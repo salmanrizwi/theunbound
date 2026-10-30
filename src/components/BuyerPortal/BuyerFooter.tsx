@@ -43,7 +43,7 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
               theunbound
             </span>
             <p className="text-xs text-slate-400 leading-relaxed">
-              Global Destination Management Company (DMC) delivering verified wholesale ground handling, private VIP itineraries, and contractual guarantees across Japan, the United Kingdom, and Europe.
+              Global Destination Management Company (DMC) delivering verified wholesale ground handling, private VIP itineraries, and contractual guarantees {visibleDestinations.length > 0 ? `across ${visibleDestinations.map(d => d.name).join(', ')}.` : 'across premier global destination corridors.'}
             </p>
             <div className="pt-2">
               <span className="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[10px] font-bold bg-[#00C6A6]/10 text-[#00E5C0] border border-[#00C6A6]/20">

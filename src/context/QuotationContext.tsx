@@ -476,6 +476,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       master_product_id: options?.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
       service_id: options?.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
       category: options?.category || effectiveProduct.category,
+      categoryLabel: options?.category || effectiveProduct.category,
+      subcategory: (effectiveProduct as any).subcategory,
       service_type: options?.service_type || (effectiveProduct as any).service_type,
       configuration_id: options?.configuration_id,
       configuration_snapshot: options?.configuration_snapshot,

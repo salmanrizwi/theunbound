@@ -72,7 +72,12 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   const eyebrowText = currentConfig.heroConfig?.eyebrowText || currentConfig.heroBadgeText || 'B2B Destination Management Company (DMC)';
   const heading = currentConfig.heroConfig?.heading || currentConfig.heroHeading || 'Your Exclusive B2B DMC Travel Platform';
   const headingHighlight = currentConfig.heroConfig?.headingHighlight || currentConfig.heroHighlightText || 'B2B DMC';
-  const subheading = currentConfig.heroConfig?.subheading || currentConfig.heroSubheading || 'TheUnbound provides verified travel agencies with direct ground operations, wholesale net tariffs, customized white-label itineraries, and guaranteed 24–48h proposal SLAs.';
+  const rawSubheading = currentConfig.heroConfig?.subheading || currentConfig.heroSubheading || '';
+  const subheading = rawSubheading.includes('across Japan, the UK, Europe')
+    ? (allDestinations && allDestinations.length > 0
+        ? `Contracted wholesale rates, verified licensed bilingual guides, executive transfers, and 24–48h SLA booking operations across ${allDestinations.map(d => d.name).join(', ')}.`
+        : 'Contracted wholesale rates, verified licensed bilingual guides, executive transfers, and 24–48h SLA booking operations across verified global destination corridors.')
+    : (rawSubheading || 'TheUnbound provides verified travel agencies with direct ground operations, wholesale net tariffs, customized white-label itineraries, and guaranteed 24–48h proposal SLAs.');
   
   const showPrimaryCta = (currentConfig.showPrimaryCta !== false) && (currentConfig.heroConfig?.ctas?.showPrimaryCta !== false);
   const primaryCtaText = currentConfig.heroConfig?.ctas?.primaryCtaText || currentConfig.primaryCtaText || 'Login as B2B Agent';
@@ -94,7 +99,12 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   const heroVideoUrl = currentConfig.heroVideoUrl || currentConfig.heroConfig?.media?.videoUrl;
   const heroImageAlt = currentConfig.heroConfig?.media?.altText || currentConfig.heroImageAlt || 'TheUnbound Premier Ground Operations & Wholesale DMC Network';
   const overlayOpacity = currentConfig.heroConfig?.media?.overlayOpacity ?? currentConfig.heroOverlayOpacity ?? 0.65;
-  const statusBadgeText = currentConfig.heroStatusBadgeText || 'Operations Desk • Japan, Europe & UK';
+  const dynamicGatewaysBadge = (allDestinations && allDestinations.length > 0)
+    ? `Operations Desk • ${allDestinations.map(d => d.name).slice(0, 3).join(', ')}`
+    : 'Verified DMC Ground Operations Desk';
+  const statusBadgeText = (currentConfig.heroStatusBadgeText && !currentConfig.heroStatusBadgeText.includes('Japan, Europe & UK'))
+    ? currentConfig.heroStatusBadgeText
+    : dynamicGatewaysBadge;
   const tradeBadgeText = currentConfig.heroTradeBadgeText || 'Trade Only';
   const visualPanelTitle = currentConfig.heroVisualPanelTitle || 'Direct B2B Ground Tariffs';
   const visualPanelDesc = currentConfig.heroVisualPanelDescription || 'Contracted wholesale rates & white-label quotes';

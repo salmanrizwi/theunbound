@@ -793,6 +793,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     const finalProduct: Product = {
       ...(formData as Product),
       id: effectiveId,
+      product_id: effectiveId,
       category: activeCategory,
       regionId: validatedRegion.id,
       regionName: validatedRegion.name,

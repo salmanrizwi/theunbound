@@ -3602,7 +3602,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                             ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
                                             : 'bg-white text-slate-600 border border-slate-200'
                                         }`}>
-                                          {isRailQuoteItem(item) ? '🚄 Shinkansen Rail' : item.product.category}
+                                          {isRailQuoteItem(item) ? '🚄 Shinkansen Rail' : (item.product?.category || item.category || 'Service')}
                                         </span>
                                         {item.product.city && (
                                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">

@@ -185,7 +185,7 @@ export function buildFallbackSEO(
       resolvedTitle = resolveSEOTemplate(globalDefaults.templates.cityHub.titleTemplate, { name, destinationName });
       resolvedDesc = resolveSEOTemplate(globalDefaults.templates.cityHub.descTemplate, { name, destinationName });
       defaultSchema = 'TouristDestination';
-      pathPrefix = `/destinations/${entity.destinationSlug || 'japan'}/${slug}`;
+      pathPrefix = entity.destinationSlug ? `/destinations/${entity.destinationSlug}/${slug}` : `/hubs/${slug}`;
       break;
     case 'PRODUCT':
       resolvedTitle = resolveSEOTemplate(globalDefaults.templates.product.titleTemplate, { title: name, destinationName });

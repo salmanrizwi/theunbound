@@ -281,7 +281,7 @@ export class HomepageService {
           badge: (h as any).badge || (h as any).tagline || 'Direct Hub'
         }));
       } else {
-        rawHubs = INITIAL_HOMEPAGE_CONFIG.homepageHubs || [];
+        rawHubs = [];
       }
     }
 
@@ -311,6 +311,10 @@ export class HomepageService {
 
         const dest = (item.destinationIdOverride && destinations.find(d => d.id === item.destinationIdOverride || d.slug === item.destinationIdOverride)) || 
                      destinations.find(d => d.id === hub.destinationId || d.slug === hub.destinationId);
+
+        if (!dest || !inventoryVisibilityService.isDestinationEligible(dest, userRole)) {
+          return null;
+        }
 
         return { item, hub, destination: dest };
       })

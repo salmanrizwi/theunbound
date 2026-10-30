@@ -75,7 +75,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     });
   }, [db]);
 
-  const currentActiveDest = selectedDestinationSlug || activeDestination || 'japan';
+  const currentActiveDest = selectedDestinationSlug || activeDestination || 'all';
 
   const canAccessB2BQuotes = canUserAccessQuoteBuilder(user, 'B2B').allowed;
   const canAccessAdminCMS = canUserAccessCMS(user);
@@ -109,7 +109,13 @@ export const Navbar: React.FC<NavbarProps> = ({
         targetId: d.slug,
         isVisible: true
       }));
-      return [...dynamicChildren, ...staticChildren];
+      const allowedStatic = staticChildren.filter(sc => {
+        if (sc.type === 'DESTINATION' && sc.targetId && sc.targetId !== 'all') {
+          return visibleDestinations.some(d => d.slug === sc.targetId || d.id === sc.targetId);
+        }
+        return true;
+      });
+      return [...dynamicChildren, ...allowedStatic];
     }
     return staticChildren;
   };

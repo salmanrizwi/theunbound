@@ -9,6 +9,7 @@ import {
   B2BEsimPlan,
   QuoteItemContentSnapshot
 } from '../types';
+import { resolveAuthoritativeCategory } from '../services/configuratorRegistry';
 
 /**
  * Passenger Classification according to B2B Travel Industry Standards:
@@ -448,8 +449,172 @@ export function checkItineraryFeasibility(
 }
 
 /**
+ * Legacy generic placeholders that were historically injected when products had empty inclusions/exclusions.
+ * Used for non-destructive legacy quote migration & fallback resolution.
+ */
+export const LEGACY_GENERIC_INCLUSIONS = [
+  'Licensed English-speaking local expert guide',
+  'All listed sight admissions & experience admissions',
+  'Air-conditioned private chauffeur transport as detailed',
+  'Application dossier review & indexing',
+  'Official portal processing & submission coordination',
+  'Digital visa grant delivery & QR validation',
+  'Luxury Hotel overnight accommodation stay',
+  'Hotel standard high-speed guest Wi-Fi',
+  'Daily morning breakfast or specified room amenities',
+  'Comprehensive customer assistance and setup support',
+  'Authorized supplier coordination and tracking'
+];
+
+export const LEGACY_GENERIC_EXCLUSIONS = [
+  'Personal food, dining, and snacks unless listed',
+  'Guide/driver gratuities and voluntary tips',
+  'Souvenir costs and personal retail shopping',
+  'Government Embassy Visa Fee (unless paid online)',
+  'Courier / physical document retrieval charges',
+  'Re-submission fees in case of client documentation errors',
+  'Personal room incidentals, minibar consumption, and phone charges',
+  'Local city bed taxes or hot spring tax (onsen tax) paid locally',
+  'Additional incidental fees outside the standard plan coverage',
+  'Modifications or upgrades beyond the selected service plan'
+];
+
+/**
+ * Resolves the single authoritative category name for any QuoteItem or Product.
+ */
+export function resolveQuoteItemCategory(itemOrProduct: QuoteItem | Product | any): string {
+  if (!itemOrProduct) return 'Private Tours';
+  return resolveAuthoritativeCategory(itemOrProduct.product || itemOrProduct);
+}
+
+/**
+ * Authoritative inclusion resolver:
+ * Ensures all surfaces (preview, PDF, email, WhatsApp) read from the exact same logic.
+ * Detects legacy generic placeholders and restores authoritative product inclusions if available.
+ * If inclusions are legitimately empty, returns an empty array (never fabricates generic tour inclusions).
+ */
+export function resolveQuoteItemInclusions(item: QuoteItem | any): string[] {
+  if (!item) return [];
+
+  const productInclusions = Array.isArray(item.product?.inclusions)
+    ? item.product.inclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    : [];
+
+  const rawSnapshotInclusions = Array.isArray(item.contentSnapshot?.inclusions)
+    ? item.contentSnapshot.inclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    : [];
+
+  // Detect whether the snapshot only contains legacy generic strings
+  const isSnapshotGeneric = rawSnapshotInclusions.length > 0 &&
+    rawSnapshotInclusions.every((s: string) =>
+      LEGACY_GENERIC_INCLUSIONS.some(g => g.toLowerCase() === s.toLowerCase())
+    );
+
+  // If snapshot is tainted with legacy generic strings, recover authoritative product record
+  if (isSnapshotGeneric) {
+    if (productInclusions.length > 0) return productInclusions;
+    if (Array.isArray(item.product?.inclusions)) return [];
+  }
+
+  // If snapshot has valid, non-generic inclusions, honour it (preserves custom line-item modifications)
+  if (rawSnapshotInclusions.length > 0 && !isSnapshotGeneric) {
+    return rawSnapshotInclusions;
+  }
+
+  // If product has explicit inclusions, use them
+  if (productInclusions.length > 0) {
+    return productInclusions;
+  }
+
+  // Special case: Manual hotel configuration where agent specified rooms & meals in Quote Builder
+  if (item.isManualHotel && item.manualHotelDetails) {
+    const mh = item.manualHotelDetails;
+    return [
+      `${mh.nights || 1} Night(s) Stay in room type ${mh.roomType || 'Standard Room'}`,
+      `Meal Plan: ${mh.mealPlan || 'Breakfast Included'}`,
+      'All applicable local taxes, VAT, and service charges',
+      'Direct 24/7 DMC concierge & support access'
+    ];
+  }
+
+  // Special case: Dynamic Shinkansen rail journey booking
+  if (item.railJourneyDetails) {
+    const rd = item.railJourneyDetails;
+    return [
+      'Authoritative SmartEX high-speed train e-ticket issuance',
+      `Guaranteed ${rd.carType || 'Standard'} Class Seat Reservation`,
+      'Oversized luggage area allocation (where selected)',
+      'DMC digital ticket dispatch and platform guidance notes'
+    ];
+  }
+
+  return [];
+}
+
+/**
+ * Authoritative exclusion resolver:
+ * Ensures all surfaces (preview, PDF, email, WhatsApp) read from the exact same logic.
+ * Detects legacy generic placeholders and restores authoritative product exclusions if available.
+ * If exclusions are legitimately empty, returns an empty array (never fabricates generic exclusions).
+ */
+export function resolveQuoteItemExclusions(item: QuoteItem | any): string[] {
+  if (!item) return [];
+
+  const productExclusions = Array.isArray(item.product?.exclusions)
+    ? item.product.exclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    : [];
+
+  const rawSnapshotExclusions = Array.isArray(item.contentSnapshot?.exclusions)
+    ? item.contentSnapshot.exclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    : [];
+
+  // Detect whether the snapshot only contains legacy generic strings
+  const isSnapshotGeneric = rawSnapshotExclusions.length > 0 &&
+    rawSnapshotExclusions.every((s: string) =>
+      LEGACY_GENERIC_EXCLUSIONS.some(g => g.toLowerCase() === s.toLowerCase())
+    );
+
+  // If snapshot is tainted with legacy generic strings, recover authoritative product record
+  if (isSnapshotGeneric) {
+    if (productExclusions.length > 0) return productExclusions;
+    if (Array.isArray(item.product?.exclusions)) return [];
+  }
+
+  // If snapshot has valid, non-generic exclusions, honour it
+  if (rawSnapshotExclusions.length > 0 && !isSnapshotGeneric) {
+    return rawSnapshotExclusions;
+  }
+
+  // If product has explicit exclusions, use them
+  if (productExclusions.length > 0) {
+    return productExclusions;
+  }
+
+  // Special case: Manual hotel configuration
+  if (item.isManualHotel && item.manualHotelDetails) {
+    return [
+      'Personal room service, telephone, minibar, and incidental bills',
+      'Early check-in or late check-out charges unless pre-confirmed',
+      'Tourism tax or city tourist bed fees payable locally at front desk'
+    ];
+  }
+
+  // Special case: Dynamic Shinkansen rail journey booking
+  if (item.railJourneyDetails) {
+    return [
+      'Onboard bento meals, drinks, and snacks',
+      'Station porterage and terminal transfers',
+      'Refund or modification fees once tickets are confirmed'
+    ];
+  }
+
+  return [];
+}
+
+/**
  * Creates a complete customer-facing content snapshot for any QuoteItem.
  * Ensures historical quote consistency across Saved Quotes, Emails, PDFs, and WhatsApp proposals.
+ * Never injects fabricated generic inclusions/exclusions.
  */
 export function createQuoteItemContentSnapshot(
   product: Product,
@@ -461,7 +626,10 @@ export function createQuoteItemContentSnapshot(
   let sourceType = 'PRODUCT';
   const sourceId = product?.id || item?.productId || '';
 
-  const cat = (product?.category || item?.category || '').toLowerCase();
+  const authoritativeCategory = resolveAuthoritativeCategory(item?.product || product || item);
+  const subcategory = product?.subcategory || (item as any)?.subcategory || '';
+
+  const cat = (product?.category || item?.category || authoritativeCategory || '').toLowerCase();
   const isVisa = cat.includes('visa') || !!item?.visaSnapshot || (item?.service_type === 'VISA');
   const isHotel = cat.includes('hotel') || cat.includes('ryokan') || cat.includes('stay') || cat.includes('accommodation') || !!item?.accommodationType || !!item?.isManualHotel;
   const isRail = cat.includes('rail') || cat.includes('train') || !!item?.railJourneyDetails;
@@ -504,13 +672,8 @@ export function createQuoteItemContentSnapshot(
       overviewSpecifications += `• **Nationality:** ${item.visaSnapshot.applicantNationality}\n`;
     }
     
-    inclusions = product?.inclusions && product.inclusions.length > 0 
-      ? product.inclusions 
-      : ['Application dossier review & indexing', 'Official portal processing & submission coordination', 'Digital visa grant delivery & QR validation'];
-    
-    exclusions = product?.exclusions && product.exclusions.length > 0 
-      ? product.exclusions 
-      : ['Government Embassy Visa Fee (unless paid online)', 'Courier / physical document retrieval charges', 'Re-submission fees in case of client documentation errors'];
+    inclusions = Array.isArray(product?.inclusions) ? product.inclusions.filter(Boolean) : [];
+    exclusions = Array.isArray(product?.exclusions) ? product.exclusions.filter(Boolean) : [];
 
   } else if (isHotel) {
     if (item?.isManualHotel && item?.manualHotelDetails) {
@@ -538,7 +701,7 @@ export function createQuoteItemContentSnapshot(
     } else {
       overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
       if (!overviewSpecifications) {
-        overviewSpecifications = `Luxury accommodations and Japanese hospitality services at ${product?.name || 'Curated Hotel'}.`;
+        overviewSpecifications = `Accommodations and Japanese hospitality services at ${product?.name || 'Curated Hotel'}.`;
       }
       overviewSpecifications += `\n\n**Stay Details:**\n`;
       overviewSpecifications += `• **Hotel:** ${product?.name || 'Selected Property'}\n`;
@@ -546,18 +709,11 @@ export function createQuoteItemContentSnapshot(
       if ((product as any)?.cityName || product?.city) overviewSpecifications += `• **City:** ${(product as any)?.cityName || product?.city}\n`;
       if ((product as any)?.address) overviewSpecifications += `• **Address:** ${(product as any)?.address}\n`;
       if ((product as any)?.starRating) {
-        overviewSpecifications += `• **Property Type:** ${(product as any).propertyType || 'Luxury Stay'}\n`;
+        overviewSpecifications += `• **Property Type:** ${(product as any).propertyType || 'Hotel Stay'}\n`;
       }
       
-      inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
-        'Luxury Hotel overnight accommodation stay',
-        'Hotel standard high-speed guest Wi-Fi',
-        'Daily morning breakfast or specified room amenities'
-      ];
-      exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
-        'Personal room incidentals, minibar consumption, and phone charges',
-        'Local city bed taxes or hot spring tax (onsen tax) paid locally'
-      ];
+      inclusions = Array.isArray(product?.inclusions) ? product.inclusions.filter(Boolean) : [];
+      exclusions = Array.isArray(product?.exclusions) ? product.exclusions.filter(Boolean) : [];
     }
 
   } else if (isRail) {
@@ -575,36 +731,35 @@ export function createQuoteItemContentSnapshot(
       if (rd.pnrReference) overviewSpecifications += `• **SmartEX PNR:** ${rd.pnrReference}\n`;
       if (rd.hasOversizedBaggage) overviewSpecifications += `• **Baggage Category:** Oversized Baggage Area Included\n`;
       
-      inclusions = [
-        'Authoritative SmartEX high-speed train e-ticket issuance',
-        `Guaranteed ${rd.carType} Class Seat Reservation`,
-        'Oversized luggage area allocation (where selected)',
-        'DMC digital ticket dispatch and platform guidance notes'
-      ];
-      exclusions = [
-        'Onboard bento meals, drinks, and snacks',
-        'Station porterage and terminal transfers',
-        'Refund or modification fees once tickets are confirmed'
-      ];
+      inclusions = Array.isArray(product?.inclusions) && product.inclusions.length > 0 
+        ? product.inclusions.filter(Boolean)
+        : [
+            'Authoritative SmartEX high-speed train e-ticket issuance',
+            `Guaranteed ${rd.carType || 'Standard'} Class Seat Reservation`,
+            'Oversized luggage area allocation (where selected)',
+            'DMC digital ticket dispatch and platform guidance notes'
+          ];
+      exclusions = Array.isArray(product?.exclusions) && product.exclusions.length > 0
+        ? product.exclusions.filter(Boolean)
+        : [
+            'Onboard bento meals, drinks, and snacks',
+            'Station porterage and terminal transfers',
+            'Refund or modification fees once tickets are confirmed'
+          ];
     } else {
       overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
       if (!overviewSpecifications) {
         overviewSpecifications = `High-speed Shinkansen bullet train transit across the Japan golden route corridor.`;
       }
       
-      inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
-        'Guaranteed seat reservations',
-        'Bullet train ticketing & digital voucher'
-      ];
-      exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
-        'Onboard food and personal refreshments'
-      ];
+      inclusions = Array.isArray(product?.inclusions) ? product.inclusions.filter(Boolean) : [];
+      exclusions = Array.isArray(product?.exclusions) ? product.exclusions.filter(Boolean) : [];
     }
 
   } else if (sourceType === 'ANCILLARY') {
     overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
     if (!overviewSpecifications) {
-      overviewSpecifications = `Bespoke ancillary travel support service: ${product?.name || 'Selected Ancillary Plan'}.`;
+      overviewSpecifications = `Ancillary travel support service: ${product?.name || 'Selected Ancillary Plan'}.`;
     }
     overviewSpecifications += `\n\n**Service Overview:**\n`;
     overviewSpecifications += `• **Service:** ${product?.name || 'Travel Add-on'}\n`;
@@ -613,17 +768,11 @@ export function createQuoteItemContentSnapshot(
       overviewSpecifications += `• **Coverage/Destination:** ${product.destinationName || product.country}\n`;
     }
     
-    inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
-      'Comprehensive customer assistance and setup support',
-      'Authorized supplier coordination and tracking'
-    ];
-    exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
-      'Additional incidental fees outside the standard plan coverage',
-      'Modifications or upgrades beyond the selected service plan'
-    ];
+    inclusions = Array.isArray(product?.inclusions) ? product.inclusions.filter(Boolean) : [];
+    exclusions = Array.isArray(product?.exclusions) ? product.exclusions.filter(Boolean) : [];
 
   } else {
-    // General Product (Private Tours, Day Trips, Activities)
+    // General Catalog Product (Private Tours, Group Tours, Transfers, Tickets, Private Yacht, Ferries, Guides, Restaurant, etc.)
     overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
     if (!overviewSpecifications) {
       overviewSpecifications = `Bespoke curated travel experience: ${product?.name || 'Curated Activity'}.`;
@@ -642,16 +791,9 @@ export function createQuoteItemContentSnapshot(
     }
     if (product?.operatingHours) overviewSpecifications += `• **Timing:** ${product.operatingHours}\n`;
     
-    inclusions = product?.inclusions && product.inclusions.length > 0 ? product.inclusions : [
-      'Licensed English-speaking local expert guide',
-      'All listed sight admissions & experience admissions',
-      'Air-conditioned private chauffeur transport as detailed'
-    ];
-    exclusions = product?.exclusions && product.exclusions.length > 0 ? product.exclusions : [
-      'Personal food, dining, and snacks unless listed',
-      'Guide/driver gratuities and voluntary tips',
-      'Souvenir costs and personal retail shopping'
-    ];
+    // Authoritative inclusions and exclusions directly from product record (or item)
+    inclusions = Array.isArray(product?.inclusions) ? product.inclusions.filter(Boolean) : [];
+    exclusions = Array.isArray(product?.exclusions) ? product.exclusions.filter(Boolean) : [];
   }
 
   // Handle sanitization/cleanup to ensure rich text formatting isn't lost
@@ -659,8 +801,11 @@ export function createQuoteItemContentSnapshot(
 
   return {
     overviewSpecifications: cleanSpecs,
-    inclusions: Array.isArray(inclusions) ? inclusions.map(s => String(s).trim()) : [],
-    exclusions: Array.isArray(exclusions) ? exclusions.map(s => String(s).trim()) : [],
+    inclusions: Array.isArray(inclusions) ? inclusions.map(s => String(s).trim()).filter(Boolean) : [],
+    exclusions: Array.isArray(exclusions) ? exclusions.map(s => String(s).trim()).filter(Boolean) : [],
+    category: authoritativeCategory,
+    categoryLabel: authoritativeCategory,
+    subcategory,
     snapshotVersion: '1.0',
     sourceType,
     sourceId,

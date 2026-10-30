@@ -132,6 +132,25 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const [isOperationalAssetsManagerOpen, setIsOperationalAssetsManagerOpen] = useState(false);
   const [operationalAssetsManagerTab, setOperationalAssetsManagerTab] = useState<'VEHICLES' | 'YACHTS' | 'FERRIES'>('VEHICLES');
   const [formError, setFormError] = useState<string | null>(null);
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [notification, setNotification] = useState<{
+    message: string;
+    type: 'success' | 'error' | 'info';
+    duplicatedProduct?: Product;
+  } | null>(null);
+
+  const showNotification = (
+    message: string,
+    type: 'success' | 'error' | 'info' = 'info',
+    duplicatedProduct?: Product
+  ) => {
+    setNotification({ message, type, duplicatedProduct });
+    if (type !== 'error') {
+      setTimeout(() => {
+        setNotification(prev => (prev?.message === message ? null : prev));
+      }, 7000);
+    }
+  };
 
   // Form State: Starts 100% clean for new products (no fabricated pricing or operational presets)
   const createCleanProductFormData = (): Partial<Product> => ({
@@ -317,10 +336,28 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     setIsModalOpen(true);
   };
 
-  const handleDuplicate = (productId: string) => {
-    const dup = db.duplicateProduct(productId, user);
-    if (dup) {
+  const handleDuplicate = async (productId: string) => {
+    if (duplicatingId) return; // Prevent concurrent or double clicks
+    const source = products.find(p => p.id === productId);
+    const sourceName = source?.name || productId;
+
+    setDuplicatingId(productId);
+    try {
+      const duplicated = await db.duplicateProductAsync(productId, user);
       refreshProducts();
+      showNotification(
+        `Successfully duplicated "${sourceName}" as "${duplicated.name}" (ID: ${duplicated.id}).`,
+        'success',
+        duplicated
+      );
+    } catch (err: any) {
+      console.error('[ProductManager] Duplication failed:', err);
+      showNotification(
+        `Failed to duplicate product "${sourceName}": ${err?.message || 'Unknown Firestore write error'}`,
+        'error'
+      );
+    } finally {
+      setDuplicatingId(null);
     }
   };
 
@@ -670,6 +707,49 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
             </button>
           </div>
         </div>
+
+        {/* Action / Notification Banner */}
+        {notification && (
+          <div className={`p-4 rounded-xl border text-xs font-bold flex flex-wrap items-center justify-between gap-3 transition-all ${
+            notification.type === 'success' 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800' 
+              : notification.type === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-blue-50 border-blue-200 text-blue-800'
+          }`}>
+            <div className="flex items-center space-x-2.5 min-w-0">
+              {notification.type === 'success' ? (
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              )}
+              <span className="truncate">{notification.message}</span>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0">
+              {notification.duplicatedProduct && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prod = notification.duplicatedProduct;
+                    setNotification(null);
+                    if (prod) handleOpenEdit(prod);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold transition-colors cursor-pointer shadow-2xs"
+                >
+                  Edit Duplicate Now
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setNotification(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                title="Dismiss"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Search & Filters */}
@@ -883,10 +963,21 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <div className="flex items-center justify-end space-x-1.5">
                       <button
                         onClick={() => handleDuplicate(product.id)}
-                        className="p-1.5 text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors cursor-pointer"
-                        title="Duplicate Product"
+                        disabled={!!duplicatingId}
+                        className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
+                          duplicatingId === product.id
+                            ? 'text-blue-500 bg-blue-50 cursor-wait'
+                            : duplicatingId
+                            ? 'text-slate-300 bg-slate-50 cursor-not-allowed opacity-50'
+                            : 'text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100'
+                        }`}
+                        title={duplicatingId === product.id ? 'Duplicating in progress...' : 'Duplicate Product'}
                       >
-                        <Copy className="w-3.5 h-3.5" />
+                        {duplicatingId === product.id ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
                       </button>
                       <button
                         onClick={() => handleOpenEdit(product)}

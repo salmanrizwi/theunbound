@@ -6097,18 +6097,14 @@ export class AppDatabase {
     }
 
     const products = this.getProducts();
-    let existingIndex = products.findIndex(p => p.id === product.id);
-    if (existingIndex < 0 && product.id) {
-      existingIndex = products.findIndex(p => p.sku === product.id || (p as any).product_id === product.id || (p as any).docId === product.id);
-    }
-    if (existingIndex < 0 && product.sku) {
-      existingIndex = products.findIndex(p => p.sku === product.sku || p.id === product.sku || (p as any).product_id === product.sku || (p as any).docId === product.sku);
-    }
-    if (existingIndex < 0 && (product as any).product_id) {
-      existingIndex = products.findIndex(p => p.id === (product as any).product_id || p.sku === (product as any).product_id || (p as any).product_id === (product as any).product_id);
+    let existingIndex = -1;
+    if (product.id) {
+      existingIndex = products.findIndex(p => p.id === product.id);
+    } else if ((product as any).docId) {
+      existingIndex = products.findIndex(p => p.id === (product as any).docId || (p as any).docId === (product as any).docId);
     }
     const prev = existingIndex >= 0 ? products[existingIndex] : null;
-    const effectiveId = prev ? prev.id : (product.id || `prod-${Date.now()}`);
+    const effectiveId = product.id || prev?.id || `prod-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const chosenCurrency = (product.nativeCurrency || product.currency || prev?.nativeCurrency || prev?.currency) as CurrencyCode;
     if (!chosenCurrency) {
@@ -6532,21 +6528,56 @@ export class AppDatabase {
     return product.configuration;
   }
 
-  public duplicateProduct(productId: string, user: User | null): Product | null {
+  public async duplicateProductAsync(productId: string, user: User | null): Promise<Product> {
     const product = this.getProductById(productId);
-    if (!product) return null;
+    if (!product) {
+      throw new Error(`Product not found with ID: ${productId}`);
+    }
 
-    const newId = `prod-${Date.now()}`;
+    const newId = `prod-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const cleanImages = canonicalImageService.extractPersistedProductImages(product);
     const primaryUrl = cleanImages[0] || null;
     const nowIso = new Date().toISOString();
 
+    // Generate unique SKU
+    let candidateSku = `${product.sku || 'UB-PROD'}-COPY`;
+    const existingSkus = new Set(this.getProducts().map(p => (p.sku || '').toUpperCase().trim()));
+    let counter = 1;
+    while (existingSkus.has(candidateSku.toUpperCase())) {
+      counter++;
+      candidateSku = `${product.sku || 'UB-PROD'}-COPY-${counter}`;
+    }
+
+    const newName = `${product.name} (Copy)`;
+    const newTitle = `${product.title || product.name} (Copy)`;
+    const baseSlug = product.slug || (product.name || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const newSlug = `${baseSlug}-copy-${Date.now().toString().slice(-4)}`;
+
     const duplicated: Product = {
       ...product,
       id: newId,
-      sku: `${product.sku}-COPY`,
-      name: `${product.name} (Copy)`,
-      images: cleanImages,
+      product_id: newId,
+      sku: candidateSku,
+      name: newName,
+      title: newTitle,
+      slug: newSlug,
+      operatingDays: Array.isArray(product.operatingDays) ? [...product.operatingDays] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      images: cleanImages.length > 0 ? [...cleanImages] : [],
+      inclusions: Array.isArray(product.inclusions) ? [...product.inclusions] : [],
+      exclusions: Array.isArray(product.exclusions) ? [...product.exclusions] : [],
+      importantInformation: Array.isArray(product.importantInformation) ? [...product.importantInformation] : [],
+      surcharges: Array.isArray(product.surcharges) ? JSON.parse(JSON.stringify(product.surcharges)) : [],
+      validity: product.validity ? { ...product.validity } : undefined,
+      vehicleConfig: product.vehicleConfig ? JSON.parse(JSON.stringify(product.vehicleConfig)) : undefined,
+      tieredPricing: Array.isArray(product.tieredPricing) ? JSON.parse(JSON.stringify(product.tieredPricing)) : [],
+      capacityTiers: Array.isArray(product.capacityTiers) ? JSON.parse(JSON.stringify(product.capacityTiers)) : undefined,
+      restaurantConfig: product.restaurantConfig ? JSON.parse(JSON.stringify(product.restaurantConfig)) : undefined,
+      ticketConfig: product.ticketConfig ? JSON.parse(JSON.stringify(product.ticketConfig)) : undefined,
+      guideConfig: product.guideConfig ? JSON.parse(JSON.stringify(product.guideConfig)) : undefined,
+      ferryConfig: product.ferryConfig ? JSON.parse(JSON.stringify(product.ferryConfig)) : undefined,
+      optionalUpgradeProductIds: Array.isArray(product.optionalUpgradeProductIds) ? [...product.optionalUpgradeProductIds] : [],
+      hubIds: Array.isArray(product.hubIds) ? [...product.hubIds] : (product.hubId ? [product.hubId] : []),
+      configuration: product.configuration ? JSON.parse(JSON.stringify(product.configuration)) : undefined,
       heroImage: primaryUrl,
       imageUrl: primaryUrl,
       primaryImageId: primaryUrl ? canonicalImageService.computeImageId('PRODUCT', newId, 'PRIMARY') : null,
@@ -6555,14 +6586,96 @@ export class AppDatabase {
             imageId: canonicalImageService.computeImageId('PRODUCT', newId, 'PRIMARY'),
             url: primaryUrl,
             version: nowIso,
-            altText: `${product.name} (Copy)`,
+            altText: newName,
             lastSyncedAt: nowIso
           }
         : null,
       status: 'DRAFT',
+      createdAt: nowIso,
+      updatedAt: nowIso,
       lastUpdated: nowIso.split('T')[0],
-      updatedAt: nowIso
+      createdBy: user?.name || user?.email || 'Admin CMS',
+      updatedBy: user?.name || user?.email || 'Admin CMS',
+      isDeleted: false
     };
+
+    delete (duplicated as any).docId;
+    delete (duplicated as any)._id;
+
+    const saved = await this.saveProductAsync(duplicated, user);
+    return saved;
+  }
+
+  public duplicateProduct(productId: string, user: User | null): Product | null {
+    const product = this.getProductById(productId);
+    if (!product) return null;
+
+    const newId = `prod-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const cleanImages = canonicalImageService.extractPersistedProductImages(product);
+    const primaryUrl = cleanImages[0] || null;
+    const nowIso = new Date().toISOString();
+
+    let candidateSku = `${product.sku || 'UB-PROD'}-COPY`;
+    const existingSkus = new Set(this.getProducts().map(p => (p.sku || '').toUpperCase().trim()));
+    let counter = 1;
+    while (existingSkus.has(candidateSku.toUpperCase())) {
+      counter++;
+      candidateSku = `${product.sku || 'UB-PROD'}-COPY-${counter}`;
+    }
+
+    const newName = `${product.name} (Copy)`;
+    const newTitle = `${product.title || product.name} (Copy)`;
+    const baseSlug = product.slug || (product.name || 'product').toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const newSlug = `${baseSlug}-copy-${Date.now().toString().slice(-4)}`;
+
+    const duplicated: Product = {
+      ...product,
+      id: newId,
+      product_id: newId,
+      sku: candidateSku,
+      name: newName,
+      title: newTitle,
+      slug: newSlug,
+      operatingDays: Array.isArray(product.operatingDays) ? [...product.operatingDays] : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      images: cleanImages.length > 0 ? [...cleanImages] : [],
+      inclusions: Array.isArray(product.inclusions) ? [...product.inclusions] : [],
+      exclusions: Array.isArray(product.exclusions) ? [...product.exclusions] : [],
+      importantInformation: Array.isArray(product.importantInformation) ? [...product.importantInformation] : [],
+      surcharges: Array.isArray(product.surcharges) ? JSON.parse(JSON.stringify(product.surcharges)) : [],
+      validity: product.validity ? { ...product.validity } : undefined,
+      vehicleConfig: product.vehicleConfig ? JSON.parse(JSON.stringify(product.vehicleConfig)) : undefined,
+      tieredPricing: Array.isArray(product.tieredPricing) ? JSON.parse(JSON.stringify(product.tieredPricing)) : [],
+      capacityTiers: Array.isArray(product.capacityTiers) ? JSON.parse(JSON.stringify(product.capacityTiers)) : undefined,
+      restaurantConfig: product.restaurantConfig ? JSON.parse(JSON.stringify(product.restaurantConfig)) : undefined,
+      ticketConfig: product.ticketConfig ? JSON.parse(JSON.stringify(product.ticketConfig)) : undefined,
+      guideConfig: product.guideConfig ? JSON.parse(JSON.stringify(product.guideConfig)) : undefined,
+      ferryConfig: product.ferryConfig ? JSON.parse(JSON.stringify(product.ferryConfig)) : undefined,
+      optionalUpgradeProductIds: Array.isArray(product.optionalUpgradeProductIds) ? [...product.optionalUpgradeProductIds] : [],
+      hubIds: Array.isArray(product.hubIds) ? [...product.hubIds] : (product.hubId ? [product.hubId] : []),
+      configuration: product.configuration ? JSON.parse(JSON.stringify(product.configuration)) : undefined,
+      heroImage: primaryUrl,
+      imageUrl: primaryUrl,
+      primaryImageId: primaryUrl ? canonicalImageService.computeImageId('PRODUCT', newId, 'PRIMARY') : null,
+      primaryImage: primaryUrl
+        ? {
+            imageId: canonicalImageService.computeImageId('PRODUCT', newId, 'PRIMARY'),
+            url: primaryUrl,
+            version: nowIso,
+            altText: newName,
+            lastSyncedAt: nowIso
+          }
+        : null,
+      status: 'DRAFT',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+      lastUpdated: nowIso.split('T')[0],
+      createdBy: user?.name || user?.email || 'Admin CMS',
+      updatedBy: user?.name || user?.email || 'Admin CMS',
+      isDeleted: false
+    };
+
+    delete (duplicated as any).docId;
+    delete (duplicated as any)._id;
 
     this.saveProduct(duplicated, user);
     return duplicated;
@@ -14109,7 +14222,33 @@ export class AppDatabase {
     }
     if (!config.newsletterConfig) {
       config.newsletterConfig = INITIAL_HOMEPAGE_CONFIG.newsletterConfig;
+    } else if (config.newsletterConfig.heading && config.newsletterConfig.heading.includes('Get Japan Travel')) {
+      config.newsletterConfig.heading = INITIAL_HOMEPAGE_CONFIG.newsletterConfig?.heading || 'Get Curated Travel Inspiration in Your Inbox';
     }
+
+    // Dynamic destination sanitization: ensure legacy cached strings don't force hardcoded destinations
+    if (config.heroStatusBadgeText && config.heroStatusBadgeText.includes('Japan, Europe & UK')) {
+      config.heroStatusBadgeText = INITIAL_HOMEPAGE_CONFIG.heroStatusBadgeText;
+    }
+    if (config.destinationSectionSubtitle && config.destinationSectionSubtitle.includes('Japan, Europe, Southeast Asia')) {
+      config.destinationSectionSubtitle = INITIAL_HOMEPAGE_CONFIG.destinationSectionSubtitle;
+    }
+    if (config.heroSubheading && config.heroSubheading.includes('across Japan, the UK, Europe')) {
+      config.heroSubheading = INITIAL_HOMEPAGE_CONFIG.heroSubheading;
+    }
+    if (config.homepageFAQs) {
+      config.homepageFAQs = config.homepageFAQs.map(faq => {
+        let answer = faq.answer;
+        if (answer.includes('including Japan, the United Kingdom, Western Europe')) {
+          answer = answer.replace('including Japan, the United Kingdom, Western Europe, Southeast Asia, the Middle East, North America, and Australasia', 'across verified destination regions worldwide');
+        }
+        if (answer.includes('(e.g., JPY for Japan, EUR for Europe)')) {
+          answer = answer.replace('(e.g., JPY for Japan, EUR for Europe)', 'in native destination currencies');
+        }
+        return { ...faq, answer };
+      });
+    }
+
     return config;
   }
 

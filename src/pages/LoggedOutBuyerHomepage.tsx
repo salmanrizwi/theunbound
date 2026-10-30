@@ -180,7 +180,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
         return config.showHeroSection !== false ? (
           <BuyerHeroSection
             key="module-hero"
-            allDestinations={allDestinations}
+            allDestinations={displayDestinations}
             onSelectDestination={onSelectDestination}
             onOpenRegister={handlePartnerAction}
             homepageConfig={config}
@@ -200,7 +200,11 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                   {config.brandIntroductionTitle || 'An Exclusive Trade Infrastructure for Inbound & Outbound Travel Designers'}
                 </h2>
                 <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
-                  {config.brandIntroductionSubtitle || 'TheUnbound operates directly licensed ground operations desks, owned and contracted vehicle fleets, and accredited bilingual guide networks across Europe, Japan, the United Kingdom, and emerging global corridors. We strictly do not sell to end consumers or public travelers.'}
+                  {config.brandIntroductionSubtitle && !config.brandIntroductionSubtitle.includes('across Europe, Japan, the United Kingdom')
+                    ? config.brandIntroductionSubtitle
+                    : (displayDestinations.length > 0 
+                        ? `TheUnbound operates directly licensed ground operations desks, owned and contracted vehicle fleets, and accredited bilingual guide networks across ${displayDestinations.map(d => d.name).join(', ')}. We strictly do not sell to end consumers or public travelers.`
+                        : 'TheUnbound operates directly licensed ground operations desks, owned and contracted vehicle fleets, and accredited bilingual guide networks across verified destination corridors. We strictly do not sell to end consumers or public travelers.')}
                 </p>
                 <p className="text-sm sm:text-base text-slate-600 leading-relaxed">
                   Every rate in our system is a confidential wholesale net tariff designed to protect trade agency margins, accompanied by strict 24–48 hour proposal SLAs and 24/7 on-tour ground dispatch.
@@ -313,6 +317,9 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                 })
                 .filter(({ hub }) => {
                   if (!hub) return false;
+                  // Hub must belong to an active, published destination
+                  const parentDest = displayDestinations.find(d => d.id === hub.destinationId || d.slug === hub.destinationId);
+                  if (!parentDest) return false;
                   const computedStatus = inventoryVisibilityService.getHubComputedStatus(hub);
                   if (computedStatus === 'HIDDEN' && !isUserAdmin) return false;
                   return true;
@@ -471,7 +478,11 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                   {config.destinationSectionTitle || 'Explore Our Destination Expertise Across Global Corridors'}
                 </h2>
                 <p className="text-xs sm:text-sm text-slate-500 max-w-2xl">
-                  {config.destinationSectionSubtitle || 'Specialized ground handling, VIP logistical planning, and local dispatch capabilities across Japan, Europe, Southeast Asia, the United Kingdom, Dubai, and Azerbaijan.'}
+                  {config.destinationSectionSubtitle && !config.destinationSectionSubtitle.includes('Japan, Europe, Southeast Asia')
+                    ? config.destinationSectionSubtitle
+                    : (displayDestinations.length > 0
+                        ? `Specialized ground handling, VIP logistical planning, and local dispatch capabilities across ${displayDestinations.map(d => d.name).join(', ')}.`
+                        : 'Specialized ground handling, VIP logistical planning, and local dispatch capabilities across our verified destination corridors.')}
                 </p>
               </div>
               <div className="flex items-center space-x-2 shrink-0">
@@ -918,7 +929,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                   },
                   {
                     q: 'How are confidential wholesale tariffs and markup controls calculated?',
-                    a: 'Authenticated agents view net wholesale costs in local destination currency (e.g., JPY for Japan, EUR for Europe). Using our B2B Quote Builder, you configure your own percentage or fixed markup to output client-ready proposals in your chosen currency.'
+                    a: 'Authenticated agents view net wholesale costs in native destination currencies. Using our B2B Quote Builder, you configure your own percentage or fixed markup to output client-ready proposals in your chosen currency.'
                   },
                   {
                     q: 'What is the standard turnaround SLA for custom FIT proposals?',

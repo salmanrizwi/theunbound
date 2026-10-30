@@ -41,7 +41,7 @@ export const INITIAL_AFFILIATIONS: HomepageAffiliation[] = [
 
 export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   heroHeading: 'Premier Ground Operations & Wholesale DMC Network',
-  heroSubheading: 'Contracted wholesale rates, verified licensed bilingual guides, executive transfers, and 24–48h SLA booking operations across Japan, the UK, Europe, Southeast Asia, and the Middle East.',
+  heroSubheading: 'Contracted wholesale rates, verified licensed bilingual guides, executive transfers, and 24–48h SLA booking operations across verified global destination corridors.',
   heroBadgeText: 'UNBOUND EXPERIENCES INDIA PVT LTD • OPERATIONS DESK',
   heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=2000&auto=format&fit=crop',
   heroImageAlt: 'TheUnbound Premier Ground Operations & Wholesale DMC Network',
@@ -53,14 +53,14 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   secondaryCtaAction: 'DESTINATION_FILTER',
   showSecondaryCta: true,
   heroTrustBadges: [
-    { label: 'Destinations', subtext: '7 Core Global Regions', icon: 'Globe2' },
-    { label: 'City Hubs', subtext: '24+ Direct Gateways', icon: 'Building2' },
+    { label: 'Destinations', subtext: 'Verified Global Regions', icon: 'Globe2' },
+    { label: 'City Hubs', subtext: 'Direct Gateways', icon: 'Building2' },
     { label: 'Ground Logistics', subtext: '100% Direct Contracts', icon: 'ShieldCheck' },
     { label: 'Operations SLA', subtext: '24–48h Booking Desk', icon: 'Clock' }
   ],
   heroSellingPoints: [
     'Direct B2B net contracted rates with verified ground suppliers',
-    'Dedicated on-ground operations desks in Tokyo, London, Paris & Bangkok',
+    'Dedicated on-ground operations desks across primary destination gateways',
     'Verified licensed bilingual private guides & executive chauffeur fleets',
     'Instant B2B white-label client quotation generation in multi-currency'
   ],
@@ -136,8 +136,8 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     aiQuickBannerSubtext: 'From requirement to editable itinerary and ready-to-send quotation.',
     status: 'PUBLISHED'
   },
-  featuredDestinationIds: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
-  destinationOrdering: ['japan', 'united-kingdom', 'western-europe', 'southeast-asia', 'middle-east', 'usa', 'australia'],
+  featuredDestinationIds: [],
+  destinationOrdering: [],
   
   // Homepage Hubs CMS Fields (Authoritative Firestore Hub references)
   homepageHubs: [
@@ -157,7 +157,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
 
   // Hero Section Customization Fields (Directly connected to BuyerHeroSection)
   heroHighlightText: 'B2B DMC',
-  heroStatusBadgeText: 'Operations Desk • Japan, Europe & UK',
+  heroStatusBadgeText: 'Operations Desk • Verified Gateways',
   heroTradeBadgeText: 'Trade Only',
   heroVisualPanelTitle: 'Direct B2B Ground Tariffs',
   heroVisualPanelDescription: 'Contracted wholesale rates & white-label quotes',
@@ -206,7 +206,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   showDestinationFilter: true,
   destinationSectionBadge: 'Destination Management Operations',
   destinationSectionTitle: 'Explore Our Destination Expertise Across Global Corridors',
-  destinationSectionSubtitle: 'Specialized ground handling, VIP logistical planning, and local dispatch capabilities across Japan, Europe, Southeast Asia, the United Kingdom, Dubai, and Azerbaijan.',
+  destinationSectionSubtitle: 'Specialized ground handling, VIP logistical planning, and local dispatch capabilities across our verified destination corridors.',
   showCityHubs: true,
   showPartnershipBenefits: true,
   partnershipBenefitsBadge: 'Trade Partner Advantage',
@@ -233,7 +233,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   newsletterConfig: {
     enabled: true,
     eyebrow: 'STAY INSPIRED',
-    heading: 'Get Japan Travel Inspiration in Your Inbox',
+    heading: 'Get Curated Travel Inspiration in Your Inbox',
     description: 'Receive destination inspiration, travel ideas, curated experiences, and updates from TheUnbound.',
     emailPlaceholder: 'Enter your email address',
     buttonText: 'Subscribe',
@@ -258,7 +258,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     {
       id: 'hfaq-1',
       question: 'What is TheUnbound Ground Operations network coverage?',
-      answer: 'TheUnbound operates dedicated, fully licensed DMC ground desks and partner fleets across 7 global regions including Japan, the United Kingdom, Western Europe, Southeast Asia, the Middle East, North America, and Australasia.',
+      answer: 'TheUnbound operates dedicated, fully licensed DMC ground desks and partner fleets across verified destination regions worldwide.',
       category: 'Operations',
       displayOrder: 1,
       isPublished: true

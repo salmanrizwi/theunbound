@@ -23,13 +23,24 @@ import {
   Globe, 
   MessageCircle, 
   Mail,
-  Train 
+  Train,
+  Ticket,
+  Ship,
+  Anchor,
+  UserCheck,
+  Crown
 } from 'lucide-react';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 import { RichTextRenderer } from './common/RichTextRenderer';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { downloadQuotationPDF } from '../services/pdfGenerator';
 import { buildQuotePresentationModel } from '../services/quotePresentationModel';
+import { 
+  resolveQuoteItemInclusions, 
+  resolveQuoteItemExclusions, 
+  resolveQuoteItemCategory 
+} from '../utils/b2bQuotationHelpers';
+import { resolveAuthoritativeCategory } from '../services/configuratorRegistry';
 
 interface ProposalDocumentViewProps {
   quote: Quotation;
@@ -301,43 +312,102 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
   const effectivePax = quote.totalPax || (quote.adultsCount || 2) + (quote.childrenCount || 0);
 
   // Helper for category styling & icons
-  const getCategoryMeta = (category?: string, productType?: string) => {
-    const cat = (category || productType || '').toLowerCase();
-    if (cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan')) {
+  const getCategoryMeta = (category?: string, productType?: string, itemOrProduct?: any) => {
+    const authoritativeCat = resolveAuthoritativeCategory(itemOrProduct || { category, productType });
+    const raw = (category || productType || '').trim();
+    const lower = (authoritativeCat || raw).toLowerCase();
+
+    if (authoritativeCat === 'Tickets' || lower === 'tickets' || lower === 'ticket' || lower.includes('ticket')) {
       return {
-        icon: Building2,
-        label: 'Luxury Accommodation',
-        color: 'bg-amber-50 text-amber-800 border-amber-200',
-        badgeColor: 'bg-amber-100 text-amber-900'
+        icon: Ticket,
+        label: raw || 'Tickets',
+        color: 'bg-purple-50 text-purple-800 border-purple-200',
+        badgeColor: 'bg-purple-100 text-purple-900'
       };
     }
-    if (cat.includes('rail') || cat.includes('train') || cat.includes('shinkansen')) {
+    if (authoritativeCat === 'Private Yacht' || lower.includes('yacht')) {
       return {
-        icon: Train,
-        label: 'High-Speed Shinkansen Bullet Train',
-        color: 'bg-indigo-50 text-indigo-800 border-indigo-200',
-        badgeColor: 'bg-indigo-100 text-indigo-900'
+        icon: Ship,
+        label: raw || 'Private Yacht',
+        color: 'bg-cyan-50 text-cyan-800 border-cyan-200',
+        badgeColor: 'bg-cyan-100 text-cyan-900'
       };
     }
-    if (cat.includes('transfer') || cat.includes('transport') || cat.includes('vehicle')) {
+    if (authoritativeCat === 'Ferries' || lower.includes('ferry') || lower.includes('ferries')) {
       return {
-        icon: Car,
-        label: 'Private Ground Transfer',
+        icon: Anchor,
+        label: raw || 'Ferries',
+        color: 'bg-teal-50 text-teal-800 border-teal-200',
+        badgeColor: 'bg-teal-100 text-teal-900'
+      };
+    }
+    if (authoritativeCat === 'Guides' || lower.includes('guide')) {
+      return {
+        icon: UserCheck,
+        label: raw || 'Guides',
+        color: 'bg-orange-50 text-orange-800 border-orange-200',
+        badgeColor: 'bg-orange-100 text-orange-900'
+      };
+    }
+    if (authoritativeCat === 'Group Tours' || lower === 'group tours' || lower.includes('group tour')) {
+      return {
+        icon: Users,
+        label: raw || 'Group Tours',
         color: 'bg-blue-50 text-blue-800 border-blue-200',
         badgeColor: 'bg-blue-100 text-blue-900'
       };
     }
-    if (cat.includes('dining') || cat.includes('food') || cat.includes('culinary') || cat.includes('meal')) {
+    if (authoritativeCat === 'Hotels' || lower.includes('hotel') || lower.includes('accommodation') || lower.includes('resort') || lower.includes('ryokan')) {
+      return {
+        icon: Building2,
+        label: raw || 'Hotels',
+        color: 'bg-amber-50 text-amber-800 border-amber-200',
+        badgeColor: 'bg-amber-100 text-amber-900'
+      };
+    }
+    if (authoritativeCat === 'Rail / Shinkansen' || authoritativeCat === 'Rail' || lower.includes('rail') || lower.includes('train') || lower.includes('shinkansen')) {
+      return {
+        icon: Train,
+        label: raw || 'Rail / Shinkansen',
+        color: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+        badgeColor: 'bg-indigo-100 text-indigo-900'
+      };
+    }
+    if (authoritativeCat === 'Transfers' || lower.includes('transfer') || lower.includes('transport') || lower.includes('vehicle')) {
+      return {
+        icon: Car,
+        label: raw || 'Transfers',
+        color: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+        badgeColor: 'bg-emerald-100 text-emerald-900'
+      };
+    }
+    if (authoritativeCat === 'Lunch / Dinner Restaurant' || lower.includes('dining') || lower.includes('restaurant') || lower.includes('food') || lower.includes('culinary') || lower.includes('meal')) {
       return {
         icon: Utensils,
-        label: 'Curated Dining Experience',
+        label: raw || 'Lunch / Dinner Restaurant',
         color: 'bg-rose-50 text-rose-800 border-rose-200',
         badgeColor: 'bg-rose-100 text-rose-900'
       };
     }
+    if (authoritativeCat === 'Visa & Ancillary Services' || lower.includes('visa') || lower.includes('insurance') || lower.includes('connectivity') || lower.includes('vip')) {
+      return {
+        icon: Globe,
+        label: raw || 'Visa & Ancillary Services',
+        color: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+        badgeColor: 'bg-emerald-100 text-emerald-900'
+      };
+    }
+    if (authoritativeCat === 'Private Tours' || lower.includes('private tour')) {
+      return {
+        icon: Crown,
+        label: raw || 'Private Tours',
+        color: 'bg-amber-50 text-amber-800 border-amber-200',
+        badgeColor: 'bg-amber-100 text-amber-900'
+      };
+    }
     return {
-      icon: Sparkles,
-      label: 'Guided Tour & Sightseeing',
+      icon: Compass,
+      label: raw || authoritativeCat || 'Service',
       color: 'bg-teal-50 text-teal-800 border-teal-200',
       badgeColor: 'bg-teal-100 text-teal-900'
     };
@@ -612,34 +682,42 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                     </div>
 
                     {/* Inclusions */}
-                    {((item.contentSnapshot?.inclusions && item.contentSnapshot.inclusions.length > 0) || (item.product.inclusions && item.product.inclusions.length > 0)) && (
-                      <div className="space-y-1 pt-1.5">
-                        <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Inclusions</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(item.contentSnapshot?.inclusions || item.product.inclusions || []).map((inc: string, iIdx: number) => (
-                            <span key={iIdx} className="text-[10px] bg-white text-emerald-950 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1">
-                              <Check className="w-2.5 h-2.5 text-emerald-600" />
-                              <span>{inc}</span>
-                            </span>
-                          ))}
+                    {(() => {
+                      const incs = resolveQuoteItemInclusions(item);
+                      if (incs.length === 0) return null;
+                      return (
+                        <div className="space-y-1 pt-1.5">
+                          <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Inclusions</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {incs.map((inc: string, iIdx: number) => (
+                              <span key={iIdx} className="text-[10px] bg-white text-emerald-950 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1">
+                                <Check className="w-2.5 h-2.5 text-emerald-600" />
+                                <span>{inc}</span>
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {/* Exclusions */}
-                    {((item.contentSnapshot?.exclusions && item.contentSnapshot.exclusions.length > 0) || (item.product.exclusions && item.product.exclusions.length > 0)) && (
-                      <div className="space-y-1 pt-1.5">
-                        <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Exclusions</span>
-                        <div className="flex flex-wrap gap-1.5">
-                          {(item.contentSnapshot?.exclusions || item.product.exclusions || []).map((exc: string, eIdx: number) => (
-                            <span key={eIdx} className="text-[10px] bg-white text-rose-950 px-2 py-0.5 rounded border border-rose-200 flex items-center space-x-1">
-                              <span className="text-rose-500 font-bold">✕</span>
-                              <span>{exc}</span>
-                            </span>
-                          ))}
+                    {(() => {
+                      const excs = resolveQuoteItemExclusions(item);
+                      if (excs.length === 0) return null;
+                      return (
+                        <div className="space-y-1 pt-1.5">
+                          <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Exclusions</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {excs.map((exc: string, eIdx: number) => (
+                              <span key={eIdx} className="text-[10px] bg-white text-rose-950 px-2 py-0.5 rounded border border-rose-200 flex items-center space-x-1">
+                                <span className="text-rose-500 font-bold">✕</span>
+                                <span>{exc}</span>
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
                     {item.notes && (
                       <div className="text-[11px] text-emerald-950 bg-white p-2.5 rounded-xl border border-emerald-200 mt-1">
@@ -738,8 +816,10 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                   {hasItems ? (
                     <div className="space-y-3">
                       {day.items.map((item, itemIdx) => {
-                        const meta = getCategoryMeta(item.product.category, item.product.productType);
+                        const meta = getCategoryMeta(item.product.category, item.product.productType, item);
                         const IconComponent = meta.icon;
+                        const itemInclusions = resolveQuoteItemInclusions(item);
+                        const itemExclusions = resolveQuoteItemExclusions(item);
 
                         return (
                           <div 
@@ -812,11 +892,11 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                                 </div>
 
                                 {/* Inclusions */}
-                                {((item.contentSnapshot?.inclusions && item.contentSnapshot.inclusions.length > 0) || (item.product.inclusions && item.product.inclusions.length > 0)) && (
+                                {itemInclusions.length > 0 && (
                                   <div className="space-y-1 pt-1.5">
                                     <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Inclusions</span>
                                     <div className="flex flex-wrap gap-1.5">
-                                      {(item.contentSnapshot?.inclusions || item.product.inclusions || []).map((inc: string, iIdx: number) => (
+                                      {itemInclusions.map((inc: string, iIdx: number) => (
                                         <span key={iIdx} className="text-[10px] bg-white/90 text-slate-700 px-2 py-0.5 rounded border border-slate-200/80 flex items-center space-x-1">
                                           <Check className="w-2.5 h-2.5 text-emerald-600" />
                                           <span>{inc}</span>
@@ -827,11 +907,11 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
                                 )}
 
                                 {/* Exclusions */}
-                                {((item.contentSnapshot?.exclusions && item.contentSnapshot.exclusions.length > 0) || (item.product.exclusions && item.product.exclusions.length > 0)) && (
+                                {itemExclusions.length > 0 && (
                                   <div className="space-y-1 pt-1.5">
                                     <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Exclusions</span>
                                     <div className="flex flex-wrap gap-1.5">
-                                      {(item.contentSnapshot?.exclusions || item.product.exclusions || []).map((exc: string, eIdx: number) => (
+                                      {itemExclusions.map((exc: string, eIdx: number) => (
                                         <span key={eIdx} className="text-[10px] bg-white/90 text-rose-950 px-2 py-0.5 rounded border border-rose-200 flex items-center space-x-1">
                                           <span className="text-rose-500 font-bold">✕</span>
                                           <span>{exc}</span>

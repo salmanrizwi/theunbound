@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import { navigateTo } from '../../services/portalRouter';
 import { authDiagnostic } from '../../services/authDiagnostic';
+import { AppDatabase } from '../../services/db';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 interface B2BLoginPanelProps {
   onSuccess?: () => void;
@@ -35,6 +37,11 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
 }) => {
   const { login, register, openAuthModal } = useAuth();
   const [activeTab, setActiveTab] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
+
+  const db = AppDatabase.getInstance();
+  const activeDestinations = db.getDestinations().filter(d => 
+    inventoryVisibilityService.isDestinationEligible(d, 'BUYER')
+  );
 
   // Login credentials
   const [email, setEmail] = useState('');
@@ -396,7 +403,9 @@ export const B2BLoginPanel: React.FC<B2BLoginPanelProps> = ({
           </div>
           <div className="flex items-center space-x-2 text-slate-700">
             <CheckCircle2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0" />
-            <span>Direct ground operations in Japan, UK, and France</span>
+            <span>
+              Direct ground operations {activeDestinations.length > 0 ? `across ${activeDestinations.slice(0, 3).map(d => d.name).join(', ')}` : 'across verified destination corridors'}
+            </span>
           </div>
         </div>
       </div>

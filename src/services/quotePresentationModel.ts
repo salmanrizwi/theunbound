@@ -10,6 +10,12 @@ import {
   convertHtmlToCleanPlainText
 } from './quoteEmailFormatter';
 import { richTextToWhatsApp } from '../utils/richTextFormatter';
+import { 
+  resolveQuoteItemInclusions, 
+  resolveQuoteItemExclusions, 
+  resolveQuoteItemCategory 
+} from '../utils/b2bQuotationHelpers';
+import { resolveAuthoritativeCategory } from './configuratorRegistry';
 
 export function isTheUnboundBrandString(val?: string | null): boolean {
   if (!val) return false;
@@ -401,55 +407,112 @@ export function isVisaQuoteItem(it: QuoteItem): boolean {
          Boolean(it.product?.name?.toLowerCase().includes('visa') && it.product?.name?.toLowerCase().includes('entry'));
 }
 
-export function getCategoryStyleMeta(category?: string, productType?: string) {
-  const cat = (category || productType || '').toLowerCase();
-  if (cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan')) {
+export function getCategoryStyleMeta(category?: string, productType?: string, itemOrProduct?: any) {
+  const authoritativeCat = resolveAuthoritativeCategory(itemOrProduct || { category, productType });
+  const raw = (category || productType || '').trim();
+  const lower = (authoritativeCat || raw).toLowerCase();
+
+  if (authoritativeCat === 'Tickets' || lower === 'tickets' || lower === 'ticket' || lower.includes('ticket')) {
     return {
-      label: 'Luxury Accommodation',
-      badgeBg: '#FEF3C7',
-      badgeText: '#92400E',
-      colorClass: 'bg-amber-50/80 text-amber-900 border-amber-200/90',
-      badgeClass: 'bg-amber-100 text-amber-900'
+      label: raw || 'Tickets',
+      badgeBg: '#F3E8FF',
+      badgeText: '#6B21A8',
+      colorClass: 'bg-purple-50/80 text-purple-900 border-purple-200/90',
+      badgeClass: 'bg-purple-100 text-purple-900'
     };
   }
-  if (cat.includes('rail') || cat.includes('train') || cat.includes('shinkansen')) {
+  if (authoritativeCat === 'Private Yacht' || lower.includes('yacht')) {
     return {
-      label: 'High-Speed Shinkansen Bullet Train',
-      badgeBg: '#E0E7FF',
-      badgeText: '#3730A3',
-      colorClass: 'bg-indigo-50/80 text-indigo-900 border-indigo-200/90',
-      badgeClass: 'bg-indigo-100 text-indigo-900'
+      label: raw || 'Private Yacht',
+      badgeBg: '#CFFAFE',
+      badgeText: '#155E75',
+      colorClass: 'bg-cyan-50/80 text-cyan-900 border-cyan-200/90',
+      badgeClass: 'bg-cyan-100 text-cyan-900'
     };
   }
-  if (cat.includes('transfer') || cat.includes('transport') || cat.includes('vehicle')) {
+  if (authoritativeCat === 'Ferries' || lower.includes('ferry') || lower.includes('ferries')) {
     return {
-      label: 'Private Ground Transfer',
+      label: raw || 'Ferries',
+      badgeBg: '#CCFBF1',
+      badgeText: '#115E59',
+      colorClass: 'bg-teal-50/80 text-teal-900 border-teal-200/90',
+      badgeClass: 'bg-teal-100 text-teal-900'
+    };
+  }
+  if (authoritativeCat === 'Guides' || lower.includes('guide')) {
+    return {
+      label: raw || 'Guides',
+      badgeBg: '#FFEDD5',
+      badgeText: '#9A3412',
+      colorClass: 'bg-orange-50/80 text-orange-900 border-orange-200/90',
+      badgeClass: 'bg-orange-100 text-orange-900'
+    };
+  }
+  if (authoritativeCat === 'Group Tours' || lower === 'group tours' || lower.includes('group tour')) {
+    return {
+      label: raw || 'Group Tours',
       badgeBg: '#DBEAFE',
       badgeText: '#1E40AF',
       colorClass: 'bg-blue-50/80 text-blue-900 border-blue-200/90',
       badgeClass: 'bg-blue-100 text-blue-900'
     };
   }
-  if (cat.includes('dining') || cat.includes('food') || cat.includes('culinary') || cat.includes('meal')) {
+  if (authoritativeCat === 'Hotels' || lower.includes('hotel') || lower.includes('accommodation') || lower.includes('resort') || lower.includes('ryokan')) {
     return {
-      label: 'Curated Dining Experience',
-      badgeBg: '#FFE4E6',
-      badgeText: '#9F1239',
-      colorClass: 'bg-rose-50/80 text-rose-900 border-rose-200/90',
-      badgeClass: 'bg-rose-100 text-rose-900'
+      label: raw || 'Hotels',
+      badgeBg: '#FEF3C7',
+      badgeText: '#92400E',
+      colorClass: 'bg-amber-50/80 text-amber-900 border-amber-200/90',
+      badgeClass: 'bg-amber-100 text-amber-900'
     };
   }
-  if (cat.includes('visa') || cat.includes('insurance') || cat.includes('connectivity') || cat.includes('vip')) {
+  if (authoritativeCat === 'Rail / Shinkansen' || authoritativeCat === 'Rail' || lower.includes('rail') || lower.includes('train') || lower.includes('shinkansen')) {
     return {
-      label: 'Visa & Ancillary Service',
+      label: raw || 'Rail / Shinkansen',
+      badgeBg: '#E0E7FF',
+      badgeText: '#3730A3',
+      colorClass: 'bg-indigo-50/80 text-indigo-900 border-indigo-200/90',
+      badgeClass: 'bg-indigo-100 text-indigo-900'
+    };
+  }
+  if (authoritativeCat === 'Transfers' || lower.includes('transfer') || lower.includes('transport') || lower.includes('vehicle')) {
+    return {
+      label: raw || 'Transfers',
       badgeBg: '#D1FAE5',
       badgeText: '#065F46',
       colorClass: 'bg-emerald-50/80 text-emerald-900 border-emerald-200/90',
       badgeClass: 'bg-emerald-100 text-emerald-900'
     };
   }
+  if (authoritativeCat === 'Lunch / Dinner Restaurant' || lower.includes('dining') || lower.includes('restaurant') || lower.includes('food') || lower.includes('culinary') || lower.includes('meal')) {
+    return {
+      label: raw || 'Lunch / Dinner Restaurant',
+      badgeBg: '#FFE4E6',
+      badgeText: '#9F1239',
+      colorClass: 'bg-rose-50/80 text-rose-900 border-rose-200/90',
+      badgeClass: 'bg-rose-100 text-rose-900'
+    };
+  }
+  if (authoritativeCat === 'Visa & Ancillary Services' || lower.includes('visa') || lower.includes('insurance') || lower.includes('connectivity') || lower.includes('vip')) {
+    return {
+      label: raw || 'Visa & Ancillary Services',
+      badgeBg: '#D1FAE5',
+      badgeText: '#065F46',
+      colorClass: 'bg-emerald-50/80 text-emerald-900 border-emerald-200/90',
+      badgeClass: 'bg-emerald-100 text-emerald-900'
+    };
+  }
+  if (authoritativeCat === 'Private Tours' || lower.includes('private tour')) {
+    return {
+      label: raw || 'Private Tours',
+      badgeBg: '#FEF3C7',
+      badgeText: '#92400E',
+      colorClass: 'bg-amber-50/80 text-amber-900 border-amber-200/90',
+      badgeClass: 'bg-amber-100 text-amber-900'
+    };
+  }
   return {
-    label: 'Guided Tour & Sightseeing',
+    label: raw || authoritativeCat || 'Service',
     badgeBg: '#CCFBF1',
     badgeText: '#115E59',
     colorClass: 'bg-teal-50/80 text-teal-900 border-teal-200/90',
@@ -459,14 +522,14 @@ export function getCategoryStyleMeta(category?: string, productType?: string) {
 
 export function transformQuoteItemToPresentation(item: QuoteItem, currency: string): ServicePresentationItem {
   const isRail = isRailQuoteItem(item) || (item.category === 'Rail') || (item as any).service_type === 'RAIL' || Boolean(item.railJourneyDetails);
-  const styleMeta = getCategoryStyleMeta(item.product?.category || item.category, item.product?.productType);
-  const itemPrice = item.calculation?.finalTotalSellingPrice || item.calculation?.totalSellingPrice || (item as any).totalPrice || (item as any).sellingPrice || 0;
+  const rawCategory = item.product?.category || item.category || (item.contentSnapshot as any)?.category || (item.contentSnapshot as any)?.categoryLabel;
+  const styleMeta = getCategoryStyleMeta(rawCategory, item.product?.productType, item);
+  const authoritativeCategory = resolveQuoteItemCategory(item);
+  const finalCategory = rawCategory || authoritativeCategory;
 
-  const rawInclusions = item.contentSnapshot?.inclusions || item.product?.inclusions || (item as any).inclusions || [];
-  const inclusions = Array.isArray(rawInclusions) ? rawInclusions.map(inc => String(inc).trim()).filter(Boolean) : [];
-
-  const rawExclusions = item.contentSnapshot?.exclusions || item.product?.exclusions || (item as any).exclusions || [];
-  const exclusions = Array.isArray(rawExclusions) ? rawExclusions.map(exc => String(exc).trim()).filter(Boolean) : [];
+  // Single authoritative source for inclusions & exclusions
+  const inclusions = resolveQuoteItemInclusions(item);
+  const exclusions = resolveQuoteItemExclusions(item);
 
   const overview = item.contentSnapshot?.overviewSpecifications || 
                    item.product?.longDescription || 
@@ -497,8 +560,8 @@ export function transformQuoteItemToPresentation(item: QuoteItem, currency: stri
 
   return {
     id: item.id || `item-${Math.random()}`,
-    category: item.product?.category || item.category || 'Service',
-    categoryLabel: styleMeta.label,
+    category: finalCategory,
+    categoryLabel: finalCategory,
     badgeBg: styleMeta.badgeBg,
     badgeText: styleMeta.badgeText,
     colorClass: styleMeta.colorClass,

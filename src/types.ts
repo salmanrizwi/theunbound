@@ -1671,6 +1671,9 @@ export interface QuoteItemContentSnapshot {
   overviewSpecifications: string;
   inclusions: string[];
   exclusions: string[];
+  category?: string;
+  categoryLabel?: string;
+  subcategory?: string;
   snapshotVersion?: string;
   sourceType: string;
   sourceId: string;
@@ -1685,6 +1688,8 @@ export interface QuoteItem {
   title?: string;
   productName?: string;
   category?: string;
+  categoryLabel?: string;
+  subcategory?: string;
   pax: {
     adults: number;
     children: number;

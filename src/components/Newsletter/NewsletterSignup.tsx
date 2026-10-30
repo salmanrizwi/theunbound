@@ -21,7 +21,9 @@ export const NewsletterSignup: React.FC<NewsletterSignupProps> = ({
 
   // Content fallbacks
   const eyebrow = config?.eyebrow || 'STAY INSPIRED';
-  const heading = config?.heading || 'Get Japan Travel Inspiration in Your Inbox';
+  const heading = (config?.heading && !config.heading.includes('Get Japan Travel'))
+    ? config.heading
+    : 'Get Curated Travel Inspiration in Your Inbox';
   const description = config?.description || 'Receive destination inspiration, travel ideas, curated experiences, and updates from TheUnbound.';
   const placeholder = config?.emailPlaceholder || 'Enter your email address';
   const buttonText = config?.buttonText || 'Subscribe';
