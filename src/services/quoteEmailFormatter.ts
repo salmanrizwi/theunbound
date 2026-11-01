@@ -705,6 +705,14 @@ export function renderProposalViewHtmlEmail(
                   </div>
                 ` : ''}
 
+                <!-- OPTIONAL JOURNEY NARRATIVE & OVERVIEW -->
+                ${model.itineraryOverview ? `
+                  <div style="background: #f0fdfa; border: 1px solid #99f6e4; border-left: 4px solid #00C6A6; padding: 14px 18px; border-radius: 12px; margin-bottom: 18px; font-size: 11px; color: #134e4a; line-height: 1.55;">
+                    <strong style="font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; color: #0f766e; display: block; margin-bottom: 5px;">✨ Journey Narrative &amp; Overview</strong>
+                    <div>${formatPdfOrEmailDescription(model.itineraryOverview)}</div>
+                  </div>
+                ` : ''}
+
                 <!-- 5. DAY-BY-DAY CHRONOLOGICAL ITINERARY (Exact PDF Day Structure) -->
                 <div style="border-bottom: 2px solid #020617; padding-bottom: 6px; margin-top: 14px; margin-bottom: 12px;">
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">
@@ -864,19 +872,23 @@ export function renderProposalViewHtmlEmail(
                       <td style="vertical-align: middle;">
                         <span style="font-size: 9px; font-weight: 800; color: #00E5C0; text-transform: uppercase; letter-spacing: 0.1em; display: block;">QUOTATION PRICING SUMMARY</span>
                         ${model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? `
-                          <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin: 6px 0 4px 0;">
+                          <div style="font-size: 13.5px; font-weight: 800; color: #ffffff; margin: 5px 0 3px 0;">
                             <strong>Hotel Accommodation Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span>
                           </div>
                         ` : ''}
-                        <h3 style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 4px 0 4px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></h3>
+                        <h3 style="font-size: 15px; font-weight: 900; color: #ffffff; margin: 3px 0 3px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></h3>
+                        <div style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 3px 0 4px 0;">
+                          <strong>Final Selling Price:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.finalCustomerSellingPriceFormatted}</span>
+                        </div>
                         <p style="font-size: 10px; color: #cbd5e1; margin: 0; max-width: 420px; line-height: 1.4;">Land Part Total covers all included non-accommodation travel services (tours, activities, transfers, rail, and ancillary ground services) and applicable taxes.</p>
                       </td>
-                      <td style="vertical-align: middle; text-align: right; width: 190px;">
+                      <td style="vertical-align: middle; text-align: right; width: 195px;">
                         ${model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? `
-                          <div style="font-size: 10.5px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Hotel Total: <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span></div>
+                          <div style="font-size: 10px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;">Hotel Total: <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span></div>
+                          <div style="font-size: 10px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Land Total: <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></div>
                         ` : ''}
-                        <div style="font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Land Part Total</div>
-                        <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.landPartTotalFormatted}</div>
+                        <div style="font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Final Selling Price</div>
+                        <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.finalCustomerSellingPriceFormatted}</div>
                         <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">${cleanInlineFormattedText(model.guaranteedCurrencyLine)}</div>
                       </td>
                     </tr>
@@ -1393,6 +1405,7 @@ export function renderSimpleSemanticQuotationEmailFromModel(
     lines.push(`Hotel Accommodation Total: ${model.hotelAccommodationTotalFormatted}`);
   }
   lines.push(`Land Part Total: ${model.landPartTotalFormatted}`);
+  lines.push(`Final Selling Price: ${model.finalCustomerSellingPriceFormatted}`);
   lines.push(`Currency Guarantee: ${model.guaranteedCurrencyLine}`);
   lines.push(`Quotation Validity: Valid until ${model.validUntilFormatted}`);
   lines.push('');

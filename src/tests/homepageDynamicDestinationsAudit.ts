@@ -64,11 +64,9 @@ async function runAudit() {
     heroImage: 'https://images.unsplash.com/photo-1530122037265-a5f1f91d3b99',
     description: 'Premier Swiss Alpine ground logistics, panoramic rail, and private chalet handling.',
     status: 'ACTIVE',
-    displayOrder: 99,
     regions: [],
-    cityHubs: [],
     faqs: []
-  };
+  } as unknown as Destination;
 
   db.saveDestination(mockSwitzerland, null);
   const updatedDestinations = db.getDestinations();

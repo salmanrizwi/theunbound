@@ -677,6 +677,30 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     });
   }
 
+  // 2.5 JOURNEY NARRATIVE & OVERVIEW BLOCK
+  if (model.itineraryOverview) {
+    const rawLen = model.itineraryOverview.length;
+    const estLines = Math.max(2, Math.ceil(rawLen / 76));
+    const estHeight = 56 + estLines * 16;
+    blocks.push({
+      id: 'block-itinerary-overview',
+      type: 'ITINERARY_OVERVIEW_BLOCK' as any,
+      html: `
+        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #00C6A6; border-radius: 12px; padding: 12px 16px; margin-top: 12px; margin-bottom: 12px;">
+          <div style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #008972; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
+            <span>✨ Journey Narrative &amp; Overview</span>
+          </div>
+          <div class="theunbound-rich-text" style="font-size: 11px; color: #334155; line-height: 1.5;">
+            ${model.itineraryOverview}
+          </div>
+        </div>
+      `,
+      estimatedHeight: estHeight,
+      splittable: false,
+      minMeaningfulHeight: estHeight
+    });
+  }
+
   // 3. DAY-BY-DAY ITINERARY BLOCKS
   model.days.forEach((day) => {
     const dayId = day.dayId || `day-${day.dayNumber}`;
@@ -737,7 +761,7 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
         html: `
           <div data-day-id="${dayId}" style="padding: 10px 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 10px; font-size: 10.5px; color: #334155; line-height: 1.45;">
             <span style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #0d9488; display: block; margin-bottom: 2px;">Day ${day.dayNumber} Overview</span>
-            <div>${day.dayOverview}</div>
+            <div class="theunbound-rich-text">${day.dayOverview}</div>
           </div>
         `,
         estimatedHeight: ovHeight,
@@ -861,22 +885,26 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
               <strong>Hotel Accommodation Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span>
             </div>
           ` : ''}
-          <h3 style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 3px 0 4px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></h3>
+          <h3 style="font-size: 15px; font-weight: 900; color: #ffffff; margin: 3px 0 3px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></h3>
+          <div style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 3px 0 4px 0;">
+            <strong>Final Selling Price:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.finalCustomerSellingPriceFormatted}</span>
+          </div>
           <p style="font-size: 10px; color: #cbd5e1; margin: 0; max-width: 420px;">Land Part Total covers all included non-accommodation travel services (private transport, tours, activities, rail, and ancillary ground services) and applicable taxes.</p>
         </div>
         <div style="text-align: right;">
           ${model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted ? `
-            <div style="font-size: 10.5px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Hotel Total: <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span></div>
+            <div style="font-size: 10px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;">Hotel Total: <span style="color: #00E5C0; font-family: monospace;">${model.hotelAccommodationTotalFormatted}</span></div>
+            <div style="font-size: 10px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Land Total: <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></div>
           ` : ''}
-          <div style="font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Land Part Total</div>
-          <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.landPartTotalFormatted}</div>
+          <div style="font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Final Selling Price</div>
+          <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${model.finalCustomerSellingPriceFormatted}</div>
           <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">${model.guaranteedCurrencyLine}</div>
         </div>
       </div>
     `,
-    estimatedHeight: model.hasHotelAccommodation ? 165 : 145,
+    estimatedHeight: model.hasHotelAccommodation ? 175 : 150,
     splittable: false,
-    minMeaningfulHeight: model.hasHotelAccommodation ? 165 : 145
+    minMeaningfulHeight: model.hasHotelAccommodation ? 175 : 150
   });
 
   // 7. OPERATIONAL GUIDELINES & POLICIES

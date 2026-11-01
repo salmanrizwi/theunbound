@@ -6591,13 +6591,12 @@ export class AppDatabase {
           }
         : null,
       status: 'DRAFT',
-      createdAt: nowIso,
       updatedAt: nowIso,
       lastUpdated: nowIso.split('T')[0],
       createdBy: user?.name || user?.email || 'Admin CMS',
       updatedBy: user?.name || user?.email || 'Admin CMS',
       isDeleted: false
-    };
+    } as Product;
 
     delete (duplicated as any).docId;
     delete (duplicated as any)._id;
@@ -6666,13 +6665,12 @@ export class AppDatabase {
           }
         : null,
       status: 'DRAFT',
-      createdAt: nowIso,
       updatedAt: nowIso,
       lastUpdated: nowIso.split('T')[0],
       createdBy: user?.name || user?.email || 'Admin CMS',
       updatedBy: user?.name || user?.email || 'Admin CMS',
       isDeleted: false
-    };
+    } as Product;
 
     delete (duplicated as any).docId;
     delete (duplicated as any)._id;

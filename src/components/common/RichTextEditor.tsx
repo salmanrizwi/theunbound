@@ -2,9 +2,11 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Bold, 
   Italic, 
+  Underline as UnderlineIcon,
+  Strikethrough as StrikethroughIcon,
+  Heading1,
   Heading2, 
   Heading3, 
-  Heading4, 
   List, 
   ListOrdered, 
   Link as LinkIcon, 
@@ -16,7 +18,14 @@ import {
   Edit3,
   Check,
   X,
-  Sparkles
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+  AlignJustify,
+  Indent,
+  Outdent,
+  Minus,
+  Palette
 } from 'lucide-react';
 import { sanitizeRichText, isHtmlContent, convertPlainTextToSemanticHtml } from '../../utils/richTextFormatter';
 import { RichTextRenderer } from './RichTextRenderer';
@@ -29,30 +38,45 @@ export interface RichTextEditorProps {
   disabled?: boolean;
   label?: string;
   helperText?: string;
+  compact?: boolean;
 }
 
 interface ActiveFormatState {
   isBold: boolean;
   isItalic: boolean;
+  isUnderline: boolean;
+  isStrike: boolean;
   isBulletList: boolean;
   isNumberedList: boolean;
-  blockType: 'p' | 'h2' | 'h3' | 'h4' | 'div';
+  blockType: 'p' | 'h1' | 'h2' | 'h3' | 'div';
+  alignment: 'left' | 'center' | 'right' | 'justify';
 }
+
+const COLOR_PALETTE = [
+  { label: 'Default Slate', value: '#0f172a' },
+  { label: 'Brand Teal', value: '#008972' },
+  { label: 'Ocean Navy', value: '#1d4ed8' },
+  { label: 'Emerald Green', value: '#047857' },
+  { label: 'Amber Gold', value: '#b45309' },
+  { label: 'Crimson Red', value: '#dc2626' },
+  { label: 'Muted Slate', value: '#64748b' }
+];
 
 /**
  * ============================================================================
  * THEUNBOUND — WYSIWYG RICH TEXT EDITOR
- * Professional Travel Product Content Editor
+ * Professional Travel Product & Quotation Content Editor
  * ============================================================================
  */
 export const RichTextEditor: React.FC<RichTextEditorProps> = ({
   value = '',
   onChange,
   placeholder = 'Write a structured description with headings, paragraphs, and lists...',
-  minHeight = '180px',
+  minHeight = '140px',
   disabled = false,
   label,
-  helperText
+  helperText,
+  compact = false
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<'EDIT' | 'PREVIEW'>('EDIT');
@@ -60,14 +84,18 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
+  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const savedSelectionRangeRef = useRef<Range | null>(null);
 
   const [formatState, setFormatState] = useState<ActiveFormatState>({
     isBold: false,
     isItalic: false,
+    isUnderline: false,
+    isStrike: false,
     isBulletList: false,
     isNumberedList: false,
-    blockType: 'p'
+    blockType: 'p',
+    alignment: 'left'
   });
 
   // Track the last emitted HTML to avoid cursor jumping loops
@@ -105,22 +133,32 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
     try {
       const isBold = document.queryCommandState('bold');
       const isItalic = document.queryCommandState('italic');
+      const isUnderline = document.queryCommandState('underline');
+      const isStrike = document.queryCommandState('strikeThrough');
       const isBulletList = document.queryCommandState('insertUnorderedList');
       const isNumberedList = document.queryCommandState('insertOrderedList');
       const formatBlock = (document.queryCommandValue('formatBlock') || '').toLowerCase();
 
-      let blockType: 'p' | 'h2' | 'h3' | 'h4' | 'div' = 'p';
-      if (formatBlock.includes('h2')) blockType = 'h2';
+      let blockType: 'p' | 'h1' | 'h2' | 'h3' | 'div' = 'p';
+      if (formatBlock.includes('h1')) blockType = 'h1';
+      else if (formatBlock.includes('h2')) blockType = 'h2';
       else if (formatBlock.includes('h3')) blockType = 'h3';
-      else if (formatBlock.includes('h4')) blockType = 'h4';
       else if (formatBlock.includes('p')) blockType = 'p';
+
+      let alignment: 'left' | 'center' | 'right' | 'justify' = 'left';
+      if (document.queryCommandState('justifyCenter')) alignment = 'center';
+      else if (document.queryCommandState('justifyRight')) alignment = 'right';
+      else if (document.queryCommandState('justifyFull')) alignment = 'justify';
 
       setFormatState({
         isBold,
         isItalic,
+        isUnderline,
+        isStrike,
         isBulletList,
         isNumberedList,
-        blockType
+        blockType,
+        alignment
       });
     } catch {
       // Ignore queryCommand errors in unusual selection states
@@ -145,16 +183,16 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
     onChange(cleanHtml);
   };
 
-  const executeCommand = (command: string, value: string | undefined = undefined) => {
+  const executeCommand = (command: string, cmdValue: string | undefined = undefined) => {
     if (disabled || activeTab !== 'EDIT') return;
 
     editorRef.current?.focus();
-    document.execCommand(command, false, value);
+    document.execCommand(command, false, cmdValue);
     handleInput();
   };
 
-  // Block Formatting (Paragraph, H2, H3, H4)
-  const setBlockFormat = (tag: 'p' | 'h2' | 'h3' | 'h4') => {
+  // Block Formatting (Paragraph, H1, H2, H3)
+  const setBlockFormat = (tag: 'p' | 'h1' | 'h2' | 'h3') => {
     if (disabled || activeTab !== 'EDIT') return;
     editorRef.current?.focus();
 
@@ -165,6 +203,12 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       document.execCommand('formatBlock', false, `<${tag}>`);
     }
     handleInput();
+  };
+
+  // Apply Text Color
+  const applyTextColor = (color: string) => {
+    executeCommand('foreColor', color);
+    setIsColorPickerOpen(false);
   };
 
   // Link Insertion
@@ -204,14 +248,50 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
     }
   };
 
+  // Keyboard Shortcuts (Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+Z, Ctrl+Y)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
+    const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+    if (modKey) {
+      const key = e.key.toLowerCase();
+      if (key === 'b') {
+        e.preventDefault();
+        executeCommand('bold');
+      } else if (key === 'i') {
+        e.preventDefault();
+        executeCommand('italic');
+      } else if (key === 'u') {
+        e.preventDefault();
+        executeCommand('underline');
+      } else if (key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          executeCommand('redo');
+        } else {
+          executeCommand('undo');
+        }
+      } else if (key === 'y') {
+        e.preventDefault();
+        executeCommand('redo');
+      }
+    }
+  };
+
   // Clean pasted content to avoid messy styles from Word/Web
   const handlePaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
-    const text = e.clipboardData.getData('text/plain');
-    if (text) {
-      const formatted = text.includes('\n\n') || text.startsWith('#') || text.startsWith('-')
-        ? convertPlainTextToSemanticHtml(text)
-        : text.replace(/\n/g, '<br/>');
+    const htmlData = e.clipboardData.getData('text/html');
+    const textData = e.clipboardData.getData('text/plain');
+
+    if (htmlData) {
+      const sanitized = sanitizeRichText(htmlData);
+      document.execCommand('insertHTML', false, sanitized);
+      handleInput();
+    } else if (textData) {
+      const formatted = textData.includes('\n\n') || textData.startsWith('#') || textData.startsWith('-')
+        ? convertPlainTextToSemanticHtml(textData)
+        : textData.replace(/\n/g, '<br/>');
       document.execCommand('insertHTML', false, formatted);
       handleInput();
     }
@@ -239,22 +319,37 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
         } ${disabled ? 'opacity-60 pointer-events-none' : ''}`}
       >
         {/* Top Formatting Toolbar */}
-        <div className="bg-slate-50/90 border-b border-slate-200/80 px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-1 select-none">
+        <div className="bg-slate-50/95 border-b border-slate-200/80 px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-1.5 select-none">
           {/* Main Formatting Actions */}
           <div className="flex flex-wrap items-center gap-1">
+            {/* Heading 1 */}
+            <button
+              type="button"
+              onClick={() => setBlockFormat('h1')}
+              title="Heading 1"
+              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-0.5 cursor-pointer ${
+                formatState.blockType === 'h1'
+                  ? 'bg-[#00C6A6]/20 text-[#008972] border border-[#00C6A6]/40 shadow-2xs font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Heading1 className="w-3.5 h-3.5" />
+              <span className="text-[10px]">H1</span>
+            </button>
+
             {/* Heading 2 */}
             <button
               type="button"
               onClick={() => setBlockFormat('h2')}
               title="Heading 2 (Main Section)"
-              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-0.5 cursor-pointer ${
                 formatState.blockType === 'h2'
-                  ? 'bg-[#00C6A6]/20 text-[#008972] border border-[#00C6A6]/40 shadow-2xs'
+                  ? 'bg-[#00C6A6]/20 text-[#008972] border border-[#00C6A6]/40 shadow-2xs font-black'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
               <Heading2 className="w-3.5 h-3.5" />
-              <span className="text-[11px]">H2</span>
+              <span className="text-[10px]">H2</span>
             </button>
 
             {/* Heading 3 */}
@@ -262,29 +357,28 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
               type="button"
               onClick={() => setBlockFormat('h3')}
               title="Heading 3 (Subsection)"
-              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
+              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-0.5 cursor-pointer ${
                 formatState.blockType === 'h3'
-                  ? 'bg-[#00C6A6]/20 text-[#008972] border border-[#00C6A6]/40 shadow-2xs'
+                  ? 'bg-[#00C6A6]/20 text-[#008972] border border-[#00C6A6]/40 shadow-2xs font-black'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
               }`}
             >
               <Heading3 className="w-3.5 h-3.5" />
-              <span className="text-[11px]">H3</span>
+              <span className="text-[10px]">H3</span>
             </button>
 
-            {/* Heading 4 */}
+            {/* Normal Paragraph */}
             <button
               type="button"
-              onClick={() => setBlockFormat('h4')}
-              title="Heading 4 (Minor Heading)"
-              className={`p-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                formatState.blockType === 'h4'
-                  ? 'bg-[#00C6A6]/20 text-[#008972] border border-[#00C6A6]/40 shadow-2xs'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              onClick={() => setBlockFormat('p')}
+              title="Normal Paragraph"
+              className={`px-1.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                formatState.blockType === 'p'
+                  ? 'bg-slate-200 text-slate-800'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/60'
               }`}
             >
-              <Heading4 className="w-3.5 h-3.5" />
-              <span className="text-[11px]">H4</span>
+              ¶
             </button>
 
             <div className="h-4 w-px bg-slate-200 mx-0.5" />
@@ -317,6 +411,88 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
               <Italic className="w-3.5 h-3.5" />
             </button>
 
+            {/* Underline */}
+            <button
+              type="button"
+              onClick={() => executeCommand('underline')}
+              title="Underline (Ctrl+U)"
+              className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                formatState.isUnderline
+                  ? 'bg-[#00C6A6]/20 text-[#008972] font-bold border border-[#00C6A6]/40 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <UnderlineIcon className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Strikethrough */}
+            <button
+              type="button"
+              onClick={() => executeCommand('strikeThrough')}
+              title="Strikethrough"
+              className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                formatState.isStrike
+                  ? 'bg-[#00C6A6]/20 text-[#008972] font-bold border border-[#00C6A6]/40 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <StrikethroughIcon className="w-3.5 h-3.5" />
+            </button>
+
+            <div className="h-4 w-px bg-slate-200 mx-0.5" />
+
+            {/* Text Alignment */}
+            <div className="flex items-center space-x-0.5">
+              <button
+                type="button"
+                onClick={() => executeCommand('justifyLeft')}
+                title="Align Left"
+                className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                  formatState.alignment === 'left'
+                    ? 'bg-slate-200 text-slate-800'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <AlignLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => executeCommand('justifyCenter')}
+                title="Align Center"
+                className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                  formatState.alignment === 'center'
+                    ? 'bg-slate-200 text-slate-800'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <AlignCenter className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => executeCommand('justifyRight')}
+                title="Align Right"
+                className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                  formatState.alignment === 'right'
+                    ? 'bg-slate-200 text-slate-800'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <AlignRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => executeCommand('justifyFull')}
+                title="Justify"
+                className={`p-1.5 rounded-lg text-xs transition-all cursor-pointer ${
+                  formatState.alignment === 'justify'
+                    ? 'bg-slate-200 text-slate-800'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <AlignJustify className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
             <div className="h-4 w-px bg-slate-200 mx-0.5" />
 
             {/* Bullet List */}
@@ -347,7 +523,69 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
               <ListOrdered className="w-3.5 h-3.5" />
             </button>
 
+            {/* Indent & Outdent */}
+            <button
+              type="button"
+              onClick={() => executeCommand('outdent')}
+              title="Decrease Indent"
+              className="p-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer"
+            >
+              <Outdent className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => executeCommand('indent')}
+              title="Increase Indent"
+              className="p-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer"
+            >
+              <Indent className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Horizontal Divider Rule */}
+            <button
+              type="button"
+              onClick={() => executeCommand('insertHorizontalRule')}
+              title="Insert Horizontal Divider"
+              className="p-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+
             <div className="h-4 w-px bg-slate-200 mx-0.5" />
+
+            {/* Text Color Picker */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsColorPickerOpen(prev => !prev)}
+                title="Text Color"
+                className="p-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer flex items-center space-x-0.5"
+              >
+                <Palette className="w-3.5 h-3.5 text-teal-700" />
+              </button>
+
+              {isColorPickerOpen && (
+                <div className="absolute top-full left-0 mt-1 z-30 bg-white border border-slate-200 shadow-xl rounded-xl p-2 flex items-center gap-1.5 animate-in fade-in duration-100">
+                  {COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c.value}
+                      type="button"
+                      onClick={() => applyTextColor(c.value)}
+                      title={c.label}
+                      style={{ backgroundColor: c.value }}
+                      className="w-5 h-5 rounded-full border border-slate-300 hover:scale-115 transition-transform cursor-pointer"
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setIsColorPickerOpen(false)}
+                    className="text-slate-400 hover:text-slate-700 p-0.5 ml-1"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Link */}
             <button
@@ -357,6 +595,14 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
               className="p-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer"
             >
               <LinkIcon className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => executeCommand('unlink')}
+              title="Remove Link"
+              className="p-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer"
+            >
+              <Unlink className="w-3.5 h-3.5" />
             </button>
 
             {/* Remove Format */}
@@ -414,7 +660,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
               }`}
             >
               <Eye className="w-3 h-3" />
-              <span>Live Preview</span>
+              <span>Preview</span>
             </button>
           </div>
         </div>
@@ -432,10 +678,13 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
             onBlur={handleBlur}
             onKeyUp={checkActiveFormats}
             onMouseUp={checkActiveFormats}
+            onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             style={{ minHeight }}
             data-placeholder={placeholder}
-            className="theunbound-rich-text p-3.5 text-xs sm:text-sm text-slate-800 focus:outline-none overflow-y-auto leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 empty:before:pointer-events-none"
+            className={`theunbound-rich-text p-3.5 text-xs sm:text-sm text-slate-800 focus:outline-none overflow-y-auto leading-relaxed empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 empty:before:pointer-events-none ${
+              compact ? 'text-xs leading-normal py-2.5 px-3' : ''
+            }`}
           />
         ) : (
           <div 
@@ -446,7 +695,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
               <RichTextRenderer content={value} />
             ) : (
               <p className="text-xs text-slate-400 italic">
-                No description entered yet. Switch to Editor to create structured content.
+                No narrative entered yet. Switch to Editor to create structured content.
               </p>
             )}
           </div>

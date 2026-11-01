@@ -110,7 +110,7 @@ export class CurrencyEngine {
         const toUsd = BASELINE_USD_RATES[to] || 1.0;
         const rawRate = toUsd / fromUsd;
         const manualAdj = INITIAL_MANUAL_ADJUSTMENTS[pairId] || 0;
-        const effectiveRate = Number((rawRate + manualAdj).toFixed(6));
+        const effectiveRate = Number((rawRate + manualAdj).toFixed(10));
 
         const formula = from === 'USD' 
           ? CANONICAL_GOOGLEFINANCE_FORMULAS[to]?.direct || `=GOOGLEFINANCE("CURRENCY:USD${to}")`
@@ -120,9 +120,9 @@ export class CurrencyEngine {
           id: pairId,
           fromCurrency: from,
           toCurrency: to,
-          googleFinanceLiveRate: Number(rawRate.toFixed(6)),
+          googleFinanceLiveRate: Number(rawRate.toFixed(10)),
           googleFinanceFormula: formula,
-          xeLiveRate: Number(rawRate.toFixed(6)),
+          xeLiveRate: Number(rawRate.toFixed(10)),
           manualAdjustment: manualAdj,
           effectiveRate,
           status: 'ACTIVE',
@@ -358,100 +358,55 @@ export class CurrencyEngine {
   private recalculateAllPairs() {
     const now = new Date().toISOString();
     this.pairs.forEach((pair) => {
-      const fromUsd = this.usdRates[pair.fromCurrency] || BASELINE_USD_RATES[pair.fromCurrency] || 1.0;
-      const toUsd = this.usdRates[pair.toCurrency] || BASELINE_USD_RATES[pair.toCurrency] || 1.0;
+      if (pair.status === 'PAUSED') return;
+      const fromUsd = this.usdRates[pair.fromCurrency];
+      const toUsd = this.usdRates[pair.toCurrency];
+      if (!fromUsd || !toUsd || fromUsd <= 0 || toUsd <= 0) return;
       const rawRate = toUsd / fromUsd;
       
       const formula = pair.fromCurrency === 'USD'
         ? CANONICAL_GOOGLEFINANCE_FORMULAS[pair.toCurrency]?.direct || `=GOOGLEFINANCE("CURRENCY:USD${pair.toCurrency}")`
         : `=GOOGLEFINANCE("CURRENCY:${pair.fromCurrency}${pair.toCurrency}")`;
 
-      pair.googleFinanceLiveRate = Number(rawRate.toFixed(6));
+      pair.googleFinanceLiveRate = Number(rawRate.toFixed(10));
       pair.googleFinanceFormula = formula;
-      pair.xeLiveRate = Number(rawRate.toFixed(6));
-      pair.effectiveRate = Number(Math.max(0.000001, (pair.googleFinanceLiveRate ?? rawRate) + (pair.manualAdjustment || 0)).toFixed(6));
+      pair.xeLiveRate = Number(rawRate.toFixed(10));
+      pair.effectiveRate = Number(Math.max(0.0000000001, (pair.googleFinanceLiveRate ?? rawRate) + (pair.manualAdjustment || 0)).toFixed(10));
       pair.lastFetchedAt = now;
       pair.status = this.isStale ? 'STALE' : 'ACTIVE';
     });
   }
 
   /**
-   * Primary Conversion Function:
-   * "Calculate Native First, Convert Second"
-   * Converts the delivered commercial price from nativeCurrency to targetCurrency
+   * Strictly resolves any currency input (ISO code, symbol, name, or object)
+   * without silently turning unknown/unsupported codes into 'USD'.
    */
-  public convert(amount: number, from: CurrencyCode | string | any, to: CurrencyCode | string | any): number {
-    const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : (Number(amount) || 0);
-    if (safeAmount === 0) return 0;
-
-    const fromCode = this.normalizeCurrencyCode(from);
-    const toCode = this.normalizeCurrencyCode(to);
-
-    if (fromCode === toCode) {
-      return safeAmount;
+  public resolveIsoCurrencyCode(raw: any): { code: CurrencyCode | null; rawCode: string; isSupported: boolean } {
+    if (raw === undefined || raw === null) {
+      return { code: null, rawCode: '', isSupported: false };
     }
-
-    const pairId = `${fromCode}_${toCode}`;
-    const directPair = this.pairs.get(pairId);
-
-    // Validate positive, finite effective rate on direct pair
-    if (
-      directPair &&
-      directPair.status !== 'PAUSED' &&
-      typeof directPair.effectiveRate === 'number' &&
-      Number.isFinite(directPair.effectiveRate) &&
-      directPair.effectiveRate > 0
-    ) {
-      return safeAmount * directPair.effectiveRate;
-    }
-
-    // Check inverse pair
-    const inversePairId = `${toCode}_${fromCode}`;
-    const inversePair = this.pairs.get(inversePairId);
-    if (
-      inversePair &&
-      inversePair.status !== 'PAUSED' &&
-      typeof inversePair.effectiveRate === 'number' &&
-      Number.isFinite(inversePair.effectiveRate) &&
-      inversePair.effectiveRate > 0
-    ) {
-      return safeAmount / inversePair.effectiveRate;
-    }
-
-    // Triangulate via USD base rate
-    const fromUsd = this.usdRates[fromCode] || BASELINE_USD_RATES[fromCode] || 1.0;
-    const toUsd = this.usdRates[toCode] || BASELINE_USD_RATES[toCode] || 1.0;
-    if (fromUsd > 0 && toUsd > 0 && Number.isFinite(fromUsd) && Number.isFinite(toUsd)) {
-      const baseEffectiveRate = toUsd / fromUsd;
-      if (Number.isFinite(baseEffectiveRate) && baseEffectiveRate > 0) {
-        return safeAmount * baseEffectiveRate;
-      }
-    }
-
-    return 0;
-  }
-
-  /**
-   * Helper to normalize currency inputs (codes, symbols, names, objects)
-   */
-  public normalizeCurrencyCode(raw: any, fallback: CurrencyCode = 'USD'): CurrencyCode {
-    if (!raw) return fallback;
     if (typeof raw === 'object' && raw !== null) {
-      raw = raw.code || raw.currency || raw.value || raw.targetCurrency || raw.nativeCurrency || fallback;
+      raw = raw.code || raw.currency || raw.value || raw.targetCurrency || raw.nativeCurrency || '';
     }
     const clean = String(raw).trim();
-    if (!clean) return fallback;
+    if (!clean) {
+      return { code: null, rawCode: '', isSupported: false };
+    }
     const upper = clean.toUpperCase();
 
     const symbols: Record<string, CurrencyCode> = {
       '¥': 'JPY',
       '￥': 'JPY',
+      'JP¥': 'JPY',
       '₹': 'INR',
+      'RS': 'INR',
+      'RS.': 'INR',
       '$': 'USD',
       'US$': 'USD',
       '€': 'EUR',
       '£': 'GBP',
       'AED': 'AED',
+      'DHS': 'AED',
       '฿': 'THB',
       'A$': 'AUD',
       'AU$': 'AUD',
@@ -461,7 +416,12 @@ export class CurrencyEngine {
       'SG$': 'SGD',
       'CHF': 'CHF'
     };
-    if (symbols[clean]) return symbols[clean];
+    if (symbols[clean]) {
+      return { code: symbols[clean], rawCode: symbols[clean], isSupported: true };
+    }
+    if (symbols[upper]) {
+      return { code: symbols[upper], rawCode: symbols[upper], isSupported: true };
+    }
 
     const names: Record<string, CurrencyCode> = {
       'JAPANESE YEN': 'JPY',
@@ -469,25 +429,324 @@ export class CurrencyEngine {
       'INDIAN RUPEE': 'INR',
       'RUPEE': 'INR',
       'US DOLLAR': 'USD',
+      'UNITED STATES DOLLAR': 'USD',
       'EURO': 'EUR',
       'BRITISH POUND': 'GBP',
+      'POUND STERLING': 'GBP',
       'AUSTRALIAN DOLLAR': 'AUD',
       'CANADIAN DOLLAR': 'CAD',
       'SINGAPORE DOLLAR': 'SGD',
       'SWISS FRANC': 'CHF',
-      'THAI BAHT': 'THB'
+      'THAI BAHT': 'THB',
+      'UAE DIRHAM': 'AED'
     };
-    if (names[upper]) return names[upper];
+    if (names[upper]) {
+      return { code: names[upper], rawCode: names[upper], isSupported: true };
+    }
 
     const matched = SUPPORTED_CURRENCIES.find(c => c.code === upper);
-    if (matched) return matched.code;
+    if (matched) {
+      return { code: matched.code, rawCode: matched.code, isSupported: true };
+    }
 
     // Extract 3-letter ISO code from formatted strings such as "JPY (¥)" or "INR ₹"
     const codeMatch = upper.match(/\b(USD|EUR|GBP|JPY|AED|THB|AUD|CAD|SGD|INR|CHF)\b/);
     if (codeMatch && codeMatch[1]) {
-      return codeMatch[1] as CurrencyCode;
+      const matchedCode = codeMatch[1] as CurrencyCode;
+      return { code: matchedCode, rawCode: matchedCode, isSupported: true };
     }
 
+    return { code: null, rawCode: upper, isSupported: false };
+  }
+
+  /**
+   * Validates whether a currency conversion pair has a valid, active, non-expired exchange rate.
+   * Never silently assumes a rate of 1.0 when a pair is missing, unsupported, or paused.
+   */
+  public validateConversion(
+    from: CurrencyCode | string | any,
+    to: CurrencyCode | string | any
+  ): {
+    isValid: boolean;
+    fromCode: CurrencyCode | string;
+    toCode: CurrencyCode | string;
+    pairId: string;
+    effectiveRate: number;
+    rateDirection: string;
+    isConverted: boolean;
+    rateTimestamp: string;
+    provider: string;
+    error?: string;
+  } {
+    const fromResolved = this.resolveIsoCurrencyCode(from);
+    const toResolved = this.resolveIsoCurrencyCode(to);
+
+    const fromLabel = fromResolved.code || fromResolved.rawCode || 'UNKNOWN';
+    const toLabel = toResolved.code || toResolved.rawCode || 'UNKNOWN';
+    const pairId = `${fromLabel}_${toLabel}`;
+
+    if (!fromResolved.isSupported || !fromResolved.code) {
+      return {
+        isValid: false,
+        fromCode: fromLabel,
+        toCode: toLabel,
+        pairId,
+        effectiveRate: 0,
+        rateDirection: `${fromLabel} -> ${toLabel}`,
+        isConverted: true,
+        rateTimestamp: this.lastFetchedAt,
+        provider: this.provider,
+        error: `Unsupported or missing source currency code "${fromLabel}" for pair ${fromLabel} -> ${toLabel}.`
+      };
+    }
+
+    if (!toResolved.isSupported || !toResolved.code) {
+      return {
+        isValid: false,
+        fromCode: fromLabel,
+        toCode: toLabel,
+        pairId,
+        effectiveRate: 0,
+        rateDirection: `${fromLabel} -> ${toLabel}`,
+        isConverted: true,
+        rateTimestamp: this.lastFetchedAt,
+        provider: this.provider,
+        error: `Unsupported or missing target currency code "${toLabel}" for pair ${fromLabel} -> ${toLabel}.`
+      };
+    }
+
+    const fromCode = fromResolved.code;
+    const toCode = toResolved.code;
+
+    // Identical source and target currencies: skip conversion completely
+    if (fromCode === toCode) {
+      return {
+        isValid: true,
+        fromCode,
+        toCode,
+        pairId: `${fromCode}_${toCode}`,
+        effectiveRate: 1,
+        rateDirection: `1 ${fromCode} = 1 ${toCode}`,
+        isConverted: false,
+        rateTimestamp: this.lastFetchedAt,
+        provider: this.provider
+      };
+    }
+
+    const directPair = this.pairs.get(`${fromCode}_${toCode}`);
+
+    // If the pair exists and is explicitly PAUSED or has invalid rate, block conversion (do NOT silently fallback)
+    if (directPair) {
+      if (directPair.status === 'PAUSED') {
+        return {
+          isValid: false,
+          fromCode,
+          toCode,
+          pairId: `${fromCode}_${toCode}`,
+          effectiveRate: 0,
+          rateDirection: `${fromCode} -> ${toCode}`,
+          isConverted: true,
+          rateTimestamp: directPair.lastFetchedAt || this.lastFetchedAt,
+          provider: this.provider,
+          error: `Exchange rate for ${fromCode} -> ${toCode} is currently paused or unavailable.`
+        };
+      }
+      if (
+        typeof directPair.effectiveRate === 'number' &&
+        Number.isFinite(directPair.effectiveRate) &&
+        directPair.effectiveRate > 0
+      ) {
+        if (this.settings.fallbackPolicy === 'BLOCK_TRANSACTION' && directPair.status === 'STALE') {
+          return {
+            isValid: false,
+            fromCode,
+            toCode,
+            pairId: `${fromCode}_${toCode}`,
+            effectiveRate: 0,
+            rateDirection: `${fromCode} -> ${toCode}`,
+            isConverted: true,
+            rateTimestamp: directPair.lastFetchedAt || this.lastFetchedAt,
+            provider: this.provider,
+            error: `Exchange rate for ${fromCode} -> ${toCode} is stale under current policy.`
+          };
+        }
+        return {
+          isValid: true,
+          fromCode,
+          toCode,
+          pairId: `${fromCode}_${toCode}`,
+          effectiveRate: directPair.effectiveRate,
+          rateDirection: `1 ${fromCode} = ${directPair.effectiveRate} ${toCode}`,
+          isConverted: true,
+          rateTimestamp: directPair.lastFetchedAt || this.lastFetchedAt,
+          provider: this.provider
+        };
+      }
+    }
+
+    // If directPair was removed or invalid, check if inverse pair is explicitly available and active
+    const inversePair = this.pairs.get(`${toCode}_${fromCode}`);
+    if (
+      !directPair &&
+      inversePair &&
+      inversePair.status !== 'PAUSED' &&
+      typeof inversePair.effectiveRate === 'number' &&
+      Number.isFinite(inversePair.effectiveRate) &&
+      inversePair.effectiveRate > 0
+    ) {
+      const derivedRate = Number((1 / inversePair.effectiveRate).toFixed(10));
+      return {
+        isValid: true,
+        fromCode,
+        toCode,
+        pairId: `${fromCode}_${toCode}`,
+        effectiveRate: derivedRate,
+        rateDirection: `1 ${fromCode} = ${derivedRate} ${toCode}`,
+        isConverted: true,
+        rateTimestamp: inversePair.lastFetchedAt || this.lastFetchedAt,
+        provider: this.provider
+      };
+    }
+
+    return {
+      isValid: false,
+      fromCode,
+      toCode,
+      pairId: `${fromCode}_${toCode}`,
+      effectiveRate: 0,
+      rateDirection: `${fromCode} -> ${toCode}`,
+      isConverted: true,
+      rateTimestamp: this.lastFetchedAt,
+      provider: this.provider,
+      error: `Missing or invalid exchange rate for currency pair ${fromCode} -> ${toCode}.`
+    };
+  }
+
+  /**
+   * Authoritative Conversion with Full Audit Metadata:
+   * Formula: Converted Amount = Original Amount × Exchange Rate
+   * Where Exchange Rate represents units of target currency per 1 unit of source currency.
+   * Never silently assumes a rate of 1 for mismatched or missing currency pairs.
+   */
+  public convertWithMetadata(
+    amount: number,
+    from: CurrencyCode | string | any,
+    to: CurrencyCode | string | any,
+    snapshotRateOverride?: number
+  ): {
+    originalAmount: number;
+    originalCurrency: CurrencyCode | string;
+    targetCurrency: CurrencyCode | string;
+    exchangeRate: number;
+    rateDirection: string;
+    convertedAmount: number;
+    conversionTimestamp: string;
+    fxSource: string;
+    rateVersion: string;
+    isConverted: boolean;
+    isValid: boolean;
+    error?: string;
+  } {
+    const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : (Number(amount) || 0);
+    const fromRes = this.resolveIsoCurrencyCode(from);
+    const toRes = this.resolveIsoCurrencyCode(to);
+    const fromCode = fromRes.code || fromRes.rawCode || 'USD';
+    const toCode = toRes.code || toRes.rawCode || 'USD';
+
+    // Same currency: skip conversion completely
+    if (fromRes.isSupported && toRes.isSupported && fromRes.code === toRes.code) {
+      return {
+        originalAmount: safeAmount,
+        originalCurrency: fromRes.code!,
+        targetCurrency: toRes.code!,
+        exchangeRate: 1,
+        rateDirection: `1 ${fromRes.code} = 1 ${toRes.code}`,
+        convertedAmount: safeAmount,
+        conversionTimestamp: this.lastFetchedAt,
+        fxSource: this.provider,
+        rateVersion: `FX-${this.lastFetchedAt}`,
+        isConverted: false,
+        isValid: true
+      };
+    }
+
+    // Historical / Snapshot rate override (for locked / finalized historical quotes)
+    if (
+      typeof snapshotRateOverride === 'number' &&
+      Number.isFinite(snapshotRateOverride) &&
+      snapshotRateOverride > 0
+    ) {
+      return {
+        originalAmount: safeAmount,
+        originalCurrency: fromCode,
+        targetCurrency: toCode,
+        exchangeRate: snapshotRateOverride,
+        rateDirection: `1 ${fromCode} = ${snapshotRateOverride} ${toCode}`,
+        convertedAmount: safeAmount === 0 ? 0 : safeAmount * snapshotRateOverride,
+        conversionTimestamp: this.lastFetchedAt,
+        fxSource: `${this.provider} (Historical Snapshot)`,
+        rateVersion: `SNAPSHOT-${snapshotRateOverride}`,
+        isConverted: fromCode !== toCode,
+        isValid: true
+      };
+    }
+
+    const validation = this.validateConversion(from, to);
+    if (!validation.isValid) {
+      return {
+        originalAmount: safeAmount,
+        originalCurrency: validation.fromCode,
+        targetCurrency: validation.toCode,
+        exchangeRate: 0,
+        rateDirection: validation.rateDirection,
+        convertedAmount: 0,
+        conversionTimestamp: validation.rateTimestamp,
+        fxSource: validation.provider,
+        rateVersion: 'INVALID',
+        isConverted: true,
+        isValid: false,
+        error: validation.error
+      };
+    }
+
+    const convertedAmount = safeAmount === 0 ? 0 : safeAmount * validation.effectiveRate;
+    return {
+      originalAmount: safeAmount,
+      originalCurrency: validation.fromCode,
+      targetCurrency: validation.toCode,
+      exchangeRate: validation.effectiveRate,
+      rateDirection: validation.rateDirection,
+      convertedAmount,
+      conversionTimestamp: validation.rateTimestamp,
+      fxSource: validation.provider,
+      rateVersion: `FX-${validation.rateTimestamp}`,
+      isConverted: validation.isConverted,
+      isValid: true
+    };
+  }
+
+  /**
+   * Primary Conversion Function:
+   * Uses `Converted Amount = Original Amount × Exchange Rate`
+   * Skips conversion if source and target currencies are identical.
+   * Does not silently fallback to rate = 1 on missing/paused pairs.
+   */
+  public convert(amount: number, from: CurrencyCode | string | any, to: CurrencyCode | string | any): number {
+    const result = this.convertWithMetadata(amount, from, to);
+    if (!result.isValid) {
+      return 0;
+    }
+    return result.convertedAmount;
+  }
+
+  /**
+   * Helper to normalize currency inputs (codes, symbols, names, objects)
+   */
+  public normalizeCurrencyCode(raw: any, fallback: CurrencyCode = 'USD'): CurrencyCode {
+    const resolved = this.resolveIsoCurrencyCode(raw);
+    if (resolved.isSupported && resolved.code) {
+      return resolved.code;
+    }
     return fallback;
   }
 
@@ -495,10 +754,11 @@ export class CurrencyEngine {
    * Retrieves full rate details, Google Finance live rate, adjustment, and metadata
    */
   public getRateInfo(from: CurrencyCode | string | any, to: CurrencyCode | string | any): FXRateDetails {
+    const validation = this.validateConversion(from, to);
     const fromCode = this.normalizeCurrencyCode(from, 'USD');
     const toCode = this.normalizeCurrencyCode(to, 'USD');
 
-    if (fromCode === toCode) {
+    if ( validation.isValid && !validation.isConverted ) {
       return {
         nativeCurrency: fromCode,
         targetCurrency: toCode,
@@ -507,9 +767,12 @@ export class CurrencyEngine {
         xeLiveRate: 1.0,
         manualAdjustment: 0.0,
         effectiveRate: 1.0,
+        rateDirection: `1 ${fromCode} = 1 ${toCode}`,
+        rateVersion: `FX-${this.lastFetchedAt}`,
         isConverted: false,
         rateTimestamp: this.lastFetchedAt,
-        provider: this.provider
+        provider: this.provider,
+        isValid: true
       };
     }
 
@@ -520,13 +783,7 @@ export class CurrencyEngine {
       ? CANONICAL_GOOGLEFINANCE_FORMULAS[toCode]?.direct || `=GOOGLEFINANCE("CURRENCY:USD${toCode}")`
       : `=GOOGLEFINANCE("CURRENCY:${fromCode}${toCode}")`;
 
-    if (
-      directPair &&
-      directPair.status !== 'PAUSED' &&
-      typeof directPair.effectiveRate === 'number' &&
-      Number.isFinite(directPair.effectiveRate) &&
-      directPair.effectiveRate > 0
-    ) {
+    if (validation.isValid && directPair) {
       return {
         nativeCurrency: fromCode,
         targetCurrency: toCode,
@@ -535,29 +792,49 @@ export class CurrencyEngine {
         xeLiveRate: directPair.xeLiveRate,
         manualAdjustment: directPair.manualAdjustment,
         effectiveRate: directPair.effectiveRate,
+        rateDirection: validation.rateDirection,
+        rateVersion: `FX-${directPair.lastFetchedAt || this.lastFetchedAt}`,
         isConverted: true,
-        rateTimestamp: directPair.lastFetchedAt,
-        provider: this.provider
+        rateTimestamp: directPair.lastFetchedAt || this.lastFetchedAt,
+        provider: this.provider,
+        isValid: true
       };
     }
 
-    // Calculate on-the-fly if pair object not explicitly cached
-    const fromUsd = this.usdRates[fromCode] || BASELINE_USD_RATES[fromCode] || 1.0;
-    const toUsd = this.usdRates[toCode] || BASELINE_USD_RATES[toCode] || 1.0;
-    const rawRate = toUsd / fromUsd;
-    const manualAdj = INITIAL_MANUAL_ADJUSTMENTS[pairId] || 0;
+    if (validation.isValid) {
+      return {
+        nativeCurrency: fromCode,
+        targetCurrency: toCode,
+        googleFinanceLiveRate: validation.effectiveRate,
+        googleFinanceFormula: formula,
+        xeLiveRate: validation.effectiveRate,
+        manualAdjustment: 0,
+        effectiveRate: validation.effectiveRate,
+        rateDirection: validation.rateDirection,
+        rateVersion: `FX-${validation.rateTimestamp}`,
+        isConverted: true,
+        rateTimestamp: validation.rateTimestamp,
+        provider: this.provider,
+        isValid: true
+      };
+    }
 
+    // Invalid / missing / paused rate: never return 1.0!
     return {
       nativeCurrency: fromCode,
       targetCurrency: toCode,
-      googleFinanceLiveRate: Number(rawRate.toFixed(6)),
+      googleFinanceLiveRate: 0,
       googleFinanceFormula: formula,
-      xeLiveRate: Number(rawRate.toFixed(6)),
-      manualAdjustment: manualAdj,
-      effectiveRate: Number((rawRate + manualAdj).toFixed(6)),
+      xeLiveRate: 0,
+      manualAdjustment: 0,
+      effectiveRate: 0,
+      rateDirection: validation.rateDirection,
+      rateVersion: 'INVALID',
       isConverted: true,
       rateTimestamp: this.lastFetchedAt,
-      provider: this.provider
+      provider: this.provider,
+      isValid: false,
+      validationError: validation.error || `Missing exchange rate for ${fromCode} -> ${toCode}`
     };
   }
 
@@ -566,8 +843,10 @@ export class CurrencyEngine {
    */
   public format(amount?: number | null, currency: CurrencyCode | string = 'USD', options?: { showCode?: boolean }): string {
     const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : (Number(amount) || 0);
-    const safeCurrency = ((typeof currency === 'string' ? currency : 'USD') || 'USD').toUpperCase();
+    const resolved = this.resolveIsoCurrencyCode(currency);
+    const safeCurrency = resolved.code || ((typeof currency === 'string' ? currency.trim() : 'USD') || 'USD').toUpperCase();
     const decimals = (safeCurrency === 'JPY' || safeCurrency === 'THB') ? 0 : 2;
+    const roundedAmount = decimals === 0 ? Math.round(safeAmount) : Math.round((safeAmount + Number.EPSILON) * 100) / 100;
 
     const symbolMap: Record<string, string> = {
       USD: '$',
@@ -584,7 +863,7 @@ export class CurrencyEngine {
     };
 
     const symbol = symbolMap[safeCurrency] || `${safeCurrency} `;
-    const formattedNum = safeAmount.toLocaleString(undefined, {
+    const formattedNum = roundedAmount.toLocaleString('en-US', {
       minimumFractionDigits: decimals,
       maximumFractionDigits: decimals
     });
@@ -593,6 +872,132 @@ export class CurrencyEngine {
       return `${symbol}${formattedNum} ${safeCurrency}`;
     }
     return `${symbol}${formattedNum}`;
+  }
+
+  /**
+   * Directly sets an authoritative exchange rate for a currency pair (and optionally its inverse).
+   * Used by admin rate overrides and deterministic verification tests.
+   */
+  public setExchangeRate(
+    from: CurrencyCode | string,
+    to: CurrencyCode | string,
+    effectiveRate: number,
+    options?: {
+      updateInverse?: boolean;
+      manualAdjustment?: number;
+      provider?: string;
+    }
+  ): boolean {
+    const fromRes = this.resolveIsoCurrencyCode(from);
+    const toRes = this.resolveIsoCurrencyCode(to);
+    if (!fromRes.isSupported || !fromRes.code || !toRes.isSupported || !toRes.code) {
+      return false;
+    }
+    if (typeof effectiveRate !== 'number' || !Number.isFinite(effectiveRate) || effectiveRate <= 0) {
+      return false;
+    }
+    const fromCode = fromRes.code;
+    const toCode = toRes.code;
+    if (fromCode === toCode) return true;
+
+    const now = new Date().toISOString();
+    const pairId = `${fromCode}_${toCode}`;
+    const manualAdj = options?.manualAdjustment ?? 0;
+    const liveRate = Number(Math.max(0.0000000001, effectiveRate - manualAdj).toFixed(10));
+    const preciseRate = Number(effectiveRate.toFixed(10));
+
+    const existing = this.pairs.get(pairId);
+    this.pairs.set(pairId, {
+      id: pairId,
+      fromCurrency: fromCode,
+      toCurrency: toCode,
+      googleFinanceLiveRate: liveRate,
+      googleFinanceFormula: existing?.googleFinanceFormula || `=GOOGLEFINANCE("CURRENCY:${fromCode}${toCode}")`,
+      xeLiveRate: liveRate,
+      manualAdjustment: manualAdj,
+      effectiveRate: preciseRate,
+      status: 'ACTIVE',
+      lastFetchedAt: now,
+      lastUpdatedAt: now,
+      updatedBy: 'admin',
+      updatedByName: options?.provider || 'Authoritative FX Rate'
+    });
+
+    if (fromCode === 'USD') {
+      this.usdRates[toCode] = preciseRate;
+    } else if (toCode === 'USD') {
+      this.usdRates[fromCode] = Number((1 / preciseRate).toFixed(10));
+    }
+
+    if (options?.updateInverse !== false) {
+      const inversePairId = `${toCode}_${fromCode}`;
+      const inverseRate = Number((1 / preciseRate).toFixed(10));
+      const existingInverse = this.pairs.get(inversePairId);
+      this.pairs.set(inversePairId, {
+        id: inversePairId,
+        fromCurrency: toCode,
+        toCurrency: fromCode,
+        googleFinanceLiveRate: inverseRate,
+        googleFinanceFormula: existingInverse?.googleFinanceFormula || `=GOOGLEFINANCE("CURRENCY:${toCode}${fromCode}")`,
+        xeLiveRate: inverseRate,
+        manualAdjustment: 0,
+        effectiveRate: inverseRate,
+        status: 'ACTIVE',
+        lastFetchedAt: now,
+        lastUpdatedAt: now,
+        updatedBy: 'admin',
+        updatedByName: options?.provider || 'Authoritative FX Rate'
+      });
+    }
+
+    this.lastFetchedAt = now;
+    this.notify();
+    return true;
+  }
+
+  /**
+   * Pauses or removes a currency pair so missing/unavailable exchange rate handling can be enforced and verified.
+   */
+  public setPairAvailability(
+    from: CurrencyCode | string,
+    to: CurrencyCode | string,
+    available: boolean,
+    mode: 'PAUSE' | 'REMOVE' = 'PAUSE'
+  ): void {
+    const fromCode = this.normalizeCurrencyCode(from);
+    const toCode = this.normalizeCurrencyCode(to);
+    const pairId = `${fromCode}_${toCode}`;
+    const inversePairId = `${toCode}_${fromCode}`;
+
+    if (!available) {
+      if (mode === 'REMOVE') {
+        this.pairs.delete(pairId);
+        this.pairs.delete(inversePairId);
+      } else {
+        const pair = this.pairs.get(pairId);
+        if (pair) {
+          pair.status = 'PAUSED';
+        }
+      }
+    } else {
+      const pair = this.pairs.get(pairId);
+      if (pair) {
+        pair.status = 'ACTIVE';
+      } else {
+        this.initDefaultPairs();
+      }
+    }
+    this.notify();
+  }
+
+  /**
+   * Resets all currency pairs to clean baseline Google Finance rates
+   */
+  public resetToBaselineRates(): void {
+    this.usdRates = { ...BASELINE_USD_RATES };
+    this.isStale = false;
+    this.initDefaultPairs();
+    this.notify();
   }
 
   /**
@@ -615,7 +1020,7 @@ export class CurrencyEngine {
     if (isNaN(numericAdj)) return false;
 
     pair.manualAdjustment = numericAdj;
-    pair.effectiveRate = Number(Math.max(0.000001, (pair.googleFinanceLiveRate ?? pair.xeLiveRate) + numericAdj).toFixed(6));
+    pair.effectiveRate = Number(Math.max(0.0000000001, (pair.googleFinanceLiveRate ?? pair.xeLiveRate) + numericAdj).toFixed(10));
     pair.lastUpdatedAt = new Date().toISOString();
     pair.updatedBy = user?.id || 'admin';
     pair.updatedByName = user?.name || user?.email || 'Admin';
@@ -732,6 +1137,19 @@ export const currencyEngine = CurrencyEngine.getInstance();
 // Primary Exported Utility Functions
 export function convertCurrency(amount: number, from: CurrencyCode | string, to: CurrencyCode | string): number {
   return currencyEngine.convert(amount, from, to);
+}
+
+export function convertCurrencyWithMetadata(
+  amount: number,
+  from: CurrencyCode | string,
+  to: CurrencyCode | string,
+  snapshotRateOverride?: number
+) {
+  return currencyEngine.convertWithMetadata(amount, from, to, snapshotRateOverride);
+}
+
+export function validateCurrencyPair(from: CurrencyCode | string, to: CurrencyCode | string) {
+  return currencyEngine.validateConversion(from, to);
 }
 
 export function formatCurrency(amount?: number | null, currency: CurrencyCode | string = 'USD', options?: { showCode?: boolean }): string {

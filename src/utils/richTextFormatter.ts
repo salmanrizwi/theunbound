@@ -14,8 +14,8 @@
  */
 
 const ALLOWED_TAGS = new Set([
-  'p', 'h2', 'h3', 'h4', 'strong', 'b', 'em', 'i', 
-  'ul', 'ol', 'li', 'a', 'br', 'span'
+  'p', 'h1', 'h2', 'h3', 'h4', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'strike',
+  'ul', 'ol', 'li', 'a', 'br', 'span', 'hr', 'blockquote', 'div', 'font'
 ]);
 
 /**
@@ -77,6 +77,37 @@ export function convertPlainTextToSemanticHtml(plainText: string): string {
     }
 
     // Markdown Heading 2: ## Heading
+    // Horizontal rule: --- or ***
+    if (/^(?:---|\*\*\*|___)$/.test(line)) {
+      flushParagraph();
+      flushList();
+      resultBlocks.push('<hr/>');
+      continue;
+    }
+
+    // Blockquote: > text
+    if (/^>\s+(.+)$/.test(line)) {
+      flushParagraph();
+      flushList();
+      const quoteMatch = line.match(/^>\s+(.+)$/);
+      if (quoteMatch) {
+        resultBlocks.push(`<blockquote><p>${formatInlineMarkdown(quoteMatch[1])}</p></blockquote>`);
+      }
+      continue;
+    }
+
+    // Markdown Heading 1: # Heading
+    if (/^#\s+(.+)$/.test(line)) {
+      flushParagraph();
+      flushList();
+      const match = line.match(/^#\s+(.+)$/);
+      if (match) {
+        resultBlocks.push(`<h1>${formatInlineMarkdown(match[1])}</h1>`);
+      }
+      continue;
+    }
+
+    // Markdown Heading 2: ## Heading
     if (/^##\s+(.+)$/.test(line)) {
       flushParagraph();
       flushList();
@@ -98,14 +129,13 @@ export function convertPlainTextToSemanticHtml(plainText: string): string {
       continue;
     }
 
-    // Markdown Heading 4: #### Heading or # Heading (treat # as H2 for travel hierarchy)
-    if (/^####\s+(.+)$/.test(line) || /^#\s+(.+)$/.test(line)) {
+    // Markdown Heading 4: #### Heading
+    if (/^####\s+(.+)$/.test(line)) {
       flushParagraph();
       flushList();
-      const match = line.match(/^#{1,4}\s+(.+)$/);
+      const match = line.match(/^####\s+(.+)$/);
       if (match) {
-        const tag = line.startsWith('####') ? 'h4' : 'h2';
-        resultBlocks.push(`<${tag}>${formatInlineMarkdown(match[1])}</${tag}>`);
+        resultBlocks.push(`<h4>${formatInlineMarkdown(match[1])}</h4>`);
       }
       continue;
     }
@@ -146,11 +176,13 @@ export function convertPlainTextToSemanticHtml(plainText: string): string {
 }
 
 /**
- * Formats simple inline bold (**text**), italic (*text*), and links [text](url)
+ * Formats inline bold (**text**), italic (*text*), strikethrough (~~text~~), and links [text](url)
  */
 function formatInlineMarkdown(text: string): string {
   if (!text) return '';
   return text
+    // Strikethrough: ~~text~~
+    .replace(/~~(.*?)~~/g, '<del>$1</del>')
     // Bold: **text** or __text__
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/__(.*?)__/g, '<strong>$1</strong>')
@@ -233,8 +265,49 @@ function sanitizeDomNode(node: Node): void {
             elem.setAttribute('target', '_blank');
             elem.setAttribute('rel', 'noopener noreferrer');
           }
+        } else if (attr === 'style') {
+          // Allow only safe CSS declarations (text-align, color, font-size, font-weight, font-style, text-decoration)
+          const styleVal = elem.getAttribute('style') || '';
+          const safeRules: string[] = [];
+          const declarations = styleVal.split(';');
+          for (const decl of declarations) {
+            const [prop, val] = decl.split(':').map(s => s?.trim());
+            if (!prop || !val) continue;
+            const pLower = prop.toLowerCase();
+            if (pLower === 'text-align' && /^(left|right|center|justify)$/i.test(val)) {
+              safeRules.push(`text-align: ${val}`);
+            } else if (pLower === 'color' && /^#[0-9a-f]{3,8}$|^rgb\([^)]+\)$|^[a-z]+$/i.test(val)) {
+              safeRules.push(`color: ${val}`);
+            } else if (pLower === 'font-size' && /^[0-9.]+(?:px|em|rem|pt|%)?$/i.test(val)) {
+              safeRules.push(`font-size: ${val}`);
+            } else if (pLower === 'font-weight' && /^(normal|bold|bolder|[1-9]00)$/i.test(val)) {
+              safeRules.push(`font-weight: ${val}`);
+            } else if (pLower === 'font-style' && /^(normal|italic)$/i.test(val)) {
+              safeRules.push(`font-style: ${val}`);
+            } else if (pLower === 'text-decoration' && /^(none|underline|line-through)$/i.test(val)) {
+              safeRules.push(`text-decoration: ${val}`);
+            }
+          }
+          if (safeRules.length > 0) {
+            elem.setAttribute('style', safeRules.join('; '));
+          } else {
+            elem.removeAttribute('style');
+          }
+        } else if (attr === 'align' && /^(left|center|right|justify)$/i.test(elem.getAttribute('align') || '')) {
+          // Keep standard alignment
+          elem.setAttribute('align', elem.getAttribute('align')!.toLowerCase());
+        } else if (tagName === 'font' && (attr === 'color' || attr === 'size')) {
+          // Keep font color and size
+        } else if (attr === 'class') {
+          // Only allow safe CSS classes (e.g., text alignment)
+          const cls = elem.getAttribute('class') || '';
+          if (/^(?:text-(?:left|center|right|justify)|theunbound-rich-text)\b/.test(cls)) {
+            // keep
+          } else {
+            elem.removeAttribute('class');
+          }
         } else {
-          // Strip all other attributes (onclick, style, class, etc.)
+          // Strip all other attributes (onclick, onerror, script, etc.)
           elem.removeAttribute(attr);
         }
       }
@@ -381,4 +454,43 @@ export function richTextToWhatsApp(htmlOrText: string): string {
     .trim();
 
   return text;
+}
+
+/**
+ * Gracefully splits a long WhatsApp message at paragraph boundaries (\n\n) or line boundaries
+ * so that long narrative or full quote messages don't exceed the WhatsApp API limit (~4096 chars).
+ */
+export function splitWhatsAppMessage(message: string, maxChunkLength: number = 3800): string[] {
+  if (!message || message.length <= maxChunkLength) return [message || ''];
+
+  const chunks: string[] = [];
+  let remaining = message.trim();
+
+  while (remaining.length > maxChunkLength) {
+    let splitIndex = remaining.lastIndexOf('\n\n', maxChunkLength);
+    if (splitIndex < maxChunkLength * 0.45) {
+      splitIndex = remaining.lastIndexOf('\n', maxChunkLength);
+    }
+    if (splitIndex < maxChunkLength * 0.45) {
+      splitIndex = remaining.lastIndexOf('. ', maxChunkLength);
+      if (splitIndex > 0) splitIndex += 1;
+    }
+    if (splitIndex < maxChunkLength * 0.3) {
+      splitIndex = maxChunkLength;
+    }
+
+    const chunk = remaining.slice(0, splitIndex).trim();
+    if (chunk) chunks.push(chunk);
+    remaining = remaining.slice(splitIndex).trim();
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  if (chunks.length > 1) {
+    return chunks.map((chunk, idx) => `[Part ${idx + 1}/${chunks.length}]\n\n${chunk}`);
+  }
+
+  return chunks;
 }

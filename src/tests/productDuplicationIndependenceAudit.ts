@@ -17,7 +17,8 @@ export async function runProductDuplicationAudit(): Promise<{ passed: boolean; r
     name: 'Audit Administrator',
     role: 'ADMIN',
     agencyName: 'TheUnbound HQ',
-    companyName: 'TheUnbound HQ'
+    companyName: 'TheUnbound HQ',
+    createdAt: new Date().toISOString()
   };
 
   const initialProducts = db.getProducts();
@@ -178,7 +179,9 @@ export async function runProductDuplicationAudit(): Promise<{ passed: boolean; r
       const unauthorizedUser: User = {
         id: 'usr-unauth',
         email: 'agent@partner.com',
-        role: 'AGENT'
+        name: 'Partner Agent',
+        role: 'AGENT',
+        createdAt: new Date().toISOString()
       };
       await db.duplicateProductAsync(originalProduct.id, unauthorizedUser);
     } catch (err: any) {

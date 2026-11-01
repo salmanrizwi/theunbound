@@ -83,6 +83,7 @@ import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitatio
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { AppDatabase } from '../../services/db';
 import { TransferConfigurator } from '../Configurators/TransferConfigurator';
+import { RichTextEditor } from '../common/RichTextEditor';
 import { RichTextRenderer } from '../common/RichTextRenderer';
 import { validateWhiteLabelReadiness, buildAgencyBrandingSnapshotFromUser } from '../../services/quotePresentationModel';
 
@@ -187,6 +188,8 @@ export interface StepByStepQuotationWorkspaceProps {
   setDayThemes?: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   dayDescriptions?: Record<number, string>;
   setDayDescriptions?: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  itineraryOverview?: string;
+  setItineraryOverview?: (overview: string) => void;
   sourcePackageName?: string | null;
   quoteTitle?: string;
   setQuoteTitle?: (title: string) => void;
@@ -325,6 +328,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   setDayThemes,
   dayDescriptions = {},
   setDayDescriptions,
+  itineraryOverview = '',
+  setItineraryOverview,
   sourcePackageName,
   quoteTitle,
   setQuoteTitle,
@@ -874,6 +879,19 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const effectiveMarginAmount = additionalAgentMarginAmount;
   const revisedFinalPrice = roundCurrencyAmount(existingFinalPrice + additionalAgentMarginAmount, currency);
   const effectiveFinalPrice = items.length === 0 && routeHubs.every(h => !h.manualHotel) ? 0 : revisedFinalPrice;
+
+  // Detect any missing/invalid currency pair across items or breakdown
+  const missingCurrencyPairsList = useMemo(() => {
+    const pairs = new Set<string>(step7BreakdownPricing?.missingCurrencyPairs || []);
+    items.forEach(it => {
+      const fx = it.calculation?.fxDetails;
+      if (fx && fx.isValid === false) {
+        pairs.add(fx.rateDirection || `${fx.sourceCurrency} -> ${fx.targetCurrency}`);
+      }
+    });
+    return Array.from(pairs);
+  }, [step7BreakdownPricing, items]);
+  const hasMissingCurrencyRate = missingCurrencyPairsList.length > 0;
 
   // Filter items by category (excluding hotel charges when Land-Only Mode or hub No Accommodation is active)
   const hotelItems = useMemo(() => {
@@ -1621,8 +1639,30 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   }, [calendarDays, routeHubs, items]);
 
   const hotelTotalSelling = useMemo(() => {
-    return hotelItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
-  }, [hotelItems]);
+    return roundCurrencyAmount(
+      hotelItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0),
+      currency
+    );
+  }, [hotelItems, currency]);
+
+  const authoritativeHotelTotal = useMemo(() => {
+    if (quotationScope === 'LAND_ONLY') return 0;
+    if (step7BreakdownPricing && step7BreakdownPricing.hotelAccommodationTotal !== undefined) {
+      return step7BreakdownPricing.hotelAccommodationTotal;
+    }
+    const rawTotal = items.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+    if (rawTotal > 0 && effectiveFinalPrice > 0) {
+      return roundCurrencyAmount(effectiveFinalPrice * (hotelTotalSelling / rawTotal), currency);
+    }
+    return hotelTotalSelling;
+  }, [quotationScope, step7BreakdownPricing, items, effectiveFinalPrice, hotelTotalSelling, currency]);
+
+  const authoritativeLandTotal = useMemo(() => {
+    if (step7BreakdownPricing && step7BreakdownPricing.landPartTotal !== undefined) {
+      return step7BreakdownPricing.landPartTotal;
+    }
+    return Math.max(0, roundCurrencyAmount(effectiveFinalPrice - authoritativeHotelTotal, currency));
+  }, [step7BreakdownPricing, effectiveFinalPrice, authoritativeHotelTotal, currency]);
 
   const handleSelectHotel = (hubOrder: number, hotel: Hotel, roomTypeId?: string, roomsCount: number = 1) => {
     if (onSelectHotelForHub) {
@@ -2159,6 +2199,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               </span>
             </div>
 
+            {hasMissingCurrencyRate && (
+              <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/60 text-rose-200 text-[11px] space-y-1">
+                <div className="font-bold text-rose-300 flex items-center space-x-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                  <span>Exchange Rate Unavailable</span>
+                </div>
+                <p className="text-[10px] text-rose-200/90 font-mono">
+                  Missing FX pair: {missingCurrencyPairsList.join(', ')}
+                </p>
+              </div>
+            )}
+
             <div>
               <div className="text-2xl font-black font-mono text-white">
                 {formatCurrency(effectiveFinalPrice, currency)}
@@ -2166,6 +2218,17 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               <p className="text-[11px] text-slate-400">
                 Guaranteed Final Price • All Inclusive
               </p>
+            </div>
+
+            <div className="pt-2 border-t border-slate-800 space-y-1 text-[11px] font-mono">
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Hotel Accommodation:</span>
+                <span className="text-slate-200 font-bold">{formatCurrency(authoritativeHotelTotal, currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Land Part Total:</span>
+                <span className="text-slate-200 font-bold">{formatCurrency(authoritativeLandTotal, currency)}</span>
+              </div>
             </div>
 
             <div className="pt-2 border-t border-slate-800 grid grid-cols-2 gap-2 text-xs">
@@ -2885,16 +2948,21 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   const currentRoomsCount = hub.roomsCount || 1;
                   const currentNights = hub.nights || 1;
 
-                  const nightlyInQuoteCurrency = selectedHotel 
-                    ? convertCurrency(
-                        (selectedRate as any)?.startingSellingRateUSD || (selectedRate as any)?.sellingRateUSD || selectedHotel.startingPriceB2B || Math.round(((selectedRate?.doubleNetRate || selectedRate?.singleNetRate || selectedHotel.startingNetPrice || 200) * 1.3)), 
-                        selectedRate?.currency || selectedHotel.currency || 'USD', 
-                        currency
-                      )
-                    : 0;
+                  const authoritativeStayPrice = assignedItem?.calculation?.finalTotalSellingPrice;
+                  const nightlyInQuoteCurrency = authoritativeStayPrice !== undefined && authoritativeStayPrice > 0
+                    ? roundCurrencyAmount(authoritativeStayPrice / Math.max(1, currentNights * currentRoomsCount), currency)
+                    : selectedHotel 
+                      ? convertCurrency(
+                          (selectedRate as any)?.startingSellingRateUSD || (selectedRate as any)?.sellingRateUSD || selectedHotel.startingPriceB2B || Math.round(((selectedRate?.doubleNetRate || selectedRate?.singleNetRate || selectedHotel.startingNetPrice || 200) * 1.3)), 
+                          selectedRate?.currency || selectedHotel.currency || 'USD', 
+                          currency
+                        )
+                      : 0;
 
-                  const totalStaySelling = nightlyInQuoteCurrency * currentNights * currentRoomsCount;
-                  const finalSellingStayPrice = totalStaySelling * (1 + (agentMarkupPercent || 0) / 100);
+                  const totalStaySelling = roundCurrencyAmount(nightlyInQuoteCurrency * currentNights * currentRoomsCount, currency);
+                  const finalSellingStayPrice = authoritativeStayPrice !== undefined && authoritativeStayPrice > 0
+                    ? authoritativeStayPrice
+                    : totalStaySelling;
 
                   const occupancy = validateRoomOccupancy(selectedRoom, currentRoomsCount, adultsCount, childrenCount, infantsCount);
 
@@ -3487,6 +3555,34 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 </div>
               </div>
 
+              {/* Journey Narrative & Overview Editor Card */}
+              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-4 sm:p-5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center space-x-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                        <span>Journey Narrative &amp; Overview</span>
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                          All Channels
+                        </span>
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Craft a rich travel narrative, journey highlights, and welcoming story. Formatting is preserved on Proposal Preview, PDF, Email &amp; WhatsApp.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <RichTextEditor
+                  value={itineraryOverview || ''}
+                  onChange={(val) => setItineraryOverview?.(val)}
+                  placeholder={`Welcome your traveler to ${currentDestination.name}! Highlight the journey flow, cultural immersion, and curated luxury touches...`}
+                  minHeight="140px"
+                />
+              </div>
+
               {/* Day-Wise Activities Canvas */}
               <div className="space-y-6">
                 {daySlots
@@ -3555,12 +3651,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               <span className="text-[10px] text-teal-700 font-semibold">Included in Client Proposal</span>
                             )}
                           </div>
-                          <textarea
-                            rows={2}
-                            placeholder={`Describe the flow and highlights for Day ${slot.dayNumber} in ${slot.hub?.hubName || currentDestination.name}...`}
+                          <RichTextEditor
                             value={dayDescriptions[slot.dayNumber] || ''}
-                            onChange={(e) => setDayDescriptions?.(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
-                            className="w-full text-xs text-slate-700 placeholder:text-slate-400 bg-white rounded-lg border border-slate-200 focus:border-[#00C6A6] p-2 outline-none resize-y leading-relaxed"
+                            onChange={(val) => setDayDescriptions?.(prev => ({ ...prev, [slot.dayNumber]: val }))}
+                            placeholder={`Describe the flow and highlights for Day ${slot.dayNumber} in ${slot.hub?.hubName || currentDestination.name}...`}
+                            minHeight="110px"
+                            compact={true}
                           />
                         </div>
 
@@ -4735,6 +4831,14 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                       <div className="p-2.5 rounded-xl bg-slate-800/80 border border-slate-700/60 text-[11px] text-slate-300 space-y-1 font-mono">
                         <div className="flex justify-between">
+                          <span className="text-slate-400">Hotel Accommodation Total:</span>
+                          <span>{formatCurrency(authoritativeHotelTotal, currency)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">Land Part Total:</span>
+                          <span>{formatCurrency(authoritativeLandTotal, currency)}</span>
+                        </div>
+                        <div className="flex justify-between pt-1 border-t border-slate-700/60">
                           <span className="text-slate-400">Base Selling:</span>
                           <span>{formatCurrency(effectiveBasePrice, currency)}</span>
                         </div>
@@ -4786,7 +4890,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             const hasClientName = Boolean(clientName && clientName.trim().length > 0);
             const hasRouteHubs = routeHubs.length > 0;
             const hasItems = items.length > 0;
-            const hasValidPricing = effectiveFinalPrice > 0 && !((effectiveMarginValue || 0) < 0);
+            const hasValidPricing = effectiveFinalPrice > 0 && !((effectiveMarginValue || 0) < 0) && !hasMissingCurrencyRate;
             const allChecklistPassed = hasClientName && hasRouteHubs && hasItems && hasValidPricing;
 
             const marginPercentageValue = effectiveMarginType === 'PERCENTAGE' 
@@ -5030,6 +5134,20 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                   </div>
 
+                  {hasMissingCurrencyRate && (
+                    <div className="p-4 rounded-2xl bg-rose-950/90 border border-rose-500 text-rose-100 flex items-start space-x-3">
+                      <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="space-y-1 text-xs">
+                        <div className="font-black uppercase tracking-wider text-rose-300">
+                          Missing or Unavailable Exchange Rate — Final Quote Generation Blocked
+                        </div>
+                        <p className="text-rose-200">
+                          An authoritative exchange rate is unavailable for currency pair(s): <strong className="font-mono">{missingCurrencyPairsList.join(', ')}</strong>. Please restore the FX rate or select an authorized currency before generating PDF, Email, or WhatsApp outputs.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Commercial Totals */}
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
                     <div>
@@ -5041,6 +5159,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         <span className="text-xs font-mono text-slate-400">
                           ({formatCurrency(Math.round(effectiveFinalPrice / totalPax), currency)} / Traveler)
                         </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 mt-1.5 text-[11px] font-mono text-slate-300">
+                        <span>Hotel Accommodation Total: <strong>{formatCurrency(authoritativeHotelTotal, currency)}</strong></span>
+                        <span>•</span>
+                        <span>Land Part Total: <strong>{formatCurrency(authoritativeLandTotal, currency)}</strong></span>
                       </div>
                     </div>
 
@@ -5461,6 +5584,36 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 )}
 
                 {renderBrandingModeSelectorCard()}
+
+                {/* Narrative & Overview Section */}
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                            Quotation Narrative &amp; Overview
+                          </h3>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                            WYSIWYG Rich-Text
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Format journey descriptions, highlights, and policies. Preserved on Proposal Preview, PDF, Email, and WhatsApp.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <RichTextEditor
+                    value={itineraryOverview || ''}
+                    onChange={(val) => setItineraryOverview?.(val)}
+                    placeholder="Refine the overall journey narrative, welcoming story, or essential highlights before dispatching..."
+                    minHeight="140px"
+                  />
+                </div>
 
                 {/* 3. Dispatch & Generation Action Hub */}
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">

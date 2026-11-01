@@ -475,7 +475,8 @@ export function sanitizePricingResultForAgent(
     appliedSurcharges: (calc as PricingCalculationResult).appliedSurcharges,
     surchargeTotal: (calc as PricingCalculationResult).surchargeTotal,
     baseSellingPriceBeforeSurcharges: (calc as PricingCalculationResult).baseSellingPriceBeforeSurcharges,
-    surchargeValidationMessage: (calc as PricingCalculationResult).surchargeValidationMessage
+    surchargeValidationMessage: (calc as PricingCalculationResult).surchargeValidationMessage,
+    fxDetails: (calc as PricingCalculationResult).fxDetails
   };
 }
 

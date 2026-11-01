@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
-import { calculateProductPrice, calculateProductPriceForAgent, resolveInventoryValidity, evaluateInventoryValidity } from '../services/pricingEngine';
+import { calculateProductPrice, calculateProductPriceForAgent, resolveInventoryValidity, evaluateInventoryValidity, roundCurrencyAmount, buildQuotationCurrencySnapshot } from '../services/pricingEngine';
 import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
 import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
@@ -155,6 +155,8 @@ interface QuotationContextType {
   setDayOverviews: React.Dispatch<React.SetStateAction<Record<number, string>>>;
   dayNotes: Record<number, string>;
   setDayNotes: React.Dispatch<React.SetStateAction<Record<number, string>>>;
+  itineraryOverview: string;
+  setItineraryOverview: (overview: string) => void;
   inclusions: string[];
   setInclusions: React.Dispatch<React.SetStateAction<string[]>>;
   exclusions: string[];
@@ -264,6 +266,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [dayDescriptions, setDayDescriptions] = useState<Record<number, string>>({});
   const [dayOverviews, setDayOverviews] = useState<Record<number, string>>({});
   const [dayNotes, setDayNotes] = useState<Record<number, string>>({});
+  const [itineraryOverview, setItineraryOverview] = useState<string>('');
   const [inclusions, setInclusions] = useState<string[]>([]);
   const [exclusions, setExclusions] = useState<string[]>([]);
   const [importantInformation, setImportantInformation] = useState('');
@@ -910,11 +913,27 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     let margin = 0;
     let totalPax = 0;
 
+    const noAccHubIds = new Set(
+      routeHubs
+        .filter(h => h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
+        .map(h => h.id)
+    );
+
     for (const item of items) {
+      const isHotel =
+        item.product.productType === 'Hotel' ||
+        item.product.productType === 'Hotel & Resort' ||
+        item.isManualHotel === true ||
+        item.product.accommodationType === 'manual' ||
+        (item.product as any).category === 'Hotels';
+      if (quotationScope === 'LAND_ONLY' && isHotel) continue;
+      const itemHubId = item.hubId || item.manualHotelDetails?.hubId;
+      if (isHotel && itemHubId && noAccHubIds.has(itemHubId)) continue;
+
       if (canViewInternalCosts) {
-        net += (item.calculation as any).totalNetCost || 0;
-        gross += (item.calculation as any).grossBeforeTax || 0;
-        margin += (item.calculation as any).dmcMarginAmount || 0;
+        net += (item.calculation as any)?.totalNetCost || 0;
+        gross += (item.calculation as any)?.grossBeforeTax || 0;
+        margin += (item.calculation as any)?.dmcMarginAmount || 0;
       }
       taxes += item.calculation?.taxAmount || 0;
       fees += item.calculation?.serviceFee || 0;
@@ -923,23 +942,23 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     if (overallDiscountPercent > 0) {
-      const discountVal = selling * (overallDiscountPercent / 100);
-      selling -= discountVal;
+      const discountVal = roundCurrencyAmount(selling * (overallDiscountPercent / 100), currency);
+      selling = roundCurrencyAmount(selling - discountVal, currency);
       if (canViewInternalCosts) {
-        margin -= discountVal;
+        margin = roundCurrencyAmount(margin - discountVal, currency);
       }
     }
 
     return {
-      totalNetCost: canViewInternalCosts ? net : 0,
-      totalGrossBeforeTax: canViewInternalCosts ? gross : selling,
-      totalTaxes: taxes,
-      totalServiceFees: fees,
-      totalSellingPrice: selling,
-      totalMarginAmount: canViewInternalCosts ? margin : 0,
+      totalNetCost: canViewInternalCosts ? roundCurrencyAmount(net, currency) : 0,
+      totalGrossBeforeTax: canViewInternalCosts ? roundCurrencyAmount(gross, currency) : roundCurrencyAmount(selling, currency),
+      totalTaxes: roundCurrencyAmount(taxes, currency),
+      totalServiceFees: roundCurrencyAmount(fees, currency),
+      totalSellingPrice: roundCurrencyAmount(selling, currency),
+      totalMarginAmount: canViewInternalCosts ? roundCurrencyAmount(margin, currency) : 0,
       totalPaxAcrossItems: totalPax
     };
-  }, [items, overallDiscountPercent, canViewInternalCosts]);
+  }, [items, overallDiscountPercent, canViewInternalCosts, quotationScope, routeHubs, currency]);
 
   const saveCurrentQuote = (): Quotation | null => {
     if (items.length === 0) return null;
@@ -967,7 +986,21 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                      it.product?.id === 'RAIL-JP-GREEN-RESERVED';
       return isTrf || isRail;
     });
-    const totalGroundPrice = groundItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+    const totalGroundPrice = roundCurrencyAmount(
+      groundItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0),
+      currency
+    );
+
+    const currencySnapshot = buildQuotationCurrencySnapshot({
+      quoteId: quoteIdToUse,
+      quoteVersion: currentVersion || 1,
+      items,
+      targetCurrency: currency,
+      scope: quotationScope,
+      routeHubs,
+      userRole: user?.role,
+      overallDiscountPercent
+    });
 
     const newQuote: Quotation = {
       id: quoteIdToUse,
@@ -990,6 +1023,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       dayDescriptions,
       dayOverviews,
       dayNotes,
+      itineraryOverview: itineraryOverview || undefined,
+      narrative: itineraryOverview || undefined,
       sourcePackageId: sourcePackageId || undefined,
       sourcePackageName: sourcePackageName || undefined,
       inclusions: inclusions.length > 0 ? inclusions : undefined,
@@ -1009,11 +1044,29 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       validUntil: new Date(Date.now() + 86400000 * 14).toISOString(),
       totalNetCost: isAgent ? 0 : totals.totalNetCost,
       totalSellingPrice: totals.totalSellingPrice,
+      baseFinalSellingPrice: totals.totalSellingPrice,
+      finalCustomerSellingPrice: totals.totalSellingPrice,
       totalTaxes: totals.totalTaxes,
       totalMargin: isAgent ? 0 : totals.totalMarginAmount,
       totalGroundLogisticsSnapshot: totalGroundPrice,
       transactionCurrencySnapshot: currency,
-      pricingVersionSnapshot: currentVersion || 1
+      pricingVersionSnapshot: currentVersion || 1,
+      currencyConversionSnapshot: currencySnapshot,
+      pricingSnapshot: {
+        baseFinalSellingPrice: totals.totalSellingPrice,
+        currency,
+        agentMarginType: 'PERCENTAGE',
+        agentMarginValue: 0,
+        agentMarginAmount: 0,
+        finalCustomerSellingPrice: totals.totalSellingPrice,
+        hotelAccommodationTotal: currencySnapshot.hotelAccommodationTotal,
+        landPartTotal: currencySnapshot.landPartTotal,
+        calculatedAt: new Date().toISOString(),
+        pricingVersion: currentVersion || 1,
+        itemsCount: items.length,
+        totalPax: totals.totalPaxAcrossItems,
+        currencyConversionSnapshot: currencySnapshot
+      }
     };
 
     // Save to AppDatabase (which persists and notifies subscribers)
@@ -1090,6 +1143,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setDayDescriptions(quote.dayDescriptions || {});
     setDayOverviews(quote.dayOverviews || {});
     setDayNotes(quote.dayNotes || {});
+    setItineraryOverview(quote.itineraryOverview || (quote as any).narrative || '');
     setInclusions(quote.inclusions || []);
     setExclusions(quote.exclusions || []);
     setImportantInformation(quote.importantInformation || '');
@@ -1131,6 +1185,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setDayDescriptions(transformed.dayDescriptions);
     setDayOverviews(transformed.dayOverviews);
     setDayNotes(transformed.dayNotes);
+    setItineraryOverview((freshPkg as any).overview || (freshPkg as any).narrative || '');
     setInclusions(transformed.inclusions);
     setExclusions(transformed.exclusions);
     setImportantInformation(transformed.importantInformation);
@@ -1216,6 +1271,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setDayOverviews,
         dayNotes,
         setDayNotes,
+        itineraryOverview,
+        setItineraryOverview,
         inclusions,
         setInclusions,
         exclusions,

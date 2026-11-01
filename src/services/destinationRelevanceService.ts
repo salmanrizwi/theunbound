@@ -157,8 +157,8 @@ export class DestinationRelevanceService {
       (h.id && h.id.toLowerCase() === clean) ||
       (h.slug && h.slug.toLowerCase() === clean) ||
       (h.name && h.name.toLowerCase() === clean) ||
-      (h.hubName && h.hubName.toLowerCase() === clean) ||
-      matchesHub(hubIdOrName, h.id, h.name, h.slug, h.hubName)
+      ((h as any).hubName && (h as any).hubName.toLowerCase() === clean) ||
+      matchesHub(hubIdOrName, h.id, h.name, h.slug, (h as any).hubName)
     );
   }
 
@@ -186,7 +186,7 @@ export class DestinationRelevanceService {
     if (hubIdOrName) {
       const resolvedHub = this.resolveHubRecord(destinationIdOrSlug, hubIdOrName);
       const criteriaTokens = Array.from(new Set(
-        [hubIdOrName, resolvedHub?.id, resolvedHub?.name, resolvedHub?.hubName, resolvedHub?.slug].filter(Boolean) as string[]
+        [hubIdOrName, resolvedHub?.id, resolvedHub?.name, (resolvedHub as any)?.hubName, resolvedHub?.slug].filter(Boolean) as string[]
       ));
       return destHotels.filter(h => 
         criteriaTokens.some(token => matchesHub(token, h.hubId, h.city, h.cityId, h.cityName))
@@ -296,7 +296,7 @@ export class DestinationRelevanceService {
           hubIdOrName,
           resolvedHub?.id,
           resolvedHub?.name,
-          resolvedHub?.hubName,
+          (resolvedHub as any)?.hubName,
           resolvedHub?.slug
         ].filter(Boolean) as string[]
       ));

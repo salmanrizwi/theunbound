@@ -73,7 +73,7 @@ import {
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent, roundCurrencyAmount } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent, roundCurrencyAmount, buildQuotationCurrencySnapshot } from '../../services/pricingEngine';
 import { canonicalImageService } from '../../services/imageService';
 import { sanitizeImageUrl } from '../../utils/imageUtils';
 import { ProposalDocumentView } from '../ProposalDocumentView';
@@ -253,6 +253,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setDayOverviews: setContextDayOverviews,
     dayNotes: contextDayNotes,
     setDayNotes: setContextDayNotes,
+    itineraryOverview: contextItineraryOverview,
+    setItineraryOverview: setContextItineraryOverview,
     inclusions: contextInclusions,
     setInclusions: setContextInclusions,
     exclusions: contextExclusions,
@@ -737,6 +739,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         setDayNotes(q.dayNotes);
         setContextDayNotes(q.dayNotes);
       }
+      if (q.itineraryOverview || (q as any).narrative) {
+        setItineraryOverview(q.itineraryOverview || (q as any).narrative || '');
+        setContextItineraryOverview(q.itineraryOverview || (q as any).narrative || '');
+      }
       if (q.inclusions) setContextInclusions(q.inclusions);
       if (q.exclusions) setContextExclusions(q.exclusions);
       if (q.importantInformation !== undefined) setContextImportantInformation(q.importantInformation || '');
@@ -914,6 +920,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       }
       if (contextDayNotes) {
         setDayNotes(contextDayNotes);
+      }
+      if (contextItineraryOverview) {
+        setItineraryOverview(contextItineraryOverview);
       }
       setOptionsData(prev => ({
         ...prev,
@@ -1224,6 +1233,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [dayDescriptions, setDayDescriptions] = useState<Record<number, string>>(() => contextDayDescriptions || {});
   const [dayOverviews, setDayOverviews] = useState<Record<number, string>>(() => contextDayOverviews || {});
   const [dayNotes, setDayNotes] = useState<Record<number, string>>(() => contextDayNotes || {});
+  const [itineraryOverview, setItineraryOverview] = useState<string>(() => contextItineraryOverview || '');
 
   useEffect(() => {
     if (contextDayThemes && Object.keys(contextDayThemes).length > 0) {
@@ -1249,22 +1259,29 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   }, [contextDayNotes]);
 
+  useEffect(() => {
+    if (contextItineraryOverview) {
+      setItineraryOverview(contextItineraryOverview);
+    }
+  }, [contextItineraryOverview]);
+
   const handleUpdateDayThemes: React.Dispatch<React.SetStateAction<Record<number, string>>> = (updaterOrValue) => {
-    setDayThemes(prev => {
-      const next = typeof updaterOrValue === 'function' ? updaterOrValue(prev) : updaterOrValue;
-      setContextDayThemes(next);
-      return next;
-    });
+    const next = typeof updaterOrValue === 'function' ? updaterOrValue(dayThemes) : updaterOrValue;
+    setDayThemes(next);
+    setContextDayThemes(next);
   };
 
   const handleUpdateDayDescriptions: React.Dispatch<React.SetStateAction<Record<number, string>>> = (updaterOrValue) => {
-    setDayDescriptions(prev => {
-      const next = typeof updaterOrValue === 'function' ? updaterOrValue(prev) : updaterOrValue;
-      setContextDayDescriptions(next);
-      setDayOverviews(next);
-      setContextDayOverviews(next);
-      return next;
-    });
+    const next = typeof updaterOrValue === 'function' ? updaterOrValue(dayDescriptions) : updaterOrValue;
+    setDayDescriptions(next);
+    setDayOverviews(next);
+    setContextDayDescriptions(next);
+    setContextDayOverviews(next);
+  };
+
+  const handleUpdateItineraryOverview = (overview: string) => {
+    setItineraryOverview(overview);
+    setContextItineraryOverview(overview);
   };
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
@@ -1446,6 +1463,38 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     showBuilderToast(`Switched to Option ${targetOptNum}: ${targetOpt?.title || `Option ${targetOptNum}`}`, 'INFO');
   };
+
+  // Keep stored optionsData items synchronized when quotation currency changes
+  useEffect(() => {
+    setOptionsData(prev => {
+      const next = { ...prev };
+      ([1, 2, 3] as const).forEach(optNum => {
+        if (!next[optNum] || !Array.isArray(next[optNum].items) || next[optNum].items.length === 0) return;
+        next[optNum] = {
+          ...next[optNum],
+          items: next[optNum].items.map(item => {
+            if (item.calculation?.currency === currency) return item;
+            const calcFn = canViewInternalCosts ? calculateProductPrice : calculateProductPriceForAgent;
+            const calculation = calcFn(item.product, {
+              productId: item.product.id,
+              pricingTier: user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C',
+              adults: item.pax?.adults || adultsCount || 2,
+              children: item.pax?.children || childrenCount || 0,
+              infants: item.pax?.infants || infantsCount || 0,
+              travelDate: item.travelDate || startDate,
+              targetCurrency: currency,
+              selectedAddonIds: item.selectedAddonIds || []
+            }) as any;
+            return {
+              ...item,
+              calculation
+            };
+          })
+        };
+      });
+      return next;
+    });
+  }, [currency]);
 
   // Duplicate an option to another option slot
   const handleDuplicateOption = (fromOptNum: number, toOptNum: number) => {
@@ -2043,10 +2092,91 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       const existingSaved = db.getQuoteByIdAuthorized(activeQuoteId, user);
       const brandingSnapshot = buildAgencyBrandingSnapshotFromUser(user, existingSaved, brandingMode);
 
+      // Historical Quote Protection: If an existing finalized/saved quote's currency or FX rate is refreshed, increment version and preserve prior snapshot in versionHistory
+      let effectiveVersion = quoteVersion || 1;
+      let updatedVersionHistory = existingSaved?.versionHistory ? [...existingSaved.versionHistory] : [];
+      if (existingSaved?.currencyConversionSnapshot && explicit) {
+        const prevSnap = existingSaved.currencyConversionSnapshot;
+        const currSnapshotPreview = buildQuotationCurrencySnapshot({
+          quoteId: activeQuoteId,
+          quoteVersion: effectiveVersion,
+          items: effectivePricedItems,
+          targetCurrency: currency,
+          scope: quotationScope,
+          routeHubs,
+          userRole: user?.role,
+          adminManualMarginType,
+          adminManualMarginValue,
+          adminMarginMode,
+          agentMarginType,
+          agentMarginValue,
+          overallDiscountPercent
+        });
+        const currencyChanged = prevSnap.targetCurrency !== currency;
+        const rateChanged = prevSnap.lineItems.some((prevLine, idx) => {
+          const currLine = currSnapshotPreview.lineItems[idx];
+          return currLine && prevLine.sourceCurrency === currLine.sourceCurrency && prevLine.targetCurrency === currLine.targetCurrency && Math.abs(prevLine.exchangeRate - currLine.exchangeRate) > 1e-9;
+        });
+        if (currencyChanged || rateChanged) {
+          updatedVersionHistory = [
+            {
+              version: existingSaved.version || 1,
+              updatedAt: existingSaved.updatedAt || new Date().toISOString(),
+              updatedBy: user?.name || existingSaved.agentName || 'Agent',
+              changesSummary: currencyChanged
+                ? `Currency switched from ${prevSnap.targetCurrency} to ${currency}`
+                : `FX rates refreshed for ${currency}`,
+              totalSellingPrice: existingSaved.finalCustomerSellingPrice ?? existingSaved.totalSellingPrice,
+              currencyConversionSnapshot: prevSnap
+            },
+            ...updatedVersionHistory
+          ];
+          effectiveVersion = (existingSaved.version || quoteVersion || 1) + 1;
+          setQuoteVersion(effectiveVersion);
+        }
+      }
+
+      const currencyConversionSnapshot = buildQuotationCurrencySnapshot({
+        quoteId: activeQuoteId,
+        quoteVersion: effectiveVersion,
+        items: effectivePricedItems,
+        targetCurrency: currency,
+        scope: quotationScope,
+        routeHubs,
+        userRole: user?.role,
+        adminManualMarginType,
+        adminManualMarginValue,
+        adminMarginMode,
+        agentMarginType,
+        agentMarginValue,
+        overallDiscountPercent
+      });
+
+      const snapshotObject = {
+        baseFinalSellingPrice,
+        currency,
+        agentMarginType,
+        agentMarginValue,
+        agentMarginAmount: additionalMarginAmount,
+        finalCustomerSellingPrice,
+        hotelAccommodationTotal: currencyConversionSnapshot.hotelAccommodationTotal,
+        landPartTotal: currencyConversionSnapshot.landPartTotal,
+        calculatedAt: currencyConversionSnapshot.capturedAt,
+        pricingVersion: effectiveVersion,
+        itemsCount: items.length,
+        totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
+        adminManualMarginType,
+        adminManualMarginValue,
+        adminMarginMode,
+        revisedSellingPrice: baseFinalSellingPrice,
+        currencyConversionSnapshot
+      };
+
       const activeQuote: Quotation = {
         id: activeQuoteId,
         quoteNumber,
-        version: quoteVersion,
+        version: effectiveVersion,
+        versionHistory: updatedVersionHistory.length > 0 ? updatedVersionHistory : existingSaved?.versionHistory,
         title: quoteTitle || (sourcePackageName ? `${sourcePackageName} (${tripNights} Nights)` : `${currentDestination.name} Bespoke Journey (${tripNights} Nights)`),
         destination: currentDestination.name,
         sourcePackageId: sourcePackageId || undefined,
@@ -2080,51 +2210,22 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         agent_margin_amount: additionalMarginAmount,
         finalCustomerSellingPrice,
         final_customer_selling_price: finalCustomerSellingPrice,
-        pricingCalculatedAt: new Date().toISOString(),
-        pricing_calculated_at: new Date().toISOString(),
-        pricingVersion: quoteVersion || 1,
-        pricing_version: quoteVersion || 1,
+        pricingCalculatedAt: currencyConversionSnapshot.capturedAt,
+        pricing_calculated_at: currencyConversionSnapshot.capturedAt,
+        pricingVersion: effectiveVersion,
+        pricing_version: effectiveVersion,
         totalGroundLogisticsSnapshot: totalGroundPrice,
         transactionCurrencySnapshot: currency,
-        pricingVersionSnapshot: quoteVersion || 1,
-        pricingSnapshot: {
-          baseFinalSellingPrice,
-          currency,
-          agentMarginType,
-          agentMarginValue,
-          agentMarginAmount: additionalMarginAmount,
-          finalCustomerSellingPrice,
-          calculatedAt: new Date().toISOString(),
-          pricingVersion: quoteVersion || 1,
-          itemsCount: items.length,
-          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
-          adminManualMarginType,
-          adminManualMarginValue,
-          adminMarginMode,
-          revisedSellingPrice: baseFinalSellingPrice
-        },
-        pricing_snapshot: {
-          baseFinalSellingPrice,
-          currency,
-          agentMarginType,
-          agentMarginValue,
-          agentMarginAmount: additionalMarginAmount,
-          finalCustomerSellingPrice,
-          calculatedAt: new Date().toISOString(),
-          pricingVersion: quoteVersion || 1,
-          itemsCount: items.length,
-          totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
-          adminManualMarginType,
-          adminManualMarginValue,
-          adminMarginMode,
-          revisedSellingPrice: baseFinalSellingPrice
-        },
+        pricingVersionSnapshot: effectiveVersion,
+        currencyConversionSnapshot,
+        pricingSnapshot: snapshotObject,
+        pricing_snapshot: snapshotObject,
         clientName: clientName || 'Client Name Pending',
         clientEmail: clientEmail || 'client@example.com',
         clientPhone: clientPhone || '',
         clientCompany: clientCompany || user?.agencyName || 'Direct B2B Client',
         agentId: user?.id || 'usr-agent-01',
-        agentName: brandingSnapshot.specialistName || user?.name || 'Travel Consultant',
+        agentName: (brandingSnapshot as any).specialistName || brandingSnapshot.agencyName || user?.name || 'Travel Consultant',
         agentAgency: brandingSnapshot.agencyName || user?.agencyName || 'Partner Agency',
         agentEmail: brandingSnapshot.email || user?.email || '',
         agentPhone: brandingSnapshot.phone || user?.phone || '',
@@ -2166,6 +2267,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         dayDescriptions,
         dayOverviews,
         dayNotes,
+        itineraryOverview: itineraryOverview || undefined,
+        narrative: itineraryOverview || undefined,
         inclusions: contextInclusions && contextInclusions.length > 0 ? contextInclusions : undefined,
         exclusions: contextExclusions && contextExclusions.length > 0 ? contextExclusions : undefined,
         importantInformation: contextImportantInformation || undefined,
@@ -2569,14 +2672,34 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
+  // Validate that all items have valid exchange rates before final quote generation
+  const validateFxBeforeFinalGeneration = (): boolean => {
+    const missingPairs = new Set<string>(step7InternalBreakdown?.missingCurrencyPairs || []);
+    effectivePricedItems.forEach(it => {
+      const fx = it.calculation?.fxDetails;
+      if (fx && fx.isValid === false) {
+        missingPairs.add(fx.rateDirection || `${fx.sourceCurrency} -> ${fx.targetCurrency}`);
+      }
+    });
+    if (missingPairs.size > 0) {
+      showBuilderToast(
+        `Missing or unavailable exchange rate for ${Array.from(missingPairs).join(', ')}. Final quote generation is blocked until a valid rate is available.`,
+        'WARNING'
+      );
+      return false;
+    }
+    return true;
+  };
+
   // Download PDF Action
   const handleDownloadPDF = () => {
+    if (!validateFxBeforeFinalGeneration()) return;
     const saved = handleSaveDraft(true);
     if (!saved) return;
     try {
       downloadQuotationPDF({
         quote: saved,
-        agentName: saved.brandingSnapshot?.specialistName || saved.agentName || user?.name || 'Travel Specialist',
+        agentName: (saved.brandingSnapshot as any)?.specialistName || saved.brandingSnapshot?.agencyName || saved.agentName || user?.name || 'Travel Specialist',
         agentAgency: saved.brandingSnapshot?.agencyName || saved.agentAgency || user?.agencyName || 'Partner Travel Agency',
         agentEmail: saved.brandingSnapshot?.email || saved.agentEmail || user?.email || '',
         agentPhone: saved.brandingSnapshot?.phone || saved.agentPhone || user?.phone || '',
@@ -2593,6 +2716,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Share on WhatsApp Action
   const handleShareWhatsApp = () => {
+    if (!validateFxBeforeFinalGeneration()) return;
     // 1. Check authorization
     const permCheck = canUserShareQuoteWhatsApp(user);
     if (!permCheck.allowed) {
@@ -2624,15 +2748,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         totalSellingPrice: finalClientPrice
       },
       {
-        name: snap.specialistName || user?.name || quoteObj.agentName || 'Travel Specialist',
+        name: (snap as any).specialistName || snap.agencyName || user?.name || quoteObj.agentName || 'Travel Specialist',
         agencyName: snap.agencyName || user?.agencyName || quoteObj.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'TheUnbound Partner Agency'),
         email: snap.email || user?.email || quoteObj.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
         phone: snap.phone || user?.phone || quoteObj.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
         logoUrl: snap.logoUrl || user?.brandLogoUrl || quoteObj.agentLogoUrl,
-        website: snap.website || user?.website,
-        address: snap.address || user?.businessAddress,
-        brandPrimaryColor: snap.primaryColor || user?.brandPrimaryColor,
-        brandAccentColor: snap.accentColor || user?.brandAccentColor,
+        website: snap.website || (user as any)?.website,
+        address: snap.address || (user as any)?.businessAddress,
+        primaryColor: snap.primaryColor || (user as any)?.brandPrimaryColor,
+        accentColor: snap.accentColor || (user as any)?.brandAccentColor,
         brandingMode: activeMode,
         selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
         customNote: customNoteText
@@ -2647,6 +2771,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Open Email Modal with Complete Canonical Quotation Content
   const handleOpenEmailModal = () => {
+    if (!validateFxBeforeFinalGeneration()) return;
     const saved = handleSaveDraft(true);
     if (!saved) return;
     setEmailModalQuote(saved);
@@ -2771,15 +2896,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           totalSellingPrice: finalClientPrice
         },
         {
-          name: snap.specialistName || user?.name || saved.agentName || 'Travel Specialist',
+          name: (snap as any).specialistName || user?.name || saved.agentName || 'Travel Specialist',
           agencyName: snap.agencyName || user?.agencyName || saved.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'Luxury Partner Agency'),
           email: snap.email || user?.email || saved.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
           phone: snap.phone || user?.phone || saved.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
           logoUrl: snap.logoUrl || user?.brandLogoUrl || saved.agentLogoUrl,
-          website: snap.website || user?.website,
-          address: snap.address || user?.businessAddress,
-          brandPrimaryColor: snap.primaryColor || user?.brandPrimaryColor,
-          brandAccentColor: snap.accentColor || user?.brandAccentColor,
+          website: snap.website || (user as any)?.website,
+          address: snap.address || (user as any)?.businessAddress,
+          primaryColor: snap.primaryColor || (user as any)?.brandPrimaryColor,
+          accentColor: snap.accentColor || (user as any)?.brandAccentColor,
           brandingMode: activeMode,
           selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
           customNote: emailCustomNote,
@@ -2849,6 +2974,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Convert to Confirmed Booking Action (Idempotent)
   const handleConvertBooking = () => {
+    if (!validateFxBeforeFinalGeneration()) return;
     const saved = handleSaveDraft();
     if (!saved) return;
 
@@ -3425,7 +3551,33 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               overallMarkupPercent: agentMarkupPercent,
               overallDiscountPercent: overallDiscountPercent || 0,
               totalNetCost: 0,
-              totalSellingPrice: finalClientPrice,
+              totalSellingPrice: finalCustomerSellingPrice,
+              baseFinalSellingPrice,
+              agentMarginType,
+              agentMarginValue,
+              agentMarginAmount: additionalMarginAmount,
+              finalCustomerSellingPrice,
+              adminManualMarginType,
+              adminManualMarginValue,
+              adminMarginMode,
+              pricingSnapshot: {
+                baseFinalSellingPrice,
+                currency,
+                agentMarginType,
+                agentMarginValue,
+                agentMarginAmount: additionalMarginAmount,
+                finalCustomerSellingPrice,
+                hotelAccommodationTotal: step7InternalBreakdown?.hotelAccommodationTotal,
+                landPartTotal: step7InternalBreakdown?.landPartTotal,
+                calculatedAt: new Date().toISOString(),
+                pricingVersion: quoteVersion || 1,
+                itemsCount: effectivePricedItems.length,
+                totalPax: adultsCount + childrenCount + infantsCount,
+                adminManualMarginType,
+                adminManualMarginValue,
+                adminMarginMode,
+                revisedSellingPrice: baseFinalSellingPrice
+              },
               totalTaxes: 0,
               totalMargin: Math.round(finalClientPrice - totalSellingPrice),
               clientName: clientName || 'Valued Guest',
@@ -3617,6 +3769,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               setDayThemes={handleUpdateDayThemes}
               dayDescriptions={dayDescriptions}
               setDayDescriptions={handleUpdateDayDescriptions}
+              itineraryOverview={itineraryOverview}
+              setItineraryOverview={handleUpdateItineraryOverview}
               sourcePackageName={sourcePackageName}
               quoteTitle={quoteTitle}
               setQuoteTitle={setQuoteTitle}
@@ -3837,7 +3991,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                           <span>Supplier: {prod.supplierName || 'DMC Verified'}</span>
                           {prod.pricing && (
                             <span className="font-mono text-slate-700 font-bold">
-                              From: {formatCurrency(prod.pricing.sellingPrice || prod.pricing.costPrice || 0, currency)}
+                              From: {formatCurrency(
+                                convertCurrency(
+                                  prod.pricing.sellingPrice || prod.pricing.costPrice || prod.adultNetPrice || 0,
+                                  (prod.currency as CurrencyCode) || 'USD',
+                                  currency
+                                ),
+                                currency
+                              )}
                             </span>
                           )}
                         </div>

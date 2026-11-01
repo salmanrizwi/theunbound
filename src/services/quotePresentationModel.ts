@@ -1,5 +1,5 @@
 import { Quotation, QuoteItem, TripRouteHub, QuoteBrandingMode, AgencyBrandingSnapshot, User } from '../types';
-import { formatCurrency, calculateQuoteTotal } from './pricingEngine';
+import { formatCurrency, calculateQuoteTotal, convertCurrency, roundCurrencyAmount } from './pricingEngine';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { isRailQuoteItem } from './rail/JapanRailJourneyDataService';
 import { 
@@ -9,7 +9,7 @@ import {
   renderSimpleSemanticQuotationEmailFromModel,
   convertHtmlToCleanPlainText
 } from './quoteEmailFormatter';
-import { richTextToWhatsApp } from '../utils/richTextFormatter';
+import { richTextToWhatsApp, richTextToPlainText } from '../utils/richTextFormatter';
 import { 
   resolveQuoteItemInclusions, 
   resolveQuoteItemExclusions, 
@@ -287,6 +287,12 @@ export interface QuotePresentationModel {
   validUntilFormatted: string;
   currency: string;
   totalSellingPriceNumeric: number;
+  finalCustomerSellingPriceNumeric: number;
+  finalCustomerSellingPriceFormatted: string;
+  baseSellingPriceNumeric: number;
+  baseSellingPriceFormatted: string;
+  agentMarginAmountNumeric: number;
+  agentMarginAmountFormatted: string;
   
   // Separate Primary Totals: Hotel Accommodation Total & Land Part Total (Excludes Accommodation)
   hasHotelAccommodation: boolean;
@@ -356,6 +362,10 @@ export interface QuotePresentationModel {
   
   // Day-by-Day Chronological Itinerary
   days: DayPresentationData[];
+  
+  // Journey Narrative & Overview
+  itineraryOverview?: string;
+  narrative?: string;
   
   // General Inclusions
   additionalServices: Array<{
@@ -1056,8 +1066,17 @@ export function buildQuotePresentationModel(
         const roomsCount = activeHub.roomsCount || activeHub.manualHotel?.numberOfRooms || quote.roomingConfig?.roomsCount || 1;
         const nights = activeHub.nights || 1;
         const htlStyle = getCategoryStyleMeta('Accommodation', 'Hotel');
-        const manualPrice = activeHub.manualHotel
+        const manualSourceCurr = (activeHub.manualHotel as any)?.rateCurrency || (activeHub.manualHotel as any)?.currency || effectiveCurrency;
+        const rawManualPrice = activeHub.manualHotel
           ? ((activeHub.manualHotel as any).totalSellingPrice || (activeHub.manualHotel.ratePerNight || 0) * nights * roomsCount)
+          : 0;
+        const manualPrice = rawManualPrice > 0
+          ? roundCurrencyAmount(
+              (activeHub.manualHotel as any)?.totalSellingPrice
+                ? rawManualPrice
+                : convertCurrency(rawManualPrice, manualSourceCurr, effectiveCurrency),
+              effectiveCurrency
+            )
           : 0;
 
         dayServices.unshift({
@@ -1104,7 +1123,7 @@ export function buildQuotePresentationModel(
     }
 
     const customTheme = quote.dayThemes?.[calDay.dayNumber];
-    const dayOverview = (quote as any).dayOverviews?.[calDay.dayNumber];
+    const dayOverview = (quote as any).dayOverviews?.[calDay.dayNumber] || (quote as any).dayDescriptions?.[calDay.dayNumber];
     const dayNotes = (quote as any).dayNotes?.[calDay.dayNumber];
 
     return {
@@ -1154,7 +1173,7 @@ export function buildQuotePresentationModel(
   // --------------------------------------------------------------------------
   // Single Authoritative Pricing Calculation via Central Pricing Engine
   // --------------------------------------------------------------------------
-  const centralTotals = calculateQuoteTotal(quote, activeOption?.id);
+  const centralTotals = calculateQuoteTotal(quote, activeOption?.id, undefined, effectiveCurrency);
 
   let hotelAccommodationTotalNumeric = centralTotals.hotelTotalSellingPrice;
   let landPartTotalNumeric = centralTotals.landPartTotalSellingPrice;
@@ -1181,9 +1200,22 @@ export function buildQuotePresentationModel(
   const hasLandServices = landPartTotalNumeric > 0 || landItemsCount > 0;
   const landPartTotalFormatted = formatCurrency(landPartTotalNumeric, effectiveCurrency);
 
-  // Use Land Part Total as the customer-facing non-accommodation total across all templates
-  const effectiveSellingPrice = landPartTotalNumeric;
-  const pricePerPerson = effectiveSellingPrice / Math.max(1, effectivePax);
+  // Authoritative Final Customer Selling Price (Hotel Accommodation Total + Land Part Total)
+  const finalCustomerSellingPriceNumeric = roundCurrencyAmount(
+    centralTotals.finalCustomerSellingPrice > 0
+      ? centralTotals.finalCustomerSellingPrice
+      : ((hasHotelAccommodation ? hotelAccommodationTotalNumeric : 0) + landPartTotalNumeric),
+    effectiveCurrency
+  );
+  const finalCustomerSellingPriceFormatted = formatCurrency(finalCustomerSellingPriceNumeric, effectiveCurrency);
+  const baseSellingPriceNumeric = roundCurrencyAmount(centralTotals.baseSellingPrice, effectiveCurrency);
+  const baseSellingPriceFormatted = formatCurrency(baseSellingPriceNumeric, effectiveCurrency);
+  const agentMarginAmountNumeric = roundCurrencyAmount(centralTotals.markupAmount, effectiveCurrency);
+  const agentMarginAmountFormatted = formatCurrency(agentMarginAmountNumeric, effectiveCurrency);
+
+  // Authoritative total selling price across all channels
+  const effectiveSellingPrice = finalCustomerSellingPriceNumeric;
+  const pricePerPerson = roundCurrencyAmount(effectiveSellingPrice / Math.max(1, effectivePax), effectiveCurrency);
 
   const paxDetailsText = quote.passengerBreakdown
     ? `ADT: ${quote.passengerBreakdown.adults}${quote.passengerBreakdown.cwb > 0 ? ` | CWB: ${quote.passengerBreakdown.cwb}` : ''}${quote.passengerBreakdown.cnb > 0 ? ` | CNB: ${quote.passengerBreakdown.cnb}` : ''}${quote.passengerBreakdown.infants > 0 ? ` | INF: ${quote.passengerBreakdown.infants}` : ''}`
@@ -1286,6 +1318,12 @@ export function buildQuotePresentationModel(
     validUntilFormatted: formatValidUntil(quote.validUntil),
     currency: effectiveCurrency,
     totalSellingPriceNumeric: effectiveSellingPrice,
+    finalCustomerSellingPriceNumeric,
+    finalCustomerSellingPriceFormatted,
+    baseSellingPriceNumeric,
+    baseSellingPriceFormatted,
+    agentMarginAmountNumeric,
+    agentMarginAmountFormatted,
     brandingMode: effectiveBrandingMode,
     isWhiteLabel,
     agencyName: effectiveAgency,
@@ -1339,9 +1377,11 @@ export function buildQuotePresentationModel(
     landItemsCount,
     visaServices: visaItems.map(it => transformQuoteItemToPresentation(it, effectiveCurrency)),
     days,
+    itineraryOverview: quote.itineraryOverview || (quote as any).narrative || undefined,
+    narrative: quote.itineraryOverview || (quote as any).narrative || undefined,
     additionalServices: generalInclusions,
     operationalStandards,
-    totalItineraryValueFormatted: landPartTotalFormatted,
+    totalItineraryValueFormatted: finalCustomerSellingPriceFormatted,
     pricePerTravelerFormatted: `${formatCurrency(pricePerPerson, effectiveCurrency)} / Traveler (${effectivePax} Guests)`,
     guaranteedCurrencyLine: `Guaranteed in ${effectiveCurrency} • No Hidden Surcharges`,
     childAndAttractionPolicies,
@@ -1412,6 +1452,13 @@ export function renderQuoteEmailFromPresentationModel(
     ] : []),
     `Land Part Total : ${model.landPartTotalFormatted}`
   ].filter(Boolean).join('\n'));
+
+  if (model.itineraryOverview) {
+    textSections.push([
+      `JOURNEY NARRATIVE & OVERVIEW:`,
+      richTextToPlainText(model.itineraryOverview)
+    ].join('\n'));
+  }
 
   textSections.push([
     `2. CLIENT & SPECIALIST DOSSIER`,
@@ -1554,6 +1601,7 @@ export function renderQuoteEmailFromPresentationModel(
       `Hotel Accommodation Total        : ${model.hotelAccommodationTotalFormatted}`
     ] : []),
     `Land Part Total                  : ${model.landPartTotalFormatted}`,
+    `Final Selling Price              : ${model.finalCustomerSellingPriceFormatted}`,
     `Currency & Tax Guarantee         : ${model.guaranteedCurrencyLine}`,
     `Quotation Valid Until            : ${model.validUntilFormatted}`
   ].join('\n'));
@@ -1742,6 +1790,18 @@ export function renderQuoteWhatsAppFromPresentationModel(
     sections.push(visaLines.join('\n'));
   }
 
+  // 3.5 Journey Narrative & Overview
+  if (model.itineraryOverview) {
+    const narrativeText = richTextToWhatsApp(model.itineraryOverview);
+    if (narrativeText) {
+      const narrativeLines = [
+        useEmojis ? `📖 *JOURNEY NARRATIVE & OVERVIEW*` : `*JOURNEY NARRATIVE & OVERVIEW*`,
+        narrativeText
+      ];
+      sections.push(narrativeLines.join('\n'));
+    }
+  }
+
   // 4. Complete Day-by-Day Chronological Itinerary (Always included in full)
   if (model.days.length > 0) {
     const planLines: string[] = [
@@ -1881,6 +1941,8 @@ export function renderQuoteWhatsAppFromPresentationModel(
       ``,
       `🏷️ *Land Part Total:* ${model.landPartTotalFormatted}`,
       ``,
+      `💎 *Final Selling Price:* ${model.finalCustomerSellingPriceFormatted}`,
+      ``,
       `💱 *Currency & Taxes:* ${model.guaranteedCurrencyLine}`,
       `⏳ *Quote Valid Until:* *${model.validUntilFormatted}*`,
       ``,
@@ -1896,6 +1958,8 @@ export function renderQuoteWhatsAppFromPresentationModel(
       ] : []),
       ``,
       `Land Part Total: ${model.landPartTotalFormatted}`,
+      ``,
+      `Final Selling Price: ${model.finalCustomerSellingPriceFormatted}`,
       ``,
       `Currency & Taxes: ${model.guaranteedCurrencyLine}`,
       `Quote Valid Until: ${model.validUntilFormatted}`,

@@ -10,6 +10,9 @@ import {
   sanitizeQuoteForCustomer,
   verifyNoCommercialLeak
 } from '../utils/customerQuoteSanitizer';
+import { splitWhatsAppMessage } from '../utils/richTextFormatter';
+
+export { splitWhatsAppMessage };
 
 export interface WhatsAppSenderBranding {
   name?: string;

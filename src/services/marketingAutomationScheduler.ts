@@ -6,6 +6,7 @@ import {
   Quotation,
   ScheduledAutomationJob,
   TriggerDelayUnit,
+  TriggerTimingMode,
   User
 } from '../types';
 import { AppDatabase } from './db';
@@ -746,7 +747,7 @@ export class MarketingAutomationScheduler {
 
     if (entityType === 'QUOTE') {
       const q = entity as Quotation;
-      const ownerUser = (q.agentId && db.getUserById(q.agentId)) || (q.userId && db.getUserById(q.userId)) || actor || null;
+      const ownerUser = (q.agentId && db.getUserById(q.agentId)) || ((q as any).userId && db.getUserById((q as any).userId)) || actor || null;
       if (ownerUser?.emailOptOut) {
         return { email: '', name: ownerUser.name, optOut: true, errorReason: `Quote owner ${ownerUser.email} has opted out of automated emails.` };
       }

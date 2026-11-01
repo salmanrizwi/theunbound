@@ -10,8 +10,10 @@ export interface PDFExportOptions {
   agentName?: string;
   agentAgency?: string;
   agentEmail?: string;
+  agentPhone?: string;
   agentRole?: string;
   agentLogoUrl?: string;
+  brandingMode?: string;
   leadId?: string;
 }
 

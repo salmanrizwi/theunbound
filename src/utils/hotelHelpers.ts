@@ -1,5 +1,5 @@
 import { Hotel, HotelRoomType, HotelRate, MealPlanCode, Product, CurrencyCode, ManualHotelDetails, InventorySurcharge, AppliedSurchargeDetail, InventoryValidityEvaluation } from '../types';
-import { convertCurrency, formatCurrency, evaluateInventoryValidity, evaluateApplicableSurcharges } from '../services/pricingEngine';
+import { convertCurrency, formatCurrency, evaluateInventoryValidity, evaluateApplicableSurcharges, roundCurrencyAmount } from '../services/pricingEngine';
 import { canonicalImageService } from '../services/imageService';
 
 export function collectHotelSurcharges(
@@ -131,7 +131,6 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
   }
 
   // Determine base nightly net rate based on occupancy per room
-  // (e.g. single pax = singleNetRate, 2 pax = doubleNetRate, 3+ pax = tripleNetRate)
   const paxPerRoom = Math.ceil(adults / roomsCount);
   let baseNightlyRateInHotelCurr = rate.doubleNetRate;
   if (paxPerRoom === 1 && rate.singleNetRate > 0) {
@@ -142,32 +141,48 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     baseNightlyRateInHotelCurr = rate.doubleNetRate || rate.singleNetRate || hotel.startingNetPrice;
   }
 
-  // Native Currency Calculation First -> Surcharge Evaluation -> Currency Conversion
   const hotelCurrency: CurrencyCode = (rate.currency || hotel.currency || 'USD') as CurrencyCode;
   const nativeRoomsNetCost = baseNightlyRateInHotelCurr * nights * roomsCount;
   const nativeExtraBedsNetCost = (rate.extraBedRate || 0) * nights * extraBeds;
   const nativeChildrenNetCost = (rate.childRate || 0) * nights * children;
   const nativeTotalStayNetCost = nativeRoomsNetCost + nativeExtraBedsNetCost + nativeChildrenNetCost;
 
-  // Universal B2B Pricing Formula in Native Currency:
+  // Currency conversion FIRST -> Commercial margin/tax/fee calculation in targetCurrency
+  const nightlyBaseNetRate = roundCurrencyAmount(convertCurrency(baseNightlyRateInHotelCurr, hotelCurrency, targetCurrency), targetCurrency);
+  const nightlyExtraBedNetRate = roundCurrencyAmount(convertCurrency(rate.extraBedRate || 0, hotelCurrency, targetCurrency), targetCurrency);
+  const nightlyChildNetRate = roundCurrencyAmount(convertCurrency(rate.childRate || 0, hotelCurrency, targetCurrency), targetCurrency);
+
+  const roomsTotalNetCost = roundCurrencyAmount(convertCurrency(nativeRoomsNetCost, hotelCurrency, targetCurrency), targetCurrency);
+  const extraBedsTotalNetCost = roundCurrencyAmount(convertCurrency(nativeExtraBedsNetCost, hotelCurrency, targetCurrency), targetCurrency);
+  const childrenTotalNetCost = roundCurrencyAmount(convertCurrency(nativeChildrenNetCost, hotelCurrency, targetCurrency), targetCurrency);
+  const totalStayNetCost = roundCurrencyAmount(convertCurrency(nativeTotalStayNetCost, hotelCurrency, targetCurrency), targetCurrency);
+
   const b2bMarkupPercent = rate.markupPercent ?? 20;
   const b2bWholesaleMarkupRate = b2bMarkupPercent / 100;
-  const nativeMarginAmount = nativeTotalStayNetCost * b2bWholesaleMarkupRate;
+  const marginAmount = roundCurrencyAmount(totalStayNetCost * b2bWholesaleMarkupRate, targetCurrency);
 
   const taxRate = (rate.taxPercent ?? 10) / 100;
-  const nativeTaxAmount = nativeMarginAmount * taxRate;
+  const taxAmount = roundCurrencyAmount(marginAmount * taxRate, targetCurrency);
 
-  const nativeSubtotal = nativeTotalStayNetCost + nativeMarginAmount + nativeTaxAmount;
+  const subtotal = roundCurrencyAmount(totalStayNetCost + marginAmount + taxAmount, targetCurrency);
 
   const serviceFeeRate = (rate.feePercent ?? 0) / 100;
-  const nativeServiceFee = nativeSubtotal * serviceFeeRate;
+  const serviceFee = roundCurrencyAmount(subtotal * serviceFeeRate, targetCurrency);
 
   const discountRate = (customDiscountPercent || 0) / 100;
+  const grossTotal = roundCurrencyAmount(subtotal + serviceFee, targetCurrency);
+  const discountAmount = discountRate > 0 ? roundCurrencyAmount(grossTotal * discountRate, targetCurrency) : 0;
+  const baseSellingPriceBeforeSurcharges = Math.max(0, roundCurrencyAmount(grossTotal - discountAmount, targetCurrency));
+
+  // Native equivalent for surcharge evaluation
+  const nativeMarginAmount = nativeTotalStayNetCost * b2bWholesaleMarkupRate;
+  const nativeTaxAmount = nativeMarginAmount * taxRate;
+  const nativeSubtotal = nativeTotalStayNetCost + nativeMarginAmount + nativeTaxAmount;
+  const nativeServiceFee = nativeSubtotal * serviceFeeRate;
   const nativeGrossTotal = nativeSubtotal + nativeServiceFee;
   const nativeDiscountAmount = nativeGrossTotal * discountRate;
   const nativeBaseSellingBeforeSurcharges = Math.max(0, nativeGrossTotal - nativeDiscountAmount);
 
-  // Validity & Surcharge Evaluation in Native Currency
   const effectiveValidFrom = rate.validity?.validFrom || rate.validityFrom || roomType?.validity?.validFrom || roomType?.validityFrom || hotel.validity?.validFrom || hotel.validityFrom || '';
   const effectiveValidTo = rate.validity?.validTo || rate.validityTo || roomType?.validity?.validTo || roomType?.validityTo || hotel.validity?.validTo || hotel.validityTo || '';
   const validityCheck = evaluateInventoryValidity(
@@ -190,28 +205,11 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     defaultApplicationBasis: 'PER_ROOM_NIGHT'
   });
 
-  const nativeFinalSellingPrice = Math.max(0, nativeBaseSellingBeforeSurcharges + surchargeEval.totalSurchargeNative);
-
-  // Currency conversions to targetCurrency
-  const nightlyBaseNetRate = convertCurrency(baseNightlyRateInHotelCurr, hotelCurrency, targetCurrency);
-  const nightlyExtraBedNetRate = convertCurrency(rate.extraBedRate || 0, hotelCurrency, targetCurrency);
-  const nightlyChildNetRate = convertCurrency(rate.childRate || 0, hotelCurrency, targetCurrency);
-
-  const roomsTotalNetCost = convertCurrency(nativeRoomsNetCost, hotelCurrency, targetCurrency);
-  const extraBedsTotalNetCost = convertCurrency(nativeExtraBedsNetCost, hotelCurrency, targetCurrency);
-  const childrenTotalNetCost = convertCurrency(nativeChildrenNetCost, hotelCurrency, targetCurrency);
-  const totalStayNetCost = convertCurrency(nativeTotalStayNetCost, hotelCurrency, targetCurrency);
-
-  const taxAmount = convertCurrency(nativeTaxAmount, hotelCurrency, targetCurrency);
-  const serviceFee = convertCurrency(nativeServiceFee, hotelCurrency, targetCurrency);
-  const discountAmount = convertCurrency(nativeDiscountAmount, hotelCurrency, targetCurrency);
-  const baseSellingPriceBeforeSurcharges = convertCurrency(nativeBaseSellingBeforeSurcharges, hotelCurrency, targetCurrency);
-
-  // Final Quoted Price
-  const finalTotalSellingPrice = convertCurrency(nativeFinalSellingPrice, hotelCurrency, targetCurrency);
-  const pricePerNightSelling = finalTotalSellingPrice / nights;
+  const convertedSurcharge = roundCurrencyAmount(surchargeEval.totalSurchargeConverted, targetCurrency);
+  const finalTotalSellingPrice = Math.max(0, roundCurrencyAmount(baseSellingPriceBeforeSurcharges + convertedSurcharge, targetCurrency));
+  const pricePerNightSelling = roundCurrencyAmount(finalTotalSellingPrice / nights, targetCurrency);
   const totalGuests = adults + children;
-  const pricePerPersonSelling = totalGuests > 0 ? finalTotalSellingPrice / totalGuests : finalTotalSellingPrice;
+  const pricePerPersonSelling = totalGuests > 0 ? roundCurrencyAmount(finalTotalSellingPrice / totalGuests, targetCurrency) : finalTotalSellingPrice;
 
   const b2bWholesaleNetToAgent = finalTotalSellingPrice;
   const agentClientMarkupRate = (agentClientMarkupPercent || 0) / 100;

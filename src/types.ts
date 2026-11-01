@@ -119,9 +119,85 @@ export interface FXRateDetails {
   xeLiveRate: number;
   manualAdjustment: number;
   effectiveRate: number;
+  rateDirection?: string; // e.g. "1 USD = 150 JPY"
+  rateVersion?: string;
   isConverted: boolean;
   rateTimestamp: string;
   provider: string;
+  isValid?: boolean;
+  validationError?: string;
+}
+
+export interface CurrencyConversionLineRecord {
+  itemId: string;
+  productId: string;
+  productName: string;
+  category: string;
+  isHotel: boolean;
+  originalAmount: number;
+  originalNetCost: number;
+  originalCurrency: CurrencyCode | string;
+  sourceCurrency?: CurrencyCode | string;
+  targetCurrency: CurrencyCode;
+  appliedExchangeRate: number;
+  exchangeRate?: number;
+  rateDirection: string;
+  fxSource: string;
+  rateTimestamp: string;
+  rateVersion?: string;
+  convertedNetCost: number;
+  convertedBaseSellingAmount: number;
+  baseMarginPercent: number;
+  baseMarginAmount: number;
+  taxAmount: number;
+  serviceFeeAmount: number;
+  discountAmount: number;
+  finalLineSellingAmount: number;
+  isValidRate: boolean;
+  rateError?: string;
+}
+
+export interface QuotationCurrencySnapshot {
+  snapshotId: string;
+  quoteId: string;
+  quoteVersion: number;
+  targetCurrency: CurrencyCode;
+  currencyPrecision: number;
+  roundingMode: 'ZERO_DECIMAL_INTEGER' | 'TWO_DECIMAL_STANDARD';
+  fxSource: string;
+  capturedAt: string;
+  lineItems: CurrencyConversionLineRecord[];
+  totals: {
+    convertedTotalNetCost: number;
+    baseMarginTotal: number;
+    manualMarginAdjustmentMode: 'ADD' | 'REPLACE';
+    manualMarginAdjustmentType: 'PERCENTAGE' | 'FIXED';
+    manualMarginAdjustmentValue: number;
+    manualMarginAdjustmentAmount: number;
+    effectiveUnderlyingMarginAmount: number;
+    taxesTotal: number;
+    serviceFeesTotal: number;
+    discountsTotal: number;
+    b2bSellingPriceTotal: number; // Manual Margin Adjustment Final Total (Stage 1)
+    additionalAgentMarginType: 'PERCENTAGE' | 'FIXED';
+    additionalAgentMarginValue: number;
+    additionalAgentMarginAmount: number;
+    hotelAccommodationTotal: number;
+    landPartTotal: number;
+    finalCustomerSellingPrice: number; // Final Customer Selling Price (Stage 2)
+  };
+  // Top-level convenience properties mirroring totals for direct access
+  totalConvertedNettCost: number;
+  existingBaseMarginAmount: number;
+  manualMarginAdjustmentAmount: number;
+  manualMarginAdjustedTotal: number;
+  additionalAgentMarginAmount: number;
+  taxAmount: number;
+  hotelAccommodationTotal: number;
+  landPartTotal: number;
+  finalCustomerSellingPrice: number;
+  isValid: boolean;
+  missingCurrencyPairs: string[];
 }
 
 export type QuotationScope = 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
@@ -1655,6 +1731,7 @@ export interface AgentPricingResponse {
   };
 
   // Safe Metadata
+  fxDetails?: FXRateDetails;
   rateEffectiveTo?: string;
   isAuthoritative?: boolean;
   calculatedAt?: string;
@@ -1792,6 +1869,7 @@ export interface QuoteVersionRecord {
   marginAmount?: number;
   items?: QuoteItem[];
   pricingSnapshot?: PricingSnapshot;
+  currencyConversionSnapshot?: QuotationCurrencySnapshot;
   passengerBreakdown?: any;
   roomingConfig?: any;
   agentNotes?: string;
@@ -1816,6 +1894,8 @@ export interface PricingSnapshot {
   agentMarginValue: number;
   agentMarginAmount: number;
   finalCustomerSellingPrice: number;
+  hotelAccommodationTotal?: number;
+  landPartTotal?: number;
   calculatedAt: string;
   pricingVersion: number | string;
   itemsCount: number;
@@ -1832,6 +1912,7 @@ export interface PricingSnapshot {
   adminManualMarginAmount?: number;
   adminMarginMode?: 'REPLACE' | 'ADD';
   revisedSellingPrice?: number;
+  currencyConversionSnapshot?: QuotationCurrencySnapshot;
 }
 
 export interface QuoteActivityRecord {
@@ -1988,6 +2069,8 @@ export interface Quotation {
   dayDescriptions?: Record<number, string>;
   dayOverviews?: Record<number, string>;
   dayNotes?: Record<number, string>;
+  itineraryOverview?: string;
+  narrative?: string;
   sourcePackageId?: string;
   sourcePackageName?: string;
   sourcePackageSlug?: string;
@@ -2010,9 +2093,11 @@ export interface Quotation {
   totalTaxes: number;
   totalMargin: number;
 
-  // Hotel Accommodation Pricing (Informational Subtotal included within Complete Package Total)
+  // Hotel Accommodation & Land Part Pricing (Informational Subtotals included within Complete Package Total)
   hotelAccommodationTotal?: number;
   hotelAccommodationTotalFormatted?: string;
+  landPartTotal?: number;
+  landPartTotalFormatted?: string;
 
   // Authoritative Commercial & Agent Margin Architecture (Section 8 Compliance)
   marginType?: AgentMarginType;
@@ -2036,6 +2121,8 @@ export interface Quotation {
   pricing_version?: number | string;
   pricingSnapshot?: PricingSnapshot;
   pricing_snapshot?: PricingSnapshot;
+  currencyConversionSnapshot?: QuotationCurrencySnapshot;
+  currency_conversion_snapshot?: QuotationCurrencySnapshot;
   totalGroundLogisticsSnapshot?: number;
   transactionCurrencySnapshot?: CurrencyCode;
   pricingVersionSnapshot?: number | string;
@@ -2118,6 +2205,8 @@ export interface AgentQuotationResponse {
   dayDescriptions?: Record<number, string>;
   dayOverviews?: Record<number, string>;
   dayNotes?: Record<number, string>;
+  itineraryOverview?: string;
+  narrative?: string;
   sourcePackageId?: string;
   sourcePackageName?: string;
   inclusions?: string[];
@@ -2147,6 +2236,9 @@ export interface AgentQuotationResponse {
   pricing_version?: number | string;
   pricingSnapshot?: PricingSnapshot;
   pricing_snapshot?: PricingSnapshot;
+  currencyConversionSnapshot?: QuotationCurrencySnapshot;
+  hotelAccommodationTotal?: number;
+  landPartTotal?: number;
 
   // Customer-Facing Totals ONLY
   totalSellingPrice: number;

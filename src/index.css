@@ -65,6 +65,18 @@
   }
 
   /* TheUnbound Rich-Text Presentation Typography */
+  .theunbound-rich-text h1 {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #0f172a;
+    margin-top: 1.25rem;
+    margin-bottom: 0.5rem;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+  }
+  .theunbound-rich-text h1:first-child {
+    margin-top: 0;
+  }
   .theunbound-rich-text h2 {
     font-size: 1.05rem;
     font-weight: 800;
@@ -135,6 +147,28 @@
   }
   .theunbound-rich-text em, 
   .theunbound-rich-text i {
+    font-style: italic;
+    color: #475569;
+  }
+  .theunbound-rich-text u {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .theunbound-rich-text s,
+  .theunbound-rich-text del,
+  .theunbound-rich-text strike {
+    text-decoration: line-through;
+    color: #64748b;
+  }
+  .theunbound-rich-text hr {
+    border: 0;
+    border-top: 1px solid #e2e8f0;
+    margin: 1rem 0;
+  }
+  .theunbound-rich-text blockquote {
+    border-left: 3px solid #00C6A6;
+    padding-left: 0.875rem;
+    margin: 0.75rem 0;
     font-style: italic;
     color: #475569;
   }
