@@ -1226,6 +1226,7 @@ export interface SurchargeHistoryRecord {
     | 'STATUS_CHANGED'
     | 'DUPLICATED'
     | 'ARCHIVED'
+    | 'DELETED'
     | 'PRODUCT_MAPPED'
     | 'PRODUCT_UNMAPPED'
     | 'MIGRATED'
@@ -3865,7 +3866,8 @@ export type AuditAction =
   | 'BULK_ACTION_PERFORMED'
   | 'SURCHARGE_CREATED'
   | 'SURCHARGE_UPDATED'
-  | 'SURCHARGE_ARCHIVED';
+  | 'SURCHARGE_ARCHIVED'
+  | 'SURCHARGE_DELETED';
 
 export type CMSDeletableEntityType =
   | 'Product'

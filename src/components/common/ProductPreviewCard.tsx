@@ -161,12 +161,6 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
               <span>Valid: <strong className="font-mono">{validFrom || '—'}</strong> to <strong className="font-mono">{validTo || '—'}</strong></span>
             </div>
           )}
-          {activeSurchargeCount > 0 && (
-            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold mr-1">
-              <Tag className="w-2.5 h-2.5" />
-              <span>{activeSurchargeCount} Active Surcharge{activeSurchargeCount > 1 ? 's' : ''}</span>
-            </div>
-          )}
           {upsellCount > 0 && (
             <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-teal-50 border border-teal-200 text-[#008972] text-[10px] font-bold">
               <span>✨ {upsellCount} Optional Experience{upsellCount > 1 ? 's' : ''} Available</span>

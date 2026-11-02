@@ -1032,9 +1032,8 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     }
   };
 
-  // Calculate active upsells & active surcharges count
+  // Calculate active upsells count
   const activeUpsells = (formData.upsells || []).filter(u => u.status === 'ACTIVE');
-  const activeSurcharges = (formData.surcharges || []).filter(s => s.status === 'ACTIVE');
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 pb-20">
@@ -1087,7 +1086,6 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
               mealsText={formData.mealSelect && formData.mealSelect.length > 0 ? formData.mealSelect.join(' / ') : undefined}
               validFrom={formData.validity?.validFrom ?? formData.validityFrom}
               validTo={formData.validity?.validTo ?? formData.validityTo}
-              activeSurchargeCount={activeSurcharges.length}
             />
           </div>
 

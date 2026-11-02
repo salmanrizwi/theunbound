@@ -894,12 +894,6 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                             <span>{(product.upsells?.length || product.addons?.length || 0)} Upsells</span>
                           </span>
                         )}
-                        {(product.surcharges && product.surcharges.filter(s => s.status === 'ACTIVE').length > 0) && (
-                          <span className="inline-flex items-center space-x-0.5 px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[9px] font-extrabold">
-                            <Tag className="w-2.5 h-2.5" />
-                            <span>{product.surcharges.filter(s => s.status === 'ACTIVE').length} Surcharge{product.surcharges.filter(s => s.status === 'ACTIVE').length > 1 ? 's' : ''}</span>
-                          </span>
-                        )}
                       </div>
                       {(product.validity?.validFrom || product.validityFrom) && (
                         <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1">

@@ -162,7 +162,9 @@ import {
   migrateLegacyProductSurcharges,
   calculateSurchargeDashboardMetrics,
   generateSurchargeCode,
-  resolveEffectiveSurchargeStatus
+  resolveEffectiveSurchargeStatus,
+  inspectSurchargeUsage,
+  SurchargeUsageInspection
 } from './surchargeEngine';
 import {
   resolveAuthoritativeCategory,
@@ -22824,6 +22826,91 @@ export class AppDatabase {
       actor,
       reason || `Archived centralized surcharge "${source.name}" (${source.code}). Historical quotation snapshots preserved.`
     );
+  }
+
+  public inspectSurchargeUsage(surchargeId: string): SurchargeUsageInspection | null {
+    const surcharge = this.getSurchargeMasterById(surchargeId);
+    if (!surcharge) return null;
+    const quotes = this.getAllSavedQuotes();
+    const bookings = this.getBookings();
+    const products = this.getProducts();
+    return inspectSurchargeUsage(surcharge, quotes, bookings, products);
+  }
+
+  public deleteSurchargeMaster(
+    surchargeId: string,
+    actor?: User | null,
+    reason?: string
+  ): { success: boolean; error?: string; inspection?: SurchargeUsageInspection } {
+    const surcharge = this.getSurchargeMasterById(surchargeId);
+    if (!surcharge) {
+      return { success: false, error: 'Surcharge configuration not found.' };
+    }
+
+    const actorRole = actor?.role || currentAuthUser?.role || 'ADMIN';
+    const isAuthorizedAdmin = actorRole === 'ADMIN' || (actor as any)?.category === 'INTERNAL';
+    if (!isAuthorizedAdmin) {
+      return { success: false, error: 'Unauthorized: Only administrators can permanently delete surcharge configurations.' };
+    }
+
+    const quotes = this.getAllSavedQuotes();
+    const bookings = this.getBookings();
+    const products = this.getProducts();
+    const inspection = inspectSurchargeUsage(surcharge, quotes, bookings, products);
+
+    if (!inspection.canDelete) {
+      return {
+        success: false,
+        error: inspection.reasons.join(' '),
+        inspection
+      };
+    }
+
+    const nowIso = new Date().toISOString();
+    const actorId = actor?.id || currentAuthUser?.id || 'usr-admin-business';
+    const actorName = actor?.name || currentAuthUser?.name || 'Administrator';
+
+    // 1. Delete from surcharge_masters
+    const currentMasters = this.getItem<SurchargeMaster[]>('surcharge_masters', []);
+    const updatedMasters = currentMasters.filter(s => s.id !== surchargeId);
+    this.setItem('surcharge_masters', updatedMasters, true);
+
+    // 2. Delete associated product mappings for this surcharge
+    const currentMappings = this.getItem<SurchargeProductMapping[]>('surcharge_product_mappings', []);
+    const updatedMappings = currentMappings.filter(m => m.surchargeId !== surchargeId);
+    this.setItem('surcharge_product_mappings', updatedMappings, true);
+
+    // 3. Delete Firestore document for the master
+    this.deleteFirestoreDocAsync('surcharge_masters', surchargeId);
+
+    // 4. Record permanent SurchargeHistoryRecord
+    const deleteHistoryRecord: SurchargeHistoryRecord = {
+      id: `shist-del-${surchargeId}-${Date.now()}`,
+      surchargeId: surcharge.id,
+      surchargeCode: surcharge.surchargeCode,
+      surchargeName: surcharge.name,
+      version: (surcharge.version || 1) + 1,
+      action: 'DELETED',
+      changesSummary: `Permanently deleted unused surcharge configuration "${surcharge.name}" (${surcharge.surchargeCode || surcharge.id}). Reason: ${reason || 'Administrator manual deletion of unused configuration.'}`,
+      performedBy: actorId,
+      performedByName: actorName,
+      performedByRole: actorRole as any,
+      timestamp: nowIso
+    };
+    const currentHistory = this.getItem<SurchargeHistoryRecord[]>('surcharge_history', []);
+    this.setItem('surcharge_history', [deleteHistoryRecord, ...currentHistory.slice(0, 499)], false);
+    this.syncFirestoreDoc('surcharge_history', deleteHistoryRecord.id, deleteHistoryRecord);
+
+    // 5. Forensic audit log (SURCHARGE_DELETED) preserved permanently
+    this.logAudit(
+      { id: actorId, name: actorName, role: actorRole as any },
+      'SURCHARGE_DELETED',
+      'SurchargeMaster',
+      surchargeId,
+      `Permanently deleted unused surcharge "${surcharge.name}" (${surcharge.surchargeCode || surcharge.id}). ${reason ? `Reason: ${reason}` : ''}`
+    );
+
+    return { success: true, inspection };
   }
 
   public recordQuotationSurchargeOverrideHistory(

@@ -46,7 +46,9 @@ import {
   resolveEffectiveSurchargeStatus,
   generateSurchargeCode,
   validateSurchargeMaster,
-  detectCentralizedSurchargeConflicts
+  detectCentralizedSurchargeConflicts,
+  inspectSurchargeUsage,
+  SurchargeUsageInspection
 } from '../../services/surchargeEngine';
 import { formatCurrency } from '../../services/pricingEngine';
 
@@ -146,6 +148,13 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
   const [editingSurcharge, setEditingSurcharge] = useState<SurchargeMaster | null>(null);
   const [inspectingSurcharge, setInspectingSurcharge] = useState<SurchargeMaster | null>(null);
   const [historyModalSurchargeId, setHistoryModalSurchargeId] = useState<string | null>(null);
+
+  // Deletion Confirmation & Audit State
+  const [deletingSurcharge, setDeletingSurcharge] = useState<SurchargeMaster | null>(null);
+  const [deleteInspection, setDeleteInspection] = useState<SurchargeUsageInspection | null>(null);
+  const [deleteReason, setDeleteReason] = useState<string>('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   // Form State
   const [formData, setFormData] = useState<Partial<SurchargeMaster>>({});
@@ -518,6 +527,47 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
     }
   };
 
+  const handleRequestDelete = (surcharge: SurchargeMaster) => {
+    const inspection = db.inspectSurchargeUsage(surcharge.id);
+    setDeletingSurcharge(surcharge);
+    setDeleteInspection(inspection);
+    setDeleteReason('');
+    setDeleteError(null);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deletingSurcharge) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      const result = db.deleteSurchargeMaster(deletingSurcharge.id, user, deleteReason);
+      if (!result.success) {
+        setDeleteError(result.error || 'Failed to delete surcharge.');
+        setIsDeleting(false);
+        return;
+      }
+      setSurcharges(db.getSurchargeMasters(true));
+      const codeLabel = deletingSurcharge.surchargeCode || deletingSurcharge.code || deletingSurcharge.id;
+      setSaveBanner(
+        `Permanently deleted surcharge "${deletingSurcharge.name}" (${codeLabel}). Configuration and unused mappings removed.`
+      );
+      setTimeout(() => setSaveBanner(null), 5000);
+      setDeletingSurcharge(null);
+      setDeleteInspection(null);
+      if (viewMode === 'FORM' && editingSurcharge?.id === deletingSurcharge.id) {
+        setViewMode('LIST');
+        setEditingSurcharge(null);
+      }
+      if (inspectingSurcharge?.id === deletingSurcharge.id) {
+        setInspectingSurcharge(null);
+      }
+    } catch (err: any) {
+      setDeleteError(err?.message || 'Unexpected error deleting surcharge.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const handleSaveForm = (targetStatus?: SurchargeStatus) => {
     const candidate: Partial<SurchargeMaster> = {
       ...formData,
@@ -693,6 +743,17 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
             >
               Save as Draft
             </button>
+            {editingSurcharge && (
+              <button
+                type="button"
+                onClick={() => handleRequestDelete(editingSurcharge)}
+                className="px-3.5 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                title="Permanently Delete Surcharge"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => handleSaveForm(formData.status === 'DRAFT' ? 'ACTIVE' : (formData.status as SurchargeStatus) || 'ACTIVE')}
@@ -2422,6 +2483,14 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                               <Archive className="w-3.5 h-3.5" />
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => handleRequestDelete(s)}
+                            className="p-1.5 rounded-lg text-slate-500 hover:text-rose-700 hover:bg-rose-50 cursor-pointer"
+                            title="Delete Surcharge (Checks Usage Eligibility)"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -2583,6 +2652,18 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                   onClick={() => {
                     const target = inspectingSurcharge;
                     setInspectingSurcharge(null);
+                    handleRequestDelete(target);
+                  }}
+                  className="px-3.5 py-2 rounded-xl border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = inspectingSurcharge;
+                    setInspectingSurcharge(null);
                     handleOpenEdit(target);
                   }}
                   className="px-4 py-2 rounded-xl bg-[#00C6A6] text-slate-950 text-xs font-black cursor-pointer"
@@ -2638,6 +2719,248 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                   </div>
                 ))
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION & USAGE INSPECTION MODAL */}
+      {deletingSurcharge && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-xl w-full flex flex-col overflow-hidden border border-slate-200 shadow-2xl">
+            {/* Header */}
+            <div
+              className={`p-5 text-white flex items-start justify-between ${
+                deleteInspection?.canDelete ? 'bg-slate-900' : 'bg-rose-950'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                    deleteInspection?.canDelete ? 'bg-rose-500/20 text-rose-400' : 'bg-amber-500/20 text-amber-400'
+                  }`}
+                >
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black">
+                    {deleteInspection?.canDelete ? 'Permanently Delete Surcharge' : 'Deletion Restricted: Surcharge In Use'}
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    {deleteInspection?.canDelete
+                      ? 'Verify surcharge details before permanently removing this configuration.'
+                      : 'Operational dependencies prevent permanent deletion to safeguard pricing records.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingSurcharge(null);
+                  setDeleteInspection(null);
+                  setDeleteError(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4 text-xs overflow-y-auto max-h-[70vh]">
+              {/* Surcharge Details Card */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-bold text-xs text-[#008972]">
+                    {deletingSurcharge.surchargeCode || deletingSurcharge.code || deletingSurcharge.id}
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-200 text-slate-700">
+                    {deletingSurcharge.status}
+                  </span>
+                </div>
+                <div className="text-sm font-black text-slate-900">{deletingSurcharge.name}</div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-600 pt-1">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Travel Validity</span>
+                    <strong className="font-mono text-slate-800">
+                      {deletingSurcharge.validFrom || '—'} → {deletingSurcharge.validTo || '—'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Configured Rate</span>
+                    <strong className="font-mono text-slate-800">
+                      {deletingSurcharge.currency}{' '}
+                      {deletingSurcharge.calculationType === 'PERCENTAGE'
+                        ? `${deletingSurcharge.percentage ?? deletingSurcharge.amount}%`
+                        : Number(deletingSurcharge.amount || 0).toLocaleString()}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Linked Products</span>
+                    <strong className="text-slate-800">
+                      {deleteInspection?.linkedProducts.length ?? deletingSurcharge.linkedProductIds?.length ?? 0} Product(s)
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Category</span>
+                    <strong className="text-slate-800">{deletingSurcharge.surchargeCategory}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Error Banner if any */}
+              {deleteError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-semibold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{deleteError}</span>
+                </div>
+              )}
+
+              {/* CASE A: UNUSED - ELIGIBLE FOR DELETION */}
+              {deleteInspection?.canDelete ? (
+                <div className="space-y-3">
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl space-y-1">
+                    <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Zero Operational Dependencies Detected</span>
+                    </div>
+                    <p className="text-[11px] text-emerald-800 leading-relaxed">
+                      This configuration is not referenced by any saved quotations, finalized snapshots, or bookings.
+                      Permanently deleting it will remove this record and unmap unused products cleanly.
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5 text-xs text-amber-950">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Permanent Deletion Warning</span>
+                    </div>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      This action is irreversible. A permanent audit entry (<code className="font-mono font-bold text-amber-900">SURCHARGE_DELETED</code>)
+                      will be retained in the administrative governance log for full historical compliance.
+                    </p>
+                  </div>
+
+                  <div className="space-y-1 pt-1">
+                    <label className="font-bold text-slate-700 text-xs">
+                      Administrative Reason for Deletion (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={deleteReason}
+                      onChange={e => setDeleteReason(e.target.value)}
+                      placeholder="e.g. Obsolete draft, duplicate entry, replaced by revised seasonal schedule..."
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* CASE B: IN USE - DELETION RESTRICTED */
+                <div className="space-y-3">
+                  <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl space-y-2">
+                    <div className="flex items-center gap-2 text-rose-950 font-bold text-xs">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>Permanent Deletion Prohibited By Data Integrity Rules</span>
+                    </div>
+                    <p className="text-[11px] text-rose-800 leading-relaxed">
+                      This surcharge configuration cannot be permanently deleted because active quotations, bookings, or product mappings depend on it:
+                    </p>
+                    <ul className="list-disc pl-5 text-[11px] text-rose-700 space-y-1">
+                      {deleteInspection?.reasons.map((r, i) => (
+                        <li key={i}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {deleteInspection && deleteInspection.referencedQuotes.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="font-bold text-slate-700 block text-[11px]">
+                        Referenced Quotations ({deleteInspection.referencedQuotes.length}):
+                      </span>
+                      <div className="max-h-28 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50">
+                        {deleteInspection.referencedQuotes.map(q => (
+                          <div key={q.id} className="p-2 flex items-center justify-between text-[11px]">
+                            <span className="font-mono font-bold text-slate-800">Quote #{q.quoteNumber}</span>
+                            <span className="text-slate-500">{q.clientName || 'Client'}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-700">
+                              {q.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {deleteInspection && deleteInspection.referencedBookings.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="font-bold text-slate-700 block text-[11px]">
+                        Referenced Bookings ({deleteInspection.referencedBookings.length}):
+                      </span>
+                      <div className="max-h-28 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100 bg-slate-50">
+                        {deleteInspection.referencedBookings.map(b => (
+                          <div key={b.id} className="p-2 flex items-center justify-between text-[11px]">
+                            <span className="font-mono font-bold text-slate-800">Booking #{b.bookingReference}</span>
+                            <span className="text-slate-500">{b.leadTraveler || 'Lead Traveler'}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800">
+                              {b.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-900 text-[11px] leading-relaxed">
+                    <strong>Recommended Action:</strong> Click <strong>"Archive Surcharge Instead"</strong> below.
+                    Archiving marks the surcharge inactive for future quotes while keeping all past quotations, invoices,
+                    and booking snapshots 100% mathematically consistent and audit-compliant.
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletingSurcharge(null);
+                  setDeleteInspection(null);
+                  setDeleteError(null);
+                }}
+                className="px-4 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <div className="flex items-center gap-2">
+                {deleteInspection?.canDelete ? (
+                  <button
+                    type="button"
+                    disabled={isDeleting}
+                    onClick={handleConfirmDelete}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-black shadow-xs cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{isDeleting ? 'Deleting...' : 'Permanently Delete Surcharge'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = deletingSurcharge;
+                      setDeletingSurcharge(null);
+                      setDeleteInspection(null);
+                      setDeleteError(null);
+                      handleArchive(target);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-black cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Archive className="w-3.5 h-3.5" />
+                    <span>Archive Surcharge Instead</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

@@ -10,7 +10,9 @@ import {
   SurchargeOverlapWarning,
   SurchargePeriodWindow,
   SurchargeProductMapping,
-  SurchargeStatus
+  SurchargeStatus,
+  Quotation,
+  Booking
 } from '../types';
 import { currencyEngine, roundCurrencyAmount } from './currencyEngine';
 
@@ -1544,3 +1546,225 @@ export function evaluateCentralizedProductSurcharges(
     fxValid: true
   };
 }
+
+export interface SurchargeUsageInspection {
+  surchargeId: string;
+  surchargeCode: string;
+  surchargeName: string;
+  canDelete: boolean;
+  isInUse: boolean;
+  hasActiveProductMappings: boolean;
+  reasons: string[];
+  referencedQuotes: Array<{ id: string; quoteNumber: string; clientName?: string; status: string }>;
+  referencedBookings: Array<{ id: string; bookingReference: string; leadTraveler?: string; status: string }>;
+  linkedProducts: Array<{ id: string; sku?: string; name: string }>;
+  activeMappingsCount: number;
+  totalUsageCount: number;
+}
+
+/**
+ * Inspects whether a centralized surcharge is in active operational use
+ * across quotations, bookings, or active product mappings before permanent deletion.
+ */
+export function inspectSurchargeUsage(
+  surcharge: SurchargeMaster,
+  allQuotes: Quotation[] = [],
+  allBookings: Booking[] = [],
+  allProducts: Product[] = []
+): SurchargeUsageInspection {
+  const sid = surcharge.id;
+  const scode = surcharge.surchargeCode || sid;
+  const legacyId = surcharge.migratedFromLegacySurchargeId;
+
+  // 1. Linked products
+  const productMap = new Map<string, Product>();
+  allProducts.forEach(p => productMap.set(p.id, p));
+
+  const linkedIds = Array.isArray(surcharge.linkedProductIds) ? surcharge.linkedProductIds.filter(Boolean) : [];
+  const linkedProducts: Array<{ id: string; sku?: string; name: string }> = [];
+  linkedIds.forEach(pid => {
+    const p = productMap.get(pid);
+    if (p) {
+      linkedProducts.push({ id: p.id, sku: p.sku, name: p.name });
+    } else {
+      linkedProducts.push({ id: pid, name: `Product (${pid})` });
+    }
+  });
+
+  // 2. Check quotations
+  const referencedQuotesMap = new Map<string, { id: string; quoteNumber: string; clientName?: string; status: string }>();
+
+  const isMatchingSurcharge = (as: any) => {
+    if (!as) return false;
+    return (
+      as.surchargeId === sid ||
+      as.surchargeCode === scode ||
+      (legacyId && (as.surchargeId === legacyId || as.surchargeCode === legacyId)) ||
+      (as.name && as.name === surcharge.name)
+    );
+  };
+
+  const isMatchingOverride = (ov: any) => {
+    if (!ov) return false;
+    return (
+      ov.surchargeId === sid ||
+      ov.surchargeCode === scode ||
+      (legacyId && ov.surchargeId === legacyId)
+    );
+  };
+
+  allQuotes.forEach(q => {
+    if (!q || !q.id) return;
+    let matches = false;
+
+    // Check items
+    if (Array.isArray(q.items)) {
+      for (const item of q.items) {
+        if (Array.isArray((item as any).appliedSurcharges) && (item as any).appliedSurcharges.some(isMatchingSurcharge)) {
+          matches = true;
+          break;
+        }
+      }
+    }
+
+    // Check currencyConversionSnapshot
+    if (!matches && q.currencyConversionSnapshot) {
+      if (
+        Array.isArray(q.currencyConversionSnapshot.appliedSurcharges) &&
+        q.currencyConversionSnapshot.appliedSurcharges.some(isMatchingSurcharge)
+      ) {
+        matches = true;
+      }
+      if (
+        !matches &&
+        Array.isArray((q.currencyConversionSnapshot as any).surchargeOverrides) &&
+        (q.currencyConversionSnapshot as any).surchargeOverrides.some(isMatchingOverride)
+      ) {
+        matches = true;
+      }
+    }
+
+    // Check quote surchargeOverrides
+    if (!matches && Array.isArray(q.surchargeOverrides) && q.surchargeOverrides.some(isMatchingOverride)) {
+      matches = true;
+    }
+
+    // Check versions if any
+    if (!matches && Array.isArray((q as any).versions)) {
+      for (const v of (q as any).versions) {
+        if (Array.isArray(v.items)) {
+          for (const item of v.items) {
+            if (Array.isArray((item as any).appliedSurcharges) && (item as any).appliedSurcharges.some(isMatchingSurcharge)) {
+              matches = true;
+              break;
+            }
+          }
+        }
+        if (matches) break;
+      }
+    }
+
+    if (matches) {
+      referencedQuotesMap.set(q.id, {
+        id: q.id,
+        quoteNumber: q.quoteNumber || q.id,
+        clientName: (q as any).clientName || (q as any).customerName || (q as any).title,
+        status: q.status || 'DRAFT'
+      });
+    }
+  });
+
+  const referencedQuotes = Array.from(referencedQuotesMap.values());
+
+  // 3. Check bookings
+  const referencedBookingsMap = new Map<string, { id: string; bookingReference: string; leadTraveler?: string; status: string }>();
+
+  allBookings.forEach(b => {
+    if (!b || !b.id) return;
+    let matches = false;
+
+    if (Array.isArray((b as any).serviceItems)) {
+      for (const item of (b as any).serviceItems) {
+        if (Array.isArray(item.appliedSurcharges) && item.appliedSurcharges.some(isMatchingSurcharge)) {
+          matches = true;
+          break;
+        }
+      }
+    }
+
+    if (!matches && Array.isArray((b as any).items)) {
+      for (const item of (b as any).items) {
+        if (Array.isArray(item.appliedSurcharges) && item.appliedSurcharges.some(isMatchingSurcharge)) {
+          matches = true;
+          break;
+        }
+      }
+    }
+
+    if (!matches && Array.isArray((b as any).appliedSurcharges) && (b as any).appliedSurcharges.some(isMatchingSurcharge)) {
+      matches = true;
+    }
+
+    // If booking was spawned from a referenced quote
+    if (!matches && b.quoteId && referencedQuotesMap.has(b.quoteId)) {
+      matches = true;
+    }
+
+    if (matches) {
+      referencedBookingsMap.set(b.id, {
+        id: b.id,
+        bookingReference: b.bookingReference || (b as any).referenceNumber || b.id,
+        leadTraveler: (b as any).leadTravelerName || (b as any).customerName || (b as any).clientName,
+        status: b.status || 'CONFIRMED'
+      });
+    }
+  });
+
+  const referencedBookings = Array.from(referencedBookingsMap.values());
+
+  const reasons: string[] = [];
+  const hasActiveProductMappings = linkedProducts.length > 0 && (surcharge.status === 'ACTIVE' || surcharge.status === 'SCHEDULED');
+
+  if (referencedQuotes.length > 0) {
+    const quoteNums = referencedQuotes.slice(0, 3).map(q => q.quoteNumber).join(', ');
+    const more = referencedQuotes.length > 3 ? ` (+${referencedQuotes.length - 3} more)` : '';
+    reasons.push(
+      `Referenced by ${referencedQuotes.length} quotation(s) [${quoteNums}${more}]. Deleting would invalidate historical quotation pricing snapshots.`
+    );
+  }
+
+  if (referencedBookings.length > 0) {
+    const bookingRefs = referencedBookings.slice(0, 3).map(b => b.bookingReference).join(', ');
+    const more = referencedBookings.length > 3 ? ` (+${referencedBookings.length - 3} more)` : '';
+    reasons.push(
+      `Referenced by ${referencedBookings.length} booking(s) [${bookingRefs}${more}]. Operational booking records require financial audit integrity.`
+    );
+  }
+
+  if (hasActiveProductMappings) {
+    const prodNames = linkedProducts.slice(0, 3).map(p => p.name).join(', ');
+    const more = linkedProducts.length > 3 ? ` (+${linkedProducts.length - 3} more)` : '';
+    reasons.push(
+      `Currently linked to ${linkedProducts.length} active product(s) [${prodNames}${more}]. Unlink products or set status to Inactive before deleting, or choose Archive instead.`
+    );
+  }
+
+  const isInUse = referencedQuotes.length > 0 || referencedBookings.length > 0 || hasActiveProductMappings;
+  const canDelete = !isInUse;
+
+  return {
+    surchargeId: sid,
+    surchargeCode: scode,
+    surchargeName: surcharge.name,
+    canDelete,
+    isInUse,
+    hasActiveProductMappings,
+    reasons,
+    referencedQuotes,
+    referencedBookings,
+    linkedProducts,
+    activeMappingsCount: linkedProducts.length,
+    totalUsageCount: referencedQuotes.length + referencedBookings.length
+  };
+}
+
