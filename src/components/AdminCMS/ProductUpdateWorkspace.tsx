@@ -1684,13 +1684,15 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
 
 
 
-          {/* Section: VALIDITY & SURCHARGES (Available across all Product Categories) */}
+          {/* Section: VALIDITY & CENTRALIZED SURCHARGES REFERENCE (Available across all Product Categories) */}
           <div id="product-validity-and-surcharges-section">
             <SectionCard
-              title="Validity & Surcharges"
-              description="Configure commercial sellable validity dates (Valid From / Valid To) and repeatable seasonal or peak surcharge periods for this product."
+              title="Commercial Validity & Centralized Surcharges"
+              description="Configure commercial sellable validity dates (Valid From / Valid To) and view centralized surcharge periods linked from Finance & Administration → Surcharges."
             >
               <InventoryValidityAndSurchargesSection
+                productId={formData.id}
+                productName={formData.name}
                 validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
                 validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
                 surcharges={formData.surcharges || []}
@@ -1705,13 +1707,6 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                     validityFrom: validFrom,
                     validityTo: validTo,
                     validity
-                  }));
-                }}
-                onChangeSurcharges={(nextSurcharges) => {
-                  setWorkspaceValidationError(null);
-                  setFormData(prev => ({
-                    ...prev,
-                    surcharges: nextSurcharges
                   }));
                 }}
               />

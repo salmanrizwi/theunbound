@@ -30,6 +30,7 @@ import { LeadManager } from './LeadManager';
 import { UserApprovalAccessManager } from './UserApprovalAccessManager';
 import { FinancialsManager } from './FinancialsManager';
 import { CurrencyManagementPanel } from './CurrencyManagement/CurrencyManagementPanel';
+import { SurchargeManagementModule } from './SurchargeManagementModule';
 import { PromotionManager } from './PromotionManager';
 import { EmailCampaignsManager } from './EmailCampaignsManager';
 import { NewsletterManager } from './NewsletterManager';
@@ -140,6 +141,7 @@ export type CMSSection =
   | 'ACCOUNT_MANAGEMENT'
   | 'ANALYTICS_MANAGEMENT'
   | 'CURRENCY_MANAGEMENT'
+  | 'SURCHARGE_MANAGEMENT'
   | 'NOTIFICATIONS_MANAGEMENT'
   | 'CALENDAR_SLAS'
   | 'DATABASE_MANAGEMENT'
@@ -196,6 +198,7 @@ const SECTION_SLUG_MAP: Record<CMSSection, string> = {
   ACCOUNT_MANAGEMENT: 'accounts',
   ANALYTICS_MANAGEMENT: 'analytics',
   CURRENCY_MANAGEMENT: 'currency',
+  SURCHARGE_MANAGEMENT: 'surcharges',
   NOTIFICATIONS_MANAGEMENT: 'tasks',
   CALENDAR_SLAS: 'tasks',
   DATABASE_MANAGEMENT: 'database',
@@ -219,6 +222,7 @@ function resolveSectionFromSlug(slug?: string): CMSSection {
   if (clean === 'ACCOUNTS' || clean === 'ACCOUNT' || clean === 'ACCOUNTMANAGEMENT' || clean === 'USERS' || clean === 'USER' || clean === 'SUPPLIERS') return 'ACCOUNT_MANAGEMENT';
   if (clean === 'ANALYTICS' || clean === 'ANALYTICSMANAGEMENT' || clean === 'FINANCIALS') return 'ANALYTICS_MANAGEMENT';
   if (clean === 'CURRENCY' || clean === 'CURRENCYMANAGEMENT' || clean === 'FX') return 'CURRENCY_MANAGEMENT';
+  if (clean === 'SURCHARGES' || clean === 'SURCHARGE' || clean === 'SURCHARGEMANAGEMENT') return 'SURCHARGE_MANAGEMENT';
   if (clean === 'TASKS' || clean === 'TASK' || clean === 'SLAS' || clean === 'SLA' || clean === 'NOTIFICATIONS' || clean === 'NOTIFICATIONSMANAGEMENT' || clean === 'CALENDARSLAS') return 'NOTIFICATIONS_MANAGEMENT';
   if (clean === 'INTEGRATIONS' || clean === 'INTEGRATIONSDB') return 'INTEGRATIONS_DB';
   if (clean === 'DATABASE' || clean === 'DATABASEMANAGEMENT') return 'DATABASE_MANAGEMENT';
@@ -341,6 +345,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [leadForNewQuote, setLeadForNewQuote] = useState<TravelLead | null>(null);
+  const [surchargeFilterProductId, setSurchargeFilterProductId] = useState<string>('');
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -444,6 +449,21 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Listen to cross-module CMS navigation events (e.g. from Product Management -> Centralized Surcharges)
+  useEffect(() => {
+    const handleCmsNavigate = (e: Event) => {
+      const customEvent = e as CustomEvent<{ section: string; subTab?: string; filterProductId?: string; filterProductName?: string }>;
+      if (customEvent.detail) {
+        if (customEvent.detail.filterProductId) {
+          setSurchargeFilterProductId(customEvent.detail.filterProductId);
+        }
+        handleNavigate(customEvent.detail.section, customEvent.detail.subTab);
+      }
+    };
+    window.addEventListener('admin-cms-navigate', handleCmsNavigate);
+    return () => window.removeEventListener('admin-cms-navigate', handleCmsNavigate);
   }, []);
 
   // Fullscreen toggle handler
@@ -724,6 +744,17 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'RATES_TABLE', label: 'Currency Pairs & Adjustments', icon: CircleDollarSign },
             { id: 'CALCULATOR_PREVIEW', label: 'Rate Preview & Simulator', icon: Calculator },
             { id: 'AUDIT_LOGS', label: 'FX Rate Audit Log', icon: History }
+          ]
+        },
+        {
+          id: 'SURCHARGE_MANAGEMENT',
+          label: 'Surcharge Management',
+          shortLabel: 'Surcharges',
+          icon: Percent,
+          badge: 'Centralized',
+          description: 'Centralized peak season, holiday, and weekend surcharge governance. Manage date windows, product links, and commercial policies.',
+          subTabs: [
+            { id: 'SURCHARGES', label: 'Centralized Surcharges', icon: Percent }
           ]
         }
       ]
@@ -1333,6 +1364,14 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* 4.3 CURRENCY MANAGEMENT & FX ENGINE */}
           {currentModuleConfig.id === 'CURRENCY_MANAGEMENT' && (
             <CurrencyManagementPanel currentUser={currentUser} />
+          )}
+
+          {/* 4.4 CENTRALIZED SURCHARGE MANAGEMENT */}
+          {currentModuleConfig.id === 'SURCHARGE_MANAGEMENT' && (
+            <SurchargeManagementModule
+              user={currentUser}
+              initialFilterProductId={surchargeFilterProductId}
+            />
           )}
 
           {/* SECTION 5: SYSTEM & OPERATIONS */}

@@ -152,6 +152,8 @@ export interface CurrencyConversionLineRecord {
   taxAmount: number;
   serviceFeeAmount: number;
   discountAmount: number;
+  surchargeAmount?: number;
+  appliedSurcharges?: AppliedSurchargeDetail[];
   finalLineSellingAmount: number;
   isValidRate: boolean;
   rateError?: string;
@@ -167,6 +169,9 @@ export interface QuotationCurrencySnapshot {
   fxSource: string;
   capturedAt: string;
   lineItems: CurrencyConversionLineRecord[];
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  surchargesTotal?: number;
+  surchargeOverrides?: QuotationSurchargeOverride[];
   totals: {
     convertedTotalNetCost: number;
     baseMarginTotal: number;
@@ -178,6 +183,7 @@ export interface QuotationCurrencySnapshot {
     taxesTotal: number;
     serviceFeesTotal: number;
     discountsTotal: number;
+    surchargesTotal?: number;
     b2bSellingPriceTotal: number; // Manual Margin Adjustment Final Total (Stage 1)
     additionalAgentMarginType: 'PERCENTAGE' | 'FIXED';
     additionalAgentMarginValue: number;
@@ -252,6 +258,8 @@ export interface CMSFinancePermissions {
   generateProforma?: boolean;
   generateVoucher?: boolean;
   pricingManagement?: boolean;
+  surchargeManagement?: boolean;
+  canOverrideQuoteSurcharges?: boolean;
   marginManagement?: boolean;
   commercialConfiguration?: boolean;
   userAccounts?: boolean;
@@ -1008,17 +1016,264 @@ export interface InventoryValidity {
 }
 
 export type SurchargeApplicationBasis =
+  | 'FIXED_AMOUNT'
+  | 'PERCENTAGE'
   | 'PER_PERSON'
   | 'PER_ADULT'
+  | 'PER_CHILD'
+  | 'PER_INFANT'
+  | 'PER_ROOM'
   | 'PER_ROOM_NIGHT'
   | 'PER_NIGHT'
   | 'PER_VEHICLE'
+  | 'PER_UNIT'
   | 'PER_SERVICE'
   | 'PER_BOOKING'
   | 'PER_HOUR'
   | 'PER_DAY'
   | 'PER_DEVICE'
   | string;
+
+export type SurchargeCategoryType =
+  | 'PEAK_SEASON'
+  | 'HOLIDAY_FESTIVAL'
+  | 'WEEKEND'
+  | 'SPECIAL_EVENT'
+  | 'FUEL_SURCHARGE'
+  | 'LATE_NIGHT'
+  | 'RUSH_BOOKING'
+  | 'Peak Season Surcharge'
+  | 'Holiday & Festival Supplement'
+  | 'Cherry Blossom (Sakura) Peak'
+  | 'Golden Week Supplement'
+  | 'Autumn Foliage Peak'
+  | 'Year-End & New Year Peak'
+  | 'Weekend & High-Demand Supplement'
+  | 'Special Event / Expo Surcharge'
+  | 'Late / Rush Booking Surcharge'
+  | 'Night / Out-of-Hours Supplement'
+  | 'Fuel & Operational Surcharge'
+  | string;
+
+export type SurchargeStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'EXPIRED' | 'INACTIVE' | 'ARCHIVED';
+
+export interface SurchargeDashboardMetrics {
+  totalConfigurations: number;
+  activePeriodsCount: number;
+  upcomingPeriodsCount: number;
+  expiredPeriodsCount: number;
+  draftConfigurationsCount: number;
+  inactiveConfigurationsCount: number;
+  archivedConfigurationsCount: number;
+  affectedProductsCount: number;
+  productsWithoutApplicableSurchargesCount: number;
+  totalCatalogProductsCount: number;
+  flaggedInactiveProductLinksCount: number;
+}
+
+export interface SurchargePeriodWindow {
+  id: string;
+  label?: string;
+  travelStartDate: string;
+  travelEndDate: string;
+  bookingStartDate?: string;
+  bookingEndDate?: string;
+  // Aliases for period configuration
+  travelValidFrom?: string;
+  travelValidTo?: string;
+  bookingValidFrom?: string;
+  bookingValidTo?: string;
+  applicableDaysOfWeek?: string[]; // e.g. ['Monday', 'Tuesday', ...]
+  blackoutDates?: string[];
+}
+
+/**
+ * Centralized Surcharge Master Record (Finance & Administration -> Surcharges)
+ */
+export interface SurchargeMaster {
+  // A. Basic Information
+  id: string;
+  surchargeCode: string; // e.g. 'SUR-2026-001'
+  code?: string; // Canonical alias for surchargeCode
+  name: string;
+  internalDescription?: string;
+  isActive?: boolean;
+  surchargeCategory: string; // e.g. 'Peak Season Surcharge', 'Holiday Supplement', 'Event Surcharge', 'Fuel / Operational Surcharge', 'Weekend Supplement', 'Late Booking Surcharge'
+  regionId?: string;
+  regionName?: string;
+  prefecture?: string;
+  destinationId?: string;
+  destinationName?: string;
+  touristArea?: string;
+  hubId?: string;
+  hubName?: string;
+  supplierId?: string;
+  supplierName?: string;
+  internalAdminNotes?: string;
+  status: SurchargeStatus;
+
+  // B. Surcharge Period Configuration
+  validFrom: string; // Primary Effective Travel Start Date (YYYY-MM-DD)
+  validTo: string;   // Primary Effective Travel End Date (YYYY-MM-DD)
+  bookingValidFrom?: string; // Optional Booking Start Date (YYYY-MM-DD)
+  bookingValidTo?: string;   // Optional Booking End Date (YYYY-MM-DD)
+  periods?: SurchargePeriodWindow[]; // Multiple separate surcharge periods
+  recurringDaysOfWeek?: string[]; // Optional day-of-week filter
+  blackoutDates?: string[]; // Excluded dates within period
+  timezone: string; // e.g. 'Asia/Tokyo', 'Europe/London', 'Asia/Kolkata'
+  allowStacking?: boolean; // Explicit stacking rule when overlapping with another surcharge (default false)
+  priority?: number; // Deterministic precedence order when allowStacking is false (higher wins)
+
+  // C. Product Selection and Mapping
+  linkedProductIds: string[]; // Authoritative references to Product.id
+  applicableCategories?: string[];
+  applicableSubcategories?: string[];
+  applicableDestinations?: string[];
+
+  // D. Surcharge Pricing Configuration & Reused Product Operational Fields
+  calculationType: 'FIXED' | 'PERCENTAGE';
+  pricingBasis: SurchargeApplicationBasis;
+  amount: number; // Surcharge Amount (when FIXED or per-unit/pax)
+  percentage?: number; // Surcharge Percentage (when PERCENTAGE)
+  adultAmount?: number; // Optional specific Adult surcharge amount
+  childAmount?: number; // Optional specific Child surcharge amount
+  infantAmount?: number; // Optional specific Infant surcharge amount
+  currency: CurrencyCode;
+
+  // Reused Product Commercial & Operational Fields
+  supplierNettSurcharge?: number;
+  buyerMarkupPercent?: number;
+  b2bAgentMarkupPercent?: number;
+  marginType?: 'PERCENTAGE' | 'FIXED';
+  marginValue?: number;
+  taxApplicable?: boolean;
+  taxPercent?: number;
+  taxMethod?: 'on_margin' | 'on_total' | string;
+  serviceFeeType?: 'PERCENTAGE' | 'FIXED';
+  serviceFeeValue?: number;
+  roundingMode?: 'STANDARD' | 'INTEGER' | 'CEIL' | 'FLOOR';
+  passengerType?: 'ALL' | 'ADULT_ONLY' | 'CHILD_ONLY' | 'ADULT_CHILD';
+  minQuantity?: number;
+  maxQuantity?: number;
+  minPax?: number;
+  maxPax?: number;
+  inclusions?: string[];
+  exclusions?: string[];
+  importantInformation?: string[];
+  operationalRestrictions?: string;
+  availability?: 'INSTANT' | 'ON_REQUEST' | 'LIMITED' | 'SOLD_OUT';
+  bookingRequiredDays?: number;
+  cancellationPolicy?: string;
+  refundConditions?: string;
+  configurableAttributes?: Record<string, any>;
+  internalPricingNotes?: string;
+
+  // Versioning, Audit & Migration Metadata
+  version: number;
+  migratedFromProductId?: string;
+  migratedFromLegacySurchargeId?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  createdByName?: string;
+  updatedBy?: string;
+  updatedByName?: string;
+  updatedByEmail?: string;
+  archivedAt?: string;
+  archivedBy?: string;
+  isDeleted?: boolean;
+}
+
+/**
+ * Surcharge <-> Product Mapping Record (`surcharge_product_mappings` collection)
+ */
+export interface SurchargeProductMapping {
+  id: string; // `${surchargeId}__${productId}`
+  surchargeId: string;
+  surchargeCode?: string;
+  surchargeNameSnapshot?: string;
+  productId: string;
+  productSku: string;
+  productNameSnapshot: string;
+  categorySnapshot: string;
+  subcategorySnapshot?: string;
+  destinationIdSnapshot?: string;
+  destinationSnapshot: string;
+  regionSnapshot?: string;
+  cityHubSnapshot?: string;
+  supplierIdSnapshot?: string;
+  supplierSnapshot: string;
+  currencySnapshot: CurrencyCode;
+  productStatusSnapshot: 'ACTIVE' | 'DRAFT' | 'ARCHIVED' | string;
+  isApplicable: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+/**
+ * Surcharge Audit & Version History Record (`surcharge_history` collection)
+ */
+export interface SurchargeHistoryRecord {
+  id: string;
+  surchargeId: string;
+  surchargeCode?: string;
+  surchargeName: string;
+  version: number;
+  action:
+    | 'CREATED'
+    | 'UPDATED'
+    | 'STATUS_CHANGED'
+    | 'DUPLICATED'
+    | 'ARCHIVED'
+    | 'PRODUCT_MAPPED'
+    | 'PRODUCT_UNMAPPED'
+    | 'MIGRATED'
+    | 'QUOTE_OVERRIDE_APPLIED';
+  changesSummary: string;
+  previousSnapshot?: Partial<SurchargeMaster>;
+  newSnapshot?: Partial<SurchargeMaster>;
+  affectedProductIds?: string[];
+  quoteId?: string;
+  performedBy: string;
+  performedByName: string;
+  performedByRole?: string;
+  timestamp: string;
+}
+
+/**
+ * Controlled Quotation-Level Surcharge Override / Exception
+ */
+export interface QuotationSurchargeOverride {
+  id: string;
+  quoteId?: string;
+  itemId?: string;
+  productId?: string;
+  productName?: string;
+  surchargeId?: string;
+  surchargeName: string;
+  customSurchargeName?: string;
+  overrideType: 'EXEMPT_PRODUCT' | 'OVERRIDE_AMOUNT' | 'ADD_CUSTOM_SURCHARGE' | 'REMOVE_SURCHARGE';
+  originalAmount?: number;
+  originalCurrency?: CurrencyCode;
+  overriddenAmount?: number;
+  overriddenCurrency?: CurrencyCode;
+  overrideAmount?: number;
+  overrideCurrency?: CurrencyCode;
+  calculationType?: 'FIXED' | 'PERCENTAGE';
+  pricingBasis?: SurchargeApplicationBasis;
+  validFrom?: string;
+  validTo?: string;
+  reason: string;
+  authorizedBy: string;
+  authorizedByName: string;
+  authorizedByRole: string;
+  overriddenBy?: string;
+  overriddenByName?: string;
+  overriddenByEmail?: string;
+  overriddenByRole?: string;
+  timestamp: string;
+}
 
 export interface InventorySurcharge {
   surchargeId: string;
@@ -1031,20 +1286,40 @@ export interface InventorySurcharge {
   applicationBasis?: SurchargeApplicationBasis;
   status: 'ACTIVE' | 'INACTIVE';
   internalNotes?: string;
+  centralizedSurchargeId?: string;
 }
 
 export interface AppliedSurchargeDetail {
   surchargeId: string;
+  surchargeCode?: string;
   name: string;
+  surchargeCategory?: string;
   validFrom: string;
   validTo: string;
+  bookingValidFrom?: string;
+  bookingValidTo?: string;
+  affectedProductId?: string;
+  affectedProductName?: string;
   type: 'FIXED' | 'PERCENTAGE';
   value: number;
-  currency: CurrencyCode;
+  currency: CurrencyCode; // Original surcharge currency
+  targetCurrency?: CurrencyCode; // Quotation target currency
+  exchangeRate?: number;
+  rateDirection?: string;
+  fxSource?: string;
+  conversionTimestamp?: string;
   applicationBasis: string;
-  appliedAmountNative: number;
-  appliedAmountConverted: number;
+  appliedAmountNative: number; // Selling surcharge amount in original surcharge currency
+  appliedAmountConverted: number; // Selling surcharge amount in quotation currency
+  supplierNettNative?: number; // Internal only: supplier nett surcharge in original currency
+  supplierNettConverted?: number; // Internal only: supplier nett surcharge in quotation currency
   eligibleDaysCount?: number;
+  isCentralized?: boolean;
+  isOverridden?: boolean;
+  overrideType?: 'EXEMPT_PRODUCT' | 'OVERRIDE_AMOUNT' | 'ADD_CUSTOM_SURCHARGE' | 'REMOVE_SURCHARGE';
+  overrideReason?: string;
+  overriddenBy?: string;
+  conflictWarning?: string;
 }
 
 export interface SurchargeOverlapWarning {
@@ -1054,6 +1329,9 @@ export interface SurchargeOverlapWarning {
   secondName: string;
   overlapStart: string;
   overlapEnd: string;
+  productId?: string;
+  productName?: string;
+  allowStacking?: boolean;
   message: string;
 }
 
@@ -1537,6 +1815,10 @@ export interface PricingCalculationRequest {
   vehicleId?: string;
   fleetId?: string;
   assetId?: string;
+  bookingDate?: string;
+  itemId?: string;
+  surchargeOverrides?: QuotationSurchargeOverride[];
+  frozenAppliedSurcharges?: AppliedSurchargeDetail[];
 }
 
 export interface PricingCalculationResult {
@@ -1912,6 +2194,9 @@ export interface PricingSnapshot {
   adminManualMarginAmount?: number;
   adminMarginMode?: 'REPLACE' | 'ADD';
   revisedSellingPrice?: number;
+  surchargesTotal?: number;
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  surchargeOverrides?: QuotationSurchargeOverride[];
   currencyConversionSnapshot?: QuotationCurrencySnapshot;
 }
 
@@ -2140,6 +2425,11 @@ export interface Quotation {
   admin_margin_mode?: 'REPLACE' | 'ADD';
   revisedSellingPrice?: number;
   revised_selling_price?: number;
+
+  // Centralized Surcharges & Controlled Overrides
+  surchargesTotal?: number;
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  surchargeOverrides?: QuotationSurchargeOverride[];
 
   // Protected Internal Commercial Fields (CMS/Admin Only)
   internalNettCost?: number;
@@ -3572,7 +3862,10 @@ export type AuditAction =
   | 'STATUS_UPDATED'
   | 'SETTINGS_UPDATED'
   | 'LEAD_MOVED_KANBAN'
-  | 'BULK_ACTION_PERFORMED';
+  | 'BULK_ACTION_PERFORMED'
+  | 'SURCHARGE_CREATED'
+  | 'SURCHARGE_UPDATED'
+  | 'SURCHARGE_ARCHIVED';
 
 export type CMSDeletableEntityType =
   | 'Product'

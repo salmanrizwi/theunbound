@@ -90,6 +90,8 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
           pricingManagement: true,
           marginManagement: true,
           commercialConfiguration: true,
+          surchargeManagement: true,
+          canOverrideQuoteSurcharges: true,
           userAccounts: true,
           agencyAccounts: true,
           customerAccounts: true
@@ -221,6 +223,8 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
           pricingManagement: false,
           marginManagement: false,
           commercialConfiguration: false,
+          surchargeManagement: false,
+          canOverrideQuoteSurcharges: false,
           userAccounts: false,
           agencyAccounts: false,
           customerAccounts: false
@@ -805,6 +809,16 @@ export function canUserAccessCMSModule(
       }
       return user?.role === 'ADMIN' || perms?.canAccessFinancials === true;
 
+    case 'SURCHARGE_MANAGEMENT':
+      if (!canUserAccessTopSection(user, 'FINANCE')) return false;
+      if (perms?.cmsFinance?.surchargeManagement !== undefined) {
+        return perms.cmsFinance.surchargeManagement;
+      }
+      if (perms?.cmsFinance?.financials !== undefined) {
+        return perms.cmsFinance.financials;
+      }
+      return user?.role === 'ADMIN' || perms?.canAccessFinancials === true;
+
     // System modules (blocked if cmsSystem.enabled === false)
     case 'CALENDAR_SLAS':
     case 'NOTIFICATIONS_MANAGEMENT':
@@ -1045,6 +1059,23 @@ export function canUserViewInternalCostBreakdown(user: User | null | undefined):
   }
 
   // External agents, buyers, viewers never have access to internal nett costs or margins
+  return false;
+}
+
+/**
+ * Evaluates whether an authenticated user is authorized to apply controlled surcharge overrides or exemptions
+ * on a B2B quotation.
+ */
+export function canUserOverrideQuoteSurcharges(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if ((user.approvalStatus || 'APPROVED') !== 'APPROVED') return false;
+  if (isMasterAdmin(user)) return true;
+  if (user.role === 'ADMIN') return true;
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    if (user.permissions?.cmsFinance?.canOverrideQuoteSurcharges === true) return true;
+    if (user.permissions?.cmsFinance?.surchargeManagement === true) return true;
+    if (user.permissions?.canAccessFinancials === true) return true;
+  }
   return false;
 }
 

@@ -149,8 +149,21 @@ import {
   MasterProductConfiguration,
   VehicleMaster,
   YachtMaster,
-  FerryMaster
+  FerryMaster,
+  SurchargeMaster,
+  SurchargeProductMapping,
+  SurchargeHistoryRecord,
+  QuotationSurchargeOverride,
+  SurchargeDashboardMetrics
 } from '../types';
+import {
+  INITIAL_SURCHARGE_MASTERS,
+  buildMappingsForSurcharge,
+  migrateLegacyProductSurcharges,
+  calculateSurchargeDashboardMetrics,
+  generateSurchargeCode,
+  resolveEffectiveSurchargeStatus
+} from './surchargeEngine';
 import {
   resolveAuthoritativeCategory,
   buildMasterProductConfiguration,
@@ -903,7 +916,8 @@ export class AppDatabase {
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
         'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata',
-        'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency'
+        'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency',
+        'surcharge_masters', 'surcharge_product_mappings', 'surcharge_history'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -942,7 +956,8 @@ export class AppDatabase {
         'product_pricing_rates', 'product_capacities', 'b2b_packages', 'package_items',
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
         'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata',
-        'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency'
+        'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency',
+        'surcharge_masters', 'surcharge_product_mappings', 'surcharge_history'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -1796,6 +1811,9 @@ export class AppDatabase {
       this.syncCollectionSafely<YachtMaster>('master_yachts', 'master_yachts');
       this.syncCollectionSafely<FerryMaster>('master_ferries', 'master_ferries');
       this.syncCollectionSafely<JapanRailCommercialProduct>('japan_rail_commercial_products', 'japan_rail_commercial_products');
+      this.syncCollectionSafely<SurchargeMaster>('surcharge_masters', 'surcharge_masters');
+      this.syncCollectionSafely<SurchargeProductMapping>('surcharge_product_mappings', 'surcharge_product_mappings');
+      this.syncCollectionSafely<SurchargeHistoryRecord>('surcharge_history', 'surcharge_history');
 
       // Synchronize Email Automation Campaigns (Merges Firestore overrides with canonical system triggers)
       onSnapshot(collection(firestoreDb, 'campaigns'), (snapshot) => {
@@ -2015,6 +2033,19 @@ export class AppDatabase {
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'supplier_requests')) this.setItem('supplier_requests', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'uploaded_invoices')) this.setItem('uploaded_invoices', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaign_events')) this.setItem('campaign_events', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_masters')) this.setItem('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_product_mappings')) {
+        const initProducts = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+        const initMappings = INITIAL_SURCHARGE_MASTERS.flatMap(s => buildMappingsForSurcharge(s, initProducts));
+        this.setItem('surcharge_product_mappings', initMappings);
+      }
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_history')) this.setItem('surcharge_history', []);
+
+      try {
+        this.migrateLegacyProductSurchargesToCentralized();
+      } catch (e) {
+        console.warn('Surcharge migration note:', e);
+      }
 
       try {
         this.migrateBookingAssignments();
@@ -2315,6 +2346,24 @@ export class AppDatabase {
       }
     } catch (e) {
       console.warn('Migration note for hotels catalog:', e);
+    }
+
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_masters')) {
+      this.setItem('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
+    }
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_product_mappings')) {
+      const initProducts = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
+      const initMappings = INITIAL_SURCHARGE_MASTERS.flatMap(s => buildMappingsForSurcharge(s, initProducts));
+      this.setItem('surcharge_product_mappings', initMappings);
+    }
+    if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_history')) {
+      this.setItem('surcharge_history', []);
+    }
+
+    try {
+      this.migrateLegacyProductSurchargesToCentralized();
+    } catch (e) {
+      console.warn('Initial centralized surcharge migration note:', e);
     }
 
     try {
@@ -22533,6 +22582,287 @@ export class AppDatabase {
       })
       .filter(e => e.excessAmount > 0);
   }
+
+  // ==========================================
+  // CENTRALIZED SURCHARGE MANAGEMENT (FINANCE & ADMINISTRATION)
+  // ==========================================
+
+  /**
+   * Safely migrates any legacy product-level surcharges (`product.surcharges`) into
+   * centralized `surcharge_masters`, `surcharge_product_mappings`, and `surcharge_history`
+   * without deleting historical data or modifying existing quotation snapshots.
+   */
+  public migrateLegacyProductSurchargesToCentralized(): {
+    migratedCount: number;
+    totalSurcharges: number;
+  } {
+    const products = this.getProducts();
+    const existingMasters = this.getItem<SurchargeMaster[]>('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
+    const existingMappings = this.getItem<SurchargeProductMapping[]>('surcharge_product_mappings', []);
+    const existingHistory = this.getItem<SurchargeHistoryRecord[]>('surcharge_history', []);
+
+    const { migratedMasters, historyRecords, migratedCount } = migrateLegacyProductSurcharges(
+      products,
+      existingMasters
+    );
+
+    if (migratedMasters.length > 0) {
+      const mergedMasters = [...existingMasters, ...migratedMasters];
+      const newMappings = migratedMasters.flatMap(s => buildMappingsForSurcharge(s, products));
+      const mergedMappings = [...existingMappings, ...newMappings];
+      const mergedHistory = [...historyRecords, ...existingHistory];
+
+      this.setItem('surcharge_masters', mergedMasters, false);
+      this.setItem('surcharge_product_mappings', mergedMappings, false);
+      this.setItem('surcharge_history', mergedHistory, false);
+
+      migratedMasters.forEach(s => this.syncFirestoreDoc('surcharge_masters', s.id, s));
+      newMappings.forEach(m => this.syncFirestoreDoc('surcharge_product_mappings', m.id, m));
+      historyRecords.forEach(h => this.syncFirestoreDoc('surcharge_history', h.id, h));
+    } else if (existingMappings.length === 0 && existingMasters.length > 0) {
+      const rebuiltMappings = existingMasters.flatMap(s => buildMappingsForSurcharge(s, products));
+      this.setItem('surcharge_product_mappings', rebuiltMappings, false);
+    }
+
+    return {
+      migratedCount: migratedMasters.length,
+      totalSurcharges: existingMasters.length + migratedMasters.length
+    };
+  }
+
+  public getSurchargeMasters(includeArchived: boolean = true): SurchargeMaster[] {
+    const raw = this.getItem<SurchargeMaster[]>('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
+    const deletedSet = this.getDeletedEntityIds();
+    const list = (Array.isArray(raw) && raw.length > 0 ? raw : INITIAL_SURCHARGE_MASTERS)
+      .filter(s => s && s.id && !deletedSet.has(s.id) && !deletedSet.has(`surcharge_masters_${s.id}`))
+      .map(s => ({
+        ...s,
+        linkedProductIds: Array.isArray(s.linkedProductIds) ? s.linkedProductIds : []
+      }));
+
+    if (!includeArchived) {
+      return list.filter(s => s.status !== 'ARCHIVED');
+    }
+    return list;
+  }
+
+  public getSurchargeMasterById(id: string): SurchargeMaster | undefined {
+    if (!id) return undefined;
+    return this.getSurchargeMasters(true).find(s => s.id === id || s.code === id);
+  }
+
+  public getSurchargesForProduct(productId: string): SurchargeMaster[] {
+    if (!productId) return [];
+    return this.getSurchargeMasters(false).filter(
+      s => Array.isArray(s.linkedProductIds) && s.linkedProductIds.includes(productId)
+    );
+  }
+
+  public getSurchargeProductMappings(surchargeId?: string): SurchargeProductMapping[] {
+    const raw = this.getItem<SurchargeProductMapping[]>('surcharge_product_mappings', []);
+    if (!Array.isArray(raw) || raw.length === 0) {
+      const products = this.getProducts();
+      const rebuilt = this.getSurchargeMasters(true).flatMap(s => buildMappingsForSurcharge(s, products));
+      return surchargeId ? rebuilt.filter(m => m.surchargeId === surchargeId) : rebuilt;
+    }
+    return surchargeId ? raw.filter(m => m.surchargeId === surchargeId) : raw;
+  }
+
+  public getSurchargeHistory(surchargeId?: string): SurchargeHistoryRecord[] {
+    const raw = this.getItem<SurchargeHistoryRecord[]>('surcharge_history', []);
+    const list = Array.isArray(raw) ? raw : [];
+    const sorted = [...list].sort(
+      (a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime()
+    );
+    return surchargeId ? sorted.filter(h => h.surchargeId === surchargeId) : sorted;
+  }
+
+  public getSurchargeDashboardMetrics(): SurchargeDashboardMetrics {
+    const surcharges = this.getSurchargeMasters(true);
+    const products = this.getProducts();
+    return calculateSurchargeDashboardMetrics(surcharges, products);
+  }
+
+  public saveSurchargeMaster(
+    surcharge: SurchargeMaster,
+    actor?: User | null,
+    changeSummary?: string
+  ): SurchargeMaster {
+    const existingList = this.getSurchargeMasters(true);
+    const existingIdx = existingList.findIndex(s => s.id === surcharge.id);
+    const existing = existingIdx >= 0 ? existingList[existingIdx] : undefined;
+    const nowIso = new Date().toISOString();
+
+    const actorId = actor?.id || currentAuthUser?.id || 'usr-admin-business';
+    const actorName = actor?.name || currentAuthUser?.name || 'System Administrator';
+    const actorEmail = actor?.email || currentAuthUser?.email || 'business@theunbound.in';
+    const actorRole = actor?.role || currentAuthUser?.role || 'ADMIN';
+
+    const nextVersion = existing ? (existing.version || 1) + 1 : (surcharge.version || 1);
+    const code = surcharge.code || existing?.code || generateSurchargeCode(existingList);
+    const uniqueLinkedProductIds = Array.from(new Set(surcharge.linkedProductIds || []));
+
+    const savedRecord: SurchargeMaster = {
+      ...surcharge,
+      id: surcharge.id || `sur-${Date.now()}`,
+      code,
+      linkedProductIds: uniqueLinkedProductIds,
+      version: nextVersion,
+      createdAt: existing?.createdAt || surcharge.createdAt || nowIso,
+      updatedAt: nowIso,
+      createdBy: existing?.createdBy || surcharge.createdBy || actorId,
+      createdByName: existing?.createdByName || surcharge.createdByName || actorName,
+      updatedBy: actorId,
+      updatedByName: actorName,
+      updatedByEmail: actorEmail
+    };
+
+    const nextList = existingIdx >= 0
+      ? existingList.map((item, idx) => (idx === existingIdx ? savedRecord : item))
+      : [savedRecord, ...existingList];
+
+    this.setItem('surcharge_masters', nextList, true);
+    this.syncFirestoreDoc('surcharge_masters', savedRecord.id, savedRecord);
+
+    // Rebuild and synchronize product mappings for this surcharge
+    const products = this.getProducts();
+    const otherMappings = this.getSurchargeProductMappings().filter(m => m.surchargeId !== savedRecord.id);
+    const newMappings = buildMappingsForSurcharge(savedRecord, products);
+    const updatedMappings = [...otherMappings, ...newMappings];
+    this.setItem('surcharge_product_mappings', updatedMappings, false);
+    newMappings.forEach(m => this.syncFirestoreDoc('surcharge_product_mappings', m.id, m));
+
+    // Record history entry in surcharge_history
+    const historyAction: SurchargeHistoryRecord['action'] = !existing
+      ? 'CREATED'
+      : existing.status !== savedRecord.status
+        ? 'STATUS_CHANGED'
+        : JSON.stringify(existing.linkedProductIds) !== JSON.stringify(savedRecord.linkedProductIds)
+          ? 'PRODUCT_MAPPED'
+          : 'UPDATED';
+
+    const historyRecord: SurchargeHistoryRecord = {
+      id: `shist-${savedRecord.id}-v${nextVersion}-${Date.now()}`,
+      surchargeId: savedRecord.id,
+      surchargeCode: savedRecord.code,
+      surchargeName: savedRecord.name,
+      version: nextVersion,
+      action: historyAction,
+      previousSnapshot: existing ? { ...existing } : undefined,
+      newSnapshot: { ...savedRecord },
+      changesSummary:
+        changeSummary ||
+        (!existing
+          ? `Created centralized surcharge "${savedRecord.name}" (${savedRecord.code}) linked to ${uniqueLinkedProductIds.length} product(s).`
+          : `Updated centralized surcharge "${savedRecord.name}" (v${nextVersion}, Status: ${savedRecord.status}, Linked Products: ${uniqueLinkedProductIds.length}).`),
+      performedBy: actorId,
+      performedByName: actorName,
+      performedByRole: actorRole,
+      timestamp: nowIso
+    };
+
+    const currentHistory = this.getItem<SurchargeHistoryRecord[]>('surcharge_history', []);
+    this.setItem('surcharge_history', [historyRecord, ...currentHistory.slice(0, 499)], false);
+    this.syncFirestoreDoc('surcharge_history', historyRecord.id, historyRecord);
+
+    // Log forensic audit trail
+    this.logAudit(
+      { id: actorId, name: actorName, role: actorRole },
+      !existing ? 'SURCHARGE_CREATED' : 'SURCHARGE_UPDATED',
+      'SurchargeMaster',
+      savedRecord.id,
+      historyRecord.changesSummary,
+      existing ? `${existing.status} | ${existing.currency} ${existing.amount}` : '',
+      `${savedRecord.status} | ${savedRecord.currency} ${savedRecord.amount} (${uniqueLinkedProductIds.length} products)`
+    );
+
+    return savedRecord;
+  }
+
+  public duplicateSurchargeMaster(surchargeId: string, actor?: User | null): SurchargeMaster | null {
+    const source = this.getSurchargeMasterById(surchargeId);
+    if (!source) return null;
+
+    const existingList = this.getSurchargeMasters(true);
+    const nowIso = new Date().toISOString();
+    const newCode = generateSurchargeCode(existingList);
+    const duplicated: SurchargeMaster = {
+      ...source,
+      id: `sur-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      code: newCode,
+      name: `${source.name} (Copy)`,
+      status: 'DRAFT',
+      isActive: false,
+      version: 1,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+
+    return this.saveSurchargeMaster(
+      duplicated,
+      actor,
+      `Duplicated surcharge from "${source.name}" (${source.code}) as draft ${newCode}.`
+    );
+  }
+
+  public archiveSurchargeMaster(
+    surchargeId: string,
+    actor?: User | null,
+    reason?: string
+  ): SurchargeMaster | null {
+    const source = this.getSurchargeMasterById(surchargeId);
+    if (!source) return null;
+
+    const archived: SurchargeMaster = {
+      ...source,
+      status: 'ARCHIVED',
+      isActive: false
+    };
+
+    return this.saveSurchargeMaster(
+      archived,
+      actor,
+      reason || `Archived centralized surcharge "${source.name}" (${source.code}). Historical quotation snapshots preserved.`
+    );
+  }
+
+  public recordQuotationSurchargeOverrideHistory(
+    override: QuotationSurchargeOverride,
+    quoteId?: string,
+    actor?: User | null
+  ): void {
+    const nowIso = new Date().toISOString();
+    const actorId = actor?.id || override.overriddenBy || currentAuthUser?.id || 'usr-admin-business';
+    const actorName = actor?.name || override.overriddenByName || currentAuthUser?.name || 'System Administrator';
+    const actorEmail = actor?.email || override.overriddenByEmail || currentAuthUser?.email || 'business@theunbound.in';
+    const actorRole = actor?.role || override.overriddenByRole || currentAuthUser?.role || 'ADMIN';
+
+    const historyRecord: SurchargeHistoryRecord = {
+      id: `shist-override-${override.id}-${Date.now()}`,
+      surchargeId: override.surchargeId || `custom-${override.id}`,
+      surchargeCode: override.surchargeId || 'QUOTE-OVERRIDE',
+      surchargeName: override.customSurchargeName || override.surchargeId || 'Quotation Surcharge Override',
+      version: 1,
+      action: 'QUOTE_OVERRIDE_APPLIED',
+      changesSummary: `[Quote ${quoteId || 'Draft'}] ${override.overrideType}: ${override.reason} (Original: ${override.originalCurrency || ''} ${override.originalAmount ?? 'N/A'} -> Override: ${override.overrideCurrency || ''} ${override.overrideAmount ?? 'Exempt/Removed'})`,
+      performedBy: actorId,
+      performedByName: actorName,
+      performedByRole: actorRole,
+      timestamp: nowIso
+    };
+
+    const currentHistory = this.getItem<SurchargeHistoryRecord[]>('surcharge_history', []);
+    this.setItem('surcharge_history', [historyRecord, ...currentHistory.slice(0, 499)], false);
+    this.syncFirestoreDoc('surcharge_history', historyRecord.id, historyRecord);
+
+    this.logAudit(
+      { id: actorId, name: actorName, role: actorRole as any },
+      'SURCHARGE_UPDATED',
+      'QuotationSurchargeOverride',
+      quoteId || override.id,
+      historyRecord.changesSummary
+    );
+  }
 }
 
 export const db = AppDatabase.getInstance();
@@ -22541,6 +22871,7 @@ export const hasBookingOperationPermission = (
   user: User | null,
   permission: keyof BookingOperationsPermissions
 ): boolean => AppDatabase.getInstance().hasBookingOperationPermission(user, permission);
+
 
 
 

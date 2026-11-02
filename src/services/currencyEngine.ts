@@ -1164,3 +1164,10 @@ export function normalizeCurrency(curr: any, fallback: CurrencyCode = 'USD'): Cu
   return currencyEngine.normalizeCurrencyCode(curr, fallback);
 }
 
+export function roundCurrencyAmount(amount: number, currency: CurrencyCode | string = 'USD'): number {
+  if (!Number.isFinite(amount)) return 0;
+  const resolved = currencyEngine.normalizeCurrencyCode(currency, 'USD');
+  const decimals = (resolved === 'JPY' || resolved === 'THB') ? 0 : 2;
+  return decimals === 0 ? Math.round(amount) : Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+

@@ -2597,9 +2597,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </>
               )}
 
-              {/* Authoritative Validity Period & Repeatable Surcharges Section (All Product Categories) */}
+              {/* Authoritative Validity Period & Centralized Surcharges Reference Section (All Product Categories) */}
               <div className="pt-4 border-t border-slate-200">
                 <InventoryValidityAndSurchargesSection
+                  productId={formData.id || editingProduct?.id}
+                  productName={formData.name || editingProduct?.name}
                   validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
                   validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
                   surcharges={formData.surcharges || []}
@@ -2619,12 +2621,6 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                       validityFrom: validFrom,
                       validityTo: validTo,
                       validity
-                    }))
-                  }
-                  onChangeSurcharges={nextSurcharges =>
-                    setFormData(prev => ({
-                      ...prev,
-                      surcharges: nextSurcharges
                     }))
                   }
                 />

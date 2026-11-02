@@ -1,15 +1,13 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo } from 'react';
 import {
   Calendar,
-  Plus,
-  Trash2,
   AlertTriangle,
-  AlertCircle,
   CheckCircle2,
-  Power,
-  Tag,
-  FileText,
-  Edit2
+  Percent,
+  DollarSign,
+  ExternalLink,
+  ShieldCheck,
+  Layers
 } from 'lucide-react';
 import {
   CurrencyCode,
@@ -18,576 +16,281 @@ import {
   SurchargeApplicationBasis
 } from '../../../types';
 import {
-  validateInventoryValidityAndSurcharges,
-  formatCurrency
+  validateInventoryValidityAndSurcharges
 } from '../../../services/pricingEngine';
+import { AppDatabase } from '../../../services/db';
+import { resolveEffectiveSurchargeStatus } from '../../../services/surchargeEngine';
 
 export interface InventoryValidityAndSurchargesSectionProps {
-  validFrom: string;
-  validTo: string;
-  surcharges: InventorySurcharge[];
+  productId?: string;
+  productName?: string;
+  validFrom?: string;
+  validTo?: string;
+  surcharges?: InventorySurcharge[];
   nativeCurrency?: CurrencyCode | string;
   defaultApplicationBasis?: SurchargeApplicationBasis;
   categoryLabel?: string;
   requireValidity?: boolean;
-  compact?: boolean;
   onChangeValidity: (next: { validFrom: string; validTo: string; validity: InventoryValidity }) => void;
-  onChangeSurcharges: (next: InventorySurcharge[]) => void;
-}
-
-const SUPPORTED_CURRENCIES: CurrencyCode[] = [
-  'USD',
-  'JPY',
-  'EUR',
-  'GBP',
-  'INR',
-  'AED',
-  'SGD',
-  'AUD',
-  'THB',
-  'CHF'
-];
-
-const APPLICATION_BASIS_OPTIONS: { value: SurchargeApplicationBasis; label: string }[] = [
-  { value: 'PER_PERSON', label: 'Per Person (Chargeable Pax)' },
-  { value: 'PER_ADULT', label: 'Per Adult' },
-  { value: 'PER_VEHICLE', label: 'Per Vehicle / Charter Unit' },
-  { value: 'PER_HOUR', label: 'Per Billable Hour' },
-  { value: 'PER_ROOM_NIGHT', label: 'Per Room / Night' },
-  { value: 'PER_NIGHT', label: 'Per Night' },
-  { value: 'PER_DAY', label: 'Per Coverage / Service Day' },
-  { value: 'PER_DEVICE', label: 'Per Device / eSIM Profile' },
-  { value: 'PER_SERVICE', label: 'Per Service' },
-  { value: 'PER_BOOKING', label: 'Per Booking (Flat)' }
-];
-
-function formatHumanDate(isoDate?: string): string {
-  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate.trim())) return isoDate || 'Not configured';
-  const [y, m, d] = isoDate.trim().split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  if (isNaN(dt.getTime())) return isoDate;
-  return dt.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC'
-  });
-}
-
-export function createStableSurchargeId(): string {
-  return `SUR-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+  onChangeSurcharges?: (next: InventorySurcharge[]) => void;
 }
 
 export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAndSurchargesSectionProps> = ({
-  validFrom,
-  validTo,
+  productId,
+  productName,
+  validFrom = '',
+  validTo = '',
   surcharges = [],
   nativeCurrency = 'USD',
-  defaultApplicationBasis = 'PER_PERSON',
-  categoryLabel,
+  categoryLabel = 'Inventory Record',
   requireValidity = true,
-  compact = false,
-  onChangeValidity,
-  onChangeSurcharges
+  onChangeValidity
 }) => {
-  const safeCurrency = (nativeCurrency || 'USD') as CurrencyCode;
-  const [editingSurchargeId, setEditingSurchargeId] = useState<string | null>(null);
-  const nameInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-
   const validation = useMemo(
     () =>
       validateInventoryValidityAndSurcharges({
-        validity: { validFrom: validFrom || '', validTo: validTo || '' },
-        surcharges,
+        validityFrom: validFrom,
+        validityTo: validTo,
+        surcharges: [],
         requireValidity,
-        nativeCurrency: safeCurrency
+        nativeCurrency
       }),
-    [validFrom, validTo, surcharges, requireValidity, safeCurrency]
+    [validFrom, validTo, requireValidity, nativeCurrency]
   );
 
-  const handleValidFromChange = (newFrom: string) => {
+  // Fetch linked centralized surcharges from Finance & Administration -> Surcharges
+  const linkedCentralizedSurcharges = useMemo(() => {
+    const db = AppDatabase.getInstance();
+    if (productId) {
+      return db.getSurchargesForProduct(productId);
+    }
+    return [];
+  }, [productId, surcharges]);
+
+  const handleValidFromChange = (val: string) => {
     onChangeValidity({
-      validFrom: newFrom,
-      validTo: validTo || '',
-      validity: {
-        validFrom: newFrom,
-        validTo: validTo || ''
-      }
+      validFrom: val,
+      validTo,
+      validity: { validFrom: val, validTo }
     });
   };
 
-  const handleValidToChange = (newTo: string) => {
+  const handleValidToChange = (val: string) => {
     onChangeValidity({
-      validFrom: validFrom || '',
-      validTo: newTo,
-      validity: {
-        validFrom: validFrom || '',
-        validTo: newTo
-      }
+      validFrom,
+      validTo: val,
+      validity: { validFrom, validTo: val }
     });
   };
 
-  const handleAddSurcharge = () => {
-    const newId = createStableSurchargeId();
-    const newEntry: InventorySurcharge = {
-      surchargeId: newId,
-      name: '',
-      validFrom: validFrom || '',
-      validTo: validTo || '',
-      type: 'FIXED',
-      value: 0,
-      currency: safeCurrency,
-      applicationBasis: defaultApplicationBasis,
-      status: 'ACTIVE',
-      internalNotes: ''
-    };
-    onChangeSurcharges([...surcharges, newEntry]);
-    setEditingSurchargeId(newId);
-    setTimeout(() => {
-      nameInputRefs.current[newId]?.focus();
-    }, 50);
-  };
-
-  const handleFocusEditSurcharge = (surchargeId: string) => {
-    setEditingSurchargeId(surchargeId);
-    setTimeout(() => {
-      nameInputRefs.current[surchargeId]?.focus();
-    }, 20);
-  };
-
-  const handleUpdateSurcharge = (surchargeId: string, patch: Partial<InventorySurcharge>) => {
-    const next = surcharges.map(item =>
-      item.surchargeId === surchargeId ? { ...item, ...patch } : item
-    );
-    onChangeSurcharges(next);
-  };
-
-  const handleToggleSurchargeStatus = (surchargeId: string) => {
-    const next = surcharges.map(item =>
-      item.surchargeId === surchargeId
-        ? { ...item, status: (item.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE') as 'ACTIVE' | 'INACTIVE' }
-        : item
-    );
-    onChangeSurcharges(next);
-  };
-
-  const handleRemoveSurcharge = (surchargeId: string) => {
-    onChangeSurcharges(surcharges.filter(item => item.surchargeId !== surchargeId));
-    if (editingSurchargeId === surchargeId) {
-      setEditingSurchargeId(null);
+  const handleNavigateToCentralizedSurcharges = () => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('admin-cms-navigate', {
+          detail: {
+            section: 'SURCHARGE_MANAGEMENT',
+            filterProductId: productId || '',
+            filterProductName: productName || ''
+          }
+        })
+      );
     }
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* 1. VALIDITY PERIOD SECTION */}
-      <div className={`bg-white border border-slate-200 rounded-xl ${compact ? 'p-4' : 'p-5'} shadow-sm space-y-4`}>
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-teal-50 text-[#008972] flex items-center justify-center">
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-[#00C6A6]/15 text-[#008972] flex items-center justify-center shrink-0">
               <Calendar className="w-4 h-4" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-slate-900">
-                Validity Period {categoryLabel ? `— ${categoryLabel}` : ''}
+              <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                Commercial Validity Period ({categoryLabel})
               </h4>
-              <p className="text-xs text-slate-500">
-                Commercial sellable validity window enforced across search, configurators, quotes, and booking submission.
+              <p className="text-[11px] text-slate-500">
+                Defines the active date window during which this inventory is eligible for quotations and bookings.
               </p>
             </div>
           </div>
-          {validFrom && validTo && validation.errors.filter(e => e.startsWith('Valid ')).length === 0 && (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+
+          {validation.isValid && validFrom && validTo ? (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              {formatHumanDate(validFrom)} – {formatHumanDate(validTo)}
+              <span>Valid: {validFrom} → {validTo}</span>
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Validity Dates Required</span>
             </span>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1">
+            <label className="block text-[11px] font-bold text-slate-700">
               Valid From {requireValidity && <span className="text-rose-500">*</span>}
             </label>
             <input
               type="date"
-              aria-label="Valid From"
-              value={validFrom || ''}
+              value={validFrom}
               onChange={e => handleValidFromChange(e.target.value)}
-              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#00C6A6]"
             />
+            <p className="text-[10px] text-slate-400">
+              First date on which this inventory rate is valid for service.
+            </p>
           </div>
 
-          <div>
-            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5">
+          <div className="space-y-1">
+            <label className="block text-[11px] font-bold text-slate-700">
               Valid To {requireValidity && <span className="text-rose-500">*</span>}
             </label>
             <input
               type="date"
-              aria-label="Valid To"
-              value={validTo || ''}
+              value={validTo}
+              min={validFrom || undefined}
               onChange={e => handleValidToChange(e.target.value)}
-              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
+              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#00C6A6]"
             />
+            <p className="text-[10px] text-slate-400">
+              Last date on which this inventory rate is valid (must be ≥ Valid From).
+            </p>
           </div>
         </div>
 
-        {validation.errors.filter(e => e.startsWith('Valid ')).length > 0 && (
-          <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-700">
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              {validation.errors
-                .filter(e => e.startsWith('Valid '))
-                .map((err, i) => (
-                  <p key={i} className="font-semibold">
-                    {err}
-                  </p>
-                ))}
+        {validation.errors.length > 0 && (
+          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 space-y-1">
+            <div className="flex items-center gap-1.5 text-[11px] font-bold text-rose-800">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+              <span>Validity Validation Requirements:</span>
             </div>
+            <ul className="list-disc pl-5 text-[11px] text-rose-700 space-y-0.5">
+              {validation.errors.map((err, i) => (
+                <li key={i}>{err}</li>
+              ))}
+            </ul>
           </div>
         )}
       </div>
 
-      {/* 2. REPEATABLE SURCHARGES SECTION */}
-      <div className={`bg-white border border-slate-200 rounded-xl ${compact ? 'p-4' : 'p-5'} shadow-sm space-y-4`}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
-              <Tag className="w-4 h-4" />
+      {/* 2. CENTRALIZED SURCHARGE REFERENCE PANEL (Read-Only in Product Management) */}
+      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-slate-900 text-[#00E5C0] flex items-center justify-center shrink-0">
+              <Layers className="w-4 h-4" />
             </div>
             <div>
-              <h4 className="text-sm font-bold text-slate-900">Surcharges</h4>
-              <p className="text-xs text-slate-500">
-                Configure multiple named seasonal or peak surcharge periods evaluated in native currency ({safeCurrency}) prior to FX conversion.
+              <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                Centralized Surcharge Governance ({linkedCentralizedSurcharges.length} Linked)
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                Surcharge periods are managed centrally under <strong>Finance &amp; Administration → Surcharges</strong>. Individual product-level surcharge editing is disabled.
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={handleAddSurcharge}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white transition-colors shadow-sm cursor-pointer"
+            onClick={handleNavigateToCentralizedSurcharges}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-2xs"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>+ Add Surcharge</span>
+            <span>Manage in Finance &amp; Administration → Surcharges</span>
+            <ExternalLink className="w-3.5 h-3.5 text-[#00E5C0]" />
           </button>
         </div>
 
-        {/* Overlap Warnings */}
-        {validation.warnings.length > 0 && (
-          <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2.5 text-xs text-amber-800">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-bold text-amber-900">
-                Overlapping Active Surcharge Periods Detected
-              </p>
-              {validation.warnings.map((warn, idx) => (
-                <p key={idx}>{warn}</p>
-              ))}
-              <p className="text-[11px] text-amber-700">
-                Each active matching surcharge with a distinct ID is evaluated according to its configured rule without duplicate application of the same surcharge. Verify whether these periods are intended to overlap.
-              </p>
+        {linkedCentralizedSurcharges.length === 0 ? (
+          <div className="p-4 rounded-xl border border-dashed border-slate-200 bg-white flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 text-xs text-slate-600">
+              <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0" />
+              <span>
+                No centralized surcharge periods are currently mapped to this product. Standard contracted tariff applies across all valid travel dates.
+              </span>
             </div>
-          </div>
-        )}
-
-        {/* Surcharge Validation Errors */}
-        {validation.errors.filter(e => !e.startsWith('Valid ')).length > 0 && (
-          <div className="p-3.5 rounded-lg bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-700">
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-bold text-rose-900">Surcharge Configuration Errors</p>
-              {validation.errors
-                .filter(e => !e.startsWith('Valid '))
-                .map((err, idx) => (
-                  <p key={idx}>{err}</p>
-                ))}
-            </div>
-          </div>
-        )}
-
-        {surcharges.length === 0 ? (
-          <div className="border border-dashed border-slate-200 rounded-lg p-6 text-center bg-slate-50/60">
-            <p className="text-xs font-semibold text-slate-600">
-              No surcharge periods configured for this inventory record.
-            </p>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Use &ldquo;+ Add Surcharge&rdquo; to define peak dates (e.g., New Year, Cherry Blossom, Golden Week) with fixed or percentage surcharges.
-            </p>
+            <span className="text-[11px] text-slate-400 shrink-0">
+              Map this product in Finance &amp; Administration → Surcharges
+            </span>
           </div>
         ) : (
-          <div className="space-y-3">
-            {surcharges.map((surcharge, index) => {
-              const isActive = surcharge.status === 'ACTIVE';
-              const isFocusedEditing = editingSurchargeId === surcharge.surchargeId;
-              const basisLabel =
-                APPLICATION_BASIS_OPTIONS.find(b => b.value === surcharge.applicationBasis)?.label ||
-                surcharge.applicationBasis ||
-                defaultApplicationBasis;
-              const formattedValue =
-                surcharge.type === 'PERCENTAGE'
-                  ? `${surcharge.value || 0}%`
-                  : `${formatCurrency(Number(surcharge.value) || 0, (surcharge.currency || safeCurrency) as CurrencyCode)}`;
-
-              return (
-                <div
-                  key={surcharge.surchargeId || `sur-idx-${index}`}
-                  className={`border rounded-lg p-4 transition-all ${
-                    isFocusedEditing
-                      ? 'border-[#00C6A6] bg-teal-50/15 ring-1 ring-[#00C6A6]/30'
-                      : isActive
-                      ? 'border-slate-200 bg-slate-50/40'
-                      : 'border-slate-200 bg-slate-100/60 opacity-80'
-                  }`}
-                >
-                  {/* Summary Header Row */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2.5 border-b border-slate-200/80">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-xs font-bold text-slate-900">
-                        Surcharge {index + 1} — {surcharge.name?.trim() || 'Unnamed Surcharge'}
-                      </span>
-                      <span
-                        className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wider ${
-                          isActive
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                            : 'bg-slate-200 text-slate-600 border border-slate-300'
-                        }`}
-                      >
-                        {isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleFocusEditSurcharge(surcharge.surchargeId)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold bg-white border border-slate-200 text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                        title="Edit surcharge details"
-                      >
-                        <Edit2 className="w-3 h-3" />
-                        <span>Edit</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleToggleSurchargeStatus(surcharge.surchargeId)}
-                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold border transition-colors cursor-pointer ${
-                          isActive
-                            ? 'bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100'
-                            : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'
-                        }`}
-                        title={isActive ? 'Deactivate surcharge period' : 'Activate surcharge period'}
-                      >
-                        <Power className="w-3 h-3" />
-                        <span>{isActive ? 'Deactivate' : 'Activate'}</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveSurcharge(surcharge.surchargeId)}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
-                        title="Remove surcharge period"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Remove</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Live Summary Line */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3 text-xs">
-                    <span className="text-slate-600 font-medium">
-                      {surcharge.validFrom ? formatHumanDate(surcharge.validFrom) : 'Start Date Pending'} –{' '}
-                      {surcharge.validTo ? formatHumanDate(surcharge.validTo) : 'End Date Pending'}
-                    </span>
-                    <span className="font-bold text-slate-900 font-mono">
-                      Surcharge: {formattedValue} ({basisLabel})
-                    </span>
-                  </div>
-
-                  {/* Form Fields Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                    <div className="md:col-span-2">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        Surcharge Name <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        ref={el => {
-                          nameInputRefs.current[surcharge.surchargeId] = el;
-                        }}
-                        type="text"
-                        value={surcharge.name || ''}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, { name: e.target.value })
-                        }
-                        placeholder="e.g. New Year or Cherry Blossom"
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        From (Valid From) <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="date"
-                        value={surcharge.validFrom || ''}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, { validFrom: e.target.value })
-                        }
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        To (Valid To) <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="date"
-                        value={surcharge.validTo || ''}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, { validTo: e.target.value })
-                        }
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        Type <span className="text-rose-500">*</span>
-                      </label>
-                      <select
-                        value={surcharge.type || 'FIXED'}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, {
-                            type: e.target.value as 'FIXED' | 'PERCENTAGE',
-                            currency: e.target.value === 'FIXED' ? (surcharge.currency || safeCurrency) : surcharge.currency
-                          })
-                        }
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      >
-                        <option value="FIXED">Fixed Amount</option>
-                        <option value="PERCENTAGE">Percentage (%)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        Value <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={surcharge.value === undefined || surcharge.value === null || Number.isNaN(Number(surcharge.value)) ? '' : surcharge.value}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, {
-                            value: e.target.value === '' ? ('' as any) : parseFloat(e.target.value)
-                          })
-                        }
-                        placeholder="0.00"
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-mono font-semibold text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        Currency {surcharge.type === 'FIXED' && <span className="text-rose-500">*</span>}
-                      </label>
-                      <select
-                        value={surcharge.currency || safeCurrency}
-                        disabled={surcharge.type === 'PERCENTAGE'}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, {
-                            currency: e.target.value as CurrencyCode
-                          })
-                        }
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-900 disabled:bg-slate-100 disabled:text-slate-400 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      >
-                        {SUPPORTED_CURRENCIES.map(curr => (
-                          <option key={curr} value={curr}>
-                            {curr}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        Basis <span className="text-rose-500">*</span>
-                      </label>
-                      <select
-                        value={surcharge.applicationBasis || defaultApplicationBasis}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, {
-                            applicationBasis: e.target.value as SurchargeApplicationBasis
-                          })
-                        }
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      >
-                        {APPLICATION_BASIS_OPTIONS.map(opt => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="md:col-span-3">
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        <span className="inline-flex items-center gap-1">
-                          <FileText className="w-3 h-3 text-slate-400" />
-                          Internal Notes (Admin-Only — Hidden from B2B Agents)
+          <div className="overflow-x-auto bg-white rounded-xl border border-slate-200">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                  <th className="py-2.5 px-3">Surcharge Name &amp; ID</th>
+                  <th className="py-2.5 px-3">Travel Period</th>
+                  <th className="py-2.5 px-3">Booking Window</th>
+                  <th className="py-2.5 px-3">Pricing Basis</th>
+                  <th className="py-2.5 px-3">Rate / Amount</th>
+                  <th className="py-2.5 px-3">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {linkedCentralizedSurcharges.map(sur => {
+                  const effStatus = resolveEffectiveSurchargeStatus(sur);
+                  return (
+                    <tr key={sur.id} className="hover:bg-slate-50/70">
+                      <td className="py-2.5 px-3">
+                        <div className="font-bold text-slate-900">{sur.name}</div>
+                        <div className="text-[11px] text-slate-500 font-mono">
+                          {sur.code} · {sur.surchargeCategory.replace(/_/g, ' ')}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700">
+                        {sur.validFrom} → {sur.validTo}
+                        {sur.periods && sur.periods.length > 1 && (
+                          <span className="block text-[10px] text-slate-400">
+                            +{sur.periods.length - 1} additional window(s)
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                        {sur.bookingValidFrom || sur.bookingValidTo
+                          ? `${sur.bookingValidFrom || 'Any'} → ${sur.bookingValidTo || 'Any'}`
+                          : 'All Booking Dates'}
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] text-slate-700 font-medium">
+                        {sur.pricingBasis.replace(/_/g, ' ')}
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-bold text-slate-900">
+                        {sur.calculationType === 'PERCENTAGE' ? (
+                          <span className="inline-flex items-center gap-0.5 text-amber-700">
+                            <Percent className="w-3 h-3" />
+                            {sur.percentage ?? sur.amount}%
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 text-emerald-700">
+                            <DollarSign className="w-3 h-3" />
+                            {sur.currency} {Number(sur.amount || 0).toLocaleString()}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] font-bold">
+                        <span
+                          className={
+                            effStatus === 'ACTIVE'
+                              ? 'text-emerald-700'
+                              : effStatus === 'SCHEDULED'
+                                ? 'text-blue-700'
+                                : effStatus === 'EXPIRED'
+                                  ? 'text-slate-400'
+                                  : 'text-amber-700'
+                          }
+                        >
+                          {effStatus}
                         </span>
-                      </label>
-                      <input
-                        type="text"
-                        value={surcharge.internalNotes || ''}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, { internalNotes: e.target.value })
-                        }
-                        placeholder="Optional internal commercial notes, supplier contract clause, etc."
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-slate-700 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                        Status
-                      </label>
-                      <select
-                        value={surcharge.status || 'ACTIVE'}
-                        onFocus={() => setEditingSurchargeId(surcharge.surchargeId)}
-                        onChange={e =>
-                          handleUpdateSurcharge(surcharge.surchargeId, {
-                            status: e.target.value as 'ACTIVE' | 'INACTIVE'
-                          })
-                        }
-                        className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-slate-900 focus:ring-2 focus:ring-[#00C6A6] focus:border-[#00C6A6] outline-none"
-                      >
-                        <option value="ACTIVE">Active</option>
-                        <option value="INACTIVE">Inactive</option>
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
-
-        <p className="text-[11px] text-slate-500">
-          Admin must configure the actual dates and amounts. Surcharges are evaluated in native currency ({safeCurrency}) by the centralized Pricing Engine and converted via CurrencyConversionService.
-        </p>
       </div>
     </div>
   );
