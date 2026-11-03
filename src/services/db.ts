@@ -159,6 +159,10 @@ import {
   SurchargeDashboardMetrics
 } from '../types';
 import {
+  COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+  resolveAuthoritativeCommercialTerms
+} from '../constants/commercialQuotationTerms';
+import {
   INITIAL_SURCHARGE_MASTERS,
   buildMappingsForSurcharge,
   migrateLegacyProductSurcharges,
@@ -303,7 +307,7 @@ export const INITIAL_SITE_PAGES_CONFIG: SitePagesConfig = {
   termsPage: {
     lastUpdated: '2026-01-15',
     title: 'Terms & Conditions of Ground Service',
-    b2bWholesaleTerms: 'All B2B contracted wholesale tariffs are confidential and valid for licensed travel agencies and tour operators. Rates are protected for 14 days from official quotation issuance.',
+    b2bWholesaleTerms: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
     cancellationSlaNotice: 'All bookings are processed under our strict 24–48 hour operational SLA. Ground dispatch confirmation and vouchers will be updated within this guaranteed window.',
     generalTermsSnippet: 'Services provided by TheUnbound Destination Management Company Ltd. are subject to operational safety regulations, local ground partner availability, and verified vehicle allocations.'
   },
@@ -441,7 +445,7 @@ export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
     slaHours: 24,
     defaultAssignee: {
       type: 'DEPARTMENT',
-      name: 'Sales Team (Sarah Lin)',
+      name: 'Sales & Quotation Desk',
       email: 'sales@theunbound.in',
       department: 'SALES',
       role: 'Senior Travel Specialist'
@@ -465,7 +469,7 @@ export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
     slaHours: 6,
     defaultAssignee: {
       type: 'DEPARTMENT',
-      name: 'Ground Fleet Logistics (Rajesh Sharma)',
+      name: 'Ground Fleet Logistics Desk',
       email: 'fleet@theunbound.in',
       department: 'GROUND_OPS',
       role: 'Fleet Dispatcher'
@@ -488,7 +492,7 @@ export const INITIAL_SLA_AUTOMATION_RULES: SLAAutomationRule[] = [
     slaHours: 12,
     defaultAssignee: {
       type: 'DEPARTMENT',
-      name: 'Hospitality Procurement (Elena Rostova)',
+      name: 'Hospitality Procurement Desk',
       email: 'hospitality@theunbound.in',
       department: 'OPERATIONS',
       role: 'Hotel Contracting Lead'
@@ -2061,6 +2065,11 @@ export class AppDatabase {
       } catch (e) {
         console.warn('Booking assignments migration note:', e);
       }
+      try {
+        this.migrateLeadAssignments();
+      } catch (e) {
+        console.warn('Lead assignments migration note:', e);
+      }
       return;
     }
 
@@ -2200,8 +2209,8 @@ export class AppDatabase {
       const defaultLogs: AuditLog[] = [
         {
           id: 'audit-01',
-          userId: 'usr-admin-01',
-          userName: 'Marcus Vance',
+          userId: 'usr-admin-business',
+          userName: 'TheUnbound Executive Admin',
           userRole: 'ADMIN',
           action: 'SETTINGS_UPDATED',
           entity: 'System',
@@ -7498,7 +7507,21 @@ export class AppDatabase {
   // STRICT SHARED QUOTE AUTHORIZATION & MANAGEMENT
   // ==========================================
   public getAllSavedQuotes(): Quotation[] {
-    return this.getItem<Quotation[]>('saved_quotes', []);
+    const raw = this.getItem<Quotation[]>('saved_quotes', []);
+    if (!Array.isArray(raw)) return [];
+    const seenIds = new Set<string>();
+    const normalized: Quotation[] = [];
+    raw.forEach((q, idx) => {
+      if (!q || typeof q !== 'object') return;
+      const ensuredId =
+        (q.id && String(q.id).trim()) ||
+        (q.quoteNumber && String(q.quoteNumber).trim()) ||
+        `quote-rec-${idx}`;
+      if (seenIds.has(ensuredId)) return;
+      seenIds.add(ensuredId);
+      normalized.push(q.id === ensuredId ? q : { ...q, id: ensuredId });
+    });
+    return normalized;
   }
 
   /*
@@ -7525,7 +7548,7 @@ export class AppDatabase {
         totalSellingPrice: 9717.5,
         totalTaxes: 0,
         totalMargin: 1267.5,
-        termsAndConditions: 'All wholesale tariffs confirmed. 20% refundable deposit secures hotel allotments and private vehicle dispatch.',
+        termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
         agentNotes: 'Client prefers English-speaking private chauffeurs and high-floor panoramic suites in Tokyo and Kyoto.',
         createdAt: '2026-08-20T10:00:00Z',
         updatedAt: '2026-08-25T14:30:00Z',
@@ -7867,6 +7890,11 @@ export class AppDatabase {
       | 'CONVERTED' = 'EDITED',
     customDetails?: string
   ): Quotation {
+    const ensuredQuoteId =
+      (quote.id && String(quote.id).trim()) ||
+      (quote.quoteNumber && String(quote.quoteNumber).trim()) ||
+      `quote-${Date.now()}`;
+    quote = { ...quote, id: ensuredQuoteId };
     const quotes = this.getAllSavedQuotes();
     const existingIndex = quotes.findIndex(q => q.id === quote.id);
     const timestamp = new Date().toISOString();
@@ -8152,8 +8180,11 @@ export class AppDatabase {
       adminBasePriceUpdatedNotification
     };
 
+    const resolvedTermsForSave = resolveAuthoritativeCommercialTerms(quote).plainText;
+
     const updatedQuote: Quotation = {
       ...quote,
+      termsAndConditions: resolvedTermsForSave,
       items: enrichedItems,
       overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? validatedMarginValue : quote.overallMarkupPercent,
       theUnboundBaseSellingPrice,
@@ -8310,107 +8341,162 @@ export class AppDatabase {
       }
     }
 
-    // Auto-capture or update CRM Lead for this client
-    if (updatedQuote.clientEmail || (updatedQuote.clientName && updatedQuote.clientName !== 'Client Name Pending')) {
-      const mappedProducts: LeadProductItem[] = (updatedQuote.items || []).map((item, idx) => ({
-        id: `lp-${updatedQuote.id}-${idx}`,
-        productId: item.product?.id || `prod-${idx}`,
-        productName: item.product?.name || 'Custom Travel Service',
-        category: (item.product?.productType as any) || 'SERVICE',
-        destinationName: item.product?.destinationName || updatedQuote.destination || 'Japan',
-        city: item.product?.city,
-        travelDate: item.travelDate,
-        quantity: 1,
-        adults: item.pax?.adults || 2,
-        children: item.pax?.children || 0,
-        infants: item.pax?.infants || 0,
-        unitNetCost: (item.calculation as any)?.totalNetCost || 0,
-        unitSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
-        totalNetCost: (item.calculation as any)?.totalNetCost || 0,
-        totalSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
-        marginPercent: (item.calculation as any)?.markupRate ? Math.round((item.calculation as any).markupRate * 100) : 15,
-        currency: updatedQuote.currency || 'USD',
-        status: 'CONFIRMED',
-        selectedAddonNames: item.selectedAddonIds || []
-      }));
+    // Reconcile Quote <-> Existing CRM Lead relationship using authoritative Lead IDs
+    const requestedLeadRef = (quote.leadId !== undefined ? quote.leadId : quote.linkedLeadId)?.trim() || '';
+    const previousLeadRef = existingQuote ? (existingQuote.leadId || existingQuote.linkedLeadId || '') : '';
+    const allLeads = this.getLeads();
 
-      const quoteSnapshot: LeadQuoteSnapshot = {
-        quoteId: updatedQuote.id,
-        quoteNumber: updatedQuote.quoteNumber,
-        version: currentVersion,
-        quoteDate: timestamp,
-        status: updatedQuote.status,
-        totalNetCost: updatedQuote.totalNetCost || 0,
-        marginAmount: updatedQuote.totalMargin || 0,
-        marginPercent: updatedQuote.overallMarkupPercent || 15,
-        taxAmount: updatedQuote.totalTaxes || 0,
-        feesAmount: 0,
-        finalSellingPrice: updatedQuote.totalSellingPrice || 0,
-        currency: updatedQuote.currency,
-        itemsCount: (updatedQuote.items || []).length
-      };
+    if (requestedLeadRef) {
+      const targetLead = allLeads.find(l => l.id === requestedLeadRef || l.leadNumber === requestedLeadRef);
+      if (targetLead) {
+        // If previously linked to a different lead, detach from the old lead first
+        if (previousLeadRef && previousLeadRef !== targetLead.id && previousLeadRef !== targetLead.leadNumber) {
+          const prevIdx = allLeads.findIndex(l => l.id === previousLeadRef || l.leadNumber === previousLeadRef);
+          if (prevIdx >= 0) {
+            const prevLead = allLeads[prevIdx];
+            prevLead.quoteIds = (prevLead.quoteIds || []).filter(qid => qid !== updatedQuote.id);
+            if (prevLead.quoteId === updatedQuote.id) {
+              prevLead.quoteId = prevLead.quoteIds[0] || undefined;
+              prevLead.quoteNumber = undefined;
+            }
+            if (prevLead.activeQuoteId === updatedQuote.id) {
+              prevLead.activeQuoteId = prevLead.quoteIds[0] || undefined;
+            }
+            allLeads[prevIdx] = prevLead;
+            this.setItem('leads', allLeads);
+            this.syncFirestoreDoc('leads', prevLead.id, prevLead);
+          }
+        }
 
-      const quoteVersions: LeadQuoteVersion[] = (updatedQuote.versionHistory || []).map(v => ({
-        version: v.version,
-        createdAt: v.updatedAt,
-        createdBy: v.updatedBy,
-        createdByUserType: 'DMC_STAFF',
-        totalItems: (updatedQuote.items || []).length,
-        totalNetCost: updatedQuote.totalNetCost || 0,
-        totalSellingPrice: v.totalSellingPrice,
-        marginPercent: updatedQuote.overallMarkupPercent || 15,
-        taxTotal: updatedQuote.totalTaxes || 0,
-        currency: updatedQuote.currency,
-        changesSummary: v.changesSummary
-      }));
+        const mappedProducts: LeadProductItem[] = (updatedQuote.items || []).map((item, idx) => ({
+          id: `lp-${updatedQuote.id}-${idx}`,
+          productId: item.product?.id || `prod-${idx}`,
+          productName: item.product?.name || 'Custom Travel Service',
+          category: (item.product?.productType as any) || 'SERVICE',
+          destinationName: item.product?.destinationName || updatedQuote.destination || 'Japan',
+          city: item.product?.city,
+          travelDate: item.travelDate,
+          quantity: 1,
+          adults: item.pax?.adults || 2,
+          children: item.pax?.children || 0,
+          infants: item.pax?.infants || 0,
+          unitNetCost: (item.calculation as any)?.totalNetCost || 0,
+          unitSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
+          totalNetCost: (item.calculation as any)?.totalNetCost || 0,
+          totalSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
+          marginPercent: (item.calculation as any)?.markupRate ? Math.round((item.calculation as any).markupRate * 100) : 15,
+          currency: updatedQuote.currency || 'USD',
+          status: 'CONFIRMED',
+          selectedAddonNames: item.selectedAddonIds || []
+        }));
 
-      const linkedLead = this.captureLeadFromSource({
-        leadId: updatedQuote.leadId || updatedQuote.linkedLeadId,
-        contactName: updatedQuote.clientName,
-        email: updatedQuote.clientEmail || `${(updatedQuote.clientName || 'client').toLowerCase().replace(/[^a-z0-9]/g, '')}@client.local`,
-        phone: updatedQuote.clientPhone,
-        agencyName: updatedQuote.clientCompany,
-        companyName: updatedQuote.clientCompany,
-        userId: resolvedClientUserId || user?.id,
-        userType: createdByUserType === 'B2B_AGENT' ? 'B2B_AGENT' : 'BUYER',
-        b2bAgentId: createdByUserType === 'B2B_AGENT' ? user?.id : undefined,
-        source: actionType === 'DOWNLOADED' || actionType === 'PRINTED' ? 'PROPOSAL_DOWNLOADED' : 'QUOTATION_SAVED',
-        destinationName: updatedQuote.destination,
-        travelDates: updatedQuote.travelStartDate && updatedQuote.travelEndDate ? `${updatedQuote.travelStartDate} to ${updatedQuote.travelEndDate}` : undefined,
-        travelStartDate: updatedQuote.travelStartDate,
-        travelEndDate: updatedQuote.travelEndDate,
-        paxAdults: updatedQuote.adultsCount || updatedQuote.totalPax || 2,
-        paxChildren: updatedQuote.childrenCount || 0,
-        travelRequirements: (typeof updatedQuote.agentNotes === 'string'
-          ? updatedQuote.agentNotes
-          : Array.isArray(updatedQuote.agentNotes)
-            ? (updatedQuote.agentNotes as any[]).map(x => typeof x === 'string' ? x : x?.text || '').filter(Boolean).join('\n')
-            : '') || updatedQuote.title || 'Quotation customized for client',
-        estimatedBudget: updatedQuote.totalSellingPrice,
-        currency: updatedQuote.currency,
-        quoteId: updatedQuote.id,
-        quoteNumber: updatedQuote.quoteNumber,
-        quoteVersion: currentVersion,
-        quoteSnapshot,
-        quoteVersions,
-        requestedProducts: mappedProducts
-      }, user);
+        const quoteSnapshot: LeadQuoteSnapshot = {
+          quoteId: updatedQuote.id,
+          quoteNumber: updatedQuote.quoteNumber,
+          version: currentVersion,
+          quoteDate: timestamp,
+          status: updatedQuote.status,
+          totalNetCost: updatedQuote.totalNetCost || 0,
+          marginAmount: updatedQuote.totalMargin || 0,
+          marginPercent: updatedQuote.overallMarkupPercent || 15,
+          taxAmount: updatedQuote.totalTaxes || 0,
+          feesAmount: 0,
+          finalSellingPrice: updatedQuote.totalSellingPrice || 0,
+          currency: updatedQuote.currency,
+          itemsCount: (updatedQuote.items || []).length
+        };
 
-      if (linkedLead) {
+        const quoteVersions: LeadQuoteVersion[] = (updatedQuote.versionHistory || []).map(v => ({
+          version: v.version,
+          createdAt: v.updatedAt,
+          createdBy: v.updatedBy,
+          createdByUserType: 'DMC_STAFF',
+          totalItems: (updatedQuote.items || []).length,
+          totalNetCost: updatedQuote.totalNetCost || 0,
+          totalSellingPrice: v.totalSellingPrice,
+          marginPercent: updatedQuote.overallMarkupPercent || 15,
+          taxTotal: updatedQuote.totalTaxes || 0,
+          currency: updatedQuote.currency,
+          changesSummary: v.changesSummary
+        }));
+
+        const linkedLead = this.captureLeadFromSource({
+          leadId: targetLead.id,
+          contactName: updatedQuote.clientName || targetLead.contactName,
+          email: updatedQuote.clientEmail || targetLead.email,
+          phone: updatedQuote.clientPhone || targetLead.phone,
+          agencyName: updatedQuote.clientCompany || targetLead.agencyName,
+          companyName: updatedQuote.clientCompany || targetLead.companyName,
+          userId: resolvedClientUserId || targetLead.userId || user?.id,
+          userType: createdByUserType === 'B2B_AGENT' ? 'B2B_AGENT' : 'BUYER',
+          b2bAgentId: createdByUserType === 'B2B_AGENT' ? user?.id : targetLead.b2bAgentId,
+          source: actionType === 'DOWNLOADED' || actionType === 'PRINTED' ? 'PROPOSAL_DOWNLOADED' : 'QUOTATION_SAVED',
+          destinationName: updatedQuote.destination || targetLead.destinationName,
+          travelDates: updatedQuote.travelStartDate && updatedQuote.travelEndDate ? `${updatedQuote.travelStartDate} to ${updatedQuote.travelEndDate}` : targetLead.travelDates,
+          travelStartDate: updatedQuote.travelStartDate || targetLead.travelStartDate,
+          travelEndDate: updatedQuote.travelEndDate || targetLead.travelEndDate,
+          paxAdults: updatedQuote.adultsCount || updatedQuote.totalPax || targetLead.paxAdults || 2,
+          paxChildren: updatedQuote.childrenCount !== undefined ? updatedQuote.childrenCount : (targetLead.paxChildren || 0),
+          travelRequirements: (typeof updatedQuote.agentNotes === 'string'
+            ? updatedQuote.agentNotes
+            : Array.isArray(updatedQuote.agentNotes)
+              ? (updatedQuote.agentNotes as any[]).map(x => typeof x === 'string' ? x : x?.text || '').filter(Boolean).join('\n')
+              : '') || updatedQuote.title || targetLead.travelRequirements || 'Quotation customized for client',
+          estimatedBudget: updatedQuote.totalSellingPrice,
+          currency: updatedQuote.currency,
+          quoteId: updatedQuote.id,
+          quoteNumber: updatedQuote.quoteNumber,
+          quoteVersion: currentVersion,
+          quoteSnapshot,
+          quoteVersions,
+          requestedProducts: mappedProducts
+        }, user);
+
         updatedQuote.leadId = linkedLead.id;
         updatedQuote.linkedLeadId = linkedLead.id;
-        const curQuotes = this.getAllSavedQuotes();
-        const curIdx = curQuotes.findIndex(q => q.id === updatedQuote.id);
-        if (curIdx >= 0) {
-          curQuotes[curIdx].leadId = linkedLead.id;
-          curQuotes[curIdx].linkedLeadId = linkedLead.id;
-          this.setItem('saved_quotes', curQuotes);
-          this.syncFirestoreDoc('quotations', updatedQuote.id, {
-            leadId: linkedLead.id,
-            linkedLeadId: linkedLead.id
-          });
+        (updatedQuote as any).leadNumber = linkedLead.leadNumber;
+      } else {
+        // Invalid/non-existent lead reference: keep unlinked
+        updatedQuote.leadId = undefined;
+        updatedQuote.linkedLeadId = undefined;
+        (updatedQuote as any).leadNumber = undefined;
+      }
+    } else {
+      // Quote is explicitly unlinked
+      if (previousLeadRef) {
+        const prevIdx = allLeads.findIndex(l => l.id === previousLeadRef || l.leadNumber === previousLeadRef);
+        if (prevIdx >= 0) {
+          const prevLead = allLeads[prevIdx];
+          prevLead.quoteIds = (prevLead.quoteIds || []).filter(qid => qid !== updatedQuote.id);
+          if (prevLead.quoteId === updatedQuote.id) {
+            prevLead.quoteId = prevLead.quoteIds[0] || undefined;
+            prevLead.quoteNumber = undefined;
+          }
+          if (prevLead.activeQuoteId === updatedQuote.id) {
+            prevLead.activeQuoteId = prevLead.quoteIds[0] || undefined;
+          }
+          allLeads[prevIdx] = prevLead;
+          this.setItem('leads', allLeads);
+          this.syncFirestoreDoc('leads', prevLead.id, prevLead);
         }
       }
+      updatedQuote.leadId = undefined;
+      updatedQuote.linkedLeadId = undefined;
+      (updatedQuote as any).leadNumber = undefined;
+    }
+
+    const curQuotes = this.getAllSavedQuotes();
+    const curIdx = curQuotes.findIndex(q => q.id === updatedQuote.id);
+    if (curIdx >= 0) {
+      curQuotes[curIdx].leadId = updatedQuote.leadId;
+      curQuotes[curIdx].linkedLeadId = updatedQuote.linkedLeadId;
+      (curQuotes[curIdx] as any).leadNumber = (updatedQuote as any).leadNumber;
+      this.setItem('saved_quotes', curQuotes);
+      this.syncFirestoreDoc('quotations', updatedQuote.id, {
+        leadId: updatedQuote.leadId || null,
+        linkedLeadId: updatedQuote.linkedLeadId || null,
+        leadNumber: (updatedQuote as any).leadNumber || null
+      });
     }
 
     // Auto-trigger SLA & Google Calendar dispatch listeners
@@ -8529,6 +8615,7 @@ export class AppDatabase {
       updatedAt: timestamp,
       lastActivityAt: timestamp,
       status: 'DRAFT',
+      termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
       versionHistory: [
         ...(parentQuote.versionHistory || []),
         {
@@ -8578,15 +8665,140 @@ export class AppDatabase {
     const idx = quotes.findIndex(q => q.id === quoteId);
     if (idx < 0) return null;
 
+    const trimmedLeadRef = (leadId || '').trim();
+    const allLeads = this.getLeads();
+    const previousLeadRef = quotes[idx].leadId || quotes[idx].linkedLeadId || '';
+    const timestamp = new Date().toISOString();
+
+    if (!trimmedLeadRef) {
+      // Unlink quote from lead
+      if (previousLeadRef) {
+        const prevIdx = allLeads.findIndex(l => l.id === previousLeadRef || l.leadNumber === previousLeadRef);
+        if (prevIdx >= 0) {
+          const prevLead = allLeads[prevIdx];
+          prevLead.quoteIds = (prevLead.quoteIds || []).filter(id => id !== quoteId);
+          if (prevLead.quoteId === quoteId) {
+            prevLead.quoteId = prevLead.quoteIds[0] || undefined;
+            prevLead.quoteNumber = undefined;
+          }
+          if (prevLead.activeQuoteId === quoteId) {
+            prevLead.activeQuoteId = prevLead.quoteIds[0] || undefined;
+          }
+          prevLead.updatedAt = timestamp;
+          allLeads[prevIdx] = prevLead;
+          this.setItem('leads', allLeads);
+          this.syncFirestoreDoc('leads', prevLead.id, prevLead);
+        }
+      }
+
+      quotes[idx] = {
+        ...quotes[idx],
+        leadId: undefined,
+        linkedLeadId: undefined,
+        updatedAt: timestamp,
+        lastActivityAt: timestamp,
+        activityLog: [
+          ...(quotes[idx].activityLog || []),
+          {
+            id: `act-${Date.now()}`,
+            action: 'EDITED',
+            timestamp,
+            userName: user?.name || 'Operations Desk',
+            userRole: user?.role,
+            userType: (user?.role as any) || 'ADMIN',
+            details: `Unlinked quotation from CRM Lead (${previousLeadRef || 'Previously Linked'})`
+          }
+        ]
+      };
+      delete (quotes[idx] as any).leadNumber;
+
+      this.setItem('saved_quotes', quotes);
+      this.syncFirestoreDoc('quotations', quoteId, {
+        leadId: null,
+        linkedLeadId: null,
+        leadNumber: null,
+        updatedAt: timestamp
+      });
+      this.logAudit(user, 'SETTINGS_UPDATED', 'Quotation', quoteId, `Unlinked quote ${quotes[idx].quoteNumber} from CRM lead`);
+      return quotes[idx];
+    }
+
+    // Validate that the target lead exists in the database
+    const targetIdx = allLeads.findIndex(l => l.id === trimmedLeadRef || l.leadNumber === trimmedLeadRef);
+    if (targetIdx < 0) {
+      throw new Error(`Target CRM Lead "${trimmedLeadRef}" does not exist.`);
+    }
+
+    const targetLead = allLeads[targetIdx];
+
+    // If previously linked to a different lead, remove quoteId from the old lead
+    if (previousLeadRef && previousLeadRef !== targetLead.id && previousLeadRef !== targetLead.leadNumber) {
+      const prevIdx = allLeads.findIndex(l => l.id === previousLeadRef || l.leadNumber === previousLeadRef);
+      if (prevIdx >= 0) {
+        const prevLead = allLeads[prevIdx];
+        prevLead.quoteIds = (prevLead.quoteIds || []).filter(id => id !== quoteId);
+        if (prevLead.quoteId === quoteId) {
+          prevLead.quoteId = prevLead.quoteIds[0] || undefined;
+          prevLead.quoteNumber = undefined;
+        }
+        if (prevLead.activeQuoteId === quoteId) {
+          prevLead.activeQuoteId = prevLead.quoteIds[0] || undefined;
+        }
+        prevLead.updatedAt = timestamp;
+        allLeads[prevIdx] = prevLead;
+        this.syncFirestoreDoc('leads', prevLead.id, prevLead);
+      }
+    }
+
+    // Update target lead with the linked quote without creating duplicate lead records
+    const updatedQuoteIds = Array.from(new Set([...(targetLead.quoteIds || []), quoteId]));
+    targetLead.quoteId = quoteId;
+    targetLead.quoteNumber = quotes[idx].quoteNumber;
+    targetLead.quoteIds = updatedQuoteIds;
+    targetLead.activeQuoteId = quoteId;
+    targetLead.quoteVersion = quotes[idx].version || 1;
+    targetLead.updatedAt = timestamp;
+    targetLead.lastActivityAt = timestamp;
+    targetLead.lastActivitySummary = `Linked Quote #${quotes[idx].quoteNumber}`;
+    allLeads[targetIdx] = targetLead;
+    this.setItem('leads', allLeads);
+    this.syncFirestoreDoc('leads', targetLead.id, targetLead);
+
     quotes[idx] = {
       ...quotes[idx],
-      leadId: leadId.trim(),
-      updatedAt: new Date().toISOString(),
-      lastActivityAt: new Date().toISOString()
+      leadId: targetLead.id,
+      linkedLeadId: targetLead.id,
+      updatedAt: timestamp,
+      lastActivityAt: timestamp,
+      activityLog: [
+        ...(quotes[idx].activityLog || []),
+        {
+          id: `act-${Date.now()}`,
+          action: 'EDITED',
+          timestamp,
+          userName: user?.name || 'Operations Desk',
+          userRole: user?.role,
+          userType: (user?.role as any) || 'ADMIN',
+          details: `Linked quotation to CRM Lead ${targetLead.leadNumber} (${targetLead.contactName})`
+        }
+      ]
     };
+    (quotes[idx] as any).leadNumber = targetLead.leadNumber;
 
     this.setItem('saved_quotes', quotes);
-    this.syncFirestoreDoc('quotations', quoteId, { leadId: leadId.trim(), updatedAt: quotes[idx].updatedAt });
+    this.syncFirestoreDoc('quotations', quoteId, {
+      leadId: targetLead.id,
+      linkedLeadId: targetLead.id,
+      leadNumber: targetLead.leadNumber,
+      updatedAt: timestamp
+    });
+    this.logAudit(
+      user,
+      'SETTINGS_UPDATED',
+      'Quotation',
+      quoteId,
+      `Linked quote ${quotes[idx].quoteNumber} to CRM Lead ${targetLead.leadNumber} (${targetLead.id})`
+    );
 
     return quotes[idx];
   }
@@ -8642,7 +8854,7 @@ export class AppDatabase {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const newQuoteNumber = `TUB-QT-2026-${randomSuffix}`;
     const newQuoteId = `quote-${Date.now()}-${randomSuffix}`;
-    const userName = user?.name || 'Elena Rostova';
+    const userName = user?.name || 'TheUnbound Executive Admin';
 
     const duplicatedQuote: Quotation = {
       ...sourceQuote,
@@ -14860,13 +15072,10 @@ export class AppDatabase {
     const idx = leads.findIndex(l => l.id === leadId || l.leadNumber === leadId);
     if (idx === -1) return null;
 
-    const allUsers = this.getUsers();
-    const member = allUsers.find(u => u.id === teamMemberUserId);
+    const eligibleMembers = this.getEligibleInternalTeamMembers();
+    const member = eligibleMembers.find(u => u.id === teamMemberUserId);
     if (!member) {
-      throw new Error(`Target internal team member with UID ${teamMemberUserId} was not found.`);
-    }
-    if (member.role === 'B2B_AGENT' || member.role === 'BUYER') {
-      throw new Error(`User ${member.name} is an external user and cannot be assigned as an internal team member.`);
+      throw new Error(`Target internal team member with UID ${teamMemberUserId} was not found or is not an active eligible internal team member.`);
     }
 
     const lead = leads[idx];
@@ -14877,6 +15086,7 @@ export class AppDatabase {
 
     // Authoritative internal assignment
     lead.assignedTeamMemberId = member.id;
+    lead.assignedTeamMemberName = member.name;
     lead.assignedTeamMemberNameSnapshot = member.name;
     lead.assignedTeamMemberEmailSnapshot = member.email;
 
@@ -15048,6 +15258,7 @@ export class AppDatabase {
     const timestamp = new Date().toISOString();
 
     lead.assignedTeamMemberId = undefined;
+    lead.assignedTeamMemberName = undefined;
     lead.assignedTeamMemberNameSnapshot = undefined;
     lead.assignedTeamMemberEmailSnapshot = undefined;
     lead.assignedStaffId = undefined as any;
@@ -15111,6 +15322,7 @@ export class AppDatabase {
   } {
     const all = this.getLeads();
     const allUsers = this.getUsers();
+    const eligibleInternalMembers = this.getEligibleInternalTeamMembers();
     let migratedCount = 0;
     let fullyAssignedCount = 0;
     let pendingInternalCount = 0;
@@ -15184,50 +15396,63 @@ export class AppDatabase {
         lead.agentAssignmentStatus = 'pending_assignment';
       }
 
-      // 2. Reconcile Internal Team Member Assignment
-      if (!lead.assignedTeamMemberId) {
-        if (lead.assignedStaffId) {
-          lead.assignedTeamMemberId = lead.assignedStaffId;
-          changed = true;
-        } else if (lead.assignedStaffName) {
-          const member = allUsers.find(u => 
-            u.name?.toLowerCase() === lead.assignedStaffName?.toLowerCase() &&
-            u.role !== 'B2B_AGENT' && u.role !== 'BUYER'
-          );
-          if (member) {
-            lead.assignedTeamMemberId = member.id;
-            lead.assignedTeamMemberNameSnapshot = member.name;
-            lead.assignedTeamMemberEmailSnapshot = member.email;
-            changed = true;
-          }
-        }
+      // 2. Reconcile Internal Team Member Assignment against real eligible internal team members
+      const candidateMemberId = lead.assignedTeamMemberId || lead.assignedStaffId;
+      const candidateMemberName = (lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName || '').trim().toLowerCase();
+
+      let validMember = candidateMemberId
+        ? eligibleInternalMembers.find(u => u.id === candidateMemberId)
+        : undefined;
+
+      if (!validMember && candidateMemberName) {
+        validMember = eligibleInternalMembers.find(u => (u.name || '').trim().toLowerCase() === candidateMemberName);
       }
 
-      if (lead.assignedTeamMemberId) {
-        const member = allUsers.find(u => u.id === lead.assignedTeamMemberId);
-        if (member) {
-          if (!lead.assignedTeamMemberNameSnapshot) {
-            lead.assignedTeamMemberNameSnapshot = member.name;
-            lead.assignedStaffName = member.name;
-            changed = true;
-          }
-          if (!lead.assignedTeamMemberEmailSnapshot && member.email) {
-            lead.assignedTeamMemberEmailSnapshot = member.email;
-            lead.assignedStaffEmail = member.email;
-            changed = true;
-          }
-        }
-        if (!lead.assignedStaffId) {
-          lead.assignedStaffId = lead.assignedTeamMemberId;
-          lead.assignedStaffName = lead.assignedTeamMemberNameSnapshot;
-          lead.assignedStaffEmail = lead.assignedTeamMemberEmailSnapshot;
+      if (validMember) {
+        if (lead.assignedTeamMemberId !== validMember.id) {
+          lead.assignedTeamMemberId = validMember.id;
           changed = true;
         }
+        if (lead.assignedTeamMemberName !== validMember.name) {
+          lead.assignedTeamMemberName = validMember.name;
+          changed = true;
+        }
+        if (lead.assignedTeamMemberNameSnapshot !== validMember.name) {
+          lead.assignedTeamMemberNameSnapshot = validMember.name;
+          changed = true;
+        }
+        if (validMember.email && lead.assignedTeamMemberEmailSnapshot !== validMember.email) {
+          lead.assignedTeamMemberEmailSnapshot = validMember.email;
+          changed = true;
+        }
+        if (lead.assignedStaffId !== validMember.id || lead.assignedStaffName !== validMember.name) {
+          lead.assignedStaffId = validMember.id;
+          lead.assignedStaffName = validMember.name;
+          lead.assignedStaffEmail = validMember.email;
+          changed = true;
+        }
+      } else if (
+        lead.assignedTeamMemberId ||
+        lead.assignedTeamMemberName ||
+        lead.assignedStaffId ||
+        lead.assignedTeamMemberNameSnapshot ||
+        lead.assignedStaffName
+      ) {
+        // Historical record assigned to a fake/dummy/non-existent team member:
+        // Preserve the historical lead record intact, and mark internal assignment as Unassigned.
+        lead.assignedTeamMemberId = undefined;
+        lead.assignedTeamMemberName = undefined;
+        lead.assignedTeamMemberNameSnapshot = undefined;
+        lead.assignedTeamMemberEmailSnapshot = undefined;
+        lead.assignedStaffId = undefined as any;
+        lead.assignedStaffName = undefined as any;
+        lead.assignedStaffEmail = undefined as any;
+        changed = true;
       }
 
       // 3. Reconcile Dual Assignment Status
       const hasAgent = Boolean(lead.responsibleAgentId || lead.assignedAgentId);
-      const hasTeamMember = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId);
+      const hasTeamMember = Boolean(lead.assignedTeamMemberId);
 
       if (hasAgent && hasTeamMember) {
         if (lead.assignmentStatus !== 'assigned') {
@@ -15263,10 +15488,10 @@ export class AppDatabase {
             type: 'INITIAL_CREATION',
             newAgentId: lead.responsibleAgentId || lead.assignedAgentId,
             newAgentName: lead.responsibleAgentNameSnapshot || lead.assignedAgentNameSnapshot,
-            newTeamMemberId: lead.assignedTeamMemberId || lead.assignedStaffId,
-            newTeamMemberName: lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName,
-            assignedStaffId: lead.assignedTeamMemberId || lead.assignedStaffId,
-            assignedStaffName: lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName || 'Unassigned',
+            newTeamMemberId: lead.assignedTeamMemberId,
+            newTeamMemberName: lead.assignedTeamMemberNameSnapshot,
+            assignedStaffId: lead.assignedTeamMemberId,
+            assignedStaffName: lead.assignedTeamMemberNameSnapshot || 'Unassigned',
             assignedByUserId: lead.assignedByUserId || 'system-migration',
             assignedByUserNameSnapshot: lead.assignedByUserNameSnapshot || 'System Migration',
             assignedBy: lead.assignedByUserNameSnapshot || 'System Migration',
@@ -15288,6 +15513,39 @@ export class AppDatabase {
     if (migratedCount > 0) {
       this.setItem('leads', updated);
       console.log(`MIGRATION: Successfully reconciled ${migratedCount} leads with mandatory B2B Agent & Internal Team Member assignments.`);
+    }
+
+    // 5. Reconcile Quote <-> Lead links so all linked quotes reference valid Lead IDs
+    try {
+      const allQuotes = this.getAllSavedQuotes();
+      let quotesModified = false;
+      const updatedQuotes = allQuotes.map(q => {
+        const ref = (q.leadId || q.linkedLeadId || '').trim();
+        if (!ref) return q;
+        const matchedLead = updated.find(l => l.id === ref || l.leadNumber === ref);
+        if (matchedLead) {
+          if (q.leadId !== matchedLead.id || q.linkedLeadId !== matchedLead.id || (q as any).leadNumber !== matchedLead.leadNumber) {
+            quotesModified = true;
+            return {
+              ...q,
+              leadId: matchedLead.id,
+              linkedLeadId: matchedLead.id,
+              leadNumber: matchedLead.leadNumber
+            } as Quotation;
+          }
+          return q;
+        } else {
+          quotesModified = true;
+          const cleaned = { ...q, leadId: undefined, linkedLeadId: undefined };
+          delete (cleaned as any).leadNumber;
+          return cleaned;
+        }
+      });
+      if (quotesModified) {
+        this.setItem('saved_quotes', updatedQuotes);
+      }
+    } catch (e) {
+      console.debug('Quote lead link reconciliation note:', e);
     }
 
     return { migratedCount, fullyAssignedCount, pendingInternalCount, pendingAgentCount, needsBothCount };
@@ -15431,13 +15689,10 @@ export class AppDatabase {
     const idx = all.findIndex(b => b.id === bookingId || b.bookingReference === bookingId);
     if (idx === -1) return null;
 
-    const allUsers = this.getUsers();
-    const member = allUsers.find(u => u.id === teamMemberUserId);
+    const eligibleMembers = this.getEligibleInternalTeamMembers();
+    const member = eligibleMembers.find(u => u.id === teamMemberUserId);
     if (!member) {
-      throw new Error(`Target team member with UID ${teamMemberUserId} was not found.`);
-    }
-    if (member.role === 'B2B_AGENT' || member.role === 'BUYER') {
-      throw new Error(`User ${member.name} is an external user and cannot be assigned as an internal operational owner.`);
+      throw new Error(`Target team member with UID ${teamMemberUserId} was not found or is not an active eligible internal team member.`);
     }
 
     const booking = all[idx];
@@ -15622,6 +15877,7 @@ export class AppDatabase {
   } {
     const all = this.getAllBookings();
     const allUsers = this.getUsers();
+    const eligibleInternalMembers = this.getEligibleInternalTeamMembers();
     let migratedCount = 0;
     let alreadyAssignedCount = 0;
     let pendingInternalCount = 0;
@@ -15682,31 +15938,45 @@ export class AppDatabase {
         }
       }
 
-      // 2. Reconcile Internal Team Member Assignment
-      if (booking.assignedTeamMemberId) {
-        const member = allUsers.find(u => u.id === booking.assignedTeamMemberId);
-        if (member) {
-          if (!booking.assignedTeamMemberNameSnapshot) {
-            booking.assignedTeamMemberNameSnapshot = member.name;
-            booking.assignedTeamMemberName = member.name;
-            changed = true;
-          }
-          if (!booking.assignedTeamMemberEmailSnapshot && member.email) {
-            booking.assignedTeamMemberEmailSnapshot = member.email;
-            changed = true;
-          }
-        }
-      } else if (booking.assignedTeamMemberName) {
-        const member = allUsers.find(u => 
-          u.name?.toLowerCase() === booking.assignedTeamMemberName?.toLowerCase() &&
-          u.role !== 'B2B_AGENT' && u.role !== 'BUYER'
-        );
-        if (member) {
-          booking.assignedTeamMemberId = member.id;
-          booking.assignedTeamMemberNameSnapshot = member.name;
-          booking.assignedTeamMemberEmailSnapshot = member.email;
+      // 2. Reconcile Internal Team Member Assignment against real eligible internal team members
+      const candidateMemberId = booking.assignedTeamMemberId;
+      const candidateMemberName = (booking.assignedTeamMemberNameSnapshot || booking.assignedTeamMemberName || '').trim().toLowerCase();
+
+      let validMember = candidateMemberId
+        ? eligibleInternalMembers.find(u => u.id === candidateMemberId)
+        : undefined;
+
+      if (!validMember && candidateMemberName) {
+        validMember = eligibleInternalMembers.find(u => (u.name || '').trim().toLowerCase() === candidateMemberName);
+      }
+
+      if (validMember) {
+        if (booking.assignedTeamMemberId !== validMember.id) {
+          booking.assignedTeamMemberId = validMember.id;
           changed = true;
         }
+        if (booking.assignedTeamMemberNameSnapshot !== validMember.name || booking.assignedTeamMemberName !== validMember.name) {
+          booking.assignedTeamMemberNameSnapshot = validMember.name;
+          booking.assignedTeamMemberName = validMember.name;
+          changed = true;
+        }
+        if (validMember.email && booking.assignedTeamMemberEmailSnapshot !== validMember.email) {
+          booking.assignedTeamMemberEmailSnapshot = validMember.email;
+          changed = true;
+        }
+      } else if (
+        booking.assignedTeamMemberId ||
+        booking.assignedTeamMemberName ||
+        booking.assignedTeamMemberNameSnapshot ||
+        booking.assignedTeamMemberEmailSnapshot
+      ) {
+        // Historical booking assigned to a fake/dummy/non-existent team member:
+        // Preserve booking intact and mark internal assignment as Unassigned.
+        booking.assignedTeamMemberId = undefined;
+        booking.assignedTeamMemberName = undefined;
+        booking.assignedTeamMemberNameSnapshot = undefined;
+        booking.assignedTeamMemberEmailSnapshot = undefined;
+        changed = true;
       }
 
       // 3. Reconcile Assignment Status
@@ -16265,9 +16535,9 @@ export class AppDatabase {
           importance: targetStage.isWon ? 'URGENT' : 'IMPORTANT',
           status: 'PENDING',
           category: 'CLIENT_FOLLOW_UP',
-          assignedTo: leads[index].assignedStaffId || user?.id || 'staff-01',
-          assignedToName: leads[index].assignedStaffName || user?.name || 'Marcus Vance',
-          assignedToEmail: leads[index].assignedStaffEmail || user?.email || 'business@theunbound.in',
+          assignedTo: leads[index].assignedTeamMemberId || leads[index].assignedStaffId || (this.isEligibleInternalTeamMember(user) ? user?.id : '') || 'unassigned',
+          assignedToName: leads[index].assignedTeamMemberNameSnapshot || leads[index].assignedStaffName || (this.isEligibleInternalTeamMember(user) ? user?.name : '') || 'Unassigned',
+          assignedToEmail: leads[index].assignedTeamMemberEmailSnapshot || leads[index].assignedStaffEmail || user?.email || 'business@theunbound.in',
           entityType: 'LEAD',
           entityId: leads[index].id,
           relatedEntityReference: leads[index].leadNumber,
@@ -17373,6 +17643,53 @@ export class AppDatabase {
   // ==========================================
   // USER APPROVAL, SEGREGATION & ACCESS CONTROL
   // ==========================================
+  private static readonly FAKE_DEMO_USER_IDS = new Set([
+    'usr-admin-01',
+    'usr-admin-ops',
+    'usr-staff-01',
+    'staff-01',
+    'staff-02',
+    'staff-03',
+    'staff-04',
+    'staff-05',
+    'user-ops-02'
+  ]);
+
+  private static readonly FAKE_DEMO_USER_EMAILS = new Set([
+    'marcus@theunbound.in',
+    'admin@theunbound.com',
+    'kenji.ops@theunbound.in',
+    'kenji@theunbound.in',
+    'elena@theunbound.in',
+    'aarav@theunbound.in',
+    'marcus.v@theunbound.in',
+    'elena.r@theunbound.in',
+    'liam.c@theunbound.in',
+    'sophia.s@theunbound.in',
+    'aria.t@theunbound.in'
+  ]);
+
+  private static readonly FAKE_DEMO_USER_NAMES = new Set([
+    'marcus vance',
+    'marcus vance (senior ops)',
+    'operations admin',
+    'kenji sato',
+    'kenji sato (japan operations)',
+    'kenji takahashi',
+    'kenji takahashi (japan ground lead)',
+    'elena rostova',
+    'elena rostova (europe luxury)',
+    'aarav patel',
+    'aarav patel (global concierge)',
+    'liam chen',
+    'liam chen (asia pacific)',
+    'sophia sterling',
+    'sophia sterling (uk & ireland)',
+    'aria tanaka',
+    'aria tanaka (japan specialist)',
+    'sarah lin'
+  ]);
+
   public getUsers(): User[] {
     const defaultUsers: User[] = [
       {
@@ -17397,72 +17714,6 @@ export class AppDatabase {
           canManageUsers: true
         },
         createdAt: '2025-01-01'
-      },
-      {
-        id: 'usr-admin-01',
-        name: 'Marcus Vance',
-        email: 'marcus@theunbound.in',
-        password: 'Unboundpass11!',
-        role: 'ADMIN',
-        category: 'INTERNAL',
-        agencyName: 'TheUnbound DMC Global Headquarters',
-        country: 'Global',
-        approvalStatus: 'APPROVED',
-        permissions: {
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: true,
-          canAccessRoster: true,
-          canAccessFinancials: true,
-          canManageUsers: true
-        },
-        createdAt: '2025-01-01'
-      },
-      {
-        id: 'usr-admin-ops',
-        name: 'Operations Admin',
-        email: 'admin@theunbound.com',
-        password: 'Unboundpass11!',
-        role: 'ADMIN',
-        category: 'INTERNAL',
-        agencyName: 'TheUnbound DMC Global Headquarters',
-        country: 'Global',
-        approvalStatus: 'APPROVED',
-        permissions: {
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: true,
-          canAccessRoster: true,
-          canAccessFinancials: true,
-          canManageUsers: true
-        },
-        createdAt: '2025-01-01'
-      },
-      {
-        id: 'usr-staff-01',
-        name: 'Kenji Sato',
-        email: 'kenji.ops@theunbound.in',
-        password: 'Unboundpass11!',
-        role: 'TEAM_MEMBER',
-        category: 'INTERNAL',
-        agencyName: 'TheUnbound Ground Operations Hub',
-        country: 'Japan',
-        approvalStatus: 'APPROVED',
-        permissions: {
-          canAccessPricingCalculator: true,
-          canCreateBookings: true,
-          canExportPDF: true,
-          canViewWholesaleNetRates: true,
-          canAccessCMS: true,
-          canAccessRoster: true,
-          canAccessFinancials: false,
-          canManageUsers: false
-        },
-        createdAt: '2025-06-15'
       }
     ];
 
@@ -17479,16 +17730,20 @@ export class AppDatabase {
       }
     }
 
-    // Filter out deleted/tombstoned users and deduplicate by ID and email
+    // Filter out deleted/tombstoned users, fake/demo internal accounts, and deduplicate by ID and email
     const seenIds = new Set<string>();
     const seenEmails = new Set<string>();
     const uniqueUsers: User[] = [];
 
     for (const u of candidateList) {
       if (!u || !u.id) continue;
+      if (AppDatabase.FAKE_DEMO_USER_IDS.has(u.id)) continue;
       if (deletedSet.has(u.id) || deletedSet.has(`User_${u.id}`) || deletedSet.has(`users_${u.id}`)) continue;
       const cleanEmail = u.email ? u.email.toLowerCase().trim() : '';
+      if (cleanEmail && AppDatabase.FAKE_DEMO_USER_EMAILS.has(cleanEmail)) continue;
       if (cleanEmail && (deletedSet.has(cleanEmail) || deletedSet.has(`user_email_${cleanEmail}`))) continue;
+      const cleanName = u.name ? u.name.toLowerCase().trim() : '';
+      if (cleanName && AppDatabase.FAKE_DEMO_USER_NAMES.has(cleanName) && u.role !== 'B2B_AGENT') continue;
       if ((u as any).status === 'DELETED' || (u as any).isDeleted === true) continue;
       if (seenIds.has(u.id)) continue;
       if (cleanEmail && seenEmails.has(cleanEmail)) continue;
@@ -17499,6 +17754,77 @@ export class AppDatabase {
     }
 
     return uniqueUsers;
+  }
+
+  /**
+   * Authoritative check for whether a user or userId represents an active, eligible internal team member.
+   * Excludes external Buyers, B2B Agents, deleted/disabled/rejected/pending accounts, and any legacy demo records.
+   */
+  public isEligibleInternalTeamMember(userOrId: User | string | null | undefined): boolean {
+    if (!userOrId) return false;
+    const allUsers = this.getUsers();
+    const user: User | undefined = typeof userOrId === 'string'
+      ? allUsers.find(u => u.id === userOrId)
+      : allUsers.find(u => u.id === userOrId.id) || userOrId;
+
+    if (!user || !user.id) return false;
+    if (AppDatabase.FAKE_DEMO_USER_IDS.has(user.id)) return false;
+
+    const cleanEmail = (user.email || '').toLowerCase().trim();
+    if (cleanEmail && AppDatabase.FAKE_DEMO_USER_EMAILS.has(cleanEmail)) return false;
+
+    const cleanName = (user.name || '').toLowerCase().trim();
+    if (cleanName && AppDatabase.FAKE_DEMO_USER_NAMES.has(cleanName)) return false;
+
+    // Exclude deleted, disabled, suspended, or unverified/pending users
+    if (
+      (user as any).status === 'DELETED' ||
+      (user as any).status === 'DISABLED' ||
+      (user as any).status === 'INACTIVE' ||
+      (user as any).status === 'SUSPENDED' ||
+      (user as any).isDeleted === true ||
+      (user as any).isActive === false ||
+      (user as any).disabled === true
+    ) {
+      return false;
+    }
+
+    if (
+      user.approvalStatus === 'REJECTED' ||
+      user.approvalStatus === 'PENDING' ||
+      (user.approvalStatus as any) === 'SUSPENDED' ||
+      (user.approvalStatus as any) === 'DISABLED'
+    ) {
+      return false;
+    }
+
+    // Strictly exclude external users (Buyers and B2B Agents)
+    if (
+      user.role === 'B2B_AGENT' ||
+      user.role === 'BUYER' ||
+      (user.role as any) === 'AGENT' ||
+      user.category === 'EXTERNAL'
+    ) {
+      return false;
+    }
+
+    // Must be an authorized internal role
+    const validInternalRoles = ['ADMIN', 'SUPER_ADMIN', 'TEAM_MEMBER', 'DMC_STAFF'];
+    if (!validInternalRoles.includes(user.role as string)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Centralized Internal Team Member Source:
+   * Returns all actual registered, active, eligible internal team members across Leads, Quotes, and Bookings.
+   */
+  public getEligibleInternalTeamMembers(): User[] {
+    return this.getUsers()
+      .filter(u => this.isEligibleInternalTeamMember(u))
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }
 
   public getUserByEmail(email: string): User | undefined {

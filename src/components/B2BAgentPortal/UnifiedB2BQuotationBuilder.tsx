@@ -48,6 +48,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { sanitizeProductForAgent } from '../../utils/customerQuoteSanitizer';
+import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../../constants/commercialQuotationTerms';
 import { StepByStepQuotationWorkspace } from './StepByStepQuotationWorkspace';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
 import { OptionComparisonMatrixModal } from './OptionComparisonMatrixModal';
@@ -113,6 +114,13 @@ import { formatPlainTextQuotationToHtml } from '../../services/quoteEmailFormatt
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { QuotationScope } from '../../types';
 import { buildAgencyBrandingSnapshotFromUser, validateWhiteLabelReadiness } from '../../services/quotePresentationModel';
+import { PackageDetailModal } from '../PackageDetailModal';
+import {
+  buildMasterPackageFromQuoteWorkspace,
+  saveAndVerifyMasterPackageFromQuote,
+  normalizeMasterPackageTripType,
+  MasterPackageVerificationReport
+} from '../../services/packageToQuoteTransformer';
 
 // Helper to check if a product is tagged with or matches a specific city / hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -161,6 +169,7 @@ export interface UnifiedB2BQuotationBuilderProps {
   initialDestinationSlug?: string;
   targetQuoteId?: string;
   targetQuoteVersion?: number;
+  initialMode?: 'inspect' | 'edit' | 'clone';
   isNewQuoteMode?: boolean;
   prefillLead?: TravelLead | null;
   destinations?: Destination[];
@@ -169,6 +178,7 @@ export interface UnifiedB2BQuotationBuilderProps {
   cityHubs?: CityHub[];
   onBackToDashboard?: () => void;
   onViewMyQuotes?: () => void;
+  onNavigateToPackages?: (packageId?: string) => void;
   onConvertToBooking?: (quote: Quotation) => void;
   onBookQuotation?: (quote: Quotation) => void;
   onViewProductDetails?: (product: Product) => void;
@@ -187,6 +197,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   cityHubs: propCityHubs = [],
   onBackToDashboard,
   onViewMyQuotes,
+  onNavigateToPackages,
   onConvertToBooking,
   onBookQuotation,
   onViewProductDetails,
@@ -812,7 +823,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       if (q.clientCompany) setClientCompany(q.clientCompany);
       if (q.agentNotes) setAgentNotes(q.agentNotes);
       if (q.currency) setCurrency(q.currency);
-      if (q.leadId) setSelectedLeadId(q.leadId);
+      const rawLeadRef = q.leadId || q.linkedLeadId || '';
+      if (rawLeadRef) {
+        const matchedLead = db.getLeads().find(l => l.id === rawLeadRef || l.leadNumber === rawLeadRef);
+        setSelectedLeadId(matchedLead ? matchedLead.id : '');
+      } else {
+        setSelectedLeadId('');
+      }
       if (q.travelStartDate) setStartDate(q.travelStartDate);
       if (q.travelEndDate) setEndDate(q.travelEndDate);
       if (q.travelStartDate && q.travelEndDate) {
@@ -1598,16 +1615,28 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Save as Package Modal State
   const [isSavePackageModalOpen, setIsSavePackageModalOpen] = useState(false);
-  const [packageFormData, setPackageFormData] = useState({
+  const [packageFormData, setPackageFormData] = useState<{
+    title: string;
+    tagline: string;
+    description: string;
+    tripType: B2BPackage['tripType'];
+    status: 'PUBLISHED' | 'DRAFT';
+    featured: boolean;
+    updateExisting: boolean;
+  }>({
     title: '',
     tagline: '',
     description: '',
-    tripType: 'LUXURY' as const,
-    pricingMode: 'LIVE_DYNAMIC' as const,
-    status: 'PUBLISHED' as const,
-    featured: true
+    tripType: 'LUXURY',
+    status: 'PUBLISHED',
+    featured: true,
+    updateExisting: true
   });
   const [packageSavedNotice, setPackageSavedNotice] = useState<string | null>(null);
+  const [savePackageError, setSavePackageError] = useState<string | null>(null);
+  const [lastSavedMasterPackage, setLastSavedMasterPackage] = useState<B2BPackage | null>(null);
+  const [lastPackageVerificationReport, setLastPackageVerificationReport] = useState<MasterPackageVerificationReport | null>(null);
+  const [viewingSavedMasterPackage, setViewingSavedMasterPackage] = useState<B2BPackage | null>(null);
 
   // Helper to open quick add modal for a day slot
   const handleOpenQuickAddModal = (slot: { dayNumber: number; dateString: string; hub?: TripRouteHub | null }) => {
@@ -2538,7 +2567,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         brandingMode,
         brandingSnapshot,
         agentNotes: agentNotes || '',
-        termsAndConditions: brandingSnapshot.disclaimer || 'All rates valid for 14 days from issue date. 20% deposit secures itinerary reservations.',
+        termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
         status: 'DRAFT',
         travelStartDate: startDate,
         travelEndDate: endDate,
@@ -2564,8 +2593,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         options: computedQuotationOptions,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        validUntil: new Date(Date.now() + 86400000 * 14).toISOString(),
-        leadId: selectedLeadId || undefined,
+        leadId: selectedLeadId || '',
+        linkedLeadId: selectedLeadId || undefined,
         scope: quotationScope,
         routeHubs,
         dayThemes,
@@ -2600,7 +2629,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [items, clientName, clientEmail, startDate, endDate, agentMarkupPercent, agentMarginType, agentMarginValue, adminManualMarginType, adminManualMarginValue, adminMarginMode, overallDiscountPercent, currency, routeHubs, quotationScope, brandingMode, hasExplicitlySaved]);
+  }, [items, clientName, clientEmail, selectedLeadId, startDate, endDate, agentMarkupPercent, agentMarginType, agentMarginValue, adminManualMarginType, adminManualMarginValue, adminMarginMode, overallDiscountPercent, currency, routeHubs, quotationScope, brandingMode, hasExplicitlySaved]);
 
   // Balance Nights Helper
   const handleAutoBalanceNights = () => {
@@ -3306,143 +3335,170 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
+  // Resolve currently linked Master Package (from sourcePackageId or lastSavedMasterPackage)
+  const linkedExistingMasterPackage = useMemo(() => {
+    const candidateId = lastSavedMasterPackage?.id || sourcePackageId;
+    if (!candidateId) return null;
+    return db.getPackages().find(p => p.id === candidateId) || lastSavedMasterPackage || null;
+  }, [db, lastSavedMasterPackage, sourcePackageId]);
+
   // Open Save as Ready-Made Package Modal
   const handleOpenSavePackageModal = () => {
     if (!canSaveAsPackage) return;
-    const defaultTitle = `${currentDestination.name} ${tripNights}N/${tripNights + 1}D ${tripType} Discovery`;
+    setSavePackageError(null);
+
+    const existingPkg = linkedExistingMasterPackage;
+    const cleanQuoteTitle = (quoteTitle || '').trim();
+    const isGenericQuoteTitle =
+      !cleanQuoteTitle ||
+      cleanQuoteTitle.toLowerCase().includes('new quotation') ||
+      cleanQuoteTitle.toLowerCase().includes('bespoke quotation');
+
+    const defaultTitle = existingPkg?.title ||
+      (!isGenericQuoteTitle
+        ? cleanQuoteTitle
+        : `${currentDestination.name} ${tripNights}N/${tripNights + 1}D ${tripType} Discovery`);
+
     const routeHubNames = (routeHubs || []).map(h => h.hubName).filter(Boolean);
-    const defaultTagline = `Signature ${tripNights}-night curated circuit featuring ${routeHubNames.length > 0 ? routeHubNames.join(' → ') : currentDestination.name}.`;
-    
+    const defaultTagline = existingPkg?.tagline ||
+      `Signature ${tripNights}-night curated circuit featuring ${routeHubNames.length > 0 ? routeHubNames.join(' → ') : currentDestination.name}.`;
+
+    const defaultDescription = existingPkg?.description ||
+      (itineraryOverview && itineraryOverview.trim().length > 0
+        ? itineraryOverview.trim()
+        : `Comprehensive multi-city luxury touring circuit including ${items.length} master experiences and premium accommodations across ${routeHubNames.length > 0 ? routeHubNames.join(', ') : currentDestination.name}.`);
+
     setPackageFormData({
       title: defaultTitle,
       tagline: defaultTagline,
-      description: `Comprehensive multi-city luxury touring circuit including ${items.length} master experiences and premium accommodations across ${routeHubNames.length > 0 ? routeHubNames.join(', ') : currentDestination.name}.`,
-      tripType: (tripType.toUpperCase().includes('LUXURY') ? 'LUXURY' : 'BOUTIQUE') as any,
-      pricingMode: 'LIVE_DYNAMIC',
-      status: 'PUBLISHED',
-      featured: true
+      description: defaultDescription,
+      tripType: existingPkg?.tripType || normalizeMasterPackageTripType(tripType || travelStyle),
+      status: existingPkg?.status === 'DRAFT' ? 'DRAFT' : 'PUBLISHED',
+      featured: existingPkg ? Boolean(existingPkg.isFeatured) : true,
+      updateExisting: Boolean(existingPkg)
     });
     setIsSavePackageModalOpen(true);
   };
 
-  // Save Current Itinerary as a Master Ready-Made Package
+  // Live preview of the Ready-Made Package & Centralized Pricing Engine calculation for the modal
+  const liveMasterPackagePreview = useMemo(() => {
+    if (!isSavePackageModalOpen) return null;
+    try {
+      return buildMasterPackageFromQuoteWorkspace({
+        title: packageFormData.title || `${currentDestination.name} ${tripNights}N/${tripNights + 1}D Circuit`,
+        tagline: packageFormData.tagline,
+        description: packageFormData.description,
+        tripType: packageFormData.tripType,
+        status: packageFormData.status,
+        featured: packageFormData.featured,
+        currentDestination,
+        quotationScope,
+        routeHubs,
+        items: effectivePricedItems,
+        calendarDays,
+        daySlots,
+        dayThemes,
+        dayDescriptions,
+        dayOverviews,
+        dayNotes,
+        inclusions: contextInclusions,
+        exclusions: contextExclusions,
+        importantInformation: contextImportantInformation,
+        cancellationPolicy: contextCancellationPolicy,
+        itineraryOverview,
+        currency,
+        adultsCount,
+        childrenCount,
+        infantsCount,
+        existingPackageId: packageFormData.updateExisting ? linkedExistingMasterPackage?.id : null,
+        updateExisting: packageFormData.updateExisting,
+        user
+      });
+    } catch (err) {
+      console.error('Error building live master package preview:', err);
+      return null;
+    }
+  }, [
+    isSavePackageModalOpen,
+    packageFormData,
+    currentDestination,
+    tripNights,
+    quotationScope,
+    routeHubs,
+    effectivePricedItems,
+    calendarDays,
+    daySlots,
+    dayThemes,
+    dayDescriptions,
+    dayOverviews,
+    dayNotes,
+    contextInclusions,
+    contextExclusions,
+    contextImportantInformation,
+    contextCancellationPolicy,
+    itineraryOverview,
+    currency,
+    adultsCount,
+    childrenCount,
+    infantsCount,
+    linkedExistingMasterPackage,
+    user
+  ]);
+
+  // Save Current Itinerary as a Master Ready-Made Package (with complete validation & synchronization)
   const handleConfirmSavePackage = () => {
-    if (!packageFormData.title.trim()) return;
-
-    // Collect all master product IDs
-    const allProdIds: string[] = [];
-    const allHotelIds: string[] = [];
-
-    // Build day-wise itinerary structure referencing master product IDs
-    const daySlotsCount = tripNights + 1;
-    const itineraryDays: PackageItineraryDay[] = [];
-
-    for (let dayNum = 1; dayNum <= daySlotsCount; dayNum++) {
-      const slot = daySlots.find(s => s.dayNumber === dayNum);
-      const dayProds = slot ? slot.productItems.map(i => i.product.id) : [];
-      dayProds.forEach(id => {
-        if (!allProdIds.includes(id)) allProdIds.push(id);
-      });
-
-      const dayHubName = slot?.hub?.hubName || currentDestination.name;
-
-      itineraryDays.push({
-        dayNumber: dayNum,
-        title: dayThemes[dayNum] || `Day ${dayNum}: Exploring ${dayHubName}`,
-        hubId: slot?.hub?.hubId || slot?.hub?.id,
-        hubName: dayHubName,
-        destinationId: currentDestination.id,
-        destinationName: currentDestination.name,
-        description: `Scheduled master experiences and private transfers in ${dayHubName}.`,
-        productIds: dayProds,
-        mealsIncluded: {
-          breakfast: true,
-          lunch: false,
-          dinner: false
-        }
-      });
+    if (!packageFormData.title.trim()) {
+      setSavePackageError('Package Title is required.');
+      return;
     }
 
-    // Build Hotel refs
-    hotelItems.forEach(h => {
-      if (h.hotelId && !allHotelIds.includes(h.hotelId)) {
-        allHotelIds.push(h.hotelId);
-      }
-    });
+    setSavePackageError(null);
 
-    const routeSummary = routeHubs.map(h => `${h.hubName} (${h.nights || 1}N)`);
-
-    const newPackage: B2BPackage = {
-      id: `pkg-${Date.now()}`,
+    const result = saveAndVerifyMasterPackageFromQuote({
       title: packageFormData.title.trim(),
-      slug: packageFormData.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)+/g, ''),
       tagline: packageFormData.tagline.trim(),
       description: packageFormData.description.trim(),
-      regionId: currentDestination.regionId || 'asia',
-      regionName: currentDestination.regionName || 'Asia',
-      destinationId: currentDestination.id,
-      destinationName: currentDestination.name,
-      hubIds: routeHubs.map(h => h.hubId || h.id),
-      durationDays: tripNights + 1,
-      durationNights: tripNights,
-      tripType: packageFormData.tripType as any,
-      heroImage: currentDestination.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
-      galleryImages: [
-        currentDestination.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800',
-        'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=800'
-      ],
-      routeSummary,
-      hotelsSummary: routeHubs.map(h => ({
-        name: `${h.hubName} Luxury Hotel / Ryokan`,
-        cityName: h.hubName,
-        nights: h.nights || 1,
-        roomType: 'Deluxe Room'
-      })),
-      itinerary: itineraryDays,
-      productIds: allProdIds,
-      pricingConfiguration: {
-        pricingMode: packageFormData.pricingMode,
-        baseNetCostUSD: 0,
-        suggestedSellingPriceUSD: finalClientPrice || 3250,
-        currency
-      },
-      highlights: [
-        `${tripNights} Nights luxury accommodations in ${(routeHubs || []).map(h => h.hubName).filter(Boolean).join(', ') || currentDestination.name}`,
-        'Daily private transfers and English-speaking local guides',
-        'Direct 24/7 on-ground DMC concierge support'
-      ],
-      inclusions: [
-        `${tripNights} Nights luxury hotel accommodations with daily breakfast`,
-        `All master excursions and private transfers as detailed in circuit`,
-        `Direct 24/7 on-ground DMC concierge support`
-      ],
-      exclusions: [
-        'International airfare & visas',
-        'Personal travel insurance & gratuities'
-      ],
-      baseNetCostUSD: 0,
-      suggestedSellingPriceUSD: finalClientPrice || 3250,
-      currency,
-      tags: ['Featured', 'Bestseller', currentDestination.name],
+      tripType: packageFormData.tripType,
       status: packageFormData.status,
-      isPublished: packageFormData.status === 'PUBLISHED',
-      isFeatured: packageFormData.featured,
-      visibility: {
-        destinationPage: true,
-        hubPage: true,
-        homepage: packageFormData.featured,
-        promotions: false,
-        search: true,
-        featured: packageFormData.featured
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
+      featured: packageFormData.featured,
+      currentDestination,
+      quotationScope,
+      routeHubs,
+      items: effectivePricedItems,
+      calendarDays,
+      daySlots,
+      dayThemes,
+      dayDescriptions,
+      dayOverviews,
+      dayNotes,
+      inclusions: contextInclusions,
+      exclusions: contextExclusions,
+      importantInformation: contextImportantInformation,
+      cancellationPolicy: contextCancellationPolicy,
+      itineraryOverview,
+      currency,
+      adultsCount,
+      childrenCount,
+      infantsCount,
+      existingPackageId: packageFormData.updateExisting ? linkedExistingMasterPackage?.id : null,
+      updateExisting: packageFormData.updateExisting,
+      user
+    });
 
-    db.savePackage(newPackage, user);
+    if (!result.success || !result.pkg) {
+      setSavePackageError(result.error || 'Failed to generate and synchronize Ready-Made Package.');
+      return;
+    }
+
+    // Link quotation workspace to the saved Master Package ID to prevent duplicates on repeated saves
+    setSourcePackageId(result.pkg.id);
+    setSourcePackageName(result.pkg.title);
+    setLastSavedMasterPackage(result.pkg);
+    setLastPackageVerificationReport(result.verificationReport || null);
     setIsSavePackageModalOpen(false);
-    setPackageSavedNotice(`Package "${newPackage.title}" published successfully to Ready-Made Packages.`);
-    setTimeout(() => setPackageSavedNotice(null), 4000);
+
+    const actionWord = result.verificationReport?.isUpdate ? 'updated and synchronized in' : 'published and synchronized to';
+    setPackageSavedNotice(`Master Package "${result.pkg.title}" (${result.pkg.id}) ${actionWord} Ready-Made Packages.`);
   };
 
   // Active base products for the day modal based on city filter scope
@@ -3922,11 +3978,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               brandingMode,
               brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, undefined, brandingMode),
               agentNotes: agentNotes || '',
-              termsAndConditions: user?.quoteDisclaimer || 'All rates are confidential and subject to availability at confirmation.',
+              termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
               status: 'DRAFT',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              validUntil: new Date(Date.now() + 86400000 * 14).toISOString(),
               travelStartDate: startDate,
               travelEndDate: endDate,
               totalPax: adultsCount + childrenCount + infantsCount,
@@ -4088,6 +4143,21 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               onOpenEmailModal={handleOpenEmailModal}
               onConvertBooking={handleConvertBooking}
               onOpenSavePackageModal={handleOpenSavePackageModal}
+              linkedMasterPackageId={linkedExistingMasterPackage?.id || null}
+              linkedMasterPackageTitle={linkedExistingMasterPackage?.title || null}
+              onViewSavedMasterPackage={
+                linkedExistingMasterPackage
+                  ? () => {
+                      const latestPkg = db.getPackages().find(p => p.id === linkedExistingMasterPackage.id) || linkedExistingMasterPackage;
+                      setViewingSavedMasterPackage(latestPkg);
+                    }
+                  : undefined
+              }
+              onNavigateToPackagesModule={
+                onNavigateToPackages
+                  ? () => onNavigateToPackages(linkedExistingMasterPackage?.id)
+                  : undefined
+              }
               canSaveAsPackage={canSaveAsPackage}
               canAddManualHotel={canAddManualHotel}
               autoSaveStatus={autoSaveStatus}
@@ -4879,17 +4949,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       {/* ========================================================================= */}
       {isSavePackageModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-xl w-full border border-slate-200 shadow-2xl overflow-hidden animate-scaleUp my-auto max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-3xl max-w-2xl w-full border border-slate-200 shadow-2xl overflow-hidden animate-scaleUp my-auto max-h-[92vh] flex flex-col">
             {/* Header */}
-            <div className="p-5 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between">
+            <div className="p-5 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between shrink-0">
               <div className="flex items-center space-x-3">
                 <div className="w-10 h-10 rounded-2xl bg-[#008972] text-white flex items-center justify-center">
                   <Layers className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-black">Save as Ready-Made Package</h3>
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-base font-black">
+                      {linkedExistingMasterPackage && packageFormData.updateExisting
+                        ? 'Update Synchronized Master Package'
+                        : 'Save as Ready-Made Master Package'}
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 text-[#00E5C0] border border-teal-400/30">
+                      Centralized Pricing Engine
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-300">
-                    Publish this circuit directly to the Master Packages catalog for B2B agents & travelers.
+                    Synchronizes complete itinerary, hotels, products, and live B2B pricing to Ready-Made Packages.
                   </p>
                 </div>
               </div>
@@ -4903,7 +4982,55 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             </div>
 
             {/* Form Fields */}
-            <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {savePackageError && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-bold flex items-start space-x-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{savePackageError}</span>
+                </div>
+              )}
+
+              {/* Existing Master Package Synchronization Banner */}
+              {linkedExistingMasterPackage && (
+                <div className="p-3.5 rounded-2xl bg-emerald-50/80 border border-emerald-200 flex flex-wrap items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <div className="text-[11px] font-black text-emerald-900 flex items-center space-x-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Linked Master Package ID: <code className="font-mono">{linkedExistingMasterPackage.id}</code></span>
+                    </div>
+                    <p className="text-[11px] text-emerald-700">
+                      {packageFormData.updateExisting
+                        ? 'Saving will update the existing Ready-Made Package without creating duplicates.'
+                        : 'Saving will create a separate new Master Package in the catalog.'}
+                    </p>
+                  </div>
+                  <div className="inline-flex rounded-xl bg-white p-0.5 border border-emerald-200 text-[11px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setPackageFormData(prev => ({ ...prev, updateExisting: true }))}
+                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        packageFormData.updateExisting
+                          ? 'bg-emerald-700 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Update Existing
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPackageFormData(prev => ({ ...prev, updateExisting: false }))}
+                      className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer ${
+                        !packageFormData.updateExisting
+                          ? 'bg-slate-900 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      Save as New
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">Package Title *</label>
                 <input
@@ -4936,56 +5063,117 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Trip Style</label>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Package Category</label>
                   <select
                     value={packageFormData.tripType}
-                    onChange={(e) => setPackageFormData({ ...packageFormData, tripType: e.target.value as any })}
+                    onChange={(e) => setPackageFormData({ ...packageFormData, tripType: e.target.value as B2BPackage['tripType'] })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 font-bold outline-none"
                   >
                     <option value="LUXURY">LUXURY (5-Star)</option>
-                    <option value="BOUTIQUE">BOUTIQUE & HERITAGE</option>
+                    <option value="CULTURAL">CULTURAL & HERITAGE</option>
                     <option value="HONEYMOON">HONEYMOON ESCAPE</option>
                     <option value="FAMILY">FAMILY CIRCUIT</option>
                     <option value="ADVENTURE">ADVENTURE & NATURE</option>
+                    <option value="CLASSIC">CLASSIC DISCOVERY</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="text-xs font-bold text-slate-700 block mb-1">Commercial Pricing Mode</label>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Catalog Status</label>
                   <select
-                    value={packageFormData.pricingMode}
-                    onChange={(e) => setPackageFormData({ ...packageFormData, pricingMode: e.target.value as any })}
+                    value={packageFormData.status}
+                    onChange={(e) => setPackageFormData({ ...packageFormData, status: e.target.value as 'PUBLISHED' | 'DRAFT' })}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 font-bold outline-none"
                   >
-                    <option value="LIVE_DYNAMIC">LIVE DYNAMIC (Calculates live tariffs)</option>
-                    <option value="FIXED_LOCKED">FIXED LOCKED (Guaranteed price quote)</option>
+                    <option value="PUBLISHED">PUBLISHED (Live for B2B Agents)</option>
+                    <option value="DRAFT">DRAFT (Internal CMS Only)</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 block mb-1">Featured Visibility</label>
+                  <button
+                    type="button"
+                    onClick={() => setPackageFormData(prev => ({ ...prev, featured: !prev.featured }))}
+                    className={`w-full px-3 py-2 rounded-xl border text-xs font-bold transition-colors cursor-pointer flex items-center justify-between ${
+                      packageFormData.featured
+                        ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        : 'bg-slate-50 border-slate-200 text-slate-600'
+                    }`}
+                  >
+                    <span>{packageFormData.featured ? 'Featured Circuit' : 'Standard Circuit'}</span>
+                    <span className={`w-2 h-2 rounded-full ${packageFormData.featured ? 'bg-emerald-600' : 'bg-slate-400'}`} />
+                  </button>
                 </div>
               </div>
 
-              {/* Summary Stats */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-3 gap-2 text-center text-xs">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Duration</span>
-                  <span className="font-extrabold text-slate-800">{tripNights}N / {tripNights + 1}D</span>
+              {/* Synchronized Structure & Centralized Pricing Engine Summary */}
+              {liveMasterPackagePreview && (
+                <div className="space-y-3">
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Duration</span>
+                      <span className="font-extrabold text-slate-800">
+                        {liveMasterPackagePreview.pkg.durationNights}N / {liveMasterPackagePreview.pkg.durationDays}D
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Route Hubs</span>
+                      <span className="font-extrabold text-slate-800">
+                        {(liveMasterPackagePreview.pkg.routeHubs || []).length || 1} City Hubs
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Accommodations</span>
+                      <span className="font-extrabold text-slate-800">
+                        {quotationScope === 'LAND_ONLY'
+                          ? 'Land-Only'
+                          : `${(liveMasterPackagePreview.pkg.hotelsSummary || []).length} Stays`}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block">Linked Services</span>
+                      <span className="font-extrabold text-slate-800">
+                        {(liveMasterPackagePreview.pkg.productIds || []).length} Products
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Admin Centralized Pricing Breakdown: Nett Price & Calculated Selling Price */}
+                  <div className="p-4 bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl text-white flex flex-wrap items-center justify-between gap-4">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                        Nett Price (Centralized Engine)
+                      </span>
+                      <span className="text-base font-black font-mono text-slate-100">
+                        {formatCurrency(liveMasterPackagePreview.livePricing.netPriceTarget, currency)}
+                      </span>
+                      <span className="text-[10px] text-slate-400 block">
+                        Live sum of product & hotel Nett tariffs ({adultsCount} Adults{childrenCount > 0 ? `, ${childrenCount} Children` : ''})
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[10px] uppercase font-bold text-[#00E5C0] tracking-wider block">
+                        Calculated Selling Price
+                      </span>
+                      <span className="text-lg font-black font-mono text-[#00E5C0]">
+                        {formatCurrency(liveMasterPackagePreview.livePricing.sellingPriceTarget, currency)}
+                      </span>
+                      <span className="text-[10px] text-slate-300 block">
+                        Dynamic B2B selling price (no fixed manual margin)
+                      </span>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Services Included</span>
-                  <span className="font-extrabold text-slate-800">{items.length} master items</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Starting Price</span>
-                  <span className="font-extrabold text-[#008972] font-mono">{formatCurrency(finalClientPrice, currency)}</span>
-                </div>
-              </div>
+              )}
             </div>
 
             {/* Footer */}
-            <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
               <span className="text-[11px] text-slate-500 font-semibold">
-                Uses master product references without duplicating inventory.
+                Synchronizes directly with Ready-Made Packages & B2B Agent Portal.
               </span>
               <div className="flex items-center space-x-2">
                 <button
@@ -5001,7 +5189,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   disabled={!packageFormData.title.trim()}
                   className="px-5 py-2 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-black transition-all cursor-pointer shadow-xs disabled:opacity-50"
                 >
-                  Publish Package
+                  {linkedExistingMasterPackage && packageFormData.updateExisting
+                    ? 'Update Master Package'
+                    : 'Save as Master Package'}
                 </button>
               </div>
             </div>
@@ -5009,17 +5199,71 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         </div>
       )}
 
-      {/* Package Saved Toast Notice */}
+      {/* Package Saved Banner with Direct View Ready-Made Package Action */}
       {packageSavedNotice && (
-        <div className="fixed bottom-6 right-6 z-50 bg-slate-950 text-white border border-[#00C6A6]/40 p-4 rounded-2xl shadow-2xl flex items-center space-x-3 animate-slideUp">
-          <div className="w-8 h-8 rounded-xl bg-[#008972] text-white flex items-center justify-center">
-            <CheckCircle2 className="w-5 h-5" />
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-950 text-white border border-[#00C6A6]/50 p-4 rounded-2xl shadow-2xl max-w-md w-full animate-slideUp space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start space-x-3">
+              <div className="w-8 h-8 rounded-xl bg-[#008972] text-white flex items-center justify-center shrink-0 mt-0.5">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-white">{packageSavedNotice}</p>
+                {lastPackageVerificationReport && (
+                  <p className="text-[11px] text-slate-300 mt-0.5">
+                    Verified {lastPackageVerificationReport.itineraryDaysCount} itinerary days, {lastPackageVerificationReport.verifiedProductsCount} linked products • Nett {formatCurrency(lastPackageVerificationReport.netPriceTarget, lastPackageVerificationReport.currency)} / Selling {formatCurrency(lastPackageVerificationReport.sellingPriceTarget, lastPackageVerificationReport.currency)}
+                  </p>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPackageSavedNotice(null)}
+              className="text-slate-400 hover:text-white p-1 rounded-lg cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <div>
-            <p className="text-xs font-black text-white">{packageSavedNotice}</p>
-            <p className="text-[10px] text-slate-400">Available across Destination pages, B2B Agent Portal, and CMS.</p>
+          <div className="flex items-center justify-end gap-2 pt-1 border-t border-slate-800">
+            {lastSavedMasterPackage && (
+              <button
+                type="button"
+                onClick={() => {
+                  const latestPkg = db.getPackages().find(p => p.id === lastSavedMasterPackage.id) || lastSavedMasterPackage;
+                  setViewingSavedMasterPackage(latestPkg);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-[11px] font-bold transition-colors cursor-pointer flex items-center space-x-1.5"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                <span>View Ready-Made Package</span>
+              </button>
+            )}
+            {onNavigateToPackages && lastSavedMasterPackage && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPackageSavedNotice(null);
+                  onNavigateToPackages(lastSavedMasterPackage.id);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold transition-colors cursor-pointer"
+              >
+                Open Ready-Made Packages
+              </button>
+            )}
           </div>
         </div>
+      )}
+
+      {/* Ready-Made Package Detail Modal (View Generated Package Directly) */}
+      {viewingSavedMasterPackage && (
+        <PackageDetailModal
+          pkg={viewingSavedMasterPackage}
+          onClose={() => setViewingSavedMasterPackage(null)}
+          onCustomizeInBuilder={(pkgToCustomize) => {
+            setViewingSavedMasterPackage(null);
+            showBuilderToast(`Package "${pkgToCustomize.title}" is already loaded in this workspace.`, 'INFO');
+          }}
+        />
       )}
 
       {/* ========================================================================= */}

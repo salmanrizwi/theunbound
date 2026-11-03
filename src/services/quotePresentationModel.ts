@@ -16,6 +16,24 @@ import {
   resolveQuoteItemCategory 
 } from '../utils/b2bQuotationHelpers';
 import { resolveAuthoritativeCategory } from './configuratorRegistry';
+import {
+  COMMERCIAL_QUOTATION_TERMS_HEADING,
+  COMMERCIAL_QUOTATION_TERMS_ITEMS,
+  COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+  COMMERCIAL_QUOTATION_TERMS_HTML,
+  COMMERCIAL_QUOTATION_TERMS_WHATSAPP,
+  CommercialQuotationTermItem,
+  resolveAuthoritativeCommercialTerms
+} from '../constants/commercialQuotationTerms';
+export {
+  COMMERCIAL_QUOTATION_TERMS_HEADING,
+  COMMERCIAL_QUOTATION_TERMS_ITEMS,
+  COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+  COMMERCIAL_QUOTATION_TERMS_HTML,
+  COMMERCIAL_QUOTATION_TERMS_WHATSAPP,
+  resolveAuthoritativeCommercialTerms
+};
+export type { CommercialQuotationTermItem };
 
 export function isTheUnboundBrandString(val?: string | null): boolean {
   if (!val) return false;
@@ -391,7 +409,12 @@ export interface QuotePresentationModel {
   childAndAttractionPolicies: string[];
   
   // Commercial Terms
+  commercialTermsHeading: string;
+  commercialTermsItems: readonly CommercialQuotationTermItem[];
   commercialTerms: string;
+  commercialTermsHtml: string;
+  commercialTermsWhatsApp: string;
+  isCustomHistoricalCommercialTerms?: boolean;
   footerContactLine: string;
 }
 
@@ -1262,7 +1285,9 @@ export function buildQuotePresentationModel(
   ];
 
   const formatValidUntil = (val?: string) => {
-    if (!val) return '14 Days from issuance';
+    if (!quote.isLocked || !val || val.toLowerCase().includes('14 day') || val.toLowerCase().includes('14 calendar day')) {
+      return 'Subject to Availability at Booking';
+    }
     const parsed = new Date(val);
     if (!isNaN(parsed.getTime())) {
       return parsed.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -1291,14 +1316,16 @@ export function buildQuotePresentationModel(
         ? 'Authorized Travel Partner • In Association with TheUnbound Luxury DMC Network'
         : 'Destination Management Operations • Direct Ground Logistics & Destination Operations Hub');
 
-  const rawCommercialTerms = agentOverride?.disclaimer || snap?.disclaimer || quote.termsAndConditions;
-  const resolvedCommercialTerms = isWhiteLabel
-    ? (rawCommercialTerms && !isTheUnboundBrandString(rawCommercialTerms)
-        ? rawCommercialTerms
-        : (rawCommercialTerms
-            ? sanitizeWhiteLabelString(rawCommercialTerms, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
-            : `This quotation is issued by ${effectiveAgency}. Rates are valid for 14 calendar days from generation date. All reservations are subject to live inventory availability and confirmation upon deposit.`))
-    : (quote.termsAndConditions || 'This quotation is issued by TheUnbound Luxury DMC Network. Rates are valid for 14 calendar days from generation date. All reservations subject to live inventory confirmation upon deposit.');
+  const resolvedTermsObj = resolveAuthoritativeCommercialTerms(quote);
+  const resolvedCommercialTerms = isWhiteLabel && resolvedTermsObj.isCustomHistoricalSnapshot
+    ? sanitizeWhiteLabelString(resolvedTermsObj.plainText, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+    : resolvedTermsObj.plainText;
+  const resolvedCommercialTermsHtml = isWhiteLabel && resolvedTermsObj.isCustomHistoricalSnapshot
+    ? sanitizeWhiteLabelString(resolvedTermsObj.htmlText, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+    : resolvedTermsObj.htmlText;
+  const resolvedCommercialTermsWhatsApp = isWhiteLabel && resolvedTermsObj.isCustomHistoricalSnapshot
+    ? sanitizeWhiteLabelString(resolvedTermsObj.whatsAppText, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+    : resolvedTermsObj.whatsAppText;
 
   const customFooterText = agentOverride?.footerText || snap?.footerText;
   const resolvedFooterContactLine = isWhiteLabel
@@ -1390,7 +1417,12 @@ export function buildQuotePresentationModel(
     pricePerTravelerFormatted: `${formatCurrency(pricePerPerson, effectiveCurrency)} / Traveler (${effectivePax} Guests)`,
     guaranteedCurrencyLine: `Guaranteed in ${effectiveCurrency} • No Hidden Surcharges`,
     childAndAttractionPolicies,
+    commercialTermsHeading: resolvedTermsObj.heading,
+    commercialTermsItems: resolvedTermsObj.items,
     commercialTerms: resolvedCommercialTerms,
+    commercialTermsHtml: resolvedCommercialTermsHtml,
+    commercialTermsWhatsApp: resolvedCommercialTermsWhatsApp,
+    isCustomHistoricalCommercialTerms: resolvedTermsObj.isCustomHistoricalSnapshot,
     footerContactLine: resolvedFooterContactLine
   };
 }
@@ -1617,8 +1649,8 @@ export function renderQuoteEmailFromPresentationModel(
   ].join('\n'));
 
   textSections.push([
-    `10. COMMERCIAL QUOTATION TERMS & CONDITIONS`,
-    convertHtmlToCleanPlainText(model.commercialTerms),
+    `10. ${COMMERCIAL_QUOTATION_TERMS_HEADING.toUpperCase()}`,
+    model.commercialTerms,
     ``,
     convertHtmlToCleanPlainText(model.footerContactLine)
   ].join('\n'));
@@ -1935,7 +1967,7 @@ export function renderQuoteWhatsAppFromPresentationModel(
 
   // 8. YOUR TRAVEL QUOTATION (PRICING SUMMARY)
   const priceLines: string[] = [];
-  const cleanCommercialTerms = richTextToWhatsApp(model.commercialTerms);
+  const cleanCommercialTerms = model.commercialTermsWhatsApp || richTextToWhatsApp(model.commercialTerms);
   if (useEmojis) {
     priceLines.push(
       `💰 *Your Travel Quotation*`,
@@ -1951,7 +1983,8 @@ export function renderQuoteWhatsAppFromPresentationModel(
       `💱 *Currency & Taxes:* ${model.guaranteedCurrencyLine}`,
       `⏳ *Quote Valid Until:* *${model.validUntilFormatted}*`,
       ``,
-      `📜 *Commercial Terms & Conditions:*`,
+      `📜 *${model.commercialTermsHeading || COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
+      ``,
       cleanCommercialTerms
     );
   } else {
@@ -1969,7 +2002,8 @@ export function renderQuoteWhatsAppFromPresentationModel(
       `Currency & Taxes: ${model.guaranteedCurrencyLine}`,
       `Quote Valid Until: ${model.validUntilFormatted}`,
       ``,
-      `*Commercial Terms & Conditions:*`,
+      `*${model.commercialTermsHeading || COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
+      ``,
       cleanCommercialTerms
     );
   }

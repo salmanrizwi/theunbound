@@ -287,22 +287,8 @@ export const INITIAL_LEADS: TravelLead[] = [
     status: 'QUOTE_DOWNLOADED',
     priority: 'URGENT',
     conversionStatus: 'IN_PROGRESS',
-    assignedStaffId: 'staff-02',
-    assignedStaffName: 'Kenji Takahashi (Japan Ground Lead)',
-    assignedStaffEmail: 'kenji@theunbound.in',
     assignedDepartment: 'SALES',
-    assignmentHistory: [
-      {
-        id: 'asg-02',
-        assignedStaffId: 'staff-02',
-        assignedStaffName: 'Kenji Takahashi',
-        assignedStaffEmail: 'kenji@theunbound.in',
-        assignedDepartment: 'SALES',
-        assignedBy: 'System Auto-Router',
-        assignedAt: '2026-08-21T11:00:00Z',
-        notes: 'Assigned to Ground Lead for honeymoon custom pricing and luxury onsen dispatch'
-      }
-    ],
+    assignmentHistory: [],
     destinationId: 'japan',
     destinationName: 'Japan',
     regionName: 'East Asia',
@@ -416,7 +402,7 @@ export const INITIAL_LEADS: TravelLead[] = [
         id: 'tl-07',
         type: 'FOLLOWUP_CREATED',
         title: 'Google Calendar 24h SLA Triggered',
-        description: 'Automated follow-up event created in Google Calendar for Sales Desk (Kenji Takahashi).',
+        description: 'Automated follow-up event created in Google Calendar for Sales Desk.',
         timestamp: '2026-08-22T14:10:05Z',
         performedBy: 'System SLA Automation Engine'
       }
@@ -428,8 +414,8 @@ export const INITIAL_LEADS: TravelLead[] = [
         taskType: 'QUOTE_FOLLOW_UP',
         title: '[SLA 24h] PDF Quote Download Follow-Up — #TUB-Q-2026-8924',
         description: 'Contact Elena Rostova (Voyages de Luxe Paris) regarding Mount Fuji private helicopter slot availability.',
-        assignedToName: 'Kenji Takahashi',
-        assignedToEmail: 'kenji@theunbound.in',
+        assignedToName: 'Unassigned',
+        assignedToEmail: 'business@theunbound.in',
         assignedDepartment: 'SALES',
         createdAt: '2026-08-22T14:10:00Z',
         dueAt: '2026-08-23T14:10:00Z',
@@ -445,9 +431,9 @@ export const INITIAL_LEADS: TravelLead[] = [
     notes: [
       {
         id: 'note-02',
-        authorId: 'staff-02',
-        authorName: 'Kenji Takahashi',
-        authorRole: 'Japan Ground Lead',
+        authorId: 'usr-admin-business',
+        authorName: 'TheUnbound Operations',
+        authorRole: 'Operations Desk',
         text: 'Quote generated and dispatched via B2B Studio with 18% wholesale contractor margin. Helicopter operator Tokyo Heliport has tentative hold.',
         timestamp: '2026-08-22T14:10:00Z',
         isInternal: true
@@ -486,22 +472,8 @@ export const INITIAL_LEADS: TravelLead[] = [
     status: 'BOOKING_SUBMITTED',
     priority: 'URGENT',
     conversionStatus: 'CONVERTED',
-    assignedStaffId: 'staff-01',
-    assignedStaffName: 'Marcus Vance (Senior Ops)',
-    assignedStaffEmail: 'business@theunbound.in',
     assignedDepartment: 'OPERATIONS',
-    assignmentHistory: [
-      {
-        id: 'asg-03',
-        assignedStaffId: 'staff-01',
-        assignedStaffName: 'Marcus Vance',
-        assignedStaffEmail: 'business@theunbound.in',
-        assignedDepartment: 'OPERATIONS',
-        assignedBy: 'Booking Auto-Dispatcher',
-        assignedAt: '2026-08-23T08:45:00Z',
-        notes: 'Auto-routed to Ground Operations for 12h supplier allocation SLA'
-      }
-    ],
+    assignmentHistory: [],
     destinationId: 'united-kingdom',
     destinationName: 'United Kingdom',
     regionName: 'Western Europe',

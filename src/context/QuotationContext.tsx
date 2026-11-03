@@ -11,6 +11,7 @@ import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 import { japanRailJourneyService } from '../services/rail/JapanRailJourneyService';
 import { canUserViewInternalCostBreakdown } from '../services/permissionEngine';
 import { transformPackageToQuoteState } from '../services/packageToQuoteTransformer';
+import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../constants/commercialQuotationTerms';
 
 interface QuotationContextType {
   items: QuoteItem[];
@@ -1077,11 +1078,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       isLocked: isLocked,
       overallDiscountPercent,
       agentNotes,
-      termsAndConditions: 'Quotation valid for 14 days from generation date. Subject to hotel and guide confirmation at time of deposit.',
+      termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
       status: existingQuote?.status || 'DRAFT',
       createdAt: existingQuote?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      validUntil: new Date(Date.now() + 86400000 * 14).toISOString(),
       totalNetCost: isAgent ? 0 : totals.totalNetCost,
       totalSellingPrice: totals.totalSellingPrice,
       baseFinalSellingPrice: totals.totalSellingPrice,
@@ -1138,8 +1138,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         agencyName: clientCompany || user?.agencyName,
         source: 'QUOTATION_SAVED',
         status: 'QUOTED',
-        assignedStaffId: user?.id || 'staff-01',
-        assignedStaffName: user?.name || 'Operations Desk',
+        assignedStaffId: db.isEligibleInternalTeamMember(user) ? user?.id : undefined,
+        assignedStaffName: db.isEligibleInternalTeamMember(user) ? user?.name : undefined,
         destinationId: items[0]?.product.destinationId || 'japan',
         destinationName: destination || items[0]?.product.destinationName || 'Multi-Destination',
         travelDates: travelStartDate || items[0]?.travelDate || 'Upcoming 2026',

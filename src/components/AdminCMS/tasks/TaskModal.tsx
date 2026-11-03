@@ -36,8 +36,8 @@ export const TaskModal: React.FC<TaskModalProps> = ({
 }) => {
   const modalContentRef = useRef<HTMLDivElement>(null);
 
-  // Retrieve existing business records for linking
-  const allUsers = useMemo(() => db.getUsers(), []);
+  // Retrieve eligible internal team members for task assignment
+  const allUsers = useMemo(() => db.getEligibleInternalTeamMembers(), []);
   const allLeads = useMemo(() => db.getLeads(), []);
   const allQuotes = useMemo(() => db.getAllSavedQuotes(), []);
   const allBookings = useMemo(() => db.getAllBookings(), []);
@@ -532,11 +532,15 @@ export const TaskModal: React.FC<TaskModalProps> = ({
                   onChange={(e) => setSelectedUserEmail(e.target.value)}
                   className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-hidden"
                 >
-                  {allUsers.map(u => (
-                    <option key={u.id} value={u.email}>
-                      {u.name} ({u.role || 'Staff'}) — {u.email}
-                    </option>
-                  ))}
+                  {allUsers.length === 0 ? (
+                    <option value="" disabled>No active team members available</option>
+                  ) : (
+                    allUsers.map(u => (
+                      <option key={u.id} value={u.email}>
+                        {u.name} ({u.role || 'Staff'}) — {u.email}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             )}

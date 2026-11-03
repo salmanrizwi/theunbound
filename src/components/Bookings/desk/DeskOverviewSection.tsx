@@ -90,8 +90,8 @@ export const DeskOverviewSection: React.FC<DeskOverviewSectionProps> = ({
   }, [db]);
 
   const internalTeamMembers = React.useMemo(() => {
-    return db.getUsers().filter(u => u.role !== 'B2B_AGENT' && u.role !== 'BUYER');
-  }, [db]);
+    return db.getEligibleInternalTeamMembers();
+  }, [db, booking.assignedTeamMemberId, booking.updatedAt]);
 
   const handleAssignBookingAgent = () => {
     if (!selectedBookingAgentId) return;
@@ -742,11 +742,15 @@ export const DeskOverviewSection: React.FC<DeskOverviewSectionProps> = ({
                       className="w-full px-2 py-1.5 rounded border border-slate-200 bg-white text-xs font-bold text-slate-800 focus:outline-none"
                     >
                       <option value="">-- Choose Team Member --</option>
-                      {internalTeamMembers.map(tm => (
-                        <option key={tm.id} value={tm.id}>
-                          {tm.name} ({tm.role || 'Operations'}) - {tm.email}
-                        </option>
-                      ))}
+                      {internalTeamMembers.length === 0 ? (
+                        <option value="" disabled>No active team members available</option>
+                      ) : (
+                        internalTeamMembers.map(tm => (
+                          <option key={tm.id} value={tm.id}>
+                            {tm.name} ({tm.role || 'Operations'}) - {tm.email}
+                          </option>
+                        ))
+                      )}
                     </select>
 
                     <input

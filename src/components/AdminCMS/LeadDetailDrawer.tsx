@@ -108,15 +108,18 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   const [newFollowUpTitle, setNewFollowUpTitle] = useState('');
   const [newFollowUpDate, setNewFollowUpDate] = useState('');
   const [newFollowUpSla, setNewFollowUpSla] = useState(24);
-  const [newFollowUpAssignee, setNewFollowUpAssignee] = useState(user?.name || 'Marcus Vance');
+  const [newFollowUpAssignee, setNewFollowUpAssignee] = useState(user?.name || 'Operations Desk');
 
-  // Quick staff assignment
-  const staffList = [
-    { id: 'staff-01', name: 'Marcus Vance (Senior Ops)', email: 'business@theunbound.in', dept: 'OPERATIONS' as const },
-    { id: 'staff-02', name: 'Kenji Takahashi (Japan Ground Lead)', email: 'kenji@theunbound.in', dept: 'SALES' as const },
-    { id: 'staff-03', name: 'Elena Rostova (B2B Concierge)', email: 'elena@theunbound.in', dept: 'SALES' as const },
-    { id: 'staff-04', name: 'Aarav Patel (Client Success)', email: 'aarav@theunbound.in', dept: 'MANAGEMENT' as const }
-  ];
+  // Authoritative active eligible internal team members from centralized database
+  const staffList = React.useMemo(() => {
+    return db.getEligibleInternalTeamMembers().map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      dept: ((u as any).department || 'OPERATIONS') as 'SALES' | 'OPERATIONS' | 'MANAGEMENT'
+    }));
+  }, [db, lead]);
 
   // B2B Partner Agent Assignment
   const [selectedAgentId, setSelectedAgentId] = useState('');
@@ -288,11 +291,20 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   };
 
   const handleAssignStaff = (staffId: string) => {
+    if (!staffId) {
+      const unassigned = db.unassignLeadTeamMember(
+        lead.id,
+        user,
+        `Unassigned by ${user?.name || 'Admin'} from Lead Detail Workspace`
+      );
+      if (unassigned) onUpdateLead(unassigned);
+      return;
+    }
     const targetStaff = staffList.find(s => s.id === staffId);
     if (!targetStaff) return;
-    const updated = db.assignLead(
+    const updated = db.assignLeadTeamMember(
       lead.id,
-      { id: targetStaff.id, name: targetStaff.name, email: targetStaff.email, department: targetStaff.dept },
+      targetStaff.id,
       user,
       `Manual assignment by ${user?.name || 'Admin'}`
     );
@@ -624,15 +636,20 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                     </div>
 
                     <select
-                      value={staffList.find(s => s.name === (lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName) || s.id === (lead.assignedTeamMemberId || lead.assignedStaffId))?.id || 'staff-01'}
+                      value={lead.assignedTeamMemberId || lead.assignedStaffId || ''}
                       onChange={e => handleAssignStaff(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl border border-teal-200 bg-white text-xs font-bold text-slate-900 focus:outline-none focus:border-[#00C6A6]"
                     >
-                      {staffList.map(st => (
-                        <option key={st.id} value={st.id}>
-                          {st.name} ({st.dept})
-                        </option>
-                      ))}
+                      <option value="">-- Unassigned --</option>
+                      {staffList.length === 0 ? (
+                        <option value="" disabled>No active team members available</option>
+                      ) : (
+                        staffList.map(st => (
+                          <option key={st.id} value={st.id}>
+                            {st.name} ({st.role || st.dept}) — {st.email}
+                          </option>
+                        ))
+                      )}
                     </select>
                     <p className="text-[10px] text-slate-500">
                       Authoritative internal lead owner responsible for processing, follow-ups, quotes, and conversion.

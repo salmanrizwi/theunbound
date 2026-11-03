@@ -1169,12 +1169,25 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       {/* ---------------------------------------------------- */}
       {/* 7. TERMS, CONDITIONS & SIGNATURE FOOTER */}
       {/* ---------------------------------------------------- */}
-      <div className="pt-4 border-t border-slate-200 text-[11px] text-slate-500 space-y-3">
-        <div className="space-y-1.5">
-          <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">Commercial Quotation Terms:</h4>
-          <p className="leading-relaxed text-slate-600">
-            {model.commercialTerms}
-          </p>
+      <div className="pt-4 border-t border-slate-200 text-[11px] text-slate-500 space-y-3 break-inside-avoid">
+        <div className="space-y-2">
+          <h4 className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">
+            {model.commercialTermsHeading || 'Commercial Quotation Terms'}
+          </h4>
+          {model.isCustomHistoricalCommercialTerms ? (
+            <p className="leading-relaxed text-slate-600 whitespace-pre-line">
+              {model.commercialTerms}
+            </p>
+          ) : (
+            <div className="space-y-2 leading-relaxed text-slate-600">
+              {model.commercialTermsItems.map((term) => (
+                <p key={term.number} className="break-inside-avoid">
+                  <strong className="font-bold text-slate-900">{term.heading}</strong>{' '}
+                  <span>{term.body}</span>
+                </p>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row justify-between items-center gap-2 text-[10px] text-slate-400 pt-3 border-t border-slate-100 font-mono">

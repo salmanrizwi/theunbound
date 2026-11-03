@@ -395,8 +395,6 @@ export const INITIAL_BOOKINGS: Booking[] = [
     agentAgency: 'Wanderlust Journeys Mumbai',
     userId: 'b2b-agent-02',
     userRole: 'B2B_AGENT',
-    assignedTeamMemberId: 'user-ops-02',
-    assignedTeamMemberName: 'Kenji Sato (Japan Operations)',
     customer: {
       leadTravelerName: 'Dr. Sameer Joshi',
       bookerName: 'Neha Kapoor (Wanderlust Journeys)',

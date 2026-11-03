@@ -14,7 +14,7 @@ import {
   User
 } from '../../types';
 import { AppDatabase } from '../../services/db';
-import { formatCurrency, calculateProductPrice } from '../../services/pricingEngine';
+import { formatCurrency, calculateProductPrice, calculatePackagePrice } from '../../services/pricingEngine';
 import { 
   Package, 
   Plus, 
@@ -121,6 +121,39 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
     setTimeout(() => setFeedbackMsg(null), 3500);
   };
 
+  // Live Centralized Pricing Engine Map for Admin (Nett Price & Calculated Selling Price)
+  const packagePricingMap = useMemo(() => {
+    const map = new Map<string, { netPrice: number; sellingPrice: number; currency: CurrencyCode }>();
+    packages.forEach(pkg => {
+      const targetCurr: CurrencyCode = pkg.currency || 'USD';
+      try {
+        const calc = calculatePackagePrice({
+          packageItem: pkg,
+          userRole: 'ADMIN',
+          pricingTier: 'B2B',
+          targetCurrency: targetCurr,
+          user
+        });
+        const netPrice =
+          (calc.internalAudit?.totalNetCostTarget && calc.internalAudit.totalNetCostTarget > 0)
+            ? calc.internalAudit.totalNetCostTarget
+            : (pkg.baseNetCostUSD || 0);
+        const sellingPrice =
+          calc.finalSellingPrice > 0
+            ? calc.finalSellingPrice
+            : (pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD || netPrice);
+        map.set(pkg.id, { netPrice, sellingPrice, currency: targetCurr });
+      } catch {
+        map.set(pkg.id, {
+          netPrice: pkg.baseNetCostUSD || 0,
+          sellingPrice: pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD || pkg.baseNetCostUSD || 0,
+          currency: targetCurr
+        });
+      }
+    });
+    return map;
+  }, [packages, user]);
+
   // Filtered and Sorted Packages
   const filteredPackages = useMemo(() => {
     return packages.filter(pkg => {
@@ -158,10 +191,14 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
         return new Date(b.createdAt || '').getTime() - new Date(a.createdAt || '').getTime();
       }
       if (sortBy === 'PRICE_ASC') {
-        return (a.suggestedSellingPriceUSD || a.baseNetCostUSD || 0) - (b.suggestedSellingPriceUSD || b.baseNetCostUSD || 0);
+        const priceA = packagePricingMap.get(a.id)?.sellingPrice ?? a.suggestedSellingPriceUSD ?? a.baseNetCostUSD ?? 0;
+        const priceB = packagePricingMap.get(b.id)?.sellingPrice ?? b.suggestedSellingPriceUSD ?? b.baseNetCostUSD ?? 0;
+        return priceA - priceB;
       }
       if (sortBy === 'PRICE_DESC') {
-        return (b.suggestedSellingPriceUSD || b.baseNetCostUSD || 0) - (a.suggestedSellingPriceUSD || a.baseNetCostUSD || 0);
+        const priceA = packagePricingMap.get(a.id)?.sellingPrice ?? a.suggestedSellingPriceUSD ?? a.baseNetCostUSD ?? 0;
+        const priceB = packagePricingMap.get(b.id)?.sellingPrice ?? b.suggestedSellingPriceUSD ?? b.baseNetCostUSD ?? 0;
+        return priceB - priceA;
       }
       if (sortBy === 'DURATION') {
         return (b.durationDays || 0) - (a.durationDays || 0);
@@ -171,7 +208,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
       }
       return 0;
     });
-  }, [packages, searchQuery, destinationFilter, hubFilter, statusFilter, tripTypeFilter, pricingModeFilter, sortBy]);
+  }, [packages, packagePricingMap, searchQuery, destinationFilter, hubFilter, statusFilter, tripTypeFilter, pricingModeFilter, sortBy]);
 
   // Statistics
   const stats = useMemo(() => {
@@ -709,26 +746,34 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                       </div>
                     )}
 
-                    {/* Commercial Pricing Summary */}
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex items-center justify-between">
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                          Nett Wholesale Cost
-                        </span>
-                        <span className="text-xs font-black text-slate-700">
-                          {formatCurrency(pkg.baseNetCostUSD || 0, pkg.currency || 'USD')} / pax
-                        </span>
-                      </div>
+                    {/* Commercial Pricing Summary (Centralized Pricing Engine) */}
+                    {(() => {
+                      const livePrices = packagePricingMap.get(pkg.id);
+                      const dispCurrency = livePrices?.currency || pkg.currency || 'USD';
+                      const dispNett = livePrices?.netPrice ?? pkg.baseNetCostUSD ?? 0;
+                      const dispSelling = livePrices?.sellingPrice ?? pkg.finalSellingPriceUSD ?? pkg.suggestedSellingPriceUSD ?? 0;
+                      return (
+                        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex items-center justify-between">
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                              Nett Price
+                            </span>
+                            <span className="text-xs font-black text-slate-700">
+                              {formatCurrency(dispNett, dispCurrency)}
+                            </span>
+                          </div>
 
-                      <div className="text-right">
-                        <span className="text-[10px] font-bold text-[#008972] uppercase tracking-wider block">
-                          Final Selling Price
-                        </span>
-                        <span className="text-sm font-black text-slate-900">
-                          {formatCurrency(pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD || (pkg.baseNetCostUSD * 1.3), pkg.currency || 'USD')}
-                        </span>
-                      </div>
-                    </div>
+                          <div className="text-right">
+                            <span className="text-[10px] font-bold text-[#008972] uppercase tracking-wider block">
+                              Calculated Selling Price
+                            </span>
+                            <span className="text-sm font-black text-slate-900">
+                              {formatCurrency(dispSelling, dispCurrency)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -848,10 +893,16 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right font-mono text-slate-700">
-                        {formatCurrency(pkg.baseNetCostUSD || 0, pkg.currency || 'USD')}
+                        {formatCurrency(
+                          packagePricingMap.get(pkg.id)?.netPrice ?? pkg.baseNetCostUSD ?? 0,
+                          packagePricingMap.get(pkg.id)?.currency || pkg.currency || 'USD'
+                        )}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                        {formatCurrency(pkg.suggestedSellingPriceUSD || (pkg.baseNetCostUSD * 1.3), pkg.currency || 'USD')}
+                        {formatCurrency(
+                          packagePricingMap.get(pkg.id)?.sellingPrice ?? pkg.suggestedSellingPriceUSD ?? 0,
+                          packagePricingMap.get(pkg.id)?.currency || pkg.currency || 'USD'
+                        )}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${

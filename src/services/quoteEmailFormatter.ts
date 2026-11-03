@@ -907,8 +907,8 @@ export function renderProposalViewHtmlEmail(
 
                 <!-- 10. TERMS & SIGNATURE (Exact PDF Terms Section) -->
                 <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; margin-top: 10px; font-size: 10px; color: #64748b;">
-                  <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">Commercial Quotation Terms:</div>
-                  <div style="margin: 0 0 10px 0; color: #475569; line-height: 1.4;">${formatPdfOrEmailDescription(model.commercialTerms)}</div>
+                  <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 10px; margin-bottom: 6px;">${cleanInlineFormattedText(model.commercialTermsHeading || 'Commercial Quotation Terms')}</div>
+                  <div style="margin: 0 0 10px 0; color: #475569; line-height: 1.45;">${model.commercialTermsHtml || formatPdfOrEmailDescription(model.commercialTerms)}</div>
                   <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="border-top: 1px solid #f1f5f9; padding-top: 8px; font-size: 9.5px; color: #94a3b8; font-family: monospace;">
                     <tr>
                       <td>${cleanInlineFormattedText(model.footerContactLine)}</td>
@@ -1153,6 +1153,17 @@ export function formatPlainTextQuotationToHtml(input: string): string {
       flushKeyValues();
       flushNumbered();
       currentBullets.push(bulletMatch[1].trim());
+      continue;
+    }
+
+    // 5b. Check Numbered Heading with Colon (e.g. "1. Booking Status: No services...")
+    const numberedHeadingWithBodyMatch = cleanLine.match(/^(\d+\.\s+[^:]+:)\s+(.+)$/);
+    if (numberedHeadingWithBodyMatch) {
+      flushAll();
+      nodes.push({
+        type: 'PARAGRAPH',
+        content: `**${numberedHeadingWithBodyMatch[1].trim()}** ${numberedHeadingWithBodyMatch[2].trim()}`
+      });
       continue;
     }
 
@@ -1417,9 +1428,9 @@ export function renderSimpleSemanticQuotationEmailFromModel(
   });
   lines.push('');
 
-  // Terms and Conditions
-  lines.push(`TERMS AND CONDITIONS`);
-  lines.push(convertHtmlToCleanPlainText(model.commercialTerms));
+  // Commercial Quotation Terms
+  lines.push((model.commercialTermsHeading || 'Commercial Quotation Terms').toUpperCase());
+  lines.push(model.commercialTerms);
   lines.push('');
   lines.push(convertHtmlToCleanPlainText(model.footerContactLine));
 

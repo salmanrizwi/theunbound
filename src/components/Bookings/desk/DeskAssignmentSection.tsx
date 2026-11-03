@@ -54,8 +54,8 @@ export const DeskAssignmentSection: React.FC<DeskAssignmentSectionProps> = ({
   }, [db]);
 
   const internalTeamMembers = useMemo(() => {
-    return db.getUsers().filter(u => u.role !== 'B2B_AGENT' && u.role !== 'BUYER');
-  }, [db]);
+    return db.getEligibleInternalTeamMembers();
+  }, [db, booking.assignedTeamMemberId, booking.updatedAt]);
 
   // Derived assignment state
   const assignmentStatus: BookingAssignmentStatus = booking.assignmentStatus || 
@@ -495,11 +495,15 @@ export const DeskAssignmentSection: React.FC<DeskAssignmentSectionProps> = ({
                   className="w-full p-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 font-medium focus:outline-none focus:border-blue-500"
                 >
                   <option value="">-- Choose Team Member --</option>
-                  {internalTeamMembers.map(m => (
-                    <option key={m.id} value={m.id}>
-                      {m.name} ({m.role}) • {m.email}
-                    </option>
-                  ))}
+                  {internalTeamMembers.length === 0 ? (
+                    <option value="" disabled>No active team members available</option>
+                  ) : (
+                    internalTeamMembers.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} ({m.role}) • {m.email}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
 

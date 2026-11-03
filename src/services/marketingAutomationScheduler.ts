@@ -666,7 +666,7 @@ export class MarketingAutomationScheduler {
       'quote.quoteId': 'Proposal',
       'quote.quoteReference': 'Proposal',
       'quote.createdAt': new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-      'quote.validUntil': '14 Days from Issue',
+      'quote.validUntil': 'Subject to Availability at Booking',
       'quote.total': 'As Quoted',
       'quote.currency': 'USD',
       'booking.bookingId': 'Reservation',

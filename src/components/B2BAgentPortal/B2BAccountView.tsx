@@ -336,12 +336,12 @@ export const B2BAccountView: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Authorized White-Label Commercial Terms & Disclaimer</label>
+                  <label className="font-bold text-slate-700 block mb-1">Authorized White-Label Commercial Quotation Terms</label>
                   <textarea
-                    rows={2}
+                    rows={3}
                     value={proposalDisclaimer}
                     onChange={(e) => setProposalDisclaimer(e.target.value)}
-                    placeholder={`This quotation is issued by ${agencyName || 'our agency'}. Rates are valid for 14 calendar days from generation date. All reservations are subject to availability upon deposit.`}
+                    placeholder="1. Booking Status: No services or reservations are currently on hold or confirmed. All arrangements are subject to availability at the time of booking."
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-900 outline-none focus:border-[#00C6A6]"
                   />
                 </div>

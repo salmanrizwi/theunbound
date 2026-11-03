@@ -193,6 +193,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
     const randomNum = Math.floor(1000 + Math.random() * 9000);
     const newLeadNumber = `LED-2026-${randomNum}`;
     const timestamp = new Date().toISOString();
+    const isEligibleStaff = db.isEligibleInternalTeamMember(user);
 
     const createdLead: TravelLead = {
       id: `lead-${Date.now()}-${randomNum}`,
@@ -207,8 +208,10 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
       status: 'PROPOSAL_SAVED',
       priority: q.totalSellingPrice > 15000 ? 'URGENT' : 'HIGH',
       conversionStatus: 'IN_PROGRESS',
-      assignedStaffId: user?.id || 'staff-01',
-      assignedStaffName: user?.name || 'Marcus Vance (Senior Ops)',
+      assignedTeamMemberId: isEligibleStaff ? user?.id : undefined,
+      assignedTeamMemberName: isEligibleStaff ? user?.name : undefined,
+      assignedStaffId: isEligibleStaff ? user?.id : undefined,
+      assignedStaffName: isEligibleStaff ? user?.name : undefined,
       destinationId: (q.destination || 'japan').toLowerCase().replace(/\s+/g, '-'),
       destinationName: q.destination || 'Japan',
       estimatedBudget: q.totalSellingPrice || 0,
@@ -222,6 +225,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
       totalPassengers: q.totalPax || (q.adultsCount ? (q.adultsCount + (q.childrenCount || 0)) : 2),
       travelRequirements: `Tailored itinerary for ${q.destination || 'Luxury Destination'} with ${q.items?.length || 0} scheduled services. Total proposal value ${q.currency || 'USD'} ${(q.totalSellingPrice || 0).toLocaleString()}.`,
       quoteId: q.id,
+      quoteIds: [q.id],
       quoteNumber: q.quoteNumber,
       quoteSnapshot: {
         quoteId: q.id,
@@ -266,52 +270,38 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
     };
 
     db.saveLead(createdLead, user);
-    db.updateQuotationLeadId(q.id, newLeadNumber, user);
+    db.updateQuotationLeadId(q.id, createdLead.id, user);
     refresh();
     setLeadLinkModalQuote(null);
     showSuccess(`Successfully converted quote #${q.quoteNumber} into CRM Lead ${newLeadNumber}!`);
   };
 
-  // 6. Link to Existing Lead
-  const handleLinkToExistingLead = (quoteId: string, leadNumber: string) => {
-    if (!leadNumber.trim()) {
-      showError('Please select or provide a valid Lead ID.');
+  // 6. Link to Existing Lead or Unlink
+  const handleLinkToExistingLead = (quoteId: string, leadIdOrNumber: string) => {
+    if (!leadIdOrNumber.trim()) {
+      showError('Please select a valid CRM Lead to link.');
       return;
     }
-    const cleanLeadNum = leadNumber.trim();
-    db.updateQuotationLeadId(quoteId, cleanLeadNum, user);
-    
-    // Also cross-link on the lead record if found
+    const cleanLeadRef = leadIdOrNumber.trim();
     const leads = db.getLeads();
-    const targetLead = leads.find(l => l.leadNumber === cleanLeadNum || l.id === cleanLeadNum);
-    if (targetLead) {
-      const q = db.getQuoteByIdAuthorized(quoteId, user);
-      if (q) {
-        targetLead.quoteId = q.id;
-        targetLead.quoteNumber = q.quoteNumber;
-        targetLead.quoteSnapshot = {
-          quoteId: q.id,
-          quoteNumber: q.quoteNumber,
-          version: q.version || 1,
-          quoteDate: new Date().toISOString(),
-          totalNetCost: q.totalNetCost || 0,
-          marginPercent: q.overallMarkupPercent || 15,
-          marginAmount: q.totalMargin || 0,
-          taxAmount: q.totalTaxes || 0,
-          feesAmount: 0,
-          finalSellingPrice: q.totalSellingPrice || 0,
-          currency: (q.currency || 'USD') as any,
-          status: q.status || 'DRAFT',
-          itemsCount: q.items?.length || 0
-        };
-        targetLead.updatedAt = new Date().toISOString();
-        db.saveLead(targetLead, user);
-      }
+    const targetLead = leads.find(l => l.id === cleanLeadRef || l.leadNumber === cleanLeadRef);
+    if (!targetLead) {
+      showError(`Lead "${cleanLeadRef}" was not found in the CRM database.`);
+      return;
     }
+
+    db.updateQuotationLeadId(quoteId, targetLead.id, user);
 
     refresh();
     setLeadLinkModalQuote(null);
-    showSuccess(`Linked quote to CRM Lead ${cleanLeadNum}`);
+    showSuccess(`Linked quote to CRM Lead ${targetLead.leadNumber} (${targetLead.contactName})`);
+  };
+
+  const handleUnlinkLead = (quoteId: string) => {
+    db.updateQuotationLeadId(quoteId, '', user);
+    refresh();
+    setLeadLinkModalQuote(null);
+    showSuccess('Quote unlinked from CRM Lead.');
   };
 
   // 7. Convert Quote to Ground Booking
@@ -383,9 +373,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
     return quotes.filter(q => {
       // 1. Text Search
       const matchesSearch = !qClean || 
-        q.quoteNumber.toLowerCase().includes(qClean) ||
-        q.title.toLowerCase().includes(qClean) ||
-        q.clientName.toLowerCase().includes(qClean) ||
+        (q.quoteNumber || '').toLowerCase().includes(qClean) ||
+        (q.title || '').toLowerCase().includes(qClean) ||
+        (q.clientName || '').toLowerCase().includes(qClean) ||
         (q.clientEmail && q.clientEmail.toLowerCase().includes(qClean)) ||
         (q.destination && q.destination.toLowerCase().includes(qClean)) ||
         (q.leadId && q.leadId.toLowerCase().includes(qClean)) ||
@@ -408,8 +398,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
       // 5. Lead Association Filter
       const matchesLeadLink = 
         filterLeadLink === 'ALL' ? true :
-        filterLeadLink === 'LINKED' ? !!q.leadId :
-        !q.leadId;
+        filterLeadLink === 'LINKED' ? !!(q.leadId || q.linkedLeadId) :
+        filterLeadLink === 'UNLINKED' ? !(q.leadId || q.linkedLeadId) :
+        (q.leadId === filterLeadLink || q.linkedLeadId === filterLeadLink || (q as any).leadNumber === filterLeadLink);
 
       // 6. Destination Filter
       const matchesDestination = filterDestination === 'ALL' || q.destination === filterDestination;
@@ -690,8 +681,8 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               className="w-full py-2 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
             >
               <option value="ALL">All Creators ({distinctCreators.length})</option>
-              {distinctCreators.map(c => (
-                <option key={c.id} value={c.id}>
+              {distinctCreators.map((c, idx) => (
+                <option key={c.id ? `${c.id}-${idx}` : `creator-${idx}`} value={c.id}>
                   {c.name} {c.agency ? `(${c.agency})` : ''}
                 </option>
               ))}
@@ -709,8 +700,17 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               className="w-full py-2 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
             >
               <option value="ALL">All Quotes</option>
-              <option value="LINKED">Linked to CRM Lead</option>
+              <option value="LINKED">All Linked to CRM Lead</option>
               <option value="UNLINKED">Unlinked / Standalone</option>
+              {allLeads.length > 0 && (
+                <optgroup label="Filter by Specific Lead">
+                  {allLeads.map((l, idx) => (
+                    <option key={l.id ? `${l.id}-${idx}` : `lead-opt-${idx}`} value={l.id}>
+                      {l.leadNumber} — {l.contactName}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
           </div>
 
@@ -725,8 +725,8 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               className="w-full py-2 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 text-xs font-semibold focus:outline-none focus:border-[#00C6A6]"
             >
               <option value="ALL">All Destinations ({distinctDestinations.length})</option>
-              {distinctDestinations.map(d => (
-                <option key={d} value={d}>{d}</option>
+              {distinctDestinations.map((d, idx) => (
+                <option key={d ? `${d}-${idx}` : `dest-${idx}`} value={d}>{d}</option>
               ))}
             </select>
           </div>
@@ -774,15 +774,16 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredQuotes.map(q => {
+              {filteredQuotes.map((q, idx) => {
                 const creatorName = q.createdByName || q.agentName || 'Ops Team';
                 const creatorRole = q.createdByUserType || (q.agentAgency ? 'B2B_AGENT' : 'ADMIN');
                 const agencyName = q.agentAgency || q.agentCompany;
                 const marginPercent = q.totalSellingPrice > 0 ? Math.round(((q.totalMargin || 0) / q.totalSellingPrice) * 100) : 0;
+                const rowKey = q.id ? `${q.id}-${q.version || 1}-${idx}` : `quote-row-${q.quoteNumber || 'unnumbered'}-${idx}`;
 
                 return (
                   <tr 
-                    key={q.id} 
+                    key={rowKey} 
                     className={`hover:bg-slate-50/80 transition-colors ${q.isLocked ? 'bg-slate-50/40' : ''}`}
                   >
                     
@@ -869,41 +870,62 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                     </td>
 
                     {/* 4. CRM Lead Link */}
-                    <td className="py-4 px-4 min-w-[140px]">
-                      {q.leadId ? (
-                        <div className="space-y-1">
-                          <div className="inline-flex items-center space-x-1 font-mono text-[10px] bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-lg font-bold">
-                            <Tag className="w-3 h-3" />
-                            <span>{q.leadId}</span>
-                          </div>
-                          {onNavigateToLeads && (
-                            <div>
-                              <button
-                                onClick={() => onNavigateToLeads(q.leadId)}
-                                className="text-[10px] text-[#008972] hover:text-[#005f4f] font-bold flex items-center space-x-1 cursor-pointer"
-                              >
-                                <span>View in CRM</span>
-                                <ArrowRight className="w-2.5 h-2.5" />
-                              </button>
+                    <td className="py-4 px-4 min-w-[160px]">
+                      {(() => {
+                        const linkedLeadObj = q.leadId
+                          ? allLeads.find(l => l.id === q.leadId || l.leadNumber === q.leadId || l.id === q.linkedLeadId)
+                          : undefined;
+                        if (q.leadId && linkedLeadObj) {
+                          return (
+                            <div className="space-y-1">
+                              <div className="inline-flex items-center space-x-1 font-mono text-[10px] bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-lg font-bold">
+                                <Tag className="w-3 h-3" />
+                                <span>{linkedLeadObj.leadNumber}</span>
+                              </div>
+                              <div className="text-[10px] font-semibold text-slate-700 truncate max-w-[150px]">
+                                {linkedLeadObj.contactName}
+                              </div>
+                              <div className="flex items-center space-x-2 pt-0.5">
+                                {onNavigateToLeads && (
+                                  <button
+                                    onClick={() => onNavigateToLeads(linkedLeadObj.id)}
+                                    className="text-[10px] text-[#008972] hover:text-[#005f4f] font-bold flex items-center space-x-0.5 cursor-pointer"
+                                  >
+                                    <span>View</span>
+                                    <ArrowRight className="w-2.5 h-2.5" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    setLeadLinkModalQuote(q);
+                                    setSelectedLeadIdToLink(linkedLeadObj.id);
+                                    setCustomLeadIdInput(linkedLeadObj.id);
+                                  }}
+                                  className="text-[10px] text-slate-500 hover:text-slate-800 font-semibold underline cursor-pointer"
+                                >
+                                  Change / Unlink
+                                </button>
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-slate-400 italic block">Unlinked</span>
-                          <button
-                            onClick={() => {
-                              setLeadLinkModalQuote(q);
-                              setSelectedLeadIdToLink('');
-                              setCustomLeadIdInput('');
-                            }}
-                            className="inline-flex items-center space-x-1 text-[10px] font-bold text-[#008972] hover:text-white bg-[#00C6A6]/10 hover:bg-[#008972] px-2 py-1 rounded-md transition-colors cursor-pointer border border-[#00C6A6]/30"
-                          >
-                            <Link2 className="w-3 h-3" />
-                            <span>Attach Lead</span>
-                          </button>
-                        </div>
-                      )}
+                          );
+                        }
+                        return (
+                          <div className="space-y-1">
+                            <span className="text-[10px] text-slate-400 italic block">Unlinked</span>
+                            <button
+                              onClick={() => {
+                                setLeadLinkModalQuote(q);
+                                setSelectedLeadIdToLink('');
+                                setCustomLeadIdInput('');
+                              }}
+                              className="inline-flex items-center space-x-1 text-[10px] font-bold text-[#008972] hover:text-white bg-[#00C6A6]/10 hover:bg-[#008972] px-2 py-1 rounded-md transition-colors cursor-pointer border border-[#00C6A6]/30"
+                            >
+                              <Link2 className="w-3 h-3" />
+                              <span>Attach Lead</span>
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {/* 5. Gross Selling */}
@@ -1084,11 +1106,20 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                       v{viewingQuote.version}
                     </span>
                   )}
-                  {viewingQuote.leadId && (
-                    <span className="text-[10px] font-mono font-bold bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded">
-                      Linked Lead: {viewingQuote.leadId}
-                    </span>
-                  )}
+                  {(() => {
+                    const linkedLeadObj = viewingQuote.leadId
+                      ? allLeads.find(l => l.id === viewingQuote.leadId || l.leadNumber === viewingQuote.leadId || l.id === viewingQuote.linkedLeadId)
+                      : undefined;
+                    return linkedLeadObj ? (
+                      <span className="text-[10px] font-mono font-bold bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded">
+                        Linked Lead: {linkedLeadObj.leadNumber} ({linkedLeadObj.contactName})
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono font-semibold bg-slate-100 text-slate-500 border border-slate-200 px-2 py-0.5 rounded">
+                        Unlinked Lead
+                      </span>
+                    );
+                  })()}
                 </div>
                 <h3 className="text-lg font-bold text-slate-900 mt-1">{viewingQuote.title}</h3>
                 <p className="text-xs text-slate-500">
@@ -1191,7 +1222,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               </h4>
               <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                 {(viewingQuote.items || []).map((item, idx) => (
-                  <div key={idx} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
+                  <div key={item.id ? `${item.id}-${idx}` : `item-${idx}`} className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
                     <div>
                       <div className="font-bold text-slate-900 text-xs">{item.product?.name || `Custom Service ${idx + 1}`}</div>
                       <div className="text-[11px] text-slate-500">
@@ -1264,7 +1295,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">
-                  Attach Quote to Lead Management
+                  {leadLinkModalQuote.leadId ? 'Manage Linked CRM Lead' : 'Attach Quote to Lead Management'}
                 </h3>
                 <p className="text-xs text-slate-500">
                   Quote: <strong>#{leadLinkModalQuote.quoteNumber}</strong> ({leadLinkModalQuote.title})
@@ -1275,33 +1306,30 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               </button>
             </div>
 
-            {/* Option A: Convert to NEW CRM Lead (1-Click) */}
-            <div className="p-5 bg-gradient-to-br from-purple-50 to-indigo-50/50 rounded-2xl border border-purple-200/80 space-y-3">
-              <div className="flex items-center space-x-2 text-purple-900 font-bold text-xs">
-                <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
-                <span>Option A: Auto-Create New CRM Lead from Quote</span>
+            {leadLinkModalQuote.leadId && (
+              <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 flex items-center justify-between gap-3">
+                <div className="text-xs text-amber-900">
+                  <span className="font-bold block">Currently Linked to CRM Lead</span>
+                  <span className="font-mono text-[11px]">
+                    {(() => {
+                      const curr = allLeads.find(l => l.id === leadLinkModalQuote.leadId || l.leadNumber === leadLinkModalQuote.leadId);
+                      return curr ? `${curr.leadNumber} — ${curr.contactName}` : leadLinkModalQuote.leadId;
+                    })()}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleUnlinkLead(leadLinkModalQuote.id)}
+                  className="px-3 py-1.5 bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 font-bold rounded-xl text-xs cursor-pointer shrink-0"
+                >
+                  Set Unlinked
+                </button>
               </div>
-              <p className="text-xs text-purple-800/80 leading-relaxed">
-                Creates a new CRM pipeline lead with budget <strong>{leadLinkModalQuote.currency} {leadLinkModalQuote.totalSellingPrice?.toLocaleString()}</strong>, client details, and attached quote snapshot.
-              </p>
-              <button
-                onClick={() => handleCreateLeadFromQuote(leadLinkModalQuote)}
-                className="w-full py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl text-xs flex items-center justify-center cursor-pointer shadow-xs"
-              >
-                <span>Create & Link New Lead Record</span>
-              </button>
-            </div>
+            )}
 
-            <div className="flex items-center my-3 text-xs text-slate-400">
-              <div className="flex-1 border-t border-slate-200" />
-              <span className="px-3 font-semibold uppercase text-[10px]">OR</span>
-              <div className="flex-1 border-t border-slate-200" />
-            </div>
-
-            {/* Option B: Link to an Existing CRM Lead */}
+            {/* Option A: Link to an Existing CRM Lead */}
             <div className="space-y-3">
               <label className="block text-xs font-bold text-slate-800">
-                Option B: Link to an Existing CRM Lead
+                Select Existing CRM Lead
               </label>
               
               <select
@@ -1312,23 +1340,17 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 }}
                 className="w-full py-2.5 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-[#00C6A6]"
               >
-                <option value="">-- Select from Active CRM Leads --</option>
-                {allLeads.map(l => (
-                  <option key={l.id} value={l.leadNumber}>
-                    {l.leadNumber} — {l.contactName} ({l.destinationName} • {l.status})
-                  </option>
-                ))}
+                <option value="">-- Select from Existing CRM Leads --</option>
+                {allLeads.length === 0 ? (
+                  <option value="" disabled>No CRM leads available</option>
+                ) : (
+                  allLeads.map((l, idx) => (
+                    <option key={l.id ? `${l.id}-${idx}` : `modal-lead-${idx}`} value={l.id}>
+                      {l.leadNumber} — {l.contactName} ({l.destinationName} • {l.status})
+                    </option>
+                  ))
+                )}
               </select>
-
-              <div className="relative">
-                <input
-                  type="text"
-                  value={customLeadIdInput}
-                  onChange={e => setCustomLeadIdInput(e.target.value)}
-                  placeholder="Or enter custom Lead ID (e.g. LED-2026-9041)..."
-                  className="w-full py-2 px-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:border-[#00C6A6]"
-                />
-              </div>
 
               <button
                 onClick={() => handleLinkToExistingLead(leadLinkModalQuote.id, customLeadIdInput)}
@@ -1340,7 +1362,30 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 }`}
               >
                 <Link2 className="w-4 h-4" />
-                <span>Link to Selected Lead</span>
+                <span>{leadLinkModalQuote.leadId ? 'Change Linked Lead' : 'Link to Selected Lead'}</span>
+              </button>
+            </div>
+
+            <div className="flex items-center my-3 text-xs text-slate-400">
+              <div className="flex-1 border-t border-slate-200" />
+              <span className="px-3 font-semibold uppercase text-[10px]">OR</span>
+              <div className="flex-1 border-t border-slate-200" />
+            </div>
+
+            {/* Option B: Convert to NEW CRM Lead (1-Click) */}
+            <div className="p-5 bg-gradient-to-br from-purple-50 to-indigo-50/50 rounded-2xl border border-purple-200/80 space-y-3">
+              <div className="flex items-center space-x-2 text-purple-900 font-bold text-xs">
+                <Sparkles className="w-4 h-4 text-purple-600 shrink-0" />
+                <span>Create & Link New CRM Lead from Quote</span>
+              </div>
+              <p className="text-xs text-purple-800/80 leading-relaxed">
+                Creates a new CRM pipeline lead with budget <strong>{leadLinkModalQuote.currency} {leadLinkModalQuote.totalSellingPrice?.toLocaleString()}</strong>, client details, and attached quote snapshot.
+              </p>
+              <button
+                onClick={() => handleCreateLeadFromQuote(leadLinkModalQuote)}
+                className="w-full py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl text-xs flex items-center justify-center cursor-pointer shadow-xs"
+              >
+                <span>Create & Link New Lead Record</span>
               </button>
             </div>
 

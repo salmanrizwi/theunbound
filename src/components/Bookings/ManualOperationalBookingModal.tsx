@@ -164,7 +164,7 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
   const masterProducts = useMemo(() => db.getProducts?.() || [], [db]);
   const allUsers = useMemo(() => db.getUsers?.() || [], [db]);
   const b2bAgents = useMemo(() => allUsers.filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED'), [allUsers]);
-  const internalTeamMembers = useMemo(() => allUsers.filter(u => u.role !== 'B2B_AGENT' && u.role !== 'BUYER'), [allUsers]);
+  const internalTeamMembers = useMemo(() => db.getEligibleInternalTeamMembers(), [db, allUsers]);
 
   // Handle lead selection auto-fill
   const handleLeadChange = (leadId: string) => {
@@ -651,7 +651,7 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
 
                   <div>
                     <label className="text-[11px] font-bold uppercase tracking-wider text-slate-700 flex items-center justify-between">
-                      <span>Assigned Internal Operational Owner *</span>
+                      <span>Assigned Internal Operational Owner</span>
                       <span className="text-[10px] font-normal text-slate-500">Execution / Supplier Owner</span>
                     </label>
                     <select
@@ -659,12 +659,16 @@ export const ManualOperationalBookingModal: React.FC<ManualOperationalBookingMod
                       onChange={(e) => setSelectedTeamMemberId(e.target.value)}
                       className="w-full mt-1.5 px-3.5 py-2.5 rounded-xl bg-white border border-slate-200 text-xs text-slate-900 font-bold focus:outline-hidden focus:border-[#008972]"
                     >
-                      <option value="">Select Internal Team Member</option>
-                      {internalTeamMembers.map(tm => (
-                        <option key={tm.id} value={tm.id}>
-                          {tm.name} — {tm.role || 'Operations'} ({tm.email})
-                        </option>
-                      ))}
+                      <option value="">-- Unassigned (Pending Internal Owner) --</option>
+                      {internalTeamMembers.length === 0 ? (
+                        <option value="" disabled>No active team members available</option>
+                      ) : (
+                        internalTeamMembers.map(tm => (
+                          <option key={tm.id} value={tm.id}>
+                            {tm.name} — {tm.role || 'Operations'} ({tm.email})
+                          </option>
+                        ))
+                      )}
                     </select>
                     <span className="text-[10px] text-slate-500 mt-0.5 block">
                       Internal team member accountable for coordinating supplier allocations, vouchers, and updates.

@@ -17,6 +17,12 @@ import {
   formatTravelDates,
   verifyNoCommercialLeak 
 } from '../utils/customerQuoteSanitizer';
+import {
+  COMMERCIAL_QUOTATION_TERMS_HEADING,
+  COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+  COMMERCIAL_QUOTATION_TERMS_HTML,
+  COMMERCIAL_QUOTATION_TERMS_WHATSAPP
+} from '../constants/commercialQuotationTerms';
 
 // ----------------------------------------------------
 // AUTHORITATIVE COMMUNICATION PAYLOAD DATA STRUCTURES
@@ -852,7 +858,7 @@ export function buildQuoteCommunicationPayload(
     quoteId: quote.quoteNumber || quote.id,
     version: quote.version || 1,
     quoteDate: quote.createdAt ? new Date(quote.createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }),
-    validUntil: quote.validUntil || '14 Days from issuance',
+    validUntil: 'Subject to Availability at Booking',
     preparedFor: {
       name: quote.clientName || 'Valued Guest',
       email: quote.clientEmail,
@@ -892,9 +898,9 @@ export function buildQuoteCommunicationPayload(
       formattedLandPartTotal: formatCurrency(landPartTotal, quote.currency || 'USD'),
       currency: quote.currency || 'USD',
       taxesIncluded: true,
-      paymentTerms: '30% Advance Deposit upon acceptance; 70% Balance 21 days prior to travel departure.',
+      paymentTerms: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
       cancellationTerms: 'Cancellations up to 30 days prior: 90% refundable. 15-29 days: 50% refundable. Within 14 days: 100% cancellation charge.',
-      validUntilText: quote.validUntil || '14 Days from issuance',
+      validUntilText: 'Subject to Availability at Booking',
       commercialDetails
     },
     options: optionsList,
@@ -1391,9 +1397,14 @@ export function formatWhatsAppQuoteFromPayload(
       ``,
       `🏷️ *Land Part Total:* ${payload.pricing.formattedLandPartTotal}`,
       ``,
+      `💎 *Final Selling Price:* ${payload.pricing.formattedPrice}`,
+      ``,
       `👥 *Travelers:* ${payload.tripSummary.travelers.displayText}`,
       `🔒 *Taxes & Fees:* Fully Included — Zero Hidden Surcharges`,
-      `⏳ *Price Guaranteed Until:* *${payload.pricing.validUntilText}*`
+      ``,
+      `📜 *${COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
+      ``,
+      COMMERCIAL_QUOTATION_TERMS_WHATSAPP
     );
   } else {
     priceLines.push(
@@ -1405,9 +1416,14 @@ export function formatWhatsAppQuoteFromPayload(
       ``,
       `Land Part Total: ${payload.pricing.formattedLandPartTotal}`,
       ``,
+      `Final Selling Price: ${payload.pricing.formattedPrice}`,
+      ``,
       `Travelers: ${payload.tripSummary.travelers.displayText}`,
       `Taxes & Fees: Included`,
-      `Quote Valid Until: ${payload.pricing.validUntilText}`
+      ``,
+      `*${COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
+      ``,
+      COMMERCIAL_QUOTATION_TERMS_WHATSAPP
     );
   }
   sections.push(priceLines.join('\n'));
@@ -1513,7 +1529,10 @@ ${payload.transfers.map(t => `• Transfer: ${t.serviceName} (${t.pickupLocation
 
 QUOTATION PRICING SUMMARY
 ${payload.pricing.hasHotelAccommodation && payload.pricing.formattedHotelAccommodationTotal ? `Hotel Accommodation Total: ${payload.pricing.formattedHotelAccommodationTotal}\n` : ''}Land Part Total: ${payload.pricing.formattedLandPartTotal}
-Quote Valid Until: ${payload.pricing.validUntilText}
+Final Selling Price: ${payload.pricing.formattedPrice}
+
+${COMMERCIAL_QUOTATION_TERMS_HEADING.toUpperCase()}
+${COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT}
 
 Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground Operations Team'})
   `.trim();
@@ -1711,11 +1730,10 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
           </div>
         </div>
 
-        <!-- Proposal Call to Action -->
-        <div style="text-align: center; margin-bottom: 24px;">
-          <p style="font-size: 12px; color: #64748b; margin-bottom: 12px;">
-            Proposal Valid Until: <strong>${payload.pricing.validUntilText}</strong>
-          </p>
+        <!-- Commercial Quotation Terms -->
+        <div style="border-top: 1px solid #e2e8f0; padding-top: 14px; margin-bottom: 20px; font-size: 11px; color: #475569;">
+          <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 10.5px; margin-bottom: 8px;">${COMMERCIAL_QUOTATION_TERMS_HEADING}</div>
+          ${COMMERCIAL_QUOTATION_TERMS_HTML}
         </div>
 
         <!-- Prepared By Section -->

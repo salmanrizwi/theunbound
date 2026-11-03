@@ -47,6 +47,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   const db = AppDatabase.getInstance();
   
   const [bookings, setBookings] = useState<Booking[]>(() => db.getAllBookings());
+  const [internalTeamMembers, setInternalTeamMembers] = useState(() => db.getEligibleInternalTeamMembers());
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(initialBookingId || null);
   const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'PIPELINE' | 'HORIZON'>(
     initialSubTab === 'HORIZON' ? 'HORIZON' : 'PIPELINE'
@@ -55,7 +56,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [channelFilter, setChannelFilter] = useState('ALL');
-  const [ownershipFilter, setOwnershipFilter] = useState<'ALL' | 'ASSIGNED_TO_ME' | 'PENDING_INTERNAL' | 'PENDING_AGENT'>('ALL');
+  const [ownershipFilter, setOwnershipFilter] = useState<string>('ALL');
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
 
@@ -65,6 +66,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
       const res = db.migrateBookingAssignments();
       alert(`Assignment reconciliation completed!\n• Migrated/Updated: ${res.migratedCount}\n• Already Complete: ${res.alreadyAssignedCount}\n• Pending Operational Owner: ${res.pendingInternalCount}\n• Pending Agent: ${res.pendingAgentCount}`);
       setBookings(db.getAllBookings());
+      setInternalTeamMembers(db.getEligibleInternalTeamMembers());
     } catch (e: any) {
       alert('Migration error: ' + (e?.message || e));
     } finally {
@@ -75,6 +77,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   useEffect(() => {
     const unsub = db.subscribe(() => {
       setBookings(db.getAllBookings());
+      setInternalTeamMembers(db.getEligibleInternalTeamMembers());
     });
     return unsub;
   }, [db]);
@@ -121,13 +124,15 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
       if (channelFilter !== 'ALL' && b.sourceType !== channelFilter) return false;
 
-      // Ownership Filter
+      // Ownership / Assigned Team Member Filter
       if (ownershipFilter === 'ASSIGNED_TO_ME') {
         if (b.assignedTeamMemberId !== user?.id) return false;
-      } else if (ownershipFilter === 'PENDING_INTERNAL') {
+      } else if (ownershipFilter === 'PENDING_INTERNAL' || ownershipFilter === 'UNASSIGNED') {
         if (b.assignedTeamMemberId && b.assignmentStatus !== 'pending_internal_assignment') return false;
       } else if (ownershipFilter === 'PENDING_AGENT') {
         if (b.agentId || b.submittingAgentId || b.assignedAgentId) return false;
+      } else if (ownershipFilter !== 'ALL') {
+        if (b.assignedTeamMemberId !== ownershipFilter) return false;
       }
 
       if (activeFilter === 'STATUS_NEW') return b.status === 'NEW' || b.status === 'PENDING_CONFIRMATION';
@@ -280,13 +285,24 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
           <select
             id="select-ownership-filter"
             value={ownershipFilter}
-            onChange={(e: any) => setOwnershipFilter(e.target.value)}
+            onChange={(e) => setOwnershipFilter(e.target.value)}
             className="px-3.5 py-2.5 rounded-xl text-xs bg-white border border-slate-200 text-slate-700 font-semibold focus:outline-hidden focus:border-[#008972]"
           >
-            <option value="ALL">All Assignments</option>
+            <option value="ALL">All Team Assignments</option>
+            <option value="UNASSIGNED">Unassigned (Pending Internal Owner)</option>
             <option value="ASSIGNED_TO_ME">Assigned to Me (Owner)</option>
-            <option value="PENDING_INTERNAL">Pending Operational Owner</option>
             <option value="PENDING_AGENT">Pending Agent Association</option>
+            {internalTeamMembers.length === 0 ? (
+              <option value="" disabled>No active team members available</option>
+            ) : (
+              <optgroup label="Internal Team Members">
+                {internalTeamMembers.map(tm => (
+                  <option key={tm.id} value={tm.id}>
+                    {tm.name} ({tm.role})
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
 
           <select
@@ -397,17 +413,40 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                               </span>
                             )}
                           </div>
-                          <div className="pt-1 border-t border-slate-100">
-                            <span className="text-[9px] text-slate-400 font-bold block uppercase">Operational Owner</span>
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider ${
+                          <div className="pt-1 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
+                            <span className="text-[9px] text-slate-400 font-bold block uppercase mb-0.5">Operational Owner</span>
+                            <select
+                              value={b.assignedTeamMemberId || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                try {
+                                  if (!val) {
+                                    db.unassignBookingTeamMember(b.id, user, 'Unassigned from Bookings listing');
+                                  } else {
+                                    db.assignBookingInternalTeamMember(b.id, val, user, 'Assigned from Bookings listing');
+                                  }
+                                  setBookings(db.getAllBookings());
+                                } catch (err: any) {
+                                  alert(err?.message || 'Failed to update booking assignment');
+                                }
+                              }}
+                              className={`w-full px-2 py-1 rounded-lg text-[10px] font-bold border cursor-pointer focus:outline-none ${
                                 b.assignedTeamMemberId
-                                  ? 'bg-teal-50 text-[#008f77] border border-teal-200'
-                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
-                              }`}>
-                                {b.assignedTeamMemberNameSnapshot || b.assignedTeamMemberName || 'Pending'}
-                              </span>
-                            </div>
+                                  ? 'bg-teal-50 text-[#008f77] border-teal-200'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200'
+                              }`}
+                            >
+                              <option value="">-- Unassigned --</option>
+                              {internalTeamMembers.length === 0 ? (
+                                <option value="" disabled>No active team members available</option>
+                              ) : (
+                                internalTeamMembers.map(tm => (
+                                  <option key={tm.id} value={tm.id}>
+                                    {tm.name} ({tm.role})
+                                  </option>
+                                ))
+                              )}
+                            </select>
                           </div>
                         </div>
                       </td>

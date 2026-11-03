@@ -1272,6 +1272,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                     prefillLead={leadForNewQuote}
                     onBackToDashboard={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
                     onViewMyQuotes={() => setActiveSubTab('QUOTES')}
+                    onNavigateToPackages={() => handleNavigate('PACKAGE_MANAGEMENT', 'PACKAGES')}
                   />
                 </div>
               )}

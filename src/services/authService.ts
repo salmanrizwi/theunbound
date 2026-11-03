@@ -831,13 +831,13 @@ class AuthService {
       }
     }
 
-    // 3. Auto-provision well-known administrator accounts if not found
-    const isAdminEmail = ['admin@theunbound.com', 'business@theunbound.in', 'marcus@theunbound.in'].includes(normalizedEmail);
+    // 3. Auto-provision master administrator account if not found
+    const isAdminEmail = normalizedEmail === 'business@theunbound.in';
     if (!profile && isAdminEmail) {
       console.log(`[AUTH-FALLBACK] Auto-constructing Executive Admin profile for ${normalizedEmail}...`);
       profile = {
-        id: normalizedEmail === 'business@theunbound.in' ? 'usr-admin-business' : 'usr-admin-01',
-        name: normalizedEmail === 'business@theunbound.in' ? 'TheUnbound Executive Admin' : 'Marcus Vance',
+        id: 'usr-admin-business',
+        name: 'TheUnbound Executive Admin',
         email: normalizedEmail,
         password: password || 'Unboundpass11!',
         role: 'ADMIN',

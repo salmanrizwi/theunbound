@@ -47,31 +47,28 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
     return db.getUsers().filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED');
   }, [db]);
 
-  // Internal operations & sales staff members
+  // Authoritative active eligible internal team members from centralized database
   const internalStaffList = React.useMemo(() => {
-    const preset = [
-      { id: 'staff-01', name: 'Marcus Vance (Senior Ops)', email: 'business@theunbound.in', dept: 'OPERATIONS' as const },
-      { id: 'staff-02', name: 'Kenji Takahashi (Japan Ground Lead)', email: 'kenji@theunbound.in', dept: 'SALES' as const },
-      { id: 'staff-03', name: 'Elena Rostova (B2B Concierge)', email: 'elena@theunbound.in', dept: 'SALES' as const },
-      { id: 'staff-04', name: 'Aarav Patel (Client Success)', email: 'aarav@theunbound.in', dept: 'MANAGEMENT' as const }
-    ];
-    const dbStaff = db.getUsers()
-      .filter(u => (u.role === 'ADMIN' || u.role === 'DMC_STAFF' || u.role === 'TEAM_MEMBER') && !preset.some(p => p.id === u.id || p.email === u.email))
-      .map(u => ({
-        id: u.id,
-        name: u.name,
-        email: u.email,
-        dept: ((u as any).department || 'SALES') as 'SALES' | 'OPERATIONS' | 'MANAGEMENT'
-      }));
-    return [...preset, ...dbStaff];
+    return db.getEligibleInternalTeamMembers().map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      dept: ((u as any).department || 'OPERATIONS') as 'SALES' | 'OPERATIONS' | 'MANAGEMENT'
+    }));
   }, [db]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.contactName || !formData.email) return;
 
-    // Resolve authoritative staff & agent
-    const selectedStaff = internalStaffList.find(s => s.id === formData.assignedTeamMemberId || s.id === formData.assignedStaffId);
+    // Resolve authoritative staff & agent (supporting Unassigned when none selected)
+    const selectedStaffId = formData.assignedTeamMemberId !== undefined
+      ? formData.assignedTeamMemberId
+      : formData.assignedStaffId;
+    const selectedStaff = selectedStaffId
+      ? internalStaffList.find(s => s.id === selectedStaffId)
+      : undefined;
     const selectedAgent = b2bAgents.find(a => a.id === formData.responsibleAgentId || a.id === formData.assignedAgentId);
 
     const fullLead: TravelLead = {
@@ -91,7 +88,7 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
       status: formData.status || 'NEW',
       priority: formData.priority || 'NORMAL',
 
-      // Mandatory Commercial B2B Agent (authoritative)
+      // Commercial B2B Agent (authoritative)
       responsibleAgentId: formData.responsibleAgentId || selectedAgent?.id,
       responsibleAgentNameSnapshot: formData.responsibleAgentNameSnapshot || selectedAgent?.name,
       responsibleAgentEmailSnapshot: formData.responsibleAgentEmailSnapshot || selectedAgent?.email,
@@ -105,17 +102,17 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
       assignedAgentEmailSnapshot: formData.responsibleAgentEmailSnapshot || selectedAgent?.email || formData.assignedAgentEmailSnapshot,
       assignedAgentAgencySnapshot: formData.responsibleAgencyNameSnapshot || selectedAgent?.agencyName || selectedAgent?.companyName || formData.assignedAgentAgencySnapshot,
 
-      // Mandatory Internal Team Member (authoritative)
-      assignedTeamMemberId: formData.assignedTeamMemberId || selectedStaff?.id || user?.id || 'staff-01',
-      assignedTeamMemberNameSnapshot: formData.assignedTeamMemberNameSnapshot || selectedStaff?.name || user?.name || 'Marcus Vance (Senior Ops)',
-      assignedTeamMemberEmailSnapshot: formData.assignedTeamMemberEmailSnapshot || selectedStaff?.email || user?.email || 'business@theunbound.in',
-      assignedTeamMemberDepartment: formData.assignedTeamMemberDepartment || selectedStaff?.dept || 'SALES',
+      // Internal Team Member (authoritative — undefined when Unassigned)
+      assignedTeamMemberId: selectedStaff ? selectedStaff.id : undefined,
+      assignedTeamMemberNameSnapshot: selectedStaff ? selectedStaff.name : undefined,
+      assignedTeamMemberEmailSnapshot: selectedStaff ? selectedStaff.email : undefined,
+      assignedTeamMemberDepartment: selectedStaff ? selectedStaff.dept : (formData.assignedTeamMemberDepartment || 'OPERATIONS'),
 
       // Legacy Staff support
-      assignedStaffId: formData.assignedTeamMemberId || selectedStaff?.id || user?.id || 'staff-01',
-      assignedStaffName: formData.assignedTeamMemberNameSnapshot || selectedStaff?.name || user?.name || 'Marcus Vance (Senior Ops)',
-      assignedStaffEmail: formData.assignedTeamMemberEmailSnapshot || selectedStaff?.email || user?.email || 'business@theunbound.in',
-      assignedDepartment: formData.assignedTeamMemberDepartment || selectedStaff?.dept || 'SALES',
+      assignedStaffId: (selectedStaff ? selectedStaff.id : undefined) as any,
+      assignedStaffName: (selectedStaff ? selectedStaff.name : undefined) as any,
+      assignedStaffEmail: (selectedStaff ? selectedStaff.email : undefined) as any,
+      assignedDepartment: selectedStaff ? selectedStaff.dept : (formData.assignedTeamMemberDepartment || 'OPERATIONS'),
 
       destinationId: formData.destinationId || 'japan',
       destinationName: formData.destinationName || 'Japan',
@@ -335,9 +332,21 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
                   <span className="text-[10px] text-[#008f77] font-bold uppercase">Operational Owner</span>
                 </label>
                 <select
-                  value={formData.assignedTeamMemberId || formData.assignedStaffId || 'staff-01'}
+                  value={formData.assignedTeamMemberId ?? formData.assignedStaffId ?? ''}
                   onChange={e => {
                     const staffId = e.target.value;
+                    if (!staffId) {
+                      setFormData({
+                        ...formData,
+                        assignedTeamMemberId: '',
+                        assignedTeamMemberNameSnapshot: undefined,
+                        assignedTeamMemberEmailSnapshot: undefined,
+                        assignedStaffId: '' as any,
+                        assignedStaffName: undefined,
+                        assignedStaffEmail: undefined
+                      });
+                      return;
+                    }
                     const st = internalStaffList.find(s => s.id === staffId);
                     setFormData({
                       ...formData,
@@ -353,11 +362,16 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
                   }}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-bold text-slate-900 focus:outline-none focus:border-[#00C6A6]"
                 >
-                  {internalStaffList.map(st => (
-                    <option key={st.id} value={st.id}>
-                      {st.name} ({st.dept})
-                    </option>
-                  ))}
+                  <option value="">-- Unassigned --</option>
+                  {internalStaffList.length === 0 ? (
+                    <option value="" disabled>No active team members available</option>
+                  ) : (
+                    internalStaffList.map(st => (
+                      <option key={st.id} value={st.id}>
+                        {st.name} ({st.role || st.dept}) — {st.email}
+                      </option>
+                    ))
+                  )}
                 </select>
                 <p className="text-[10px] text-slate-500 leading-normal">
                   The internal team member responsible for quoting, itineraries, ground operations, and conversion.

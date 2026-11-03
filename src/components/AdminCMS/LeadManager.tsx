@@ -42,14 +42,6 @@ import { LeadKanbanBoard } from './LeadKanbanBoard';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { CalendarTask } from '../../types';
 
-export const STAFF_SPECIALISTS = [
-  { id: 'staff-01', name: 'Marcus Vance', email: 'marcus.v@theunbound.in', department: 'SALES' as const },
-  { id: 'staff-02', name: 'Elena Rostova', email: 'elena.r@theunbound.in', department: 'SALES' as const },
-  { id: 'staff-03', name: 'Liam Chen', email: 'liam.c@theunbound.in', department: 'OPERATIONS' as const },
-  { id: 'staff-04', name: 'Sophia Sterling', email: 'sophia.s@theunbound.in', department: 'MANAGEMENT' as const },
-  { id: 'staff-05', name: 'Aria Tanaka', email: 'aria.t@theunbound.in', department: 'SALES' as const }
-];
-
 export interface LeadManagerProps {
   initialLeadId?: string | null;
   onOpenActionCenter?: (task: CalendarTask) => void;
@@ -67,12 +59,14 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   const db = AppDatabase.getInstance();
 
   const [leads, setLeads] = useState<TravelLead[]>(db.getLeadsAuthorized(user));
+  const internalTeamMembers = React.useMemo(() => db.getEligibleInternalTeamMembers(), [leads]);
   const stages: LeadStageConfig[] = db.getLeadStages();
   const [stageFilter, setStageFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'assigned' | 'needs_assignment' | 'pending_internal' | 'pending_agent'>('all');
+  const [teamMemberFilter, setTeamMemberFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'table' | 'cards' | 'kanban'>(() => {
     try {
@@ -208,6 +202,15 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       matchesOwnership = !hasAgent;
     }
 
+    // Assigned Internal Team Member Filter
+    const assignedMemberId = l.assignedTeamMemberId || l.assignedStaffId || '';
+    let matchesTeamMember = true;
+    if (teamMemberFilter === 'unassigned') {
+      matchesTeamMember = !assignedMemberId;
+    } else if (teamMemberFilter !== 'all') {
+      matchesTeamMember = assignedMemberId === teamMemberFilter;
+    }
+
     const query = (searchQuery || '').toLowerCase().trim();
     const matchesSearch = !query || 
       (l.contactName || '').toLowerCase().includes(query) ||
@@ -220,7 +223,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       (l.quoteNumber && l.quoteNumber.toLowerCase().includes(query)) ||
       (l.bookingReference && l.bookingReference.toLowerCase().includes(query));
 
-    return matchesStage && matchesStatus && matchesPriority && matchesSource && matchesOwnership && matchesSearch;
+    return matchesStage && matchesStatus && matchesPriority && matchesSource && matchesOwnership && matchesTeamMember && matchesSearch;
   });
 
   const handleStageChange = (leadId: string, stageId: string) => {
@@ -247,12 +250,43 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   };
 
   const handleBulkAssign = (staffId: string) => {
-    const targetStaff = STAFF_SPECIALISTS.find(s => s.id === staffId);
-    if (!targetStaff || selectedLeadIds.length === 0) return;
-    db.bulkAssignLeads(selectedLeadIds, targetStaff, user);
+    if (!staffId || selectedLeadIds.length === 0) return;
+    if (staffId === 'UNASSIGN') {
+      selectedLeadIds.forEach(id => {
+        db.unassignLeadTeamMember(id, user, 'Bulk unassignment from Lead Management');
+      });
+      setLeads(db.getLeadsAuthorized(user));
+      setSelectedLeadIds([]);
+      setBulkStaffId('');
+      return;
+    }
+    const targetStaff = internalTeamMembers.find(s => s.id === staffId);
+    if (!targetStaff) return;
+    db.bulkAssignLeads(
+      selectedLeadIds,
+      {
+        id: targetStaff.id,
+        name: targetStaff.name,
+        email: targetStaff.email,
+        department: ((targetStaff as any).department || 'OPERATIONS') as 'SALES' | 'OPERATIONS' | 'MANAGEMENT'
+      },
+      user
+    );
     setLeads(db.getLeadsAuthorized(user));
     setSelectedLeadIds([]);
     setBulkStaffId('');
+  };
+
+  const handleInlineAssignTeamMember = (leadId: string, teamMemberId: string) => {
+    if (!teamMemberId) {
+      const updated = db.unassignLeadTeamMember(leadId, user, 'Set to Unassigned from Lead Management table');
+      setLeads(db.getLeadsAuthorized(user));
+      if (updated && selectedLead?.id === leadId) setSelectedLead(updated);
+      return;
+    }
+    const updated = db.assignLeadTeamMember(leadId, teamMemberId, user, `Assigned from Lead Management table by ${user?.name || 'Admin'}`);
+    setLeads(db.getLeadsAuthorized(user));
+    if (updated && selectedLead?.id === leadId) setSelectedLead(updated);
   };
 
   const handleBulkStage = (targetStageId: string) => {
@@ -265,6 +299,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
 
   const handleOpenAdd = () => {
     const randomNum = Math.floor(1000 + Math.random() * 9000);
+    const eligibleCurrentUser = db.isEligibleInternalTeamMember(user) ? user : null;
     setEditingLead({
       id: `lead-${Date.now()}`,
       leadNumber: `LED-2026-${randomNum}`,
@@ -275,12 +310,12 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
       source: 'WEBSITE',
       status: 'NEW',
       priority: 'NORMAL',
-      assignedStaffId: user?.id || 'staff-01',
-      assignedStaffName: user?.name || 'Marcus Vance (Senior Ops)',
-      assignedTeamMemberId: user?.id || 'staff-01',
-      assignedTeamMemberNameSnapshot: user?.name || 'Marcus Vance (Senior Ops)',
-      assignedTeamMemberEmailSnapshot: user?.email || 'business@theunbound.in',
-      assignedTeamMemberDepartment: 'SALES',
+      assignedStaffId: eligibleCurrentUser?.id,
+      assignedStaffName: eligibleCurrentUser?.name,
+      assignedTeamMemberId: eligibleCurrentUser?.id,
+      assignedTeamMemberNameSnapshot: eligibleCurrentUser?.name,
+      assignedTeamMemberEmailSnapshot: eligibleCurrentUser?.email,
+      assignedTeamMemberDepartment: ((eligibleCurrentUser as any)?.department || 'SALES') as any,
       destinationId: 'japan',
       destinationName: 'Japan',
       travelDates: 'Autumn 2026',
@@ -360,7 +395,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     }
   };
 
-  const hasActiveFilters = stageFilter !== 'all' || statusFilter !== 'all' || priorityFilter !== 'all' || sourceFilter !== 'all' || ownershipFilter !== 'all' || !!searchQuery.trim();
+  const hasActiveFilters = stageFilter !== 'all' || statusFilter !== 'all' || priorityFilter !== 'all' || sourceFilter !== 'all' || ownershipFilter !== 'all' || teamMemberFilter !== 'all' || !!searchQuery.trim();
 
   const handleResetFilters = () => {
     setStageFilter('all');
@@ -368,6 +403,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     setPriorityFilter('all');
     setSourceFilter('all');
     setOwnershipFilter('all');
+    setTeamMemberFilter('all');
     setSearchQuery('');
   };
 
@@ -679,6 +715,30 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
               <option value="pending_agent">Pending B2B Agent ({pendingAgentLeads})</option>
             </select>
 
+            {/* Assigned Internal Team Member Filter */}
+            <select
+              id="lead-team-member-filter"
+              value={teamMemberFilter}
+              onChange={e => setTeamMemberFilter(e.target.value)}
+              className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                teamMemberFilter !== 'all'
+                  ? 'bg-teal-50 border-[#00C6A6] text-[#008f77]'
+                  : 'bg-slate-50 border-slate-200 text-slate-700 focus:bg-white'
+              }`}
+            >
+              <option value="all">Team Member: All</option>
+              <option value="unassigned">Unassigned ({pendingInternalLeads})</option>
+              {internalTeamMembers.length === 0 ? (
+                <option value="" disabled>No active team members available</option>
+              ) : (
+                internalTeamMembers.map(tm => (
+                  <option key={tm.id} value={tm.id}>
+                    {tm.name} ({tm.role})
+                  </option>
+                ))
+              )}
+            </select>
+
             {/* Quick Needs Assignment Filter Pill */}
             {needsAssignmentLeads > 0 && ownershipFilter !== 'needs_assignment' && (
               <button
@@ -737,12 +797,17 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                 }}
                 className="bg-transparent text-xs text-white focus:outline-none cursor-pointer"
               >
-                <option value="" className="text-slate-900">Assign Specialist...</option>
-                {STAFF_SPECIALISTS.map(st => (
-                  <option key={st.id} value={st.id} className="text-slate-900">
-                    {st.name} ({st.department})
-                  </option>
-                ))}
+                <option value="" className="text-slate-900">Assign Team Member...</option>
+                <option value="UNASSIGN" className="text-slate-900">-- Set Unassigned --</option>
+                {internalTeamMembers.length === 0 ? (
+                  <option value="" disabled className="text-slate-900">No active team members available</option>
+                ) : (
+                  internalTeamMembers.map(st => (
+                    <option key={st.id} value={st.id} className="text-slate-900">
+                      {st.name} ({st.role})
+                    </option>
+                  ))
+                )}
               </select>
             </div>
 
@@ -983,20 +1048,30 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                                   </div>
                                 </div>
 
-                                {/* Internal Team Member Indicator */}
-                                <div className="flex items-center gap-1.5">
+                                {/* Internal Team Member Indicator & Quick Selector */}
+                                <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
                                   <UserCheck className={`w-3.5 h-3.5 shrink-0 ${hasStaff ? 'text-[#008f77]' : 'text-rose-500'}`} />
-                                  <div className="truncate">
-                                    {hasStaff ? (
-                                      <span className="text-xs font-semibold text-slate-700 truncate block">
-                                        {staffName} <span className="text-[10px] text-slate-400">({lead.assignedDepartment || 'OPS'})</span>
-                                      </span>
+                                  <select
+                                    value={lead.assignedTeamMemberId || lead.assignedStaffId || ''}
+                                    onChange={e => handleInlineAssignTeamMember(lead.id, e.target.value)}
+                                    className={`text-xs font-semibold rounded-lg border px-2 py-1 max-w-[175px] truncate cursor-pointer focus:outline-none focus:border-[#00C6A6] ${
+                                      hasStaff
+                                        ? 'bg-white border-slate-200 text-slate-800'
+                                        : 'bg-rose-50 border-rose-200 text-rose-700 font-bold'
+                                    }`}
+                                    title="Assign or Reassign Internal Team Member"
+                                  >
+                                    <option value="">-- Unassigned --</option>
+                                    {internalTeamMembers.length === 0 ? (
+                                      <option value="" disabled>No active team members available</option>
                                     ) : (
-                                      <span className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded inline-block">
-                                        Needs Internal Staff
-                                      </span>
+                                      internalTeamMembers.map(tm => (
+                                        <option key={tm.id} value={tm.id}>
+                                          {tm.name} ({tm.role})
+                                        </option>
+                                      ))
                                     )}
-                                  </div>
+                                  </select>
                                 </div>
 
                                 {/* Status Chip */}

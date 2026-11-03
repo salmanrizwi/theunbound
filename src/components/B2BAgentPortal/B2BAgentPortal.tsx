@@ -417,6 +417,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
               isNewQuoteMode={!targetQuoteIdForBuilder && quoteSource !== 'PACKAGE' && !sourcePackageId}
               onBackToDashboard={() => handleTabSelect('dashboard')}
               onViewMyQuotes={() => handleTabSelect('my-quotes')}
+              onNavigateToPackages={() => handleTabSelect('packages')}
               onConvertToBooking={handleConvertToBooking}
             />
           )

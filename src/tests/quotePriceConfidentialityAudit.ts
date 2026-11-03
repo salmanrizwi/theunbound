@@ -33,7 +33,7 @@ const mockQuote: Quotation = ({
   clientPhone: '+919811654959',
   travelStartDate: '2026-11-10',
   travelEndDate: '2026-11-15',
-  termsAndConditions: 'All proposed rates are confidential and valid for 14 calendar days from generation date.',
+  termsAndConditions: '1. Booking Status: No services or reservations are currently on hold or confirmed. All arrangements are subject to availability at the time of booking.\n\n2. Hotel Pricing & Availability: Hotel rates and availability are dynamic and may change without prior notice. The final hotel price will be reconfirmed at the time of booking confirmation.\n\n3. Land Package Validity: The quoted land package price remains valid, subject to any revisions in activity or service prices by the respective suppliers.\n\n4. Booking Deposit: An advance payment of 30% of the total package cost is required to initiate and secure the reservation. Confirmation is subject to receipt of the deposit and supplier availability.',
   adultsCount: 2,
   childrenCount: 1,
   infantsCount: 0,

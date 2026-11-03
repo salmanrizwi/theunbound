@@ -368,7 +368,7 @@ export function hotelToProduct(
   const mealLabel = selectedRate.mealPlanName || (selectedRoom?.mealPlan ? String(selectedRoom.mealPlan) : getMealPlanLabel(selectedRate.mealPlan));
   const roomTitle = selectedRoom ? selectedRoom.roomName : 'Luxury Room';
 
-  const basePrice = selectedRate.doubleNetRate || selectedRate.singleNetRate || (selectedRoom as any)?.baseRatePerNight || (selectedRoom as any)?.ratePerNight || hotel.startingNetPrice || 0;
+  const basePrice = selectedRate.doubleNetRate || selectedRate.singleNetRate || (selectedRate as any)?.baseNetRatePerNight || (selectedRoom as any)?.baseRatePerNight || (selectedRoom as any)?.ratePerNight || hotel.startingNetPrice || 0;
   const safeEffectiveNights = safeNights;
   const safeEffectiveRooms = safeRooms;
   const totalNetPrice = basePrice * safeEffectiveNights * safeEffectiveRooms;
@@ -450,7 +450,7 @@ export function hotelToProduct(
     inclusions: [
       `${safeNights} Night${safeNights > 1 ? 's' : ''} Luxury Accommodation in ${safeRooms}x ${roomTitle}`,
       mealLabel,
-      ...(hotel.amenities.slice(0, 3)),
+      ...((hotel.amenities || []).slice(0, 3)),
       'Direct Concierge Access & Luggage Handling'
     ],
     exclusions: [

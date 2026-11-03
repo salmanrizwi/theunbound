@@ -525,7 +525,7 @@ CMS Link: ${window.location.origin}/#admin-bookings`;
       slaHours: 24,
       defaultAssignee: {
         type: 'DEPARTMENT' as const,
-        name: 'Sales Team (Sarah Lin)',
+        name: 'Sales & Quotation Desk',
         email: 'sales@theunbound.in',
         department: 'SALES' as const,
         role: 'Senior Travel Specialist'

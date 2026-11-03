@@ -932,18 +932,20 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     id: 'block-terms',
     type: 'TERMS_AND_SIGNATURE',
     html: `
-      <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; margin-top: 10px; font-size: 10px; color: #64748b;">
-        <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">Commercial Quotation Terms:</div>
-        <p style="margin: 0 0 10px 0; color: #475569; line-height: 1.4;">${model.commercialTerms}</p>
+      <div style="border-top: 1px solid #e2e8f0; padding-top: 12px; margin-top: 10px; font-size: 10px; color: #64748b; page-break-inside: avoid; break-inside: avoid;">
+        <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 10px; margin-bottom: 6px; page-break-after: avoid; break-after: avoid;">${model.commercialTermsHeading || 'Commercial Quotation Terms'}</div>
+        <div style="margin: 0 0 10px 0; color: #475569; line-height: 1.45;">
+          ${model.commercialTermsHtml || `<p style="margin: 0; line-height: 1.45; color: #475569;">${model.commercialTerms}</p>`}
+        </div>
         <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #f1f5f9; padding-top: 8px; font-size: 9.5px; color: #94a3b8; font-family: monospace;">
           <span>${model.footerContactLine}</span>
           <span>${model.footerRightTitle}</span>
         </div>
       </div>
     `,
-    estimatedHeight: 145,
+    estimatedHeight: 195,
     splittable: false,
-    minMeaningfulHeight: 145
+    minMeaningfulHeight: 195
   });
 
   return blocks;

@@ -88,6 +88,7 @@ import { TransferConfigurator } from '../Configurators/TransferConfigurator';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { RichTextRenderer } from '../common/RichTextRenderer';
 import { validateWhiteLabelReadiness, buildAgencyBrandingSnapshotFromUser } from '../../services/quotePresentationModel';
+import { COMMERCIAL_QUOTATION_TERMS_HEADING, COMMERCIAL_QUOTATION_TERMS_ITEMS } from '../../constants/commercialQuotationTerms';
 
 // Helper to check if a product matches a target city/hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -248,6 +249,10 @@ export interface StepByStepQuotationWorkspaceProps {
   onOpenEmailModal: () => void;
   onConvertBooking: () => void;
   onOpenSavePackageModal?: () => void;
+  linkedMasterPackageId?: string | null;
+  linkedMasterPackageTitle?: string | null;
+  onViewSavedMasterPackage?: () => void;
+  onNavigateToPackagesModule?: () => void;
   canSaveAsPackage?: boolean;
   canAddManualHotel?: boolean;
   autoSaveStatus: 'SAVED' | 'SAVING' | 'IDLE';
@@ -384,6 +389,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   onOpenEmailModal,
   onConvertBooking,
   onOpenSavePackageModal,
+  linkedMasterPackageId,
+  linkedMasterPackageTitle,
+  onViewSavedMasterPackage,
+  onNavigateToPackagesModule,
   canSaveAsPackage,
   canAddManualHotel,
   autoSaveStatus,
@@ -1293,6 +1302,40 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       </div>
     );
   };
+
+  const renderCommercialQuotationTermsCard = () => (
+    <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 rounded-2xl bg-slate-900 text-[#00E5C0] flex items-center justify-center">
+            <ShieldCheck className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                {COMMERCIAL_QUOTATION_TERMS_HEADING}
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                Authoritative Quotation Terms
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Synchronized across Quote Preview, PDF, Email, and WhatsApp (Standard &amp; White-Label).
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2.5 text-xs text-slate-600 leading-relaxed bg-slate-50/70 rounded-2xl border border-slate-200/80 p-4">
+        {COMMERCIAL_QUOTATION_TERMS_ITEMS.map((term) => (
+          <p key={term.number}>
+            <strong className="font-bold text-slate-900">{term.heading}</strong>{' '}
+            <span>{term.body}</span>
+          </p>
+        ))}
+      </div>
+    </div>
+  );
 
   // Detect any missing/invalid currency pair across items or breakdown
   const missingCurrencyPairsList = useMemo(() => {
@@ -2844,27 +2887,29 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
               {/* Client & CRM Leads */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <label className="text-xs font-black text-slate-700 uppercase tracking-wider">
                     Customer / Lead Information
                   </label>
-                  {crmLeads.length > 0 && (
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs text-slate-400">Import CRM Lead:</span>
-                      <select
-                        value={selectedLeadId || ''}
-                        onChange={(e) => onSelectLead(e.target.value)}
-                        className="text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-2.5 py-1 outline-none cursor-pointer"
-                      >
-                        <option value="">Select Existing CRM Lead...</option>
-                        {crmLeads.map(lead => (
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-semibold text-slate-500">Linked CRM Lead:</span>
+                    <select
+                      value={selectedLeadId || ''}
+                      onChange={(e) => onSelectLead(e.target.value)}
+                      className="text-xs font-bold text-teal-800 bg-teal-50 border border-teal-200 rounded-xl px-2.5 py-1.5 outline-none cursor-pointer"
+                    >
+                      <option value="">-- Unlinked (Standalone Quote) --</option>
+                      {crmLeads.length === 0 ? (
+                        <option value="" disabled>No leads available</option>
+                      ) : (
+                        crmLeads.map(lead => (
                           <option key={lead.id} value={lead.id}>
-                            {lead.contactName} ({lead.agencyName || 'Direct'})
+                            {lead.leadNumber} — {lead.contactName} ({lead.destinationName || lead.agencyName || 'Direct'})
                           </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
+                        ))
+                      )}
+                    </select>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
@@ -5283,6 +5328,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                 {renderBrandingModeSelectorCard()}
 
+                {renderCommercialQuotationTermsCard()}
+
                 {/* COMMERCIAL SUMMARY & NEXT STEP TRANSITION */}
                 <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-4">
                   <div>
@@ -5829,6 +5876,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                 {renderBrandingModeSelectorCard()}
 
+                {renderCommercialQuotationTermsCard()}
+
                 {/* Narrative & Overview Section */}
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
@@ -6082,7 +6131,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       </button>
                     </div>
 
-                    {/* Action 6: Save as Package Template */}
+                    {/* Action 6: Save as Master Package */}
                     {canSaveAsPackage && onOpenSavePackageModal && (
                       <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
                         <div className="space-y-1.5">
@@ -6090,23 +6139,43 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             <div className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center">
                               <Layers className="w-4 h-4" />
                             </div>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                              Template Store
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              linkedMasterPackageId
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-amber-50 text-amber-700 border-amber-200'
+                            }`}>
+                              {linkedMasterPackageId ? 'Synced Master Package' : 'Ready-Made Packages'}
                             </span>
                           </div>
-                          <h4 className="text-xs font-black text-slate-900">Save as Master Package</h4>
+                          <h4 className="text-xs font-black text-slate-900">
+                            {linkedMasterPackageId ? 'Update Master Package' : 'Save as Master Package'}
+                          </h4>
                           <p className="text-[11px] text-slate-500 leading-relaxed">
-                            Publish this itinerary structure to the B2B master package catalog for reusable agency quoting.
+                            {linkedMasterPackageId
+                              ? `Synchronized with Ready-Made Package "${linkedMasterPackageTitle || linkedMasterPackageId}". Re-saving updates the linked package.`
+                              : 'Generate & synchronize a complete Ready-Made Package in the Ready-Made Packages catalog for B2B agents.'}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          onClick={onOpenSavePackageModal}
-                          className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
-                        >
-                          <Layers className="w-3.5 h-3.5" />
-                          <span>Save as Template</span>
-                        </button>
+                        <div className="space-y-1.5">
+                          <button
+                            type="button"
+                            onClick={onOpenSavePackageModal}
+                            className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                          >
+                            <Layers className="w-3.5 h-3.5 text-amber-600" />
+                            <span>{linkedMasterPackageId ? 'Update Master Package' : 'Save as Master Package'}</span>
+                          </button>
+                          {linkedMasterPackageId && onViewSavedMasterPackage && (
+                            <button
+                              type="button"
+                              onClick={onViewSavedMasterPackage}
+                              className="w-full py-1.5 px-3 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-[11px] font-bold text-emerald-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>View Ready-Made Package</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
 

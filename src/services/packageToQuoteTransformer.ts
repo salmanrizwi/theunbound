@@ -5,7 +5,10 @@ import {
   Destination,
   Hotel,
   ManualHotelDetails,
+  PackageHotelRef,
   PackageItineraryDay,
+  PackageProductRef,
+  PackageStatus,
   Product,
   QuotationScope,
   QuoteItem,
@@ -15,8 +18,10 @@ import {
 import { db } from './db';
 import {
   buildPackageCalculationDiagnostics,
+  calculatePackagePrice,
   calculateProductPrice,
   calculateProductPriceForAgent,
+  convertCurrency,
   resolveInventoryValidity
 } from './pricingEngine';
 import { canUserViewInternalCostBreakdown } from './permissionEngine';
@@ -27,6 +32,7 @@ import {
 } from '../utils/hotelHelpers';
 import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
 import { richTextToPlainText } from '../utils/richTextFormatter';
+import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../constants/commercialQuotationTerms';
 
 export interface TransformedPackageQuoteState {
   sourcePackageId: string;
@@ -1009,9 +1015,18 @@ export function transformPackageToQuoteState(
       const serviceTime = defaultTimes[timeSlotIndex % defaultTimes.length];
       timeSlotIndex++;
 
-      const itemNoteParts: string[] = [`Day ${dayNum}: ${cleanPackageText(day.title || masterProduct.name)}`];
-      if (day.operationalNotes || day.notes) {
-        itemNoteParts.push(cleanPackageText(day.operationalNotes || day.notes));
+      const matchedProdRef = (pkg.productReferences || []).find(
+        pr => pr.dayNumber === dayNum && (pr.productId === masterProduct.id || pr.productId === pid)
+      );
+
+      const itemNoteParts: string[] = [];
+      if (matchedProdRef?.notes) {
+        itemNoteParts.push(cleanPackageText(matchedProdRef.notes));
+      } else {
+        itemNoteParts.push(`Day ${dayNum}: ${cleanPackageText(day.title || masterProduct.name)}`);
+        if (day.operationalNotes || day.notes) {
+          itemNoteParts.push(cleanPackageText(day.operationalNotes || day.notes));
+        }
       }
 
       const quoteItem = buildQuoteItem(masterProduct, {
@@ -1095,9 +1110,1031 @@ export function transformPackageToQuoteState(
     exclusions: [...(pkg.exclusions || [])],
     highlights: [...(pkg.highlights || [])],
     importantInformation: cleanPackageText(pkg.importantInformation),
-    termsAndConditions: cleanPackageText(pkg.termsAndConditions) || 'All wholesale rates are confidential and valid for licensed travel partners.',
+    termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
     cancellationPolicy: cleanPackageText(pkg.cancellationPolicy),
     agentNotes: summaryLines.join('\n\n'),
     currency: targetCurrency
   };
 }
+
+// ============================================================================
+// AUTHORITATIVE QUOTATION -> MASTER READY-MADE PACKAGE SYNCHRONIZATION ENGINE
+// ============================================================================
+
+export interface QuoteWorkspaceToPackageInput {
+  title: string;
+  tagline?: string;
+  description?: string;
+  itineraryOverview?: string;
+  tripType?: string;
+  status?: PackageStatus;
+  featured?: boolean;
+  existingPackageId?: string | null;
+  updateExisting?: boolean;
+  destination?: Destination;
+  currentDestination?: Destination;
+  quotationScope: QuotationScope;
+  routeHubs: TripRouteHub[];
+  items: QuoteItem[];
+  calendarDays: Array<{ dayNumber: number; dateString: string }>;
+  daySlots?: Array<{
+    dayNumber: number;
+    dateString: string;
+    hub?: TripRouteHub | null;
+    hotelItems: QuoteItem[];
+    productItems: QuoteItem[];
+  }>;
+  dayThemes?: Record<number, string>;
+  dayDescriptions?: Record<number, string>;
+  dayOverviews?: Record<number, string>;
+  dayNotes?: Record<number, string>;
+  inclusions?: string[];
+  exclusions?: string[];
+  highlights?: string[];
+  importantInformation?: string;
+  cancellationPolicy?: string;
+  termsAndConditions?: string;
+  currency: CurrencyCode;
+  adultsCount?: number;
+  childrenCount?: number;
+  infantsCount?: number;
+  user?: User | null;
+}
+
+export interface MasterPackageVerificationReport {
+  packageId: string;
+  packageSlug: string;
+  isUpdate: boolean;
+  durationDays: number;
+  durationNights: number;
+  itineraryDaysCount: number;
+  referencedProductIds: string[];
+  verifiedProductIds: string[];
+  missingProductIds: string[];
+  autoRegisteredProductsCount: number;
+  hotelsCount: number;
+  hubsCount: number;
+  netPriceTarget: number;
+  sellingPriceTarget: number;
+  calculatedSellingPriceTarget: number;
+  netPriceUSD: number;
+  sellingPriceUSD: number;
+  calculatedSellingPriceUSD: number;
+  currency: CurrencyCode;
+  retrievableById: boolean;
+  visibleInReadyMadeCatalog: boolean;
+  visibleToB2BAgent: boolean;
+}
+
+function isHotelQuoteItemHelper(it: QuoteItem): boolean {
+  if (!it || !it.product) return false;
+  return (
+    it.product.productType === 'Hotel' ||
+    it.product.productType === 'Hotel & Resort' ||
+    it.isManualHotel === true ||
+    it.product.accommodationType === 'manual' ||
+    (it.product as any).category === 'Hotels'
+  );
+}
+
+function isVisaQuoteItemHelper(it: QuoteItem): boolean {
+  if (!it || !it.product) return false;
+  return (
+    it.product.productType === 'Visa Service' ||
+    it.product.subcategory === 'Visa Facilitation' ||
+    Boolean(it.product.sku?.startsWith('VSA-')) ||
+    (it.product.category === 'Travel Services' && Boolean(it.product.name?.toLowerCase().includes('visa'))) ||
+    Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'))
+  );
+}
+
+export function normalizeMasterPackageTripType(
+  rawTripType?: string
+): B2BPackage['tripType'] {
+  const upper = String(rawTripType || '').toUpperCase().trim();
+  if (upper.includes('LUXURY')) return 'LUXURY';
+  if (upper.includes('HONEYMOON') || upper.includes('ROMAN')) return 'HONEYMOON';
+  if (upper.includes('FAMILY')) return 'FAMILY';
+  if (upper.includes('ADVENTURE') || upper.includes('NATURE')) return 'ADVENTURE';
+  if (upper.includes('CLASSIC')) return 'CLASSIC';
+  if (upper.includes('CULTUR') || upper.includes('BOUTIQUE') || upper.includes('HERITAGE')) return 'CULTURAL';
+  return 'LUXURY';
+}
+
+/**
+ * Builds a complete, schema-compliant B2BPackage from the Dispatch & Generation Action Hub
+ * state, ensuring all itinerary days, products, hotels, routeHubs, media, inclusions, and
+ * live Centralized Pricing Engine figures are populated.
+ */
+export function buildMasterPackageFromQuoteWorkspace(
+  input: QuoteWorkspaceToPackageInput
+): {
+  pkg: B2BPackage;
+  isUpdate: boolean;
+  autoRegisteredProducts: Product[];
+  livePricing: {
+    netPriceTarget: number;
+    sellingPriceTarget: number;
+    netPriceUSD: number;
+    sellingPriceUSD: number;
+    currency: CurrencyCode;
+  };
+  validationErrors: string[];
+} {
+  const validationErrors: string[] = [];
+  const cleanTitle = String(input.title || '').trim();
+  if (!cleanTitle) {
+    validationErrors.push('Package title is required.');
+  }
+
+  const dest = input.destination || input.currentDestination || db.getDestinations()[0] || {
+    id: 'DST-JPN',
+    name: 'Japan',
+    slug: 'japan',
+    code: 'JP',
+    description: 'Japan',
+    heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
+    regions: ['East Asia'],
+    regionId: 'REG-001',
+    regionName: 'East Asia',
+    active: true,
+    currency: 'JPY',
+    featured: true
+  };
+  if (!dest || !dest.id) {
+    validationErrors.push('Valid destination is required.');
+  }
+
+  const baseSlug = cleanTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)+/g, '') || `package-${Date.now()}`;
+
+  // 1. Check for existing Master Package (for update & idempotency)
+  const allPackages = db.getPackages();
+  let existingPkg: B2BPackage | undefined;
+
+  if (input.existingPackageId) {
+    existingPkg = allPackages.find(
+      p => p.id === input.existingPackageId || p.slug === input.existingPackageId
+    );
+  }
+
+  if (!existingPkg && input.updateExisting !== false && cleanTitle) {
+    existingPkg = allPackages.find(
+      p =>
+        p.destinationId === dest?.id &&
+        (p.title.trim().toLowerCase() === cleanTitle.toLowerCase() || p.slug === baseSlug)
+    );
+  }
+
+  const isUpdate = Boolean(existingPkg);
+  const packageId = existingPkg?.id || `pkg-${Date.now()}`;
+  const packageSlug = existingPkg?.slug && existingPkg.title.trim().toLowerCase() === cleanTitle.toLowerCase()
+    ? existingPkg.slug
+    : baseSlug;
+
+  const isLandOnly = input.quotationScope === 'LAND_ONLY';
+  const adults = Math.max(1, input.adultsCount || 2);
+  const children = Math.max(0, input.childrenCount || 0);
+  const infants = Math.max(0, input.infantsCount || 0);
+  const targetCurrency: CurrencyCode = input.currency || 'USD';
+
+  // 2. Ensure Referential Integrity for all non-hotel products in QuoteItems
+  let allProducts = db.getProducts();
+  const allHotels = db.getHotels();
+  const destCityHubs = dest?.id
+    ? db.getCityHubs().filter(h => h.destinationId === dest.id)
+    : db.getCityHubs();
+  const autoRegisteredProducts: Product[] = [];
+
+  const resolveOrRegisterMasterProduct = (item: QuoteItem): Product | null => {
+    if (!item || !item.product) return null;
+    const candidateId = item.master_product_id || item.service_id || item.product.id;
+    let found = allProducts.find(
+      p =>
+        p.id === candidateId ||
+        p.product_id === candidateId ||
+        p.id === item.product.id ||
+        (item.product.sku && p.sku === item.product.sku) ||
+        (item.product.name &&
+          p.destinationId === dest.id &&
+          (p.name || '').toLowerCase().trim() === (item.product.name || '').toLowerCase().trim())
+    );
+
+    if (!found && item.product.id && item.product.name) {
+      // Auto-register ad-hoc QuoteBuilder product (e.g., suggested transfer or custom service) into Master Product Catalog
+      const matchedHubForProd =
+        destCityHubs.find(
+          h =>
+            h.id === item.product.hubId ||
+            (item.product.city && (h.name || '').toLowerCase() === item.product.city.toLowerCase())
+        ) || destCityHubs[0];
+
+      const newProd: Product = {
+        ...item.product,
+        id: item.product.id,
+        product_id: item.product.id,
+        regionId: item.product.regionId || dest.regionId || 'reg-east-asia',
+        regionName: item.product.regionName || dest.regionName || 'East Asia',
+        destinationId: item.product.destinationId || dest.id,
+        destinationName: item.product.destinationName || dest.name,
+        hubId: item.product.hubId || matchedHubForProd?.id,
+        country: item.product.country || dest.name,
+        city: item.product.city || matchedHubForProd?.name || dest.name,
+        adultNetPrice:
+          Number(item.product.adultNetPrice) > 0
+            ? Number(item.product.adultNetPrice)
+            : Number(item.calculation?.totalNetCost || item.product.basePrice || 65),
+        currency: item.product.currency || targetCurrency,
+        status: 'ACTIVE'
+      };
+      try {
+        db.saveProduct(newProd, input.user || null);
+        allProducts = db.getProducts();
+        found = allProducts.find(p => p.id === newProd.id) || newProd;
+      } catch {
+        found = newProd;
+      }
+      autoRegisteredProducts.push(found);
+    }
+
+    return found || null;
+  };
+
+  // 3. Resolve Ordered Route Hubs & Duration
+  const rawRouteHubs = Array.isArray(input.routeHubs) && input.routeHubs.length > 0
+    ? [...input.routeHubs].sort((a, b) => (a.order || 0) - (b.order || 0))
+    : [];
+
+  const totalHubNights = rawRouteHubs.reduce((sum, h) => sum + Math.max(1, Number(h.nights) || 1), 0);
+  const calendarNights = input.calendarDays && input.calendarDays.length > 1
+    ? input.calendarDays.length - 1
+    : 0;
+  const durationNights = Math.max(1, totalHubNights || calendarNights || existingPkg?.durationNights || 4);
+  const durationDays = durationNights + 1;
+
+  // Ensure at least one hub exists if rawRouteHubs was empty
+  const effectiveSourceHubs: TripRouteHub[] = rawRouteHubs.length > 0
+    ? rawRouteHubs
+    : [
+        {
+          id: `rhub-pkg-1-${destCityHubs[0]?.id || dest.id}`,
+          hubId: destCityHubs[0]?.id || `hub-${dest.id}`,
+          hubName: destCityHubs[0]?.name || dest.name,
+          destinationId: dest.id,
+          destinationName: dest.name,
+          nights: durationNights,
+          order: 1,
+          accommodationType: isLandOnly ? 'NO_ACCOMMODATION' : 'none',
+          roomsCount: Math.max(1, Math.ceil(adults / 2))
+        }
+      ];
+
+  const hotelQuoteItems = (input.items || []).filter(isHotelQuoteItemHelper);
+  const serviceQuoteItems = (input.items || []).filter(
+    it => !isHotelQuoteItemHelper(it) && !isVisaQuoteItemHelper(it)
+  );
+
+  // 4. Map Route Hubs, Hotel References, Manual Hotels, and Hotels Summary
+  const hubIds: string[] = [];
+  const hubNames: string[] = [];
+  const routeSummary: string[] = [];
+  const hotelsSummary: B2BPackage['hotelsSummary'] = [];
+  const hotelReferences: PackageHotelRef[] = [];
+  const manualHotels: ManualHotelDetails[] = [];
+  const mappedRouteHubs: TripRouteHub[] = [];
+
+  let runningNightOffset = 0;
+
+  effectiveSourceHubs.forEach((rh, idx) => {
+    const nights = Math.max(1, Number(rh.nights) || 1);
+    const startDay = runningNightOffset + 1;
+    const endDay = runningNightOffset + nights;
+    runningNightOffset += nights;
+
+    // Resolve canonical CityHub ID and Name
+    const matchedCityHub = destCityHubs.find(
+      ch =>
+        ch.id === rh.hubId ||
+        ch.id === rh.id ||
+        (ch.name || '').toLowerCase() === (rh.hubName || '').toLowerCase()
+    );
+    const canonicalHubId = matchedCityHub?.id || rh.hubId || rh.id || `hub-${idx + 1}`;
+    const canonicalHubName = matchedCityHub?.name || rh.hubName || dest.name;
+
+    if (!hubIds.includes(canonicalHubId)) {
+      hubIds.push(canonicalHubId);
+      hubNames.push(canonicalHubName);
+    }
+    routeSummary.push(`${canonicalHubName} (${nights}N)`);
+
+    // Find matching hotel item from quote if present
+    const matchingHotelItem = hotelQuoteItems.find(
+      hi =>
+        hi.hubId === rh.id ||
+        hi.hubId === rh.hubId ||
+        hi.hubId === canonicalHubId ||
+        (rh.hotelId && (hi.hotelId === rh.hotelId || hi.product?.id === rh.hotelId))
+    );
+
+    if (
+      isLandOnly ||
+      rh.accommodationType === 'NO_ACCOMMODATION' ||
+      rh.accommodationType === 'none'
+    ) {
+      mappedRouteHubs.push({
+        ...rh,
+        id: rh.id || `rhub-${idx + 1}-${canonicalHubId}`,
+        hubId: canonicalHubId,
+        hubName: canonicalHubName,
+        destinationId: dest.id,
+        destinationName: dest.name,
+        nights,
+        order: idx + 1,
+        accommodationType: 'NO_ACCOMMODATION'
+      });
+      return;
+    }
+
+    // Check Manual Hotel
+    const isManual =
+      rh.isManualHotel === true ||
+      rh.accommodationType === 'MANUAL' ||
+      rh.accommodationType === 'manual' ||
+      matchingHotelItem?.isManualHotel === true;
+
+    const rawManual = rh.manualHotel || matchingHotelItem?.manualHotelDetails;
+    if (isManual && rawManual && rawManual.hotelName) {
+      const safeRooms = Math.max(1, Number(rawManual.numberOfRooms || rh.roomsCount || matchingHotelItem?.roomsCount) || Math.ceil(adults / 2));
+      const fallbackRatePerNight =
+        Number(rawManual.ratePerNight) > 0
+          ? Number(rawManual.ratePerNight)
+          : Math.max(
+              100,
+              Math.round(
+                Number(matchingHotelItem?.product?.adultNetPrice || matchingHotelItem?.calculation?.totalNetCost || 250) /
+                  Math.max(1, nights * safeRooms)
+              )
+            );
+
+      const manualCfg: ManualHotelDetails = {
+        ...rawManual,
+        hotelName: rawManual.hotelName.trim(),
+        hubId: canonicalHubId,
+        hubName: canonicalHubName,
+        city: rawManual.city || canonicalHubName,
+        roomType: rawManual.roomType || 'Deluxe Room',
+        mealPlan: rawManual.mealPlan || 'BB',
+        mealPlanName: rawManual.mealPlanName || 'Bed & Breakfast',
+        numberOfNights: nights,
+        numberOfRooms: safeRooms,
+        ratePerNight: fallbackRatePerNight,
+        rateCurrency: rawManual.rateCurrency || targetCurrency,
+        rateBasis: rawManual.rateBasis || 'PER_ROOM_PER_NIGHT'
+      };
+
+      manualHotels.push(manualCfg);
+      hotelsSummary.push({
+        name: manualCfg.hotelName,
+        cityName: canonicalHubName,
+        nights,
+        roomType: manualCfg.roomType,
+        mealPlan: manualCfg.mealPlanName || manualCfg.mealPlan
+      });
+
+      mappedRouteHubs.push({
+        ...rh,
+        id: rh.id || `rhub-${idx + 1}-${canonicalHubId}`,
+        hubId: canonicalHubId,
+        hubName: canonicalHubName,
+        destinationId: dest.id,
+        destinationName: dest.name,
+        nights,
+        order: idx + 1,
+        roomsCount: safeRooms,
+        isManualHotel: true,
+        accommodationType: 'MANUAL',
+        manualHotel: manualCfg
+      });
+      return;
+    }
+
+    // Check Master Hotel
+    const rawHotelId =
+      rh.hotelId ||
+      matchingHotelItem?.hotelId ||
+      matchingHotelItem?.product?.id?.replace(/^hotel-/, '');
+
+    let matchedHotel = rawHotelId
+      ? allHotels.find(
+          h =>
+            h.id === rawHotelId ||
+            `hotel-${h.id}` === rawHotelId ||
+            (h.name || '').toLowerCase() === String(rawHotelId).toLowerCase()
+        )
+      : undefined;
+
+    if (!matchedHotel && matchingHotelItem?.product?.name) {
+      const cleanHName = matchingHotelItem.product.name.split('—')[0].split('•')[0].trim().toLowerCase();
+      matchedHotel = allHotels.find(
+        h =>
+          (h.name || '').toLowerCase() === cleanHName ||
+          (h.name || '').toLowerCase().includes(cleanHName)
+      );
+    }
+
+    if (matchedHotel) {
+      const targetRoomId = rh.roomTypeId || matchingHotelItem?.roomTypeId;
+      const roomType =
+        matchedHotel.roomTypes?.find(r => r.id === targetRoomId) ||
+        matchedHotel.roomTypes?.[0];
+      const mealPlanCode =
+        rh.mealPlanCode ||
+        (rh as any).mealPlan ||
+        matchingHotelItem?.mealPlanCode ||
+        roomType?.rates?.[0]?.mealPlan ||
+        'BB';
+      const safeRooms = Math.max(
+        1,
+        Number(rh.roomsCount || matchingHotelItem?.roomsCount) || Math.ceil(adults / 2)
+      );
+      const roomName = roomType?.roomName || (roomType as any)?.name || 'Deluxe Room';
+
+      hotelReferences.push({
+        hotelId: matchedHotel.id,
+        hotelName: matchedHotel.name,
+        cityName: canonicalHubName,
+        hubId: canonicalHubId,
+        hubName: canonicalHubName,
+        roomTypeId: roomType?.id,
+        roomTypeName: roomName,
+        mealPlanCode: String(mealPlanCode),
+        mealPlanName: String(mealPlanCode),
+        nights,
+        startDay,
+        endDay
+      });
+
+      hotelsSummary.push({
+        hotelId: matchedHotel.id,
+        name: matchedHotel.name,
+        cityName: canonicalHubName,
+        nights,
+        roomType: roomName,
+        mealPlan: String(mealPlanCode)
+      });
+
+      mappedRouteHubs.push({
+        ...rh,
+        id: rh.id || `rhub-${idx + 1}-${canonicalHubId}`,
+        hubId: canonicalHubId,
+        hubName: canonicalHubName,
+        destinationId: dest.id,
+        destinationName: dest.name,
+        nights,
+        order: idx + 1,
+        hotelId: matchedHotel.id,
+        roomTypeId: roomType?.id,
+        mealPlanCode: mealPlanCode as any,
+        mealPlan: String(mealPlanCode),
+        roomsCount: safeRooms,
+        isManualHotel: false,
+        accommodationType: 'HOTEL'
+      });
+      return;
+    }
+
+    // Hub with no hotel selected
+    mappedRouteHubs.push({
+      ...rh,
+      id: rh.id || `rhub-${idx + 1}-${canonicalHubId}`,
+      hubId: canonicalHubId,
+      hubName: canonicalHubName,
+      destinationId: dest.id,
+      destinationName: dest.name,
+      nights,
+      order: idx + 1,
+      accommodationType: isLandOnly ? 'NO_ACCOMMODATION' : 'none'
+    });
+  });
+
+  // 5. Build Complete Day-Wise Itinerary & Product References
+  const allProductIds: string[] = [];
+  const productReferences: PackageProductRef[] = [];
+  const itineraryDays: PackageItineraryDay[] = [];
+  const assignedQuoteItemIds = new Set<string>();
+
+  for (let dayNum = 1; dayNum <= durationDays; dayNum++) {
+    const slot = (input.daySlots || []).find(s => s.dayNumber === dayNum);
+    const calDay = (input.calendarDays || []).find(c => c.dayNumber === dayNum);
+
+    // Resolve active hub for this day
+    let hubForDay: TripRouteHub | undefined;
+    let runningNights = 0;
+    for (const h of mappedRouteHubs) {
+      const hStart = runningNights + 1;
+      const hEnd = runningNights + (h.nights || 1);
+      if (dayNum >= hStart && dayNum <= hEnd) {
+        hubForDay = h;
+        break;
+      }
+      runningNights += h.nights || 1;
+    }
+    if (!hubForDay && mappedRouteHubs.length > 0) {
+      hubForDay = mappedRouteHubs[mappedRouteHubs.length - 1];
+    }
+
+    const dayHubId = hubForDay?.hubId || slot?.hub?.hubId || slot?.hub?.id;
+    const dayHubName = hubForDay?.hubName || slot?.hub?.hubName || dest.name;
+
+    // Collect all non-hotel items for this day
+    const dayItems: QuoteItem[] = [];
+    const addCandidateItem = (it: QuoteItem) => {
+      if (!it || assignedQuoteItemIds.has(it.id)) return;
+      if (isHotelQuoteItemHelper(it) || isVisaQuoteItemHelper(it)) return;
+      assignedQuoteItemIds.add(it.id);
+      dayItems.push(it);
+    };
+
+    if (slot && Array.isArray(slot.productItems)) {
+      slot.productItems.forEach(addCandidateItem);
+    }
+
+    serviceQuoteItems.forEach(it => {
+      if (assignedQuoteItemIds.has(it.id)) return;
+      if (it.metadata?.dayNumber === dayNum) {
+        addCandidateItem(it);
+      } else if (calDay && it.travelDate === calDay.dateString) {
+        addCandidateItem(it);
+      } else if (
+        dayNum === 1 &&
+        input.calendarDays?.[0]?.dateString &&
+        it.travelDate < input.calendarDays[0].dateString
+      ) {
+        addCandidateItem(it);
+      } else if (dayNum === durationDays) {
+        const lastDateStr = input.calendarDays?.[input.calendarDays.length - 1]?.dateString;
+        if (!lastDateStr || it.travelDate >= lastDateStr || !it.travelDate) {
+          addCandidateItem(it);
+        }
+      }
+    });
+
+    const dayProductIds: string[] = [];
+    const dayMasterProducts: Product[] = [];
+    let dayTransferId: string | undefined;
+    let dayRailId: string | undefined;
+
+    dayItems.forEach(it => {
+      const masterProd = resolveOrRegisterMasterProduct(it);
+      if (!masterProd) return;
+
+      if (!dayProductIds.includes(masterProd.id)) {
+        dayProductIds.push(masterProd.id);
+      }
+      if (!allProductIds.includes(masterProd.id)) {
+        allProductIds.push(masterProd.id);
+      }
+      dayMasterProducts.push(masterProd);
+
+      const catLower = String(masterProd.category || '').toLowerCase();
+      const typeLower = String(masterProd.productType || '').toLowerCase();
+      if (catLower.includes('transfer') || typeLower.includes('transfer')) {
+        if (!dayTransferId) dayTransferId = masterProd.id;
+      } else if (catLower.includes('rail') || typeLower.includes('rail') || typeLower.includes('shinkansen')) {
+        if (!dayRailId) dayRailId = masterProd.id;
+      }
+
+      productReferences.push({
+        productId: masterProd.id,
+        dayNumber: dayNum,
+        productName: masterProd.name,
+        category: masterProd.category,
+        productType: masterProd.productType,
+        hubId: dayHubId,
+        hubName: dayHubName,
+        notes: it.notes || undefined
+      });
+    });
+
+    // Resolve hotel reference for this day
+    const hotelRefForDay = !isLandOnly
+      ? hotelReferences.find(hr => dayNum >= hr.startDay && dayNum <= hr.endDay)
+      : undefined;
+    const manualHotelForDay =
+      !isLandOnly && !hotelRefForDay && hubForDay?.isManualHotel ? hubForDay.manualHotel : undefined;
+
+    // Resolve Day Title
+    const customDayTheme = cleanPackageText(input.dayThemes?.[dayNum]);
+    const defaultDayTitle =
+      dayMasterProducts.length > 0
+        ? `Day ${dayNum}: ${dayHubName} — ${dayMasterProducts.map(p => p.name).slice(0, 2).join(' & ')}`
+        : dayNum === 1
+          ? `Day 1: Arrival in ${dayHubName}`
+          : dayNum === durationDays
+            ? `Day ${durationDays}: ${dayHubName} & Departure`
+            : `Day ${dayNum}: Exploring ${dayHubName}`;
+    const dayTitle = customDayTheme || defaultDayTitle;
+
+    // Resolve Day Description
+    const customDayDesc =
+      (input.dayDescriptions?.[dayNum] && input.dayDescriptions[dayNum].trim()) ||
+      (input.dayOverviews?.[dayNum] && input.dayOverviews[dayNum].trim());
+    const derivedProductDesc =
+      dayMasterProducts.length > 0
+        ? dayMasterProducts
+            .map(p => cleanPackageText(p.shortDescription || p.longDescription || p.name))
+            .filter(Boolean)
+            .join(' ')
+        : '';
+    const dayDescription =
+      customDayDesc ||
+      derivedProductDesc ||
+      `Scheduled curated experiences, sightseeing, and ground services in ${dayHubName}.`;
+
+    const dayOpNotes = cleanPackageText(input.dayNotes?.[dayNum]);
+    const mealPlanStr = String(
+      hotelRefForDay?.mealPlanCode || manualHotelForDay?.mealPlan || (isLandOnly ? 'RO' : 'BB')
+    ).toUpperCase();
+    const hasLunchProd = dayMasterProducts.some(p =>
+      (p.name || '').toLowerCase().includes('lunch')
+    );
+    const hasDinnerProd = dayMasterProducts.some(p =>
+      (p.name || '').toLowerCase().includes('dinner')
+    );
+
+    const mealsIncluded = {
+      breakfast:
+        mealPlanStr.includes('BB') ||
+        mealPlanStr.includes('HB') ||
+        mealPlanStr.includes('FB') ||
+        mealPlanStr.includes('AI') ||
+        mealPlanStr.includes('BREAKFAST') ||
+        dayOpNotes.toLowerCase().includes('breakfast') ||
+        (!isLandOnly && Boolean(hotelRefForDay || manualHotelForDay)),
+      lunch:
+        mealPlanStr.includes('FB') ||
+        mealPlanStr.includes('AI') ||
+        hasLunchProd ||
+        dayOpNotes.toLowerCase().includes('lunch'),
+      dinner:
+        mealPlanStr.includes('HB') ||
+        mealPlanStr.includes('FB') ||
+        mealPlanStr.includes('AI') ||
+        hasDinnerProd ||
+        dayOpNotes.toLowerCase().includes('dinner')
+    };
+
+    const hasGuide = dayMasterProducts.some(
+      p =>
+        (p.name || '').toLowerCase().includes('guide') ||
+        (p.name || '').toLowerCase().includes('private') ||
+        (p.inclusions || []).some(inc => inc.toLowerCase().includes('guide'))
+    );
+
+    itineraryDays.push({
+      dayNumber: dayNum,
+      title: dayTitle,
+      hubId: dayHubId,
+      hubName: dayHubName,
+      destinationId: dest.id,
+      destinationName: dest.name,
+      description: dayDescription,
+      operationalNotes: dayOpNotes || undefined,
+      notes: dayOpNotes || undefined,
+      hotelId: hotelRefForDay?.hotelId,
+      hotelName: hotelRefForDay?.hotelName || manualHotelForDay?.hotelName,
+      roomTypeId: hotelRefForDay?.roomTypeId,
+      mealPlan: hotelRefForDay?.mealPlanCode || manualHotelForDay?.mealPlan,
+      mealsIncluded,
+      productIds: dayProductIds,
+      transferId: dayTransferId,
+      railId: dayRailId,
+      guideIncluded: hasGuide || true,
+      freeTime: dayProductIds.length <= 1
+    });
+  }
+
+  // 6. Media & Gallery Collection
+  const mediaSet = new Set<string>();
+  if (dest?.heroImage) mediaSet.add(dest.heroImage);
+  if (existingPkg?.heroImage) mediaSet.add(existingPkg.heroImage);
+  (existingPkg?.galleryImages || []).forEach(img => {
+    if (img) mediaSet.add(img);
+  });
+  hotelReferences.forEach(hr => {
+    const h = allHotels.find(ht => ht.id === hr.hotelId);
+    if (h?.heroImage) mediaSet.add(h.heroImage);
+  });
+  allProductIds.forEach(pid => {
+    const p = allProducts.find(pr => pr.id === pid);
+    if (p?.heroImage) mediaSet.add(p.heroImage);
+  });
+
+  const galleryImages = Array.from(mediaSet).filter(Boolean).slice(0, 8);
+  const heroImage =
+    galleryImages[0] ||
+    dest?.heroImage ||
+    'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200';
+
+  // 7. Inclusions, Exclusions, Highlights, Description & Policies
+  const cleanTagline =
+    String(input.tagline || '').trim() ||
+    existingPkg?.tagline ||
+    `Signature ${durationNights}-night curated circuit featuring ${hubNames.join(' → ') || dest.name}.`;
+
+  const cleanOverview = cleanPackageText(input.itineraryOverview);
+  const cleanDescription =
+    String(input.description || '').trim() ||
+    cleanOverview ||
+    existingPkg?.description ||
+    `Comprehensive ${durationDays}-day / ${durationNights}-night curated circuit across ${hubNames.join(', ') || dest.name} including ${allProductIds.length} master experiences${!isLandOnly && hotelsSummary.length > 0 ? ` and ${hotelsSummary.length} configured hotel stays` : ''}.`;
+
+  const detailedDescription = cleanOverview || cleanDescription;
+
+  const finalInclusions =
+    Array.isArray(input.inclusions) && input.inclusions.filter(Boolean).length > 0
+      ? input.inclusions.filter(Boolean)
+      : [
+          ...(!isLandOnly && hotelsSummary.length > 0
+            ? [`${durationNights} Nights accommodation across ${hotelsSummary.map(h => `${h.name} (${h.cityName})`).join(', ')}`]
+            : []),
+          ...(allProductIds.length > 0
+            ? [`${allProductIds.length} scheduled excursions, sightseeing tours, and ground transfers as per itinerary`]
+            : [`Curated ground arrangements across ${hubNames.join(', ') || dest.name}`]),
+          '24/7 on-ground DMC operations & concierge support'
+        ];
+
+  const finalExclusions =
+    Array.isArray(input.exclusions) && input.exclusions.filter(Boolean).length > 0
+      ? input.exclusions.filter(Boolean)
+      : [
+          'International airfare & visa processing fees unless specified',
+          'Personal travel insurance, gratuities & incidental expenses'
+        ];
+
+  const finalHighlights =
+    Array.isArray(input.highlights) && input.highlights.filter(Boolean).length > 0
+      ? input.highlights.filter(Boolean)
+      : [
+          `${durationNights} Nights / ${durationDays} Days curated route: ${routeSummary.join(' → ')}`,
+          ...(!isLandOnly && hotelsSummary.length > 0
+            ? [`Handpicked stays: ${hotelsSummary.map(h => h.name).join(', ')}`]
+            : []),
+          ...allProductIds
+            .slice(0, 3)
+            .map(pid => allProducts.find(p => p.id === pid)?.name)
+            .filter((n): n is string => Boolean(n)),
+          'Direct 24/7 on-ground DMC concierge support'
+        ];
+
+  const normalizedTripType = normalizeMasterPackageTripType(input.tripType || existingPkg?.tripType);
+  const status: PackageStatus = input.status || existingPkg?.status || 'PUBLISHED';
+  const isPublished = status === 'PUBLISHED';
+  const isFeatured = input.featured !== undefined ? Boolean(input.featured) : Boolean(existingPkg?.isFeatured ?? true);
+  const timestamp = new Date().toISOString();
+
+  // 8. Construct Draft Package & Run Authoritative Centralized Pricing Engine
+  const draftPkg: B2BPackage = {
+    ...(existingPkg || {}),
+    id: packageId,
+    package_id: packageId,
+    title: cleanTitle,
+    name: cleanTitle,
+    slug: packageSlug,
+    tagline: cleanTagline,
+    description: cleanDescription,
+    detailedDescription,
+    regionId: dest.regionId || (dest as any).region || existingPkg?.regionId || 'asia',
+    regionName: dest.regionName || (dest as any).region || existingPkg?.regionName || 'Asia',
+    destinationId: dest.id,
+    destinationName: dest.name,
+    hubIds,
+    hubNames,
+    durationDays,
+    durationNights,
+    tripType: normalizedTripType,
+    heroImage,
+    galleryImages: galleryImages.length > 0 ? galleryImages : [heroImage],
+    isLandOnly,
+    routeSummary,
+    routeHubs: mappedRouteHubs,
+    hotelsSummary,
+    hotelReferences,
+    manualHotels,
+    itinerary: itineraryDays,
+    productIds: allProductIds,
+    productReferences,
+    highlights: finalHighlights,
+    inclusions: finalInclusions,
+    exclusions: finalExclusions,
+    termsAndConditions: input.termsAndConditions || COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+    cancellationPolicy:
+      input.cancellationPolicy ||
+      existingPkg?.cancellationPolicy ||
+      'Full refund up to 30 days prior to arrival. 50% cancellation fee between 15–29 days prior to arrival.',
+    importantInformation:
+      input.importantInformation ||
+      existingPkg?.importantInformation ||
+      'All arrangements are subject to availability at the time of booking confirmation.',
+    customizationRules: existingPkg?.customizationRules || {
+      allowHotelCustomization: true,
+      allowActivityCustomization: true,
+      allowTransferCustomization: true,
+      allowDurationCustomization: true,
+      allowMealCustomization: true
+    },
+    visibility: {
+      destinationPage: true,
+      hubPage: true,
+      homepage: isFeatured,
+      promotions: existingPkg?.visibility?.promotions ?? false,
+      search: true,
+      featured: isFeatured
+    },
+    tags: Array.from(
+      new Set([
+        ...(existingPkg?.tags || []),
+        'Master Package',
+        dest.name,
+        ...hubNames
+      ])
+    ).filter(Boolean),
+    status,
+    isPublished,
+    isFeatured,
+    currency: targetCurrency,
+    baseNetCostUSD: 0,
+    suggestedSellingPriceUSD: 0,
+    finalSellingPriceUSD: 0,
+    createdAt: existingPkg?.createdAt || timestamp,
+    updatedAt: timestamp
+  };
+
+  // Calculate live pricing strictly via Centralized Pricing Engine (no manual/fixed margin inheritance)
+  const livePricingCalc = calculatePackagePrice({
+    packageItem: draftPkg,
+    userRole: 'ADMIN',
+    pricingTier: 'B2B',
+    targetCurrency,
+    adults,
+    children,
+    infants,
+    user: input.user || null
+  });
+
+  const netPriceTarget = livePricingCalc.internalAudit?.totalNetCostTarget || 0;
+  const sellingPriceTarget = livePricingCalc.finalSellingPrice || 0;
+  const netPriceUSD = Math.round(
+    livePricingCalc.internalAudit?.totalNetCostUSD ||
+      convertCurrency(netPriceTarget, targetCurrency, 'USD')
+  );
+  const sellingPriceUSD = Math.round(
+    convertCurrency(sellingPriceTarget, targetCurrency, 'USD')
+  );
+
+  draftPkg.baseNetCostUSD = netPriceUSD;
+  draftPkg.finalSellingPriceUSD = sellingPriceUSD;
+  draftPkg.suggestedSellingPriceUSD = sellingPriceUSD;
+  draftPkg.pricingConfiguration = {
+    pricingMode: 'LIVE',
+    baseNetCostUSD: netPriceUSD,
+    finalSellingPriceUSD: sellingPriceUSD,
+    suggestedSellingPriceUSD: sellingPriceUSD,
+    currency: targetCurrency
+  };
+
+  if (draftPkg.itinerary && draftPkg.itinerary.length === 0) {
+    validationErrors.push('Package itinerary must contain at least 1 day.');
+  }
+
+  return {
+    pkg: draftPkg,
+    isUpdate,
+    autoRegisteredProducts,
+    livePricing: {
+      netPriceTarget,
+      sellingPriceTarget,
+      netPriceUSD,
+      sellingPriceUSD,
+      currency: targetCurrency
+    },
+    validationErrors
+  };
+}
+
+/**
+ * Transactional Save, Validation, Referential Integrity Verification, and
+ * Ready-Made Packages Catalog Availability Verification.
+ */
+export function saveAndVerifyMasterPackageFromQuote(
+  input: QuoteWorkspaceToPackageInput
+): {
+  success: boolean;
+  pkg?: B2BPackage;
+  isUpdate?: boolean;
+  error?: string;
+  verificationReport?: MasterPackageVerificationReport;
+} {
+  try {
+    const built = buildMasterPackageFromQuoteWorkspace(input);
+    if (built.validationErrors.length > 0) {
+      return {
+        success: false,
+        error: built.validationErrors.join(' ')
+      };
+    }
+
+    const { pkg, isUpdate, autoRegisteredProducts, livePricing } = built;
+
+    // Verify all referenced products exist in db.getProducts() prior to saving
+    const currentProducts = db.getProducts();
+    const verifiedProductIds: string[] = [];
+    const missingProductIds: string[] = [];
+
+    (pkg.productIds || []).forEach(pid => {
+      const exists = currentProducts.some(
+        p => p.id === pid || p.product_id === pid || p.sku === pid
+      );
+      if (exists) {
+        verifiedProductIds.push(pid);
+      } else {
+        missingProductIds.push(pid);
+      }
+    });
+
+    if (missingProductIds.length > 0) {
+      return {
+        success: false,
+        error: `Referential integrity check failed: Missing product IDs in catalog (${missingProductIds.join(', ')}).`
+      };
+    }
+
+    // Save Master Package to authoritative `b2b_packages` store & sync to Firestore
+    db.savePackage(pkg, input.user || null);
+
+    // Read back from database to verify persistence and normalization
+    const retrieved = db.getPackageById(pkg.id);
+    if (!retrieved) {
+      return {
+        success: false,
+        error: `Package "${pkg.title}" (${pkg.id}) could not be retrieved from Ready-Made Packages store after saving.`
+      };
+    }
+
+    const normalizedRetrieved = normalizePackageRecord(retrieved);
+    const inAllPackages = db.getPackages().some(p => p.id === pkg.id);
+    const inPublishedPackages = pkg.isPublished
+      ? db.getPublishedB2BPackages().some(p => p.id === pkg.id)
+      : true;
+    const visibleToAgent = pkg.isPublished
+      ? isPackageVisibleToB2BAgent(normalizedRetrieved)
+      : false;
+
+    if (!inAllPackages || (pkg.isPublished && (!inPublishedPackages || !visibleToAgent))) {
+      return {
+        success: false,
+        error: `Package "${pkg.title}" (${pkg.id}) saved but failed Ready-Made Packages visibility verification.`
+      };
+    }
+
+    const report: MasterPackageVerificationReport = {
+      packageId: normalizedRetrieved.id,
+      packageSlug: normalizedRetrieved.slug,
+      isUpdate,
+      durationDays: normalizedRetrieved.durationDays,
+      durationNights: normalizedRetrieved.durationNights,
+      itineraryDaysCount: (normalizedRetrieved.itinerary || []).length,
+      referencedProductIds: pkg.productIds || [],
+      verifiedProductIds,
+      missingProductIds,
+      autoRegisteredProductsCount: autoRegisteredProducts.length,
+      hotelsCount: (normalizedRetrieved.hotelsSummary || []).length,
+      hubsCount: (normalizedRetrieved.hubIds || []).length,
+      netPriceTarget: livePricing.netPriceTarget,
+      sellingPriceTarget: livePricing.sellingPriceTarget,
+      calculatedSellingPriceTarget: livePricing.sellingPriceTarget,
+      netPriceUSD: livePricing.netPriceUSD,
+      sellingPriceUSD: livePricing.sellingPriceUSD,
+      calculatedSellingPriceUSD: livePricing.sellingPriceUSD,
+      currency: livePricing.currency,
+      retrievableById: Boolean(retrieved),
+      visibleInReadyMadeCatalog: inAllPackages,
+      visibleToB2BAgent: visibleToAgent
+    };
+
+    return {
+      success: true,
+      pkg: normalizedRetrieved,
+      isUpdate,
+      verificationReport: report
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Unexpected error while saving and verifying Master Package.'
+    };
+  }
+}
+
