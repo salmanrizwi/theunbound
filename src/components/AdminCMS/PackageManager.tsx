@@ -225,8 +225,6 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
         pricingMode: 'LIVE',
         baseNetCostUSD: 2800,
         suggestedSellingPriceUSD: 3750,
-        buyerMarkupPercent: 25,
-        b2bMarkupPercent: 12,
         currency: 'USD'
       },
       customizationRules: {
@@ -312,8 +310,6 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
         pricingMode: 'LIVE',
         baseNetCostUSD: pkg.baseNetCostUSD || 2500,
         suggestedSellingPriceUSD: pkg.suggestedSellingPriceUSD || 3500,
-        buyerMarkupPercent: 25,
-        b2bMarkupPercent: 12,
         currency: pkg.currency || 'USD'
       },
       visibility: pkg.visibility || {

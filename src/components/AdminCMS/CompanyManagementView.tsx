@@ -97,6 +97,7 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
 
   // Handlers
   const handleCreateCompany = () => {
+    const nowIso = new Date().toISOString();
     setEditingCompany({
       id: `comp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       name: '',
@@ -116,14 +117,46 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
       tier: 'STANDARD_PARTNER',
       notes: '',
       linkedUserIds: [],
-      createdAt: new Date().toISOString()
+      pricingSettings: {
+        productLevelMarginEnabled: true,
+        activeMarginMode: 'PRODUCT_LEVEL',
+        agentLevelMarginPercent: 0,
+        lastUpdatedBy: currentUser?.id || 'SYSTEM',
+        lastUpdatedByName: currentUser?.name || 'System Admin',
+        lastUpdatedAt: nowIso
+      },
+      createdAt: nowIso
     });
     setIsEditModalOpen(true);
   };
 
   const handleEditCompany = (company: Company) => {
-    setEditingCompany({ ...company });
+    const resolvedSettings = db.resolveAgencyPricingSettings({ companyId: company.id, agencyName: company.name });
+    setEditingCompany({
+      ...company,
+      pricingSettings: company.pricingSettings || resolvedSettings
+    });
     setIsEditModalOpen(true);
+  };
+
+  const handleQuickMarginModeToggle = (company: Company, enabled: boolean) => {
+    try {
+      const existingSettings = db.resolveAgencyPricingSettings({ companyId: company.id, agencyName: company.name });
+      db.updateAgencyPricingSettings(
+        company.id,
+        {
+          productLevelMarginEnabled: enabled,
+          agentLevelMarginPercent: existingSettings.agentLevelMarginPercent
+        },
+        currentUser
+      );
+      refreshData();
+      showNotification(
+        `Updated "${company.name}" margin mode: Product-Level Margin = ${enabled ? 'ON (Agent-Level Margin Disabled)' : 'OFF (Agent-Level Margin Active)'}.`
+      );
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to update Product-Level Margin setting.');
+    }
   };
 
   const handleSaveCompany = (e: React.FormEvent) => {
@@ -134,6 +167,12 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
     }
 
     try {
+      const nowIso = new Date().toISOString();
+      const prodLevelEnabled = editingCompany.pricingSettings?.productLevelMarginEnabled !== false;
+      const agentPct = Number.isFinite(Number(editingCompany.pricingSettings?.agentLevelMarginPercent))
+        ? Math.max(0, Number(editingCompany.pricingSettings?.agentLevelMarginPercent))
+        : 0;
+
       const companyToSave: Company = {
         id: editingCompany.id || `comp-${Date.now()}`,
         name: editingCompany.name.trim(),
@@ -159,15 +198,32 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
         primaryContactEmail: editingCompany.primaryContactEmail?.trim() || undefined,
         primaryContactPhone: editingCompany.primaryContactPhone?.trim() || undefined,
         linkedUserIds: editingCompany.linkedUserIds || [],
-        createdAt: editingCompany.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        pricingSettings: {
+          productLevelMarginEnabled: prodLevelEnabled,
+          activeMarginMode: prodLevelEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL',
+          agentLevelMarginPercent: agentPct,
+          lastUpdatedBy: currentUser?.id || editingCompany.pricingSettings?.lastUpdatedBy || 'SYSTEM',
+          lastUpdatedByName: currentUser?.name || editingCompany.pricingSettings?.lastUpdatedByName || 'Admin',
+          lastUpdatedAt: nowIso
+        },
+        createdAt: editingCompany.createdAt || nowIso,
+        updatedAt: nowIso
       };
 
       db.saveCompany(
         companyToSave, 
         currentUser, 
         'COMPANY_PROFILE_UPDATED', 
-        `Updated company profile ${companyToSave.name} (Status: ${companyToSave.verificationStatus})`
+        `Updated company profile ${companyToSave.name} (Status: ${companyToSave.verificationStatus}, Product-Level Margin: ${prodLevelEnabled ? 'ON' : 'OFF'})`
+      );
+
+      db.updateAgencyPricingSettings(
+        companyToSave.id,
+        {
+          productLevelMarginEnabled: prodLevelEnabled,
+          agentLevelMarginPercent: agentPct
+        },
+        currentUser
       );
 
       refreshData();
@@ -391,6 +447,7 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
                 <tr className="bg-slate-50/80 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
                   <th className="py-3 px-4">Company Profile</th>
                   <th className="py-3 px-4">Business Type & Tier</th>
+                  <th className="py-3 px-4">Pricing & Margin Configuration</th>
                   <th className="py-3 px-4">Location & Country</th>
                   <th className="py-3 px-4">Trade Credentials</th>
                   <th className="py-3 px-4">Verification Status</th>
@@ -407,6 +464,8 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
                     (u.companyName && u.companyName.toLowerCase() === company.name.toLowerCase()) ||
                     (u.agencyName && u.agencyName.toLowerCase() === company.name.toLowerCase())
                   );
+                  const pricingSettings = db.resolveAgencyPricingSettings({ companyId: company.id, agencyName: company.name });
+                  const isProdLevelOn = pricingSettings.productLevelMarginEnabled !== false;
 
                   return (
                     <tr key={company.id} className="hover:bg-slate-50/60 transition-colors">
@@ -466,6 +525,39 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
                             {company.tier === 'TIER_1_DIRECT_DMC' ? '★ Tier 1 Direct DMC' : company.tier.replace(/_/g, ' ')}
                           </div>
                         )}
+                      </td>
+
+                      {/* Pricing & Margin Configuration */}
+                      <td className="py-3.5 px-4">
+                        <div className="space-y-1.5">
+                          <div className="flex items-center space-x-2">
+                            <button
+                              type="button"
+                              onClick={() => handleQuickMarginModeToggle(company, !isProdLevelOn)}
+                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                                isProdLevelOn ? 'bg-[#00C6A6]' : 'bg-amber-500'
+                              }`}
+                              title="Toggle Product-Level Margin ON/OFF"
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out ${
+                                  isProdLevelOn ? 'translate-x-4' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                            <span className="text-[11px] font-black text-slate-900">
+                              Product-Level Margin: <span className={isProdLevelOn ? 'text-[#008972]' : 'text-amber-700'}>{isProdLevelOn ? 'ON' : 'OFF'}</span>
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-slate-600 flex flex-col gap-0.5">
+                            <span>
+                              Active Mode: <strong className={isProdLevelOn ? 'text-[#008972]' : 'text-amber-700'}>{isProdLevelOn ? 'Product-Level' : 'Agent-Level'}</strong>
+                            </span>
+                            <span>
+                              Agent-Level Margin: <strong className={!isProdLevelOn ? 'text-amber-700' : 'text-slate-400'}>{!isProdLevelOn ? `Active (${pricingSettings.agentLevelMarginPercent}%)` : 'Inactive (Disabled)'}</strong>
+                            </span>
+                          </div>
+                        </div>
                       </td>
 
                       {/* Location */}
@@ -552,7 +644,7 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
                           <button
                             onClick={() => handleEditCompany(company)}
                             className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                            title="Edit Company Details"
+                            title="Edit Company Details & Margin Mode"
                           >
                             <Edit3 className="w-4 h-4" />
                           </button>
@@ -599,6 +691,107 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
             </div>
 
             <form onSubmit={handleSaveCompany} className="space-y-4">
+              {/* Pricing & Margin Configuration Section */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">Pricing & Margin Configuration</h4>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Mutually exclusive margin control. Product-Level Margin and Agent-Level Margin never apply simultaneously.
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-[11px] font-bold text-slate-700">Product-Level Margin:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextEnabled = editingCompany.pricingSettings?.productLevelMarginEnabled === false ? true : false;
+                        setEditingCompany({
+                          ...editingCompany,
+                          pricingSettings: {
+                            ...(editingCompany.pricingSettings || {
+                              productLevelMarginEnabled: true,
+                              activeMarginMode: 'PRODUCT_LEVEL',
+                              agentLevelMarginPercent: 0
+                            }),
+                            productLevelMarginEnabled: nextEnabled,
+                            activeMarginMode: nextEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL'
+                          }
+                        });
+                      }}
+                      className={`px-3 py-1 rounded-lg text-xs font-black cursor-pointer transition-colors ${
+                        editingCompany.pricingSettings?.productLevelMarginEnabled !== false
+                          ? 'bg-[#00C6A6] text-slate-950'
+                          : 'bg-amber-500 text-slate-950'
+                      }`}
+                    >
+                      {editingCompany.pricingSettings?.productLevelMarginEnabled !== false ? 'ON (Default)' : 'OFF'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-2 border-t border-slate-200/80">
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Product-Level Margin</span>
+                    <span className={`font-black text-xs mt-0.5 block ${editingCompany.pricingSettings?.productLevelMarginEnabled !== false ? 'text-[#008972]' : 'text-slate-500'}`}>
+                      {editingCompany.pricingSettings?.productLevelMarginEnabled !== false ? 'ON (Active)' : 'OFF (Disabled)'}
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Active Margin Mode</span>
+                    <span className="font-black text-xs text-slate-900 mt-0.5 block">
+                      {editingCompany.pricingSettings?.productLevelMarginEnabled !== false ? 'Product-Level' : 'Agent-Level'}
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Agent-Level Margin Status</span>
+                    <span className={`font-black text-xs mt-0.5 block ${editingCompany.pricingSettings?.productLevelMarginEnabled === false ? 'text-amber-600' : 'text-slate-400'}`}>
+                      {editingCompany.pricingSettings?.productLevelMarginEnabled === false ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Configured Agent-Level Margin (%) {editingCompany.pricingSettings?.productLevelMarginEnabled !== false && <span className="text-[10px] text-slate-400 font-normal">(Inactive while Product-Level is ON)</span>}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.5"
+                      disabled={editingCompany.pricingSettings?.productLevelMarginEnabled !== false}
+                      value={editingCompany.pricingSettings?.agentLevelMarginPercent ?? 0}
+                      onChange={(e) =>
+                        setEditingCompany({
+                          ...editingCompany,
+                          pricingSettings: {
+                            ...(editingCompany.pricingSettings || {
+                              productLevelMarginEnabled: false,
+                              activeMarginMode: 'AGENT_LEVEL',
+                              agentLevelMarginPercent: 0
+                            }),
+                            agentLevelMarginPercent: Math.max(0, Number(e.target.value) || 0)
+                          }
+                        })
+                      }
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                    />
+                  </div>
+                  <div className="flex flex-col justify-center text-[11px] text-slate-500 bg-white p-2.5 rounded-xl border border-slate-200">
+                    <div>
+                      <span className="font-bold text-slate-600">Last Updated By: </span>
+                      <span>{editingCompany.pricingSettings?.lastUpdatedByName || editingCompany.pricingSettings?.lastUpdatedBy || 'System Default'}</span>
+                    </div>
+                    <div className="mt-0.5">
+                      <span className="font-bold text-slate-600">Last Updated At: </span>
+                      <span>{editingCompany.pricingSettings?.lastUpdatedAt ? new Date(editingCompany.pricingSettings.lastUpdatedAt).toLocaleString() : 'Initial'}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                 {/* Company Name */}
                 <div className="space-y-1">

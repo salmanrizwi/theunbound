@@ -30,13 +30,19 @@ service cloud.firestore {
           request.auth.token.email.lower() == 'admin@theunbound.com' ||
           request.auth.token.email.lower() == 'marcus@theunbound.in'
         )) ||
-        (hasUserDoc(request.auth.uid) && currentUserData().role == 'ADMIN')
+        (hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'ADMIN' ||
+          currentUserData().role == 'SUPER_ADMIN'
+        ))
       );
     }
 
     // Verifies if the existing document was marked with Administrator ownership
     function isResourceAdminOwned() {
-      return resource != null && 'data' in resource && 'updatedByRole' in resource.data && resource.data.updatedByRole == 'ADMIN';
+      return resource != null && 'data' in resource && 'updatedByRole' in resource.data && (
+        resource.data.updatedByRole == 'ADMIN' ||
+        resource.data.updatedByRole == 'SUPER_ADMIN'
+      );
     }
 
     // Authoritative Admin CMS Write Validation
@@ -47,7 +53,7 @@ service cloud.firestore {
         request.resource != null &&
         'data' in request.resource &&
         'updatedByRole' in request.resource.data &&
-        request.resource.data.updatedByRole == 'ADMIN' &&
+        (request.resource.data.updatedByRole == 'ADMIN' || request.resource.data.updatedByRole == 'SUPER_ADMIN') &&
         (
           ('updatedByEmail' in request.resource.data && (
             request.resource.data.updatedByEmail == 'business@theunbound.in' ||
@@ -72,9 +78,9 @@ service cloud.firestore {
             'SYNCED', 'Synced'
           ]
         ) &&
-        (!('role' in request.resource.data) || request.resource.data.role != 'B2B_AGENT') &&
-        (!('userType' in request.resource.data) || request.resource.data.userType != 'B2B_AGENT') &&
-        (!('authorRole' in request.resource.data) || request.resource.data.authorRole != 'B2B_AGENT')
+        (!('role' in request.resource.data) || (request.resource.data.role != 'B2B_AGENT' && request.resource.data.role != 'BUYER')) &&
+        (!('userType' in request.resource.data) || (request.resource.data.userType != 'B2B_AGENT' && request.resource.data.userType != 'BUYER')) &&
+        (!('authorRole' in request.resource.data) || (request.resource.data.authorRole != 'B2B_AGENT' && request.resource.data.authorRole != 'BUYER'))
       );
     }
 
@@ -101,9 +107,11 @@ service cloud.firestore {
       return isAuthenticated() && (
         isMasterAdmin() ||
         (hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'SUPER_ADMIN' ||
           currentUserData().role == 'ADMIN' ||
           currentUserData().role == 'TEAM_MEMBER' ||
           currentUserData().role == 'DMC_STAFF' ||
+          currentUserData().userType == 'SUPER_ADMIN' ||
           currentUserData().userType == 'ADMIN' ||
           currentUserData().userType == 'TEAM_MEMBER'
         ))
@@ -122,10 +130,14 @@ service cloud.firestore {
     function canManageUserAccounts() {
       return isMasterAdmin() || (
         isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          currentUserData().role == 'SUPER_ADMIN' ||
           currentUserData().role == 'ADMIN' ||
           (hasPerms() && (
             userPerms().canManagePermissions == true ||
-            ('cmsFinance' in userPerms() && userPerms().cmsFinance.userAccounts == true)
+            ('cmsFinance' in userPerms() && (
+              userPerms().cmsFinance.userAccounts == true ||
+              userPerms().cmsFinance.accountManagement == true
+            ))
           ))
         )
       );
@@ -193,13 +205,15 @@ service cloud.firestore {
       );
     }
 
-    // 6. B2B Wholesale Inventory & Quote Builder Access (Strict B2B Agent & Internal Staff Only)
+    // 6. B2B Wholesale Inventory & Quote Builder Access (Strict B2B Agent, Agency Owner & Internal Staff Only)
     function canAccessB2BInventory() {
       return isMasterAdmin() || (
         isApprovedUser() && (
+          currentUserData().role == 'SUPER_ADMIN' ||
           currentUserData().role == 'ADMIN' ||
           currentUserData().role == 'TEAM_MEMBER' ||
           currentUserData().role == 'DMC_STAFF' ||
+          currentUserData().role == 'AGENCY_OWNER' ||
           currentUserData().role == 'B2B_AGENT' ||
           currentUserData().role == 'AGENT'
         ) && (
@@ -308,6 +322,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (request.auth.uid == userId || isNotBuyer());
       
       // User can create their own document on registration, or Admin CMS can provision accounts
+      // Strictly reject BUYER role creation
       allow create: if canManageUserAccounts() || isValidAdminCMSData() || (
         isAuthenticated() && request.auth.uid == userId && (
           request.resource.data.role != 'BUYER' &&
@@ -315,14 +330,22 @@ service cloud.firestore {
         )
       );
 
-      // Update: Admin can update all fields (roles, permissions, approvals)
-      // Self-updates are allowed ONLY if privilege fields (role, permissions, approvalStatus) are unchanged, and role is not BUYER
+      // Update: Admin can update all fields (roles, permissions, approvals, pricingSettings)
+      // Self-updates are allowed ONLY if privilege & pricingSettings fields are untouched, and role is not BUYER
       allow update: if canManageUserAccounts() || isValidAdminCMSData() || (
-        isAuthenticated() && request.auth.uid == userId && isNotBuyer() && (
-          (!('role' in request.resource.data) || !('role' in resource.data) || request.resource.data.role == resource.data.role) &&
-          (!('permissions' in request.resource.data) || !('permissions' in resource.data) || request.resource.data.permissions == resource.data.permissions) &&
-          (!('approvalStatus' in request.resource.data) || !('approvalStatus' in resource.data) || request.resource.data.approvalStatus == resource.data.approvalStatus)
-        )
+        isAuthenticated() && request.auth.uid == userId && isNotBuyer() &&
+        request.resource.data.role != 'BUYER' &&
+        (!('userType' in request.resource.data) || request.resource.data.userType != 'BUYER') &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'role',
+          'permissions',
+          'approvalStatus',
+          'pricingSettings',
+          'customAgentMarginPercent',
+          'agentLevelMarginPercent',
+          'productLevelMarginEnabled',
+          'activeMarginMode'
+        ])
       );
 
       // Deletion strictly reserved for Administrators
@@ -332,14 +355,23 @@ service cloud.firestore {
     match /companies/{companyId} {
       // Authenticated business users can read company profiles
       allow read: if isAuthenticated();
-      // Write: Admins and staff have full control; users can manage their own company profile
-      allow write: if canManageUserAccounts() || isInternalUser() || (
-        isAuthenticated() && (
-          resource == null ||
+      // Write: Admins and internal staff with Account Management access have full control;
+      // External agency users can update their company profile ONLY if pricingSettings is untouched
+      allow create: if canManageUserAccounts() || isInternalUser() || isValidAdminCMSData() || isAuthenticated();
+      allow update: if canManageUserAccounts() || isInternalUser() || isValidAdminCMSData() || (
+        isAuthenticated() && isNotBuyer() && (
           (resource.data.primaryContactUserId == request.auth.uid) ||
           (request.auth.uid in resource.data.linkedUserIds)
-        )
+        ) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'pricingSettings',
+          'customAgentMarginPercent',
+          'agentLevelMarginPercent',
+          'productLevelMarginEnabled',
+          'activeMarginMode'
+        ])
       );
+      allow delete: if canManageUserAccounts() || isValidAdminCMSData() || isResourceAdminOwned();
     }
 
     match /system_users/{userId} {

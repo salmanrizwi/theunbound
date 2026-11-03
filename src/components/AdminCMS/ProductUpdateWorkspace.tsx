@@ -149,7 +149,6 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     currency: 'USD',
     nativeCurrency: 'USD',
     defaultMarkupPercent: undefined,
-    buyerMarkupPercent: undefined,
     b2bAgentMarkupPercent: undefined,
     taxPercent: undefined,
     commissionPercent: undefined,
@@ -716,7 +715,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       const netVal = t.supplierNett !== undefined 
         ? Number(t.supplierNett) 
         : (t.nettPrice !== undefined ? Number(t.nettPrice) : (t.netCostPerPax !== undefined ? Number(t.netCostPerPax) : 0));
-      const mVal = t.marginValue !== undefined ? Number(t.marginValue) : (formData.b2bAgentMarkupPercent || formData.buyerMarkupPercent || 20);
+      const mVal = t.marginValue !== undefined ? Number(t.marginValue) : (formData.b2bAgentMarkupPercent || formData.defaultMarkupPercent || 15);
       const mType = t.marginType || 'PERCENTAGE';
       const tVal = t.taxValue !== undefined ? Number(t.taxValue) : (formData.taxPercent || 10);
       const tType = t.taxType || 'PERCENTAGE';
@@ -1717,10 +1716,8 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
             currency={formData.currency || formData.nativeCurrency || 'USD'}
             onCurrencyChange={(curr) => setFormData(prev => ({ ...prev, currency: curr, nativeCurrency: curr }))}
             status={formData.status}
-            buyerMarginPercent={formData.buyerMarkupPercent}
-            onBuyerMarginChange={(margin) => setFormData(prev => ({ ...prev, buyerMarkupPercent: margin, defaultMarkupPercent: margin }))}
-            b2bAgentMarginPercent={formData.b2bAgentMarkupPercent}
-            onB2bAgentMarginChange={(margin) => setFormData(prev => ({ ...prev, b2bAgentMarkupPercent: margin }))}
+            b2bAgentMarginPercent={formData.b2bAgentMarkupPercent ?? formData.defaultMarkupPercent ?? 0}
+            onB2bAgentMarginChange={(margin) => setFormData(prev => ({ ...prev, b2bAgentMarkupPercent: margin, defaultMarkupPercent: margin }))}
             taxPercent={formData.taxPercent}
             onTaxPercentChange={(tax) => setFormData(prev => ({ ...prev, taxPercent: tax }))}
             serviceFeeFixed={formData.serviceFeeFixed}

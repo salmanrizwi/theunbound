@@ -18,10 +18,11 @@ export const MASTER_ADMIN_ID = 'usr-admin-business';
  */
 export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAccess {
   switch (role) {
+    case 'SUPER_ADMIN':
     case 'ADMIN':
       return {
         b2bQuoteBuilderAccess: true,
-        buyerQuoteBuilderAccess: true,
+        buyerQuoteBuilderAccess: false,
         canAccessPricingCalculator: true,
         canCreateBookings: true,
         canExportPDF: true,
@@ -154,7 +155,7 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
     case 'DMC_STAFF':
       return {
         b2bQuoteBuilderAccess: true,
-        buyerQuoteBuilderAccess: true,
+        buyerQuoteBuilderAccess: false,
         canAccessPricingCalculator: true,
         canCreateBookings: true,
         canExportPDF: true,
@@ -283,6 +284,7 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
         }
       };
 
+    case 'AGENCY_OWNER':
     case 'B2B_AGENT':
     case 'AGENT':
       return {
@@ -320,12 +322,13 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
       };
 
     case 'BUYER':
+      // Buyer user type is disabled in the B2B-only portal
       return {
         b2bQuoteBuilderAccess: false,
-        buyerQuoteBuilderAccess: true,
-        canAccessPricingCalculator: true,
-        canCreateBookings: true,
-        canExportPDF: true,
+        buyerQuoteBuilderAccess: false,
+        canAccessPricingCalculator: false,
+        canCreateBookings: false,
+        canExportPDF: false,
         canViewWholesaleNetRates: false,
         canAddManualHotelRates: false,
         canManagePackages: false,
@@ -400,7 +403,7 @@ export function canUserAccessB2BInventory(
   }
 
   // Master Admin & Administrators always have full operational inventory access
-  if (isMasterAdmin(user) || user.role === 'ADMIN') {
+  if (isMasterAdmin(user) || user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
     return { allowed: true };
   }
 
@@ -417,8 +420,8 @@ export function canUserAccessB2BInventory(
     return { allowed: true };
   }
 
-  // Verified B2B Travel Agent
-  const isAgent = user.role === 'B2B_AGENT' || user.role === 'AGENT';
+  // Verified B2B Travel Agent / Agency Owner
+  const isAgent = user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'AGENCY_OWNER';
   if (!isAgent) {
     return {
       allowed: false,
@@ -533,27 +536,18 @@ export function canUserAccessQuoteBuilder(
     }
     // Backward-compatible fallback to Pricing Calculator flag or role defaults
     if (perms && typeof perms.canAccessPricingCalculator === 'boolean') {
-      const rolePermits = user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER';
+      const rolePermits = user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'AGENCY_OWNER' || user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'TEAM_MEMBER';
       if (!rolePermits || !perms.canAccessPricingCalculator) {
         return { allowed: false, reason: 'PERMISSION_DENIED' };
       }
       return { allowed: true };
     }
-    const defaultAllowed = user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER';
+    const defaultAllowed = user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'AGENCY_OWNER' || user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'TEAM_MEMBER';
     return defaultAllowed ? { allowed: true } : { allowed: false, reason: 'PERMISSION_DENIED' };
   }
 
   if (mode === 'BUYER') {
-    if (perms && typeof perms.buyerQuoteBuilderAccess === 'boolean') {
-      return perms.buyerQuoteBuilderAccess 
-        ? { allowed: true } 
-        : { allowed: false, reason: 'PERMISSION_DENIED' };
-    }
-    if (perms && typeof perms.canAccessPricingCalculator === 'boolean') {
-      return perms.canAccessPricingCalculator ? { allowed: true } : { allowed: false, reason: 'PERMISSION_DENIED' };
-    }
-    const defaultAllowed = user.role === 'BUYER' || user.role === 'ADMIN' || user.role === 'TEAM_MEMBER';
-    return defaultAllowed ? { allowed: true } : { allowed: false, reason: 'PERMISSION_DENIED' };
+    return { allowed: false, reason: 'PERMISSION_DENIED' };
   }
 
   return { allowed: true };
@@ -584,7 +578,7 @@ export function canUserShareQuoteWhatsApp(
   }
 
   // Master Admin & Admin always have full authority
-  if (isMasterAdmin(user) || user.role === 'ADMIN') {
+  if (isMasterAdmin(user) || user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') {
     return { allowed: true };
   }
 
@@ -595,8 +589,8 @@ export function canUserShareQuoteWhatsApp(
     return { allowed: false, reason: 'WhatsApp quotation sharing is disabled for your user account.' };
   }
 
-  // B2B Agent: Allowed if B2B Quote Builder is allowed
-  if (user.role === 'B2B_AGENT' || user.role === 'AGENT') {
+  // B2B Agent / Agency Owner: Allowed if B2B Quote Builder is allowed
+  if (user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'AGENCY_OWNER') {
     const qb = canUserAccessQuoteBuilder(user, 'B2B');
     if (!qb.allowed) {
       return { allowed: false, reason: 'Quotation builder access is required to share quotes.' };
@@ -612,15 +606,6 @@ export function canUserShareQuoteWhatsApp(
       return { allowed: true };
     }
     return { allowed: false, reason: 'WhatsApp sharing authorization is required for staff accounts.' };
-  }
-
-  // Buyer: Allowed if Buyer Quote Builder is allowed
-  if (user.role === 'BUYER') {
-    const buyerQb = canUserAccessQuoteBuilder(user, 'BUYER');
-    if (!buyerQb.allowed) {
-      return { allowed: false, reason: 'Quote access required.' };
-    }
-    return { allowed: true };
   }
 
   return { allowed: false, reason: 'Unauthorized role for quote sharing.' };
@@ -639,10 +624,10 @@ export function canUserAccessSystemAnalysis(
 ): boolean {
   if (!user) return false;
   if (isMasterAdmin(user)) return true;
-  if (user.role === 'ADMIN') return true;
+  if (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') return true;
 
   // Strict: external roles can never access system analysis
-  if (user.role === 'BUYER' || user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'VIEWER' || user.role === 'PUBLIC') {
+  if (user.role === 'BUYER' || user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'AGENCY_OWNER' || user.role === 'VIEWER' || user.role === 'PUBLIC') {
     return false;
   }
 
@@ -682,7 +667,7 @@ export function canUserAccessCMS(user: User | null | undefined): boolean {
     return user.permissions.canAccessCMS;
   }
 
-  return user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF';
+  return user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF';
 }
 
 /**

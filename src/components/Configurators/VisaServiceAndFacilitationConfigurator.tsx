@@ -97,8 +97,8 @@ export const visaProductToProduct = (visa: VisaProduct): Product => {
     duration: `${v.processingTimeDays || 5} Days`,
     operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
     operatingHours: '09:00 - 18:00',
-    adultNetPrice: embassy + service,
-    childNetPrice: embassy + service,
+    adultNetPrice: suggestedSelling,
+    childNetPrice: suggestedSelling,
     infantNetPrice: 0,
     currency: v.currency || 'USD',
     defaultMarkupPercent: 0,
@@ -325,13 +325,14 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
   const totalRatePerApplicantUSD = baseRatePerApplicantUSD + extraAssistancePerApplicantUSD;
   const basePartyTotalSellingUSD = (baseRatePerApplicantUSD * totalApplicants) + extraAssistanceTotalUSD;
 
+  const visaSourceCurrency = (selectedVisa.currency || 'USD') as CurrencyCode;
   const validityCheck = evaluateInventoryValidity(selectedVisa, travelDate);
   const surchargeEval = evaluateApplicableSurcharges({
     surcharges: (selectedVisa as any).surcharges,
     serviceDate: travelDate,
     baseNativeAmount: basePartyTotalSellingUSD,
-    nativeCurrency: (selectedVisa.currency || 'USD') as CurrencyCode,
-    targetCurrency: 'USD',
+    nativeCurrency: visaSourceCurrency,
+    targetCurrency: visaSourceCurrency,
     adults: Math.max(1, adultApplicants),
     children: childApplicants,
     infants: infantApplicants,
@@ -339,7 +340,7 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
     defaultApplicationBasis: 'PER_PERSON'
   });
 
-  const partyTotalSellingUSD = basePartyTotalSellingUSD + surchargeEval.totalSurchargeConverted;
+  const partyTotalSellingUSD = basePartyTotalSellingUSD + surchargeEval.totalSurchargeNative;
 
   // Commercial Net calculations for Admin & Team Member
   const assistanceNetPerApplicantUSD = selectedAssistanceObjects.reduce((sum, a) => sum + (a.netCost || 0), 0);
@@ -349,10 +350,10 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
   const profitMarginPercent = partyTotalSellingUSD > 0 ? Math.round((partyGrossProfitUSD / partyTotalSellingUSD) * 100) : 0;
 
   // Currency Conversions
-  const convertedSellingRate = convertCurrency(totalRatePerApplicantUSD, 'USD', currency);
-  const convertedTotalPartySelling = convertCurrency(partyTotalSellingUSD, 'USD', currency);
-  const convertedTotalNet = convertCurrency(partyTotalNetUSD, 'USD', currency);
-  const convertedProfit = convertCurrency(partyGrossProfitUSD, 'USD', currency);
+  const convertedSellingRate = convertCurrency(totalRatePerApplicantUSD, visaSourceCurrency, currency);
+  const convertedTotalPartySelling = convertCurrency(partyTotalSellingUSD, visaSourceCurrency, currency);
+  const convertedTotalNet = convertCurrency(partyTotalNetUSD, visaSourceCurrency, currency);
+  const convertedProfit = convertCurrency(partyGrossProfitUSD, visaSourceCurrency, currency);
 
   // Toggle assistance selection
   const toggleAssistance = (asstId: string) => {
@@ -379,9 +380,11 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
     }
 
     const prod = visaProductToProduct(selectedVisa);
-    // Enrich with dynamic calculated rate
+    // Enrich with dynamic calculated selling rate (defaultMarkupPercent is 0 on visa product)
     prod.sellingPriceStartingFrom = totalRatePerApplicantUSD;
-    prod.adultNetPrice = totalNetPerApplicantUSD;
+    prod.adultNetPrice = totalRatePerApplicantUSD;
+    prod.childNetPrice = totalRatePerApplicantUSD;
+    prod.infantNetPrice = infantApplicants > 0 ? totalRatePerApplicantUSD : 0;
 
     // Build immutable snapshot
     const visaSnapshot: QuoteVisaSnapshot = {
@@ -1054,16 +1057,16 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
                       <div className="pt-1.5 border-t border-slate-200/60 flex items-center justify-between text-[11px] font-mono">
                         <span className="text-slate-400">Additional Fee:</span>
                         <span className="font-bold text-slate-900">
-                          {isIncluded ? 'FREE' : `+${formatCurrency(convertCurrency(asst.sellingPrice, 'USD', currency), currency)} / pax`}
+                          {isIncluded ? 'FREE' : `+${formatCurrency(convertCurrency(asst.sellingPrice, (asst as any).currency || visaSourceCurrency, currency), currency)} / pax`}
                         </span>
                       </div>
 
                       {/* Admin Cost View */}
                       {role === 'ADMIN' && (
                         <div className="text-[10px] text-slate-400 font-mono pt-1 border-t border-slate-100 flex justify-between">
-                          <span>Net: ${asst.netCost}</span>
-                          <span>Fee: ${asst.serviceFee}</span>
-                          <span className="text-emerald-600 font-bold">Margin: ${(asst.sellingPrice - asst.netCost)}</span>
+                          <span>Net: {formatCurrency(convertCurrency(asst.netCost, (asst as any).currency || visaSourceCurrency, currency), currency)}</span>
+                          <span>Fee: {formatCurrency(convertCurrency(asst.serviceFee, (asst as any).currency || visaSourceCurrency, currency), currency)}</span>
+                          <span className="text-emerald-600 font-bold">Margin: {formatCurrency(convertCurrency(asst.sellingPrice - asst.netCost, (asst as any).currency || visaSourceCurrency, currency), currency)}</span>
                         </div>
                       )}
                     </div>
@@ -1110,11 +1113,11 @@ export const VisaServiceAndFacilitationConfigurator: React.FC<VisaConfiguratorPr
                     </span>
                     {role === 'ADMIN' ? (
                       <span className="text-[9px] text-slate-400 block mt-0.5">
-                        Embassy (${embassyFeeUSD}) + Service (${serviceFeeUSD}) {extraAssistancePerApplicantUSD > 0 ? `+ Add-ons ($${extraAssistancePerApplicantUSD})` : ''}
+                        Embassy ({formatCurrency(convertCurrency(embassyFeeUSD, visaSourceCurrency, currency), currency)}) + Service ({formatCurrency(convertCurrency(serviceFeeUSD, visaSourceCurrency, currency), currency)}) {extraAssistancePerApplicantUSD > 0 ? `+ Add-ons (${formatCurrency(convertCurrency(extraAssistancePerApplicantUSD, visaSourceCurrency, currency), currency)})` : ''}
                       </span>
                     ) : (
                       <span className="text-[9px] text-slate-400 block mt-0.5">
-                        Base Selling Rate {extraAssistancePerApplicantUSD > 0 ? `+ Add-ons ($${extraAssistancePerApplicantUSD})` : ''}
+                        Base Selling Rate {extraAssistancePerApplicantUSD > 0 ? `+ Add-ons (${formatCurrency(convertCurrency(extraAssistancePerApplicantUSD, visaSourceCurrency, currency), currency)})` : ''}
                       </span>
                     )}
                   </>

@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Product, QuoteItem, CurrencyCode, FerryMaster } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency, calculateProductPrice } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateProductPrice } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
 import { operationalMasterInventory } from '../../services/operationalMasterInventoryService';
 import { operationalAssetEligibility } from '../../services/operationalAssetEligibilityService';
@@ -515,7 +515,7 @@ export const FerryConfigurator: React.FC<FerryConfiguratorProps> = ({
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-xs leading-snug">{upsell.name}</div>
                         <div className="text-[10px] text-slate-500 mt-0.5">
-                          +{formatCurrency(upsell.price, currency)} {upsell.priceType === 'PER_BOOKING' ? '(Total)' : '/ passenger'}
+                          +{formatCurrency(convertCurrency(upsell.price, ((upsell as any).currency || product.currency || 'USD') as CurrencyCode, currency), currency)} {upsell.priceType === 'PER_BOOKING' ? '(Total)' : '/ passenger'}
                         </div>
                       </div>
                     </button>

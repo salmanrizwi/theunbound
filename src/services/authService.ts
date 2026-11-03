@@ -498,8 +498,6 @@ class AuthService {
       agencyName: isAdminEmail ? 'TheUnbound DMC Global Headquarters' : 'Pending Agency Verification',
       country: 'Global',
       approvalStatus,
-      customBuyerMarginPercent: 25,
-      customAgentMarginPercent: 10,
       permissions: approvalStatus === 'APPROVED' ? getDefaultPermissionsForRole(role) : {
         ...getDefaultPermissionsForRole(role),
         b2bQuoteBuilderAccess: false,
@@ -753,7 +751,7 @@ class AuthService {
       authDiagnostic.markStage('T8');
 
       // Validate B2B Approval status
-      if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT') {
+      if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT' || profile.role === 'AGENCY_OWNER') {
         const approval = profile.approvalStatus || 'APPROVED';
         if (approval === 'PENDING') {
           return {
@@ -847,8 +845,6 @@ class AuthService {
         agencyName: 'TheUnbound DMC Global Headquarters',
         country: 'Global',
         approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
         contactNumber: '+91 9811654959',
         permissions: getDefaultPermissionsForRole('ADMIN'),
         createdAt: '2025-01-01'
@@ -916,7 +912,7 @@ class AuthService {
     }
 
     // 5. Verify B2B Agent approval status
-    if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT') {
+    if (profile.role === 'B2B_AGENT' || profile.role === 'AGENT' || profile.role === 'AGENCY_OWNER') {
       const approval = profile.approvalStatus || 'APPROVED';
       if (approval === 'PENDING') {
         return {
@@ -1049,8 +1045,8 @@ class AuthService {
       return { success: false, error: 'Password must be at least 6 characters in length.' };
     }
 
-    const isB2BAgent = profileData.role === 'B2B_AGENT' || profileData.role === 'AGENT';
-    const isInternal = profileData.role === 'ADMIN' || profileData.role === 'TEAM_MEMBER';
+    const isB2BAgent = profileData.role === 'B2B_AGENT' || profileData.role === 'AGENT' || profileData.role === 'AGENCY_OWNER';
+    const isInternal = profileData.role === 'ADMIN' || profileData.role === 'SUPER_ADMIN' || profileData.role === 'TEAM_MEMBER' || profileData.role === 'DMC_STAFF';
 
     if (isB2BAgent && !trimmedAgency) {
       return { success: false, error: 'Travel Agency or Company Name is required for B2B Agent registration.' };
@@ -1131,8 +1127,6 @@ class AuthService {
       iataOrAbtaNumber: profileData.iataOrAbtaNumber?.trim() || '',
       createdAt: new Date().toISOString().split('T')[0],
       approvalStatus,
-      customBuyerMarginPercent: 25,
-      customAgentMarginPercent: 10,
       permissions: approvalStatus === 'APPROVED' 
         ? getDefaultPermissionsForRole(profileData.role)
         : {
@@ -1229,9 +1223,25 @@ class AuthService {
    * Update Profile Information
    */
   public async updateUserProfile(userId: string, updates: Partial<User>): Promise<User | null> {
+    const safeUpdates: Partial<User> = { ...updates };
+    const actor = this.currentUserProfile;
+    const isAdminActor =
+      actor?.role === 'ADMIN' ||
+      actor?.role === 'SUPER_ADMIN' ||
+      ((actor?.role === 'TEAM_MEMBER' || actor?.role === 'DMC_STAFF') &&
+        Boolean(actor?.permissions?.cmsFinance?.accountManagement || actor?.permissions?.canManageUsers));
+
+    if (!isAdminActor) {
+      delete (safeUpdates as any).customAgentMarginPercent;
+      delete (safeUpdates as any).pricingSettings;
+      delete (safeUpdates as any).role;
+      delete (safeUpdates as any).permissions;
+      delete (safeUpdates as any).approvalStatus;
+    }
+
     try {
       const userRef = doc(firestoreDb, 'users', userId);
-      const cleanUpdates = cleanForFirestore(updates);
+      const cleanUpdates = cleanForFirestore(safeUpdates);
       await setDoc(userRef, cleanUpdates, { merge: true });
       console.log('[AUTH] Updated Firestore doc users/' + userId);
 
@@ -1249,7 +1259,7 @@ class AuthService {
       console.error('[AUTH] Error updating profile in Firestore:', err);
       // Fallback local update
       const db = AppDatabase.getInstance();
-      return db.updateUserProfile(userId, updates, this.currentUserProfile);
+      return db.updateUserProfile(userId, safeUpdates, this.currentUserProfile);
     }
   }
 }

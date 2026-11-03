@@ -108,10 +108,11 @@ export const AuditTrailViewer: React.FC = () => {
             className="w-full py-2 px-3 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-[#00C6A6]"
           >
             <option value="ALL">All Operator Roles</option>
+            <option value="SUPER_ADMIN">Super Admin</option>
             <option value="ADMIN">Admin</option>
             <option value="TEAM_MEMBER">Team Member</option>
+            <option value="AGENCY_OWNER">Agency Owner</option>
             <option value="B2B_AGENT">B2B Agent</option>
-            <option value="BUYER">Buyer</option>
           </select>
         </div>
       </div>
@@ -130,8 +131,8 @@ export const AuditTrailViewer: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map(log => (
-                <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+              {filtered.map((log, idx) => (
+                <tr key={`audit-row-${log.id || 'entry'}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
                   <td className="py-3.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
                     {(log.timestamp || '').replace('T', ' ').substring(0, 19)}
                   </td>

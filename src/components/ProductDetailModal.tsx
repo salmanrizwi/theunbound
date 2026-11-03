@@ -3,7 +3,7 @@ import { Product, CurrencyCode, SUPPORTED_CURRENCIES } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
-import { formatCurrency, convertCurrency } from '../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateDeliveredPriceForUser } from '../services/pricingEngine';
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
 import { WishlistButton } from './WishlistButton';
@@ -195,11 +195,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     return next || new Date(Date.now() + 86400000 * 14).toISOString().split('T')[0];
   });
 
-  const convertedStartingPrice = convertCurrency(
-    product.sellingPriceStartingFrom,
-    product.currency,
-    currency
-  );
+  const convertedStartingPrice = calculateDeliveredPriceForUser(product, user, currency).deliveredPrice;
 
   const availability = checkDateAvailability(product.id, selectedTravelDate, adults + childrenCount);
   const isAlreadyInQuote = items.some(i => i.product.id === product.id);

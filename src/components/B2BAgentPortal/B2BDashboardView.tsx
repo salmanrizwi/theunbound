@@ -33,7 +33,7 @@ import { useQuotation } from '../../context/QuotationContext';
 import { B2BNavTab, Quotation, B2BPackage, Destination, Product, Hotel } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { canonicalImageService } from '../../services/imageService';
-import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import {
   cleanPackageText,
   isPackageVisibleToB2BAgent,
@@ -90,17 +90,53 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
   const tasks = useMemo(() => db.getB2BTasks(user?.id), [db, user, dbTick]);
   const bookings = useMemo(() => db.getBookingsForUser(user), [db, user, dbTick]);
 
-  // Quotes metrics
-  const quotesList = useMemo(() => db.getAllSavedQuotesForUser(user), [db, user, dbTick]);
+  // Quotes metrics (deduplicated by quote ID)
+  const quotesList = useMemo(() => {
+    const rawQuotes = db.getAllSavedQuotesForUser(user);
+    const seen = new Set<string>();
+    return rawQuotes.filter(q => {
+      if (!q || !q.id || seen.has(q.id)) return false;
+      seen.add(q.id);
+      return true;
+    });
+  }, [db, user, dbTick]);
   
   const draftQuotes = quotesList.filter(q => q.status === 'DRAFT' || q.status === 'IN_PROGRESS');
   const sentQuotes = quotesList.filter(q => q.status === 'SENT' || q.status === 'SENT_TO_CLIENT' || q.status === 'VIEWED');
   const approvedQuotes = quotesList.filter(q => q.status === 'APPROVED' || q.status === 'ACCEPTED');
   const convertedQuotes = quotesList.filter(q => q.status === 'CONVERTED' || q.status === 'CONFIRMED' || q.status === 'BOOKING_SUBMITTED');
 
-  // Pipeline revenue calculation
-  const totalPipelineValue = quotesList.reduce((sum, q) => sum + (q.totalSellingPrice || 0), 0);
-  const totalConfirmedBookingsValue = bookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
+  // Pipeline revenue calculation: exclude cancelled/expired/archived quotes and convert each quote from its source currency into the selected reporting currency
+  const activePipelineQuotes = useMemo(
+    () => quotesList.filter(q => q.status !== 'CANCELLED' && q.status !== 'EXPIRED' && (q.status as string) !== 'ARCHIVED'),
+    [quotesList]
+  );
+
+  const totalPipelineValue = useMemo(() => {
+    return activePipelineQuotes.reduce((sum, q) => {
+      const rawQuoteAmount = Number(
+        q.pricingSnapshot?.finalCustomerSellingPrice ??
+        q.finalCustomerSellingPrice ??
+        q.totalSellingPrice ??
+        0
+      );
+      if (!Number.isFinite(rawQuoteAmount) || rawQuoteAmount <= 0) return sum;
+      const sourceCurr = (q.currency || q.pricingSnapshot?.currency || 'USD') as any;
+      const convertedAmount = convertCurrency(rawQuoteAmount, sourceCurr, currency);
+      return sum + convertedAmount;
+    }, 0);
+  }, [activePipelineQuotes, currency]);
+
+  const totalConfirmedBookingsValue = useMemo(() => {
+    return bookings
+      .filter(b => b.status !== 'CANCELLED')
+      .reduce((sum, b) => {
+        const rawBookingAmount = Number(b.totalAmount || 0);
+        if (!Number.isFinite(rawBookingAmount) || rawBookingAmount <= 0) return sum;
+        const sourceCurr = (b.currency || 'USD') as any;
+        return sum + convertCurrency(rawBookingAmount, sourceCurr, currency);
+      }, 0);
+  }, [bookings, currency]);
 
   // Quick Duplicate Handler
   const handleQuickDuplicate = (quote: Quotation) => {
@@ -281,11 +317,11 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           </div>
           <div className="mt-2">
             <span className="text-xl sm:text-2xl font-extrabold text-slate-900 font-mono">
-              {formatCurrency(totalPipelineValue || 18450, currency)}
+              {formatCurrency(totalPipelineValue, currency)}
             </span>
           </div>
           <p className="text-[11px] text-emerald-600 font-bold mt-1">
-            Wholesale + Margin Total
+            Total Client Quotation Value
           </p>
         </div>
 
@@ -459,7 +495,14 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                           {quote.items?.length || 0} products
                         </td>
                         <td className="py-3 font-mono font-bold text-slate-900">
-                          {formatCurrency(quote.totalSellingPrice, quote.currency || currency)}
+                          {formatCurrency(
+                            convertCurrency(
+                              Number(quote.pricingSnapshot?.finalCustomerSellingPrice ?? quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0),
+                              (quote.currency || quote.pricingSnapshot?.currency || 'USD') as any,
+                              currency
+                            ),
+                            currency
+                          )}
                         </td>
                         <td className="py-3">
                           <span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-bold ${
@@ -793,7 +836,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
             </p>
             <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[11px]">
               <span className="text-slate-400">Direct Ops Hotline:</span>
-              <span className="font-mono font-bold text-white">+91 98710 24890</span>
+              <span className="font-mono font-bold text-white">+91 97188 94959</span>
             </div>
           </div>
         </div>

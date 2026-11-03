@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
 import { calculateProductPrice, calculateProductPriceForAgent, resolveInventoryValidity, evaluateInventoryValidity, roundCurrencyAmount, buildQuotationCurrencySnapshot } from '../services/pricingEngine';
+import { currencyEngine } from '../services/currencyEngine';
 import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
 import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
@@ -211,7 +212,35 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
     return [];
   });
-  const [currency, setCurrency] = useState<CurrencyCode>('USD');
+  const [currency, setCurrencyState] = useState<CurrencyCode>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const savedCurr = localStorage.getItem('theunbound_selected_currency');
+        const validCurrencies: CurrencyCode[] = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'SGD', 'AED', 'CHF', 'THB'];
+        if (savedCurr && validCurrencies.includes(savedCurr as CurrencyCode)) {
+          return savedCurr as CurrencyCode;
+        }
+      }
+    } catch {}
+    return 'USD';
+  });
+  const setCurrency = useCallback((curr: CurrencyCode) => {
+    setCurrencyState(curr);
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('theunbound_selected_currency', curr);
+      }
+    } catch {}
+  }, []);
+  const [fxRateTick, setFxRateTick] = useState(0);
+  useEffect(() => {
+    const unsub = currencyEngine.subscribe(() => {
+      setFxRateTick(t => t + 1);
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
   const [isQuoteDrawerOpenState, setIsQuoteDrawerOpenState] = useState(false);
 
   const isInsideB2BQuoteBuilder = (): boolean => {
@@ -376,7 +405,18 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }
         }
 
-        const calculation = calculateItemPrice(item.product, {
+        const productWithContext: Product = {
+          ...item.product,
+          ...(item.hotelId ? { hotelId: item.hotelId } : {}),
+          ...(item.roomTypeId ? { roomTypeId: item.roomTypeId } : {}),
+          ...(item.nights ? { nights: item.nights } : {}),
+          ...(item.roomsCount ? { roomsCount: item.roomsCount } : {}),
+          ...(item.isManualHotel ? { isManualHotel: item.isManualHotel } : {}),
+          ...(item.manualHotelDetails ? { manualHotelDetails: item.manualHotelDetails } : {}),
+          ...(item.master_product_id ? { master_product_id: item.master_product_id } : {})
+        } as Product;
+
+        const calculation = calculateItemPrice(productWithContext, {
           productId: item.product.id,
           pricingTier,
           adults: item.pax.adults,
@@ -392,7 +432,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         };
       })
     );
-  }, [currency, pricingTier, isAgent, isLocked]);
+  }, [currency, pricingTier, isAgent, isLocked, fxRateTick]);
 
   const addProductToQuote = (
     product: Product,

@@ -12,6 +12,7 @@ import {
   Clock, 
   ArrowRight, 
   ArrowLeft, 
+  Loader2, 
   Calendar, 
   Users, 
   MapPin, 
@@ -72,16 +73,17 @@ import {
   VisaProduct,
   FeasibilityCheckResult,
   AgentMarginType,
-  QuoteBrandingMode
+  QuoteBrandingMode,
+  AdminBasePriceUpdatedNotification
 } from '../../types';
-import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown, roundCurrencyAmount } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown, roundCurrencyAmount, validateAgentAdditionalMarkup } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
 import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct, isManualHotelPricingComplete } from '../../utils/hotelHelpers';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
-import { AppDatabase } from '../../services/db';
+import { AppDatabase, db } from '../../services/db';
 import { TransferConfigurator } from '../Configurators/TransferConfigurator';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { RichTextRenderer } from '../common/RichTextRenderer';
@@ -174,6 +176,9 @@ export interface StepByStepQuotationWorkspaceProps {
   updateItemTravelDate: (itemId: string, travelDate: string) => void;
   updateItemServiceTime: (itemId: string, time: string) => void;
   updateItemNotes: (itemId: string, notes: string) => void;
+  updateItemAdditionalMarkup?: (itemId: string, markupType: AgentMarginType, markupValue: number) => void;
+  adminBasePriceUpdatedNotification?: AdminBasePriceUpdatedNotification;
+  onDismissAdminBasePriceNotification?: () => void;
 
   // Hotel Actions
   onSelectHotelForHub?: (hubOrder: number, hotel: Hotel, roomTypeId?: string, roomsCount?: number) => void;
@@ -249,6 +254,9 @@ export interface StepByStepQuotationWorkspaceProps {
   lastSavedTimestamp: string;
   quoteNumber?: string;
   quoteVersion?: number;
+  packagePricingStatus?: 'IDLE' | 'CALCULATING' | 'SUCCESS' | 'ERROR';
+  packagePricingError?: { message: string; failedItems: string[] } | null;
+  onRetryPackagePricing?: () => void;
   brandingMode?: QuoteBrandingMode;
   setBrandingMode?: (mode: QuoteBrandingMode) => void;
   onOpenCartDrawer?: () => void;
@@ -318,6 +326,9 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   updateItemTravelDate,
   updateItemServiceTime,
   updateItemNotes,
+  updateItemAdditionalMarkup,
+  adminBasePriceUpdatedNotification,
+  onDismissAdminBasePriceNotification,
   onSelectHotelForHub,
   onSelectNoAccommodationForHub,
   onRemoveHotelForHub,
@@ -381,7 +392,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   quoteVersion = 1,
   brandingMode: propBrandingMode = 'STANDARD',
   setBrandingMode: propSetBrandingMode,
-  onOpenCartDrawer
+  onOpenCartDrawer,
+  packagePricingStatus = 'IDLE',
+  packagePricingError = null,
+  onRetryPackagePricing
 }) => {
   const { user, updateUserProfile } = useAuth();
   const { setIsQuoteDrawerOpen } = useQuotation();
@@ -747,18 +761,25 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     );
   };
 
-  // User Type Segregation checks (Section 3)
-  const isMasterAdminUser = Boolean(user && (user.role === 'ADMIN' || (user as any).email === 'business@theunbound.in' || (user as any).email === 'admin@theunbound.com'));
+  // User Type Segregation checks (Section 3 — B2B Only, Buyer User Type Removed)
+  const isMasterAdminUser = Boolean(user && (user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || (user as any).email === 'business@theunbound.in' || (user as any).email === 'admin@theunbound.com'));
   const isAuthorizedInternalUser = canViewInternalCosts;
-  const isAgentUser = user?.role === 'B2B_AGENT';
+  const isAgentUser = user?.role === 'B2B_AGENT' || user?.role === 'AGENT' || user?.role === 'AGENCY_OWNER';
   const isTeamMember = user?.role === 'TEAM_MEMBER' || user?.role === 'DMC_STAFF';
 
-  // 1. Admin: Can configure manual margin on Total Nett Cost
-  // 2. Team Member: Authorized only if explicit permissions allow (canViewInternalCosts) - hidden unless authorized
-  // 3. B2B Agent: Can configure additional agent margin on Existing Final Price
-  // 4. Buyer: Hidden by default
+  // Resolve Agency Pricing & Margin Configuration from Account Management
+  const agencyPricingSettings = useMemo(() => db.resolveAgencyPricingSettings({ user }), [user]);
+  const isProductLevelMarginEnabled = agencyPricingSettings.productLevelMarginEnabled !== false;
+  const activeMarginModeLabel = isProductLevelMarginEnabled ? 'Product-Level Margin (ON)' : 'Agent-Level Margin (ON)';
+
+  // 1. Admin / Internal Authorized: Can configure manual margin on Total Nett Cost
+  // 2. B2B Agent / Agency Owner (and Admin): Can configure "Your Additional Markup" on top of TheUnbound Base Selling Price (increase-only, >= 0).
+  // Internal Agent-Level Margin remains completely invisible to B2B Agents.
   const canConfigureAdminManualMargin = isMasterAdminUser || (isTeamMember && isAuthorizedInternalUser);
-  const canConfigureAgentManualMargin = isAgentUser || isMasterAdminUser;
+  const canConfigureAgentManualMargin = true;
+
+  const [markupValidationError, setMarkupValidationError] = useState<string | null>(null);
+  const [showPerProductMarkupPanel, setShowPerProductMarkupPanel] = useState<boolean>(false);
 
   // Local fallback admin manual margin state (Section 1) — Default mode is 'ADD' (Add to Existing Margin)
   const [internalAdminManualMarginType, setInternalAdminManualMarginType] = useState<'PERCENTAGE' | 'FIXED'>(propAdminManualMarginType || 'PERCENTAGE');
@@ -793,16 +814,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     if (propSetAdminMarginMode) propSetAdminMarginMode(mode);
   };
 
-  // Local fallback agent margin state (Section 2)
+  // Local fallback agent additional markup state ("Your Additional Markup") — Default is 0
   const [internalMarginType, setInternalMarginType] = useState<AgentMarginType>(propAgentMarginType || 'PERCENTAGE');
   const [internalMarginValue, setInternalMarginValue] = useState<number>(
-    propAgentMarginValue !== undefined ? propAgentMarginValue : (agentMarkupPercent || 10)
+    propAgentMarginValue !== undefined ? propAgentMarginValue : (agentMarkupPercent ?? 0)
   );
 
   const effectiveMarginType = propAgentMarginType || internalMarginType;
-  const effectiveMarginValue = propAgentMarginValue !== undefined ? propAgentMarginValue : internalMarginValue;
+  const rawMarginValue = propAgentMarginValue !== undefined ? propAgentMarginValue : internalMarginValue;
+  const effectiveMarginValue = Math.max(0, Number.isFinite(Number(rawMarginValue)) ? Number(rawMarginValue) : 0);
 
   const handleUpdateMarginType = (newType: AgentMarginType) => {
+    setMarkupValidationError(null);
     setInternalMarginType(newType);
     if (propSetAgentMarginType) {
       propSetAgentMarginType(newType);
@@ -810,7 +833,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   };
 
   const handleUpdateMarginValue = (val: number) => {
-    const num = Math.max(0, isNaN(val) ? 0 : val);
+    const check = validateAgentAdditionalMarkup(val);
+    if (!check.isValid) {
+      setMarkupValidationError(check.errorMessage || 'Additional markup cannot be negative. You can only increase the selling price above TheUnbound Base Selling Price.');
+    } else {
+      setMarkupValidationError(null);
+    }
+    const num = check.sanitizedValue;
     setInternalMarginValue(num);
     if (propSetAgentMarginValue) {
       propSetAgentMarginValue(num);
@@ -820,8 +849,32 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     }
   };
 
-  // Step 7 Internal pricing calculation with Admin manual margin on Total Nett Cost
-  const step7BreakdownPricing = isAuthorizedInternalUser ? calculateQuoteInternalBreakdown({
+  const handleRawMarginInputChange = (rawStr: string) => {
+    if (rawStr.trim().startsWith('-') || Number(rawStr) < 0) {
+      setMarkupValidationError('Validation Error: Additional markup cannot be negative. You can only increase the selling price above TheUnbound Base Selling Price.');
+      setInternalMarginValue(0);
+      if (propSetAgentMarginValue) propSetAgentMarginValue(0);
+      if (effectiveMarginType === 'PERCENTAGE') setAgentMarkupPercent(0);
+      return;
+    }
+    const parsed = rawStr === '' ? 0 : parseFloat(rawStr);
+    handleUpdateMarginValue(isNaN(parsed) ? 0 : parsed);
+  };
+
+  const handleRawItemMarkupInputChange = (itemId: string, markupType: AgentMarginType, rawStr: string) => {
+    if (rawStr.trim().startsWith('-') || Number(rawStr) < 0) {
+      setMarkupValidationError('Validation Error: Per-product additional markup cannot be negative. You can only increase the product selling price.');
+      updateItemAdditionalMarkup?.(itemId, markupType, 0);
+      return;
+    }
+    setMarkupValidationError(null);
+    const parsed = rawStr === '' ? 0 : parseFloat(rawStr);
+    const safeVal = Math.max(0, isNaN(parsed) ? 0 : parsed);
+    updateItemAdditionalMarkup?.(itemId, markupType, safeVal);
+  };
+
+  // Authoritative central pricing breakdown for both B2B Agents (Stage 1 -> Stage 2 -> Stage 3) and Admin
+  const quoteCommercialBreakdown = useMemo(() => calculateQuoteInternalBreakdown({
     items: quotationScope === 'LAND_ONLY'
       ? items.filter(it => !(
           (it.product.category || '').toLowerCase().includes('hotel') ||
@@ -836,12 +889,29 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     agentMarginValue: effectiveMarginValue,
     overallDiscountPercent: overallDiscountPercent || 0,
     userRole: user?.role,
+    user,
+    companyId: user?.companyId,
+    agencyName: user?.agencyName,
     scope: quotationScope,
     routeHubs,
     adminManualMarginType: effectiveAdminMarginType,
     adminManualMarginValue: effectiveAdminMarginValue,
     adminMarginMode: effectiveAdminMarginMode
-  }) : null;
+  }), [
+    items,
+    quotationScope,
+    currency,
+    effectiveMarginType,
+    effectiveMarginValue,
+    overallDiscountPercent,
+    user,
+    routeHubs,
+    effectiveAdminMarginType,
+    effectiveAdminMarginValue,
+    effectiveAdminMarginMode
+  ]);
+
+  const step7BreakdownPricing = isAuthorizedInternalUser ? quoteCommercialBreakdown : null;
 
   // STAGE 1: Manual Margin Adjustment (Admin Commercial Controls)
   const adminTotalNettCost = roundCurrencyAmount(step7BreakdownPricing?.totalNettCost ?? totalNetCost ?? 0, currency);
@@ -863,22 +933,366 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     ? step7BreakdownPricing.adminFinalTotal
     : Math.max(0, roundCurrencyAmount(stage1PreDiscountTotal - stage1DiscountAmount, currency));
 
-  // STAGE 2: Additional Agent Margin — Handoff from Manual Margin Adjustment
-  // The Additional Agent Margin section MUST ALWAYS use the Final Total generated by Manual Margin Adjustment as its starting price
+  // STAGE 2: Your Additional Markup (B2B Agent Commercial Adjustment on top of TheUnbound Base Selling Price)
   const hasManualMarginStage = canConfigureAdminManualMargin && adminFinalTotal > 0;
-  const effectiveBasePrice = hasManualMarginStage
-    ? adminFinalTotal
-    : roundCurrencyAmount(baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice, currency);
+  const effectiveBasePrice = quoteCommercialBreakdown.theUnboundBaseSellingPrice > 0
+    ? quoteCommercialBreakdown.theUnboundBaseSellingPrice
+    : (hasManualMarginStage
+        ? adminFinalTotal
+        : roundCurrencyAmount(baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice, currency));
 
   const existingFinalPrice = effectiveBasePrice;
+  const productLevelAgentMarkupTotal = roundCurrencyAmount(quoteCommercialBreakdown.productLevelAgentMarkupTotal || 0, currency);
+  const overallAgentMarkupAmount = quoteCommercialBreakdown.theUnboundBaseSellingPrice > 0
+    ? roundCurrencyAmount(quoteCommercialBreakdown.overallAgentMarkupAmount || 0, currency)
+    : (effectiveMarginType === 'PERCENTAGE'
+        ? roundCurrencyAmount(existingFinalPrice * ((effectiveMarginValue || 0) / 100), currency)
+        : roundCurrencyAmount(effectiveMarginValue || 0, currency));
 
-  const additionalAgentMarginAmount = effectiveMarginType === 'PERCENTAGE'
-    ? roundCurrencyAmount(existingFinalPrice * ((effectiveMarginValue || 0) / 100), currency)
-    : roundCurrencyAmount(effectiveMarginValue || 0, currency);
-
+  const additionalAgentMarginAmount = roundCurrencyAmount(productLevelAgentMarkupTotal + overallAgentMarkupAmount, currency);
   const effectiveMarginAmount = additionalAgentMarginAmount;
-  const revisedFinalPrice = roundCurrencyAmount(existingFinalPrice + additionalAgentMarginAmount, currency);
+  const revisedFinalPrice = Math.max(
+    existingFinalPrice,
+    quoteCommercialBreakdown.finalPackagePrice > 0
+      ? roundCurrencyAmount(quoteCommercialBreakdown.finalPackagePrice, currency)
+      : roundCurrencyAmount(existingFinalPrice + additionalAgentMarginAmount, currency)
+  );
   const effectiveFinalPrice = items.length === 0 && routeHubs.every(h => !h.manualHotel) ? 0 : revisedFinalPrice;
+
+  const renderYourAdditionalMarkupCard = () => {
+    if (!canConfigureAgentManualMargin) return null;
+    const totalPax = Math.max(1, adultsCount + childrenCount + infantsCount);
+    const activeBreakdownItems = quoteCommercialBreakdown.itemizedBreakdown || [];
+
+    return (
+      <div className="bg-white rounded-3xl border-2 border-teal-200 p-6 shadow-xs space-y-5 animate-fadeIn">
+        {/* Header */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-teal-100">
+          <div className="flex items-center space-x-3">
+            <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
+              <Percent className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                  Your Additional Markup
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                  Increase-Only Quotation Adjustment
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Add your own commercial markup on top of <strong>TheUnbound Base Selling Price</strong>. Your final customer selling price updates immediately across Preview, PDF, Email, and WhatsApp.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowPerProductMarkupPanel(prev => !prev)}
+            className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-700 transition-colors cursor-pointer flex items-center space-x-1.5"
+          >
+            <Sliders className="w-3.5 h-3.5 text-teal-600" />
+            <span>{showPerProductMarkupPanel ? 'Hide Per-Product Markup' : 'Configure Per-Product Markup'}</span>
+            {showPerProductMarkupPanel ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        {/* Admin Base Selling Price Updated Notification Banner */}
+        {adminBasePriceUpdatedNotification && (
+          <div className="p-4 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-950 flex items-start justify-between gap-3">
+            <div className="flex items-start space-x-2.5 text-xs">
+              <Info className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <div className="font-black uppercase tracking-wider text-indigo-900">
+                  Base Selling Price Updated by Admin
+                </div>
+                <p className="text-indigo-800">
+                  {adminBasePriceUpdatedNotification.message}
+                </p>
+              </div>
+            </div>
+            {onDismissAdminBasePriceNotification && (
+              <button
+                type="button"
+                onClick={onDismissAdminBasePriceNotification}
+                className="px-2.5 py-1 rounded-lg bg-white border border-indigo-200 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 shrink-0 cursor-pointer"
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Negative Input Validation Error Alert */}
+        {markupValidationError && (
+          <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center space-x-2">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span className="font-bold">{markupValidationError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMarkupValidationError(null)}
+              className="text-[10px] font-bold text-rose-700 hover:text-rose-900 underline shrink-0 cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+
+        {/* 3 Clear Commercial Display Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+          {/* Card 1: TheUnbound Base Selling Price */}
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
+              TheUnbound Base Selling Price
+            </span>
+            <span className="text-lg font-black font-mono text-slate-900 block mt-1">
+              {formatCurrency(existingFinalPrice, currency)}
+            </span>
+            <span className="text-[10px] text-slate-400 block mt-0.5">
+              Minimum allowed quotation selling price
+            </span>
+          </div>
+
+          {/* Card 2: Your Additional Markup */}
+          <div className="p-4 rounded-2xl bg-teal-50/70 border border-teal-200">
+            <span className="text-[10px] font-black uppercase tracking-wider text-teal-800 block">
+              Your Additional Markup
+            </span>
+            <span className="text-lg font-black font-mono text-teal-900 block mt-1">
+              +{formatCurrency(additionalAgentMarginAmount, currency)}
+            </span>
+            <span className="text-[10px] text-teal-700 block mt-0.5">
+              {productLevelAgentMarkupTotal > 0 && overallAgentMarkupAmount > 0
+                ? `Product-level (+${formatCurrency(productLevelAgentMarkupTotal, currency)}) + Overall (+${formatCurrency(overallAgentMarkupAmount, currency)})`
+                : productLevelAgentMarkupTotal > 0
+                  ? `From individual product markups`
+                  : effectiveMarginType === 'PERCENTAGE'
+                    ? `${effectiveMarginValue}% overall quotation markup`
+                    : `Fixed amount in ${currency}`}
+            </span>
+          </div>
+
+          {/* Card 3: Your Final Customer Selling Price */}
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 text-white border border-slate-700 shadow-sm">
+            <span className="text-[10px] font-black uppercase tracking-wider text-[#00E5C0] block">
+              Your Final Customer Selling Price
+            </span>
+            <span className="text-lg font-black font-mono text-white block mt-1">
+              {formatCurrency(revisedFinalPrice, currency)}
+            </span>
+            <span className="text-[10px] text-slate-300 block mt-0.5">
+              {formatCurrency(Math.round(revisedFinalPrice / totalPax), currency)} / traveler • Shown on PDF, Email &amp; WhatsApp
+            </span>
+          </div>
+        </div>
+
+        {/* Overall Quotation Additional Markup Controls */}
+        <div className="p-4 rounded-2xl bg-teal-50/40 border border-teal-100 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs font-bold text-slate-700">Overall Quotation Markup Type:</span>
+            <div className="inline-flex rounded-xl p-0.5 bg-white border border-slate-200 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => handleUpdateMarginType('PERCENTAGE')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                  effectiveMarginType === 'PERCENTAGE'
+                    ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Percent className="w-3.5 h-3.5" />
+                <span>Percentage (%)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleUpdateMarginType('FIXED')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                  effectiveMarginType === 'FIXED'
+                    ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <DollarSign className="w-3.5 h-3.5" />
+                <span>Fixed Amount ({currency})</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs font-bold text-slate-700">Your Additional Markup:</span>
+            <div className="relative w-36">
+              <input
+                type="number"
+                min="0"
+                max={effectiveMarginType === 'PERCENTAGE' ? 200 : undefined}
+                step={effectiveMarginType === 'PERCENTAGE' ? 0.5 : 100}
+                value={Number.isNaN(effectiveMarginValue) ? 0 : (effectiveMarginValue ?? 0)}
+                onChange={(e) => handleRawMarginInputChange(e.target.value)}
+                className="w-full pl-3 pr-8 py-1.5 rounded-xl border border-slate-300 font-mono text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 shadow-2xs"
+              />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                {effectiveMarginType === 'PERCENTAGE' ? '%' : currency}
+              </span>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="hidden sm:flex items-center space-x-1">
+              {effectiveMarginType === 'PERCENTAGE' ? (
+                [0, 5, 10, 15, 20].map(pct => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => handleUpdateMarginValue(pct)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                      effectiveMarginValue === pct
+                        ? 'bg-slate-900 text-[#00E5C0] border-slate-900'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {pct === 0 ? '0%' : `+${pct}%`}
+                  </button>
+                ))
+              ) : (
+                [0, 500, 1000, 2500, 5000].map(amt => (
+                  <button
+                    key={amt}
+                    type="button"
+                    onClick={() => handleUpdateMarginValue(amt)}
+                    className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                      effectiveMarginValue === amt
+                        ? 'bg-slate-900 text-[#00E5C0] border-slate-900'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {amt === 0 ? '0' : `+${amt.toLocaleString()}`}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Expandable Per-Product Additional Markup Panel */}
+        {showPerProductMarkupPanel && items.length > 0 && (
+          <div className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-50/50 space-y-2 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
+              <div>
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
+                  Product-Level Additional Markup (Per Quotation Item)
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Add a specific percentage or fixed markup in {currency} to individual items. Items with an individual markup use their own rule and are not double-counted by an overall percentage markup.
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-100 text-slate-600 uppercase text-[10px] font-black border-b border-slate-200">
+                  <tr>
+                    <th className="px-3.5 py-2.5">Product / Service</th>
+                    <th className="px-3.5 py-2.5 text-right">TheUnbound Base Price</th>
+                    <th className="px-3.5 py-2.5 text-center">Markup Type</th>
+                    <th className="px-3.5 py-2.5 text-right">Your Item Markup</th>
+                    <th className="px-3.5 py-2.5 text-right">Markup Added</th>
+                    <th className="px-3.5 py-2.5 text-right">Final Customer Item Price</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200/70">
+                  {items.map((it) => {
+                    const bRow = activeBreakdownItems.find(r => r.itemId === it.id);
+                    const itemBasePrice = bRow?.theUnboundBaseSellingPrice ?? roundCurrencyAmount(it.theUnboundBaseSellingPrice || it.calculation?.finalTotalSellingPrice || 0, currency);
+                    const itemMarkupType: AgentMarginType = it.agentAdditionalMarkupType || 'PERCENTAGE';
+                    const itemMarkupValue = Math.max(0, Number(it.agentAdditionalMarkupValue || 0));
+                    const itemMarkupAmount = bRow?.agentAdditionalMarkupAmount ?? (
+                      itemMarkupType === 'PERCENTAGE'
+                        ? roundCurrencyAmount(itemBasePrice * (itemMarkupValue / 100), currency)
+                        : roundCurrencyAmount(itemMarkupValue, currency)
+                    );
+                    const itemFinalCustomerPrice = bRow?.finalCustomerSellingPrice ?? roundCurrencyAmount(itemBasePrice + itemMarkupAmount, currency);
+
+                    return (
+                      <tr key={it.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-3.5 py-2.5 font-bold text-slate-900">
+                          {getInventoryDisplayName(it)}
+                          <span className="block text-[10px] font-normal text-slate-500">
+                            {it.product?.category || 'Service'}
+                          </span>
+                        </td>
+                        <td className="px-3.5 py-2.5 text-right font-mono font-bold text-slate-800">
+                          {formatCurrency(itemBasePrice, currency)}
+                        </td>
+                        <td className="px-3.5 py-2.5 text-center">
+                          <div className="inline-flex rounded-lg p-0.5 bg-slate-100 border border-slate-200">
+                            <button
+                              type="button"
+                              onClick={() => updateItemAdditionalMarkup?.(it.id, 'PERCENTAGE', itemMarkupValue)}
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer ${
+                                itemMarkupType === 'PERCENTAGE'
+                                  ? 'bg-slate-900 text-[#00E5C0]'
+                                  : 'text-slate-600'
+                              }`}
+                            >
+                              %
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateItemAdditionalMarkup?.(it.id, 'FIXED', itemMarkupValue)}
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer ${
+                                itemMarkupType === 'FIXED'
+                                  ? 'bg-slate-900 text-[#00E5C0]'
+                                  : 'text-slate-600'
+                              }`}
+                            >
+                              {currency}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-3.5 py-2.5 text-right">
+                          <div className="inline-flex items-center justify-end">
+                            <input
+                              type="number"
+                              min="0"
+                              step={itemMarkupType === 'PERCENTAGE' ? 0.5 : 50}
+                              value={itemMarkupValue}
+                              onChange={(e) => handleRawItemMarkupInputChange(it.id, itemMarkupType, e.target.value)}
+                              className="w-24 px-2.5 py-1 rounded-lg border border-slate-300 font-mono text-xs font-bold text-right text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                            />
+                          </div>
+                        </td>
+                        <td className="px-3.5 py-2.5 text-right font-mono font-bold text-teal-700">
+                          +{formatCurrency(itemMarkupAmount, currency)}
+                        </td>
+                        <td className="px-3.5 py-2.5 text-right font-mono font-black text-slate-900">
+                          {formatCurrency(itemFinalCustomerPrice, currency)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Formula Summary Bar */}
+        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+          <div className="flex items-center space-x-2">
+            <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
+            <span>
+              Price Calculation: <strong>{formatCurrency(existingFinalPrice, currency)} (TheUnbound Base Selling Price) + {formatCurrency(additionalAgentMarginAmount, currency)} (Your Additional Markup) = {formatCurrency(revisedFinalPrice, currency)} (Your Final Customer Selling Price)</strong>
+            </span>
+          </div>
+          <span className="text-[10px] font-mono font-bold text-teal-700 shrink-0">
+            Synchronized Across PDF, Email &amp; WhatsApp
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   // Detect any missing/invalid currency pair across items or breakdown
   const missingCurrencyPairsList = useMemo(() => {
@@ -1321,7 +1735,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       maxLuggage: 5,
       netCost: 150,
       currency: currency as CurrencyCode,
-      markupPercent: 15,
+      markupPercent: 0,
       specialNotes: `Day ${dayNum} ground transfer for ${adultsCount + childrenCount} Passengers.`
     });
 
@@ -1350,7 +1764,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     maxLuggage: 5,
     netCost: 150,
     currency: currency as CurrencyCode,
-    markupPercent: 15,
+    markupPercent: 0,
     specialNotes: ''
   });
 
@@ -1406,7 +1820,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       maxLuggage: 5,
       netCost: 150,
       currency: currency,
-      markupPercent: 15,
+      markupPercent: 0,
       specialNotes: ''
     });
     setIsCustomTransferModalOpen(true);
@@ -1415,7 +1829,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const handleSaveCustomTransfer = () => {
     if (!customTransferForm.routeName) return;
     const net = Number(customTransferForm.netCost) || 100;
-    const markup = Number(customTransferForm.markupPercent) || 15;
+    const markup = canViewInternalCosts ? (Number(customTransferForm.markupPercent) || 0) : 0;
 
     const customProduct: Product = {
       id: `prod-custom-transfer-${Date.now()}`,
@@ -1647,22 +2061,22 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
   const authoritativeHotelTotal = useMemo(() => {
     if (quotationScope === 'LAND_ONLY') return 0;
-    if (step7BreakdownPricing && step7BreakdownPricing.hotelAccommodationTotal !== undefined) {
-      return step7BreakdownPricing.hotelAccommodationTotal;
+    if (quoteCommercialBreakdown && quoteCommercialBreakdown.hotelAccommodationTotal !== undefined) {
+      return quoteCommercialBreakdown.hotelAccommodationTotal;
     }
     const rawTotal = items.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
     if (rawTotal > 0 && effectiveFinalPrice > 0) {
       return roundCurrencyAmount(effectiveFinalPrice * (hotelTotalSelling / rawTotal), currency);
     }
     return hotelTotalSelling;
-  }, [quotationScope, step7BreakdownPricing, items, effectiveFinalPrice, hotelTotalSelling, currency]);
+  }, [quotationScope, quoteCommercialBreakdown, items, effectiveFinalPrice, hotelTotalSelling, currency]);
 
   const authoritativeLandTotal = useMemo(() => {
-    if (step7BreakdownPricing && step7BreakdownPricing.landPartTotal !== undefined) {
-      return step7BreakdownPricing.landPartTotal;
+    if (quoteCommercialBreakdown && quoteCommercialBreakdown.landPartTotal !== undefined) {
+      return quoteCommercialBreakdown.landPartTotal;
     }
     return Math.max(0, roundCurrencyAmount(effectiveFinalPrice - authoritativeHotelTotal, currency));
-  }, [step7BreakdownPricing, effectiveFinalPrice, authoritativeHotelTotal, currency]);
+  }, [quoteCommercialBreakdown, effectiveFinalPrice, authoritativeHotelTotal, currency]);
 
   const handleSelectHotel = (hubOrder: number, hotel: Hotel, roomTypeId?: string, roomsCount: number = 1) => {
     if (onSelectHotelForHub) {
@@ -2194,10 +2608,66 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               <span className="text-[10px] font-black tracking-wider uppercase text-teal-400">
                 Live Pricing Snapshot
               </span>
-              <span className="text-xs font-mono font-bold text-slate-400">
-                {currency}
-              </span>
+              <div className="flex items-center space-x-1.5">
+                {packagePricingStatus === 'CALCULATING' && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-teal-500/20 text-teal-300 border border-teal-500/40 flex items-center space-x-1 animate-pulse">
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                    <span>CALCULATING</span>
+                  </span>
+                )}
+                {packagePricingStatus === 'SUCCESS' && sourcePackageName && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center space-x-1">
+                    <Check className="w-2.5 h-2.5" />
+                    <span>LIVE TARIFFS</span>
+                  </span>
+                )}
+                <span className="text-xs font-mono font-bold text-slate-400">
+                  {currency}
+                </span>
+              </div>
             </div>
+
+            {packagePricingStatus === 'CALCULATING' && (
+              <div className="p-2.5 rounded-xl bg-teal-950/80 border border-teal-500/60 text-teal-200 text-[11px] space-y-1">
+                <div className="font-bold text-teal-300 flex items-center space-x-1.5">
+                  <Loader2 className="w-3.5 h-3.5 text-teal-400 animate-spin shrink-0" />
+                  <span>Fetching Live Wholesale Tariffs...</span>
+                </div>
+                <p className="text-[10px] text-teal-200/80 leading-relaxed">
+                  Automatically retrieving latest product nett costs and centralized agent margins.
+                </p>
+              </div>
+            )}
+
+            {packagePricingStatus === 'ERROR' && packagePricingError && (
+              <div className="p-2.5 rounded-xl bg-rose-950/90 border border-rose-500/70 text-rose-200 text-[11px] space-y-1.5 shadow-xs">
+                <div className="font-bold text-rose-300 flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                    <span>Tariff Calculation Issue</span>
+                  </div>
+                  {onRetryPackagePricing && (
+                    <button
+                      type="button"
+                      onClick={onRetryPackagePricing}
+                      className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold text-[10px] flex items-center space-x-1 cursor-pointer transition-colors"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      <span>Retry</span>
+                    </button>
+                  )}
+                </div>
+                <p className="text-[10px] text-rose-200/90 leading-tight">
+                  {packagePricingError.message}
+                </p>
+                {packagePricingError.failedItems && packagePricingError.failedItems.length > 0 && (
+                  <div className="text-[9px] text-rose-300/80 font-mono">
+                    Failed on: {packagePricingError.failedItems.slice(0, 2).join(', ')}
+                    {packagePricingError.failedItems.length > 2 ? ` (+${packagePricingError.failedItems.length - 2} more)` : ''}
+                  </div>
+                )}
+              </div>
+            )}
 
             {hasMissingCurrencyRate && (
               <div className="p-2.5 rounded-xl bg-rose-950/80 border border-rose-500/60 text-rose-200 text-[11px] space-y-1">
@@ -2212,16 +2682,34 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             )}
 
             <div>
-              <div className="text-2xl font-black font-mono text-white">
-                {formatCurrency(effectiveFinalPrice, currency)}
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                Your Final Customer Selling Price
+              </span>
+              <div className="text-2xl font-black font-mono text-[#00E5C0] flex items-center space-x-2 mt-0.5">
+                {packagePricingStatus === 'CALCULATING' ? (
+                  <span className="text-teal-400 flex items-center space-x-2">
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    <span>Calculating...</span>
+                  </span>
+                ) : (
+                  <span>{formatCurrency(effectiveFinalPrice, currency)}</span>
+                )}
               </div>
               <p className="text-[11px] text-slate-400">
-                Guaranteed Final Price • All Inclusive
+                {packagePricingStatus === 'CALCULATING' ? 'Updating dynamic component pricing...' : 'Guaranteed Final Price • All Inclusive'}
               </p>
             </div>
 
             <div className="pt-2 border-t border-slate-800 space-y-1 text-[11px] font-mono">
               <div className="flex items-center justify-between text-slate-400">
+                <span>TheUnbound Base Price:</span>
+                <span className="text-slate-200 font-bold">{formatCurrency(existingFinalPrice, currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Your Additional Markup:</span>
+                <span className="text-teal-400 font-bold">+{formatCurrency(additionalAgentMarginAmount, currency)}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-400 pt-1 border-t border-slate-800/80">
                 <span>Hotel Accommodation:</span>
                 <span className="text-slate-200 font-bold">{formatCurrency(authoritativeHotelTotal, currency)}</span>
               </div>
@@ -2305,9 +2793,38 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <span className="font-black">Customizing Ready-Made Package:</span>{' '}
                       <span className="font-semibold text-teal-800">{sourcePackageName}</span>
                       <span className="text-teal-600 block sm:inline sm:ml-2 text-[11px]">
-                        • Changing the Start Date or Passenger Counts automatically shifts all itinerary dates &amp; recalculates live pricing.
+                        • Live wholesale pricing and centralized agent margins are calculated automatically.
                       </span>
                     </div>
+                  </div>
+                  <div className="flex items-center space-x-2 shrink-0">
+                    {packagePricingStatus === 'CALCULATING' && (
+                      <span className="px-2.5 py-1 rounded-xl bg-teal-100 text-teal-800 text-[11px] font-bold flex items-center space-x-1.5 border border-teal-300">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-600" />
+                        <span>Recalculating Tariffs...</span>
+                      </span>
+                    )}
+                    {packagePricingStatus === 'ERROR' && onRetryPackagePricing && (
+                      <button
+                        type="button"
+                        onClick={onRetryPackagePricing}
+                        className="px-2.5 py-1 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-xs"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Retry Pricing</span>
+                      </button>
+                    )}
+                    {packagePricingStatus !== 'CALCULATING' && onRetryPackagePricing && (
+                      <button
+                        type="button"
+                        onClick={onRetryPackagePricing}
+                        className="px-2.5 py-1 rounded-xl bg-white hover:bg-teal-100/80 border border-teal-300 text-teal-800 text-[11px] font-bold flex items-center space-x-1.5 transition-colors cursor-pointer"
+                        title="Force recalculate live B2B tariffs for this package"
+                      >
+                        <RefreshCw className="w-3 h-3 text-teal-600" />
+                        <span>Recalculate Tariffs</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -4102,7 +4619,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                     <div>
                       <h2 className="text-base font-black text-slate-900">Step 6: Review & Pricing</h2>
-                      <p className="text-xs text-slate-500">Live feasibility diagnostics, route coherence, day-by-day validation, and transparent pricing & margin controls.</p>
+                      <p className="text-xs text-slate-500">Live feasibility diagnostics, route coherence, day-by-day validation, and quotation pricing summary.</p>
                     </div>
                   </div>
                   <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
@@ -4366,10 +4883,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                     <div>
                       <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
-                        Commercial Pricing & Partner Margin Controls
+                        Quotation Pricing Summary
                       </h3>
                       <p className="text-[11px] text-slate-500">
-                        Authoritative wholesale supplier base, customizable agency margin, and customer-facing selling prices.
+                        Consolidated category totals and final customer-facing quotation pricing.
                       </p>
                     </div>
                   </div>
@@ -4487,57 +5004,83 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       </div>
                     </div>
 
-                    {/* FIELDS 2 TO 5: TOTAL MARGIN, TAX AMOUNT, SERVICE FEE, FINAL PACKAGE PRICE */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-                      {/* 2. Total Margin */}
+                    {/* 6-STAGE ADMIN COMMERCIAL OVERSIGHT CHAIN */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                      {/* 1. Supplier Nett Cost */}
                       <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                          2. Total Margin
+                          1. Supplier Nett Cost
+                        </span>
+                        <span className="text-xl font-black font-mono text-emerald-400 block">
+                          {formatCurrency(internalPricing.totalNettCost, currency)}
+                        </span>
+                        <p className="text-[10px] text-slate-400 leading-snug">
+                          Authoritative underlying supplier nett cost in {currency}.
+                        </p>
+                      </div>
+
+                      {/* 2. Internal Margin (Product-Level ON or Agent-Level ON) */}
+                      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                          2. Internal Margin ({isProductLevelMarginEnabled ? 'Product-Level ON' : `Agent-Level ON (${agencyPricingSettings.agentLevelMarginPercent}%)`})
                         </span>
                         <span className="text-xl font-black font-mono text-[#00E5C0] block">
-                          + {formatCurrency(internalPricing.totalMargin, currency)}
+                          + {formatCurrency(internalPricing.existingMarginAmount, currency)}
                         </span>
                         <p className="text-[10px] text-slate-400 leading-snug">
-                          Authorized DMC margin + partner margin ({effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}%` : formatCurrency(effectiveMarginValue, currency)}) net of discounts.
+                          Mutually exclusive internal margin controlled via Account Management.
                         </p>
                       </div>
 
-                      {/* 3. Tax Amount */}
+                      {/* 3. Admin Manual Margin Adjustment */}
                       <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                          3. Tax Amount
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300 block">
+                          3. Admin Manual Margin ({effectiveAdminMarginMode})
                         </span>
                         <span className="text-xl font-black font-mono text-indigo-300 block">
-                          + {formatCurrency(internalPricing.taxAmount, currency)}
+                          + {formatCurrency(internalPricing.adminManualMarginAmount, currency)}
                         </span>
                         <p className="text-[10px] text-slate-400 leading-snug">
-                          Applicable statutory taxes calculated according to existing pricing rules.
+                          Taxes: +{formatCurrency(internalPricing.taxAmount, currency)} • Service Fee: +{formatCurrency(internalPricing.serviceFee, currency)}
                         </p>
                       </div>
 
-                      {/* 4. Service Fee */}
-                      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                          4. Service Fee
+                      {/* 4. TheUnbound Base Selling Price */}
+                      <div className="bg-slate-900/90 rounded-2xl border border-slate-700 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-cyan-300 block">
+                          4. TheUnbound Base Selling Price
                         </span>
                         <span className="text-xl font-black font-mono text-cyan-300 block">
-                          + {formatCurrency(internalPricing.serviceFee, currency)}
+                          {formatCurrency(internalPricing.theUnboundBaseSellingPrice, currency)}
                         </span>
                         <p className="text-[10px] text-slate-400 leading-snug">
-                          Applicable platform service fee according to existing pricing rules.
+                          Stage 1 base selling price provided to the B2B agent.
                         </p>
                       </div>
 
-                      {/* 5. Final Package Price */}
-                      <div className="bg-slate-900/90 rounded-2xl border-2 border-teal-500/40 p-4 space-y-1.5">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-teal-400 block">
-                          5. Final Package Price
+                      {/* 5. Agent Additional Markup */}
+                      <div className="bg-slate-900/90 rounded-2xl border border-teal-500/30 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-teal-300 block">
+                          5. Agent Additional Markup
                         </span>
                         <span className="text-xl font-black font-mono text-teal-300 block">
+                          + {formatCurrency(internalPricing.totalAgentAdditionalMarkupAmount, currency)}
+                        </span>
+                        <p className="text-[10px] text-slate-400 leading-snug">
+                          Stage 2 agent-controlled markup ({effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}%` : formatCurrency(effectiveMarginValue, currency)}).
+                        </p>
+                      </div>
+
+                      {/* 6. Final Customer Selling Price */}
+                      <div className="bg-slate-900/90 rounded-2xl border-2 border-teal-500/40 p-4 space-y-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-[#00E5C0] block">
+                          6. Final Customer Selling Price
+                        </span>
+                        <span className="text-xl font-black font-mono text-white block">
                           {formatCurrency(internalPricing.finalPackagePrice, currency)}
                         </span>
                         <p className="text-[10px] text-slate-400 leading-snug">
-                          Customer-facing total produced by existing Pricing Engine.
+                          Stage 3 synchronized customer-facing price across PDF, Email &amp; WhatsApp.
                         </p>
                       </div>
                     </div>
@@ -4619,15 +5162,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 )}
 
-                {/* 3 Core Commercial Architecture Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  {/* CARD 1: SYSTEM BASE SELLING PRICE (AUTHORITATIVE) */}
+                {/* Core Quotation Pricing Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  {/* CARD 1: CATEGORY PRICE BREAKDOWN */}
                   <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-5 space-y-3.5 flex flex-col justify-between">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-800">
                           <Lock className="w-3 h-3 text-slate-600" />
-                          <span>Authoritative System Base</span>
+                          <span>Included Services Breakdown</span>
                         </span>
 
                         {/* Currency Selector */}
@@ -4644,15 +5187,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                       <div>
                         <span className="text-[11px] font-bold text-slate-500 block">
-                          Contracted Wholesale Base
+                          Category Price Breakdown
                         </span>
                         <span className="text-2xl font-black font-mono text-slate-900">
-                          {formatCurrency(effectiveBasePrice, currency)}
+                          {formatCurrency(effectiveFinalPrice, currency)}
                         </span>
                       </div>
 
                       <p className="text-[11px] text-slate-500 leading-relaxed">
-                        Calculated from wholesale inventory supplier tariffs, platform commercial markups, and taxes. Protected unmodifiable baseline.
+                        Consolidated selling prices across all scheduled itinerary services, taxes, and applicable fees.
                       </p>
                     </div>
 
@@ -4691,120 +5234,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                   </div>
 
-                  {/* CARD 2: ADDITIONAL AGENT MARGIN (CONTROLS) */}
-                  <div className="bg-white rounded-2xl border-2 border-teal-200/80 p-5 space-y-3.5 shadow-2xs flex flex-col justify-between">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-teal-50 text-teal-800 border border-teal-200">
-                          <Percent className="w-3 h-3 text-teal-600" />
-                          <span>Partner Margin Controls</span>
-                        </span>
-
-                        {/* Mode Switcher */}
-                        <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px]">
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateMarginType('PERCENTAGE')}
-                            className={`px-2 py-1 rounded-md font-bold transition-all cursor-pointer ${
-                              effectiveMarginType === 'PERCENTAGE'
-                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            %
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateMarginType('FIXED')}
-                            className={`px-2 py-1 rounded-md font-bold transition-all cursor-pointer ${
-                              effectiveMarginType === 'FIXED'
-                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            {currency}
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Margin Input Field */}
-                      <div className="space-y-1.5">
-                        <label className="text-[11px] font-bold text-slate-600 block">
-                          {effectiveMarginType === 'PERCENTAGE' ? 'Agency Markup Percentage (%)' : `Fixed Margin Amount (${currency})`}
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="number"
-                            min="0"
-                            step={effectiveMarginType === 'PERCENTAGE' ? '0.5' : '10'}
-                            value={Number.isNaN(effectiveMarginValue) ? 0 : (effectiveMarginValue ?? 0)}
-                            onChange={(e) => handleUpdateMarginValue(parseFloat(e.target.value) || 0)}
-                            className={`w-full text-base font-black font-mono text-slate-900 bg-slate-50 border rounded-xl px-3 py-2 outline-none transition-all ${
-                              isNegativeMargin ? 'border-rose-400 bg-rose-50' : 'border-slate-300 focus:border-teal-500 focus:bg-white'
-                            }`}
-                            placeholder="0"
-                          />
-                          <span className="absolute right-3 top-2.5 text-xs font-bold text-slate-400 font-mono">
-                            {effectiveMarginType === 'PERCENTAGE' ? '%' : currency}
-                          </span>
-                        </div>
-                        {isNegativeMargin && (
-                          <p className="text-[10px] font-bold text-rose-600">Margin value cannot be negative.</p>
-                        )}
-                        {isHighMargin && (
-                          <p className="text-[10px] font-bold text-amber-600">Markup exceeds 100% of base wholesale price.</p>
-                        )}
-                      </div>
-
-                      {/* Quick Presets */}
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Quick Presets</span>
-                        <div className="flex flex-wrap gap-1">
-                          {effectiveMarginType === 'PERCENTAGE' ? (
-                            [5, 10, 12, 15, 20].map(pct => (
-                              <button
-                                key={pct}
-                                type="button"
-                                onClick={() => handleUpdateMarginValue(pct)}
-                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
-                                  effectiveMarginValue === pct
-                                    ? 'bg-teal-600 text-white'
-                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                                }`}
-                              >
-                                +{pct}%
-                              </button>
-                            ))
-                          ) : (
-                            [100, 250, 500, 1000].map(amt => (
-                              <button
-                                key={amt}
-                                type="button"
-                                onClick={() => handleUpdateMarginValue(amt)}
-                                className={`px-2 py-0.5 rounded-md text-[11px] font-bold transition-colors cursor-pointer ${
-                                  effectiveMarginValue === amt
-                                    ? 'bg-teal-600 text-white'
-                                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
-                                }`}
-                              >
-                                +{formatCurrency(amt, currency)}
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Calculated Margin Subtotal */}
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                      <span className="text-slate-500 font-medium">Net Retained Margin:</span>
-                      <span className="font-mono font-black text-emerald-700">
-                        + {formatCurrency(effectiveMarginAmount, currency)} ({marginPercentageValue}%)
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* CARD 3: FINAL CUSTOMER SELLING PRICE (CLIENT-FACING) */}
+                  {/* CARD 2: FINAL CUSTOMER SELLING PRICE (CLIENT-FACING) */}
                   <div className="bg-slate-900 text-white rounded-2xl border border-slate-800 p-5 space-y-3.5 shadow-lg flex flex-col justify-between relative overflow-hidden">
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
@@ -4838,14 +5268,6 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           <span className="text-slate-400">Land Part Total:</span>
                           <span>{formatCurrency(authoritativeLandTotal, currency)}</span>
                         </div>
-                        <div className="flex justify-between pt-1 border-t border-slate-700/60">
-                          <span className="text-slate-400">Base Selling:</span>
-                          <span>{formatCurrency(effectiveBasePrice, currency)}</span>
-                        </div>
-                        <div className="flex justify-between text-[#00E5C0]">
-                          <span>Partner Margin:</span>
-                          <span>+ {formatCurrency(effectiveMarginAmount, currency)}</span>
-                        </div>
                       </div>
                     </div>
 
@@ -4856,6 +5278,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   </div>
                 </div>
               </div>
+
+                {renderYourAdditionalMarkupCard()}
 
                 {renderBrandingModeSelectorCard()}
 
@@ -5047,7 +5471,9 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         {formatCurrency(effectiveFinalPrice, currency)}
                       </div>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        Margin: +{formatCurrency(effectiveMarginAmount, currency)} ({marginPercentageValue}%)
+                        {canViewInternalCosts
+                          ? `Margin: +${formatCurrency(effectiveMarginAmount, currency)} (${marginPercentageValue}%)`
+                          : `${items.length} ${items.length === 1 ? 'service' : 'services'} priced`}
                       </p>
                     </div>
                   </div>
@@ -5167,18 +5593,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       </div>
                     </div>
 
-                    <div className="flex items-center space-x-2 text-xs font-mono text-slate-400">
-                      {canViewInternalCosts && (
-                        <>
-                          <span>Base Wholesale: {formatCurrency(effectiveBasePrice, currency)}</span>
-                          <span>•</span>
-                        </>
-                      )}
-                      <span className="text-emerald-400 font-bold">
-                        {canViewInternalCosts ? 'Agency Margin: ' : 'Your Margin: '}+
-                        {formatCurrency(effectiveMarginAmount, currency)} ({effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}%` : 'Fixed'})
-                      </span>
-                    </div>
+                    {canViewInternalCosts && (
+                      <div className="flex items-center space-x-2 text-xs font-mono text-slate-400">
+                        <span>Base Wholesale: {formatCurrency(effectiveBasePrice, currency)}</span>
+                        <span>•</span>
+                        <span className="text-emerald-400 font-bold">
+                          Agency Margin: +{formatCurrency(effectiveMarginAmount, currency)} ({effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}%` : 'Fixed'})
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -5400,188 +5823,9 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 )}
 
                 {/* ========================================================================= */}
-                {/* SECTION 2: B2B AGENT — ADDITIONAL AGENT MARGIN (ON FINAL PRICE) */}
+                {/* SECTION 2: YOUR ADDITIONAL MARKUP (B2B AGENT COMMERCIAL ADJUSTMENT) */}
                 {/* ========================================================================= */}
-                {canConfigureAgentManualMargin && (
-                  <div className="bg-white rounded-3xl border-2 border-teal-200 p-6 shadow-xs space-y-5 animate-fadeIn">
-                    <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-teal-100">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
-                          <Percent className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
-                              Additional Agent Margin
-                            </h3>
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                              {isMasterAdminUser ? 'Agency Client Markup Simulation' : 'Agency Client Markup'}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-slate-500">
-                            Calculated directly on top of the <strong>Existing Final Price</strong>{canConfigureAdminManualMargin ? ' (Final Total from Manual Margin Adjustment)' : ' produced by the central pricing engine'}.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs font-bold text-slate-600">Markup Basis:</span>
-                        <span className="px-2.5 py-1 rounded-xl bg-slate-100 border border-slate-200 text-xs font-mono font-bold text-slate-800">
-                          Existing Final Price
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Display Fields Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-                      {/* Field 1: Existing Final Price */}
-                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
-                          Existing Final Price
-                        </span>
-                        <span className="text-sm font-black font-mono text-slate-900 block mt-1">
-                          {formatCurrency(existingFinalPrice, currency)}
-                        </span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Authoritative base before agent markup</span>
-                      </div>
-
-                      {/* Field 2: Additional Margin Amount */}
-                      <div className="p-3.5 rounded-2xl bg-teal-50/60 border border-teal-200">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-teal-700 block">
-                          Additional Margin Amount
-                        </span>
-                        <span className="text-sm font-black font-mono text-teal-900 block mt-1">
-                          +{formatCurrency(additionalAgentMarginAmount, currency)}
-                        </span>
-                        <span className="text-[10px] text-teal-600 block mt-0.5">
-                          {effectiveMarginType === 'PERCENTAGE' ? `${effectiveMarginValue}% markup` : 'Fixed additional amount'}
-                        </span>
-                      </div>
-
-                      {/* Field 3: Revised Final Price */}
-                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 block">
-                          Revised Final Price
-                        </span>
-                        <span className="text-sm font-black font-mono text-slate-900 block mt-1">
-                          {formatCurrency(revisedFinalPrice, currency)}
-                        </span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Existing Final Price + Additional Margin</span>
-                      </div>
-
-                      {/* Field 4: Final Quote Total */}
-                      <div className="p-3.5 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-800 text-white border border-slate-700 shadow-sm">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-[#00E5C0] block">
-                          Final Quote Total
-                        </span>
-                        <span className="text-base font-black font-mono text-white block mt-1">
-                          {formatCurrency(revisedFinalPrice, currency)}
-                        </span>
-                        <span className="text-[10px] text-slate-300 block mt-0.5">
-                          {formatCurrency(Math.round(revisedFinalPrice / totalPax), currency)} / traveler
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Controls Row */}
-                    <div className="p-4 rounded-2xl bg-teal-50/40 border border-teal-100 flex flex-wrap items-center justify-between gap-4">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="text-xs font-bold text-slate-700">Manual Margin Type:</span>
-                        <div className="inline-flex rounded-xl p-0.5 bg-white border border-slate-200 shadow-2xs">
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateMarginType('PERCENTAGE')}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
-                              effectiveMarginType === 'PERCENTAGE'
-                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            <Percent className="w-3.5 h-3.5" />
-                            <span>Percentage (%)</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleUpdateMarginType('FIXED')}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1 ${
-                              effectiveMarginType === 'FIXED'
-                                ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            <DollarSign className="w-3.5 h-3.5" />
-                            <span>Fixed Amount ({currency})</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-3">
-                        <span className="text-xs font-bold text-slate-700">Margin Value:</span>
-                        <div className="relative w-36">
-                          <input
-                            type="number"
-                            min="0"
-                            max={effectiveMarginType === 'PERCENTAGE' ? 100 : undefined}
-                            step={effectiveMarginType === 'PERCENTAGE' ? 0.5 : 100}
-                            value={Number.isNaN(effectiveMarginValue) ? 0 : (effectiveMarginValue ?? 0)}
-                            onChange={(e) => handleUpdateMarginValue(parseFloat(e.target.value) || 0)}
-                            className="w-full pl-3 pr-8 py-1.5 rounded-xl border border-slate-300 font-mono text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 shadow-2xs"
-                          />
-                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                            {effectiveMarginType === 'PERCENTAGE' ? '%' : currency}
-                          </span>
-                        </div>
-
-                        {/* Quick Presets */}
-                        <div className="hidden sm:flex items-center space-x-1">
-                          {effectiveMarginType === 'PERCENTAGE' ? (
-                            [0, 5, 10, 15, 20].map(pct => (
-                              <button
-                                key={pct}
-                                type="button"
-                                onClick={() => handleUpdateMarginValue(pct)}
-                                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
-                                  effectiveMarginValue === pct
-                                    ? 'bg-slate-900 text-[#00E5C0] border-slate-900'
-                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                }`}
-                              >
-                                {pct}%
-                              </button>
-                            ))
-                          ) : (
-                            [0, 5000, 10000, 20000].map(amt => (
-                              <button
-                                key={amt}
-                                type="button"
-                                onClick={() => handleUpdateMarginValue(amt)}
-                                className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
-                                  effectiveMarginValue === amt
-                                    ? 'bg-slate-900 text-[#00E5C0] border-slate-900'
-                                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                                }`}
-                              >
-                                {amt === 0 ? '0' : `+${amt >= 1000 ? `${amt / 1000}k` : amt}`}
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
-                      <div className="flex items-center space-x-2">
-                        <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
-                        <span>
-                          Calculation Formula: <strong>{formatCurrency(existingFinalPrice, currency)} (Existing Final Price) + {formatCurrency(additionalAgentMarginAmount, currency)} (Additional Margin) = {formatCurrency(revisedFinalPrice, currency)} Revised Final Price</strong>. Does not trigger recalculation of underlying costs.
-                        </span>
-                      </div>
-                      <span className="text-[10px] font-mono font-bold text-slate-400 shrink-0 ml-2">
-                        Client Dispatch Total
-                      </span>
-                    </div>
-                  </div>
-                )}
+                {renderYourAdditionalMarkupCard()}
 
                 {renderBrandingModeSelectorCard()}
 
@@ -5625,6 +5869,45 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       Choose an output format or dispatch channel. All actions compile authoritatively from this quotation snapshot.
                     </p>
                   </div>
+
+                  {packagePricingStatus === 'CALCULATING' && (
+                    <div className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 text-teal-900 text-xs flex items-center space-x-3">
+                      <Loader2 className="w-5 h-5 animate-spin text-teal-600 shrink-0" />
+                      <div>
+                        <span className="font-black text-teal-950">Calculating Live Tariffs...</span>
+                        <p className="text-[11px] text-teal-700 mt-0.5">
+                          Package selling prices are being updated using current product costs and centralized margins. Actions will activate as soon as calculation completes.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {packagePricingStatus === 'ERROR' && packagePricingError && (
+                    <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center space-x-2.5">
+                        <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                        <div>
+                          <span className="font-black text-rose-950">Tariff calculation failed:</span>
+                          <span className="text-rose-700 ml-1.5">{packagePricingError.message}</span>
+                          {packagePricingError.failedItems && packagePricingError.failedItems.length > 0 && (
+                            <div className="text-[10px] text-rose-600 font-mono mt-0.5">
+                              Affected: {packagePricingError.failedItems.join(', ')}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {onRetryPackagePricing && (
+                        <button
+                          type="button"
+                          onClick={onRetryPackagePricing}
+                          className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 transition-colors cursor-pointer flex items-center space-x-1.5 shadow-xs"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Retry Calculation</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     {/* Action 1: Save Draft */}
@@ -5678,10 +5961,19 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <button
                         type="button"
                         onClick={onPreviewQuotation}
-                        className="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                        disabled={packagePricingStatus === 'CALCULATING'}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-black transition-colors flex items-center justify-center space-x-1.5 shadow-xs ${
+                          packagePricingStatus === 'CALCULATING'
+                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                            : 'bg-slate-900 hover:bg-slate-800 text-[#00E5C0] cursor-pointer'
+                        }`}
                       >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Open Proposal Preview</span>
+                        {packagePricingStatus === 'CALCULATING' ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Eye className="w-3.5 h-3.5" />
+                        )}
+                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Open Proposal Preview'}</span>
                       </button>
                     </div>
 
@@ -5704,10 +5996,19 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <button
                         type="button"
                         onClick={onDownloadPDF}
-                        className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                        disabled={packagePricingStatus === 'CALCULATING'}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-xs ${
+                          packagePricingStatus === 'CALCULATING'
+                            ? 'bg-indigo-300 text-white cursor-not-allowed'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'
+                        }`}
                       >
-                        <Download className="w-3.5 h-3.5" />
-                        <span>Export PDF Proposal</span>
+                        {packagePricingStatus === 'CALCULATING' ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
+                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Export PDF Proposal'}</span>
                       </button>
                     </div>
 
@@ -5730,10 +6031,19 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <button
                         type="button"
                         onClick={onOpenEmailModal}
-                        className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                        disabled={packagePricingStatus === 'CALCULATING'}
+                        className={`w-full py-2 px-3 rounded-xl border text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-2xs ${
+                          packagePricingStatus === 'CALCULATING'
+                            ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                            : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-800 cursor-pointer'
+                        }`}
                       >
-                        <Mail className="w-3.5 h-3.5" />
-                        <span>Dispatch Email</span>
+                        {packagePricingStatus === 'CALCULATING' ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Mail className="w-3.5 h-3.5" />
+                        )}
+                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Dispatch Email'}</span>
                       </button>
                     </div>
 
@@ -5756,10 +6066,19 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <button
                         type="button"
                         onClick={onShareWhatsApp}
-                        className="w-full py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-xs"
+                        disabled={packagePricingStatus === 'CALCULATING'}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-xs ${
+                          packagePricingStatus === 'CALCULATING'
+                            ? 'bg-emerald-300 text-white cursor-not-allowed'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
+                        }`}
                       >
-                        <MessageCircle className="w-3.5 h-3.5" />
-                        <span>Share on WhatsApp</span>
+                        {packagePricingStatus === 'CALCULATING' ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <MessageCircle className="w-3.5 h-3.5" />
+                        )}
+                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Share on WhatsApp'}</span>
                       </button>
                     </div>
 
@@ -6101,43 +6420,68 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               </div>
 
               {/* Pricing calculation row */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Wholesale Net Cost</label>
-                  <div className="flex items-center space-x-1">
-                    <span className="text-xs font-bold text-slate-500 font-mono">{customTransferForm.currency}</span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={customTransferForm.netCost ?? 0}
-                      onChange={(e) => setCustomTransferForm(prev => ({ ...prev, netCost: Number(e.target.value) || 0 }))}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 font-mono"
-                    />
+              {canViewInternalCosts ? (
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Wholesale Net Cost</label>
+                    <div className="flex items-center space-x-1">
+                      <span className="text-xs font-bold text-slate-500 font-mono">{customTransferForm.currency}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={customTransferForm.netCost ?? 0}
+                        onChange={(e) => setCustomTransferForm(prev => ({ ...prev, netCost: Number(e.target.value) || 0 }))}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 font-mono"
+                      />
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-600 mb-1">Markup %</label>
-                  <div className="flex items-center space-x-1">
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={customTransferForm.markupPercent ?? 0}
-                      onChange={(e) => setCustomTransferForm(prev => ({ ...prev, markupPercent: Number(e.target.value) || 0 }))}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 font-mono"
-                    />
-                    <span className="text-xs font-bold text-slate-500">%</span>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Markup %</label>
+                    <div className="flex items-center space-x-1">
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        value={customTransferForm.markupPercent ?? 0}
+                        onChange={(e) => setCustomTransferForm(prev => ({ ...prev, markupPercent: Number(e.target.value) || 0 }))}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 font-mono"
+                      />
+                      <span className="text-xs font-bold text-slate-500">%</span>
+                    </div>
                   </div>
-                </div>
 
-                <div>
-                  <div className="text-[10px] text-slate-500 font-bold uppercase">Client Selling Price</div>
-                  <div className="text-sm font-black text-teal-700 font-mono">
-                    {formatCurrency(Math.round(customTransferForm.netCost * (1 + customTransferForm.markupPercent / 100)), customTransferForm.currency)}
+                  <div>
+                    <div className="text-[10px] text-slate-500 font-bold uppercase">Client Selling Price</div>
+                    <div className="text-sm font-black text-teal-700 font-mono">
+                      {formatCurrency(Math.round(customTransferForm.netCost * (1 + customTransferForm.markupPercent / 100)), customTransferForm.currency)}
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">Transfer Selling Price ({customTransferForm.currency}) *</label>
+                    <div className="flex items-center space-x-1">
+                      <span className="text-xs font-bold text-slate-500 font-mono">{customTransferForm.currency}</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={customTransferForm.netCost ?? 0}
+                        onChange={(e) => setCustomTransferForm(prev => ({ ...prev, netCost: Number(e.target.value) || 0, markupPercent: 0 }))}
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-900 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="text-[10px] text-slate-500 font-bold uppercase">Transfer Selling Price</div>
+                    <div className="text-sm font-black text-teal-700 font-mono">
+                      {formatCurrency(Math.round(customTransferForm.netCost || 0), customTransferForm.currency)}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Dispatch Notes & Special Requests</label>

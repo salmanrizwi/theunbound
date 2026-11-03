@@ -6,9 +6,10 @@ import {
   QuoteItem, 
   Booking, 
   PricingCalculationResult, 
-  AgentPricingResponse 
+  AgentPricingResponse,
+  B2BPackage
 } from '../types';
-import { formatCurrency, roundCurrencyAmount } from '../services/pricingEngine';
+import { formatCurrency, roundCurrencyAmount, calculateQuoteTotal } from '../services/pricingEngine';
 
 export interface CustomerSanitizedQuote {
   quoteId: string;
@@ -153,13 +154,16 @@ export function sanitizeQuoteForCustomer(
     }
   }
 
-  // Authoritative Final Selling Price
+  // Authoritative Final Selling Price via central pricing engine
+  const centralTotals = calculateQuoteTotal(quote, activeOption?.id, undefined, quote.currency);
   const finalPrice = roundCurrencyAmount(
-    (selectedOptionIndexOrId === undefined && (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price) !== undefined)
-      ? (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price)!
-      : (activeOption?.totalSellingPrice !== undefined
-          ? activeOption.totalSellingPrice
-          : (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price ?? quote.totalSellingPrice ?? 0)),
+    centralTotals.finalCustomerSellingPrice > 0
+      ? centralTotals.finalCustomerSellingPrice
+      : ((selectedOptionIndexOrId === undefined && (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price) !== undefined)
+          ? (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price)!
+          : (activeOption?.totalSellingPrice !== undefined
+              ? activeOption.totalSellingPrice
+              : (quote.finalCustomerSellingPrice ?? quote.final_customer_selling_price ?? quote.totalSellingPrice ?? 0))),
     quote.currency
   );
 
@@ -539,6 +543,12 @@ export function sanitizeQuoteItemForAgent(item: QuoteItem): QuoteItem {
   if (!item) return item;
   const clone: QuoteItem = JSON.parse(JSON.stringify(item));
 
+  delete (clone as any).totalNetCost;
+  delete (clone as any).internalNettCost;
+  delete (clone as any).supplierCost;
+  delete (clone as any).internalMarkup;
+  delete (clone as any).internalProfit;
+
   if (clone.product) {
     clone.product = sanitizeProductForAgent(clone.product);
   }
@@ -553,6 +563,11 @@ export function sanitizeQuoteItemForAgent(item: QuoteItem): QuoteItem {
     delete (clone.manualHotelDetails as any).supplierCost;
   }
 
+  // Ensure non-negative agent additional markup if present
+  if (clone.agentAdditionalMarkupValue !== undefined) {
+    clone.agentAdditionalMarkupValue = Math.max(0, Number(clone.agentAdditionalMarkupValue) || 0);
+  }
+
   return clone;
 }
 
@@ -560,46 +575,58 @@ export function sanitizeQuoteItemForAgent(item: QuoteItem): QuoteItem {
  * Sanitizes a Quotation object into a pure Agent-facing representation.
  * STRICT SECURITY:
  * - Deletes totalNetCost, totalMargin, internalNettCost, internalMarkup, agentMarkup, internalProfit.
- * - Deletes private operational notes and rate snapshots.
- * - Sanitizes all items and options to remove net costs.
+ * - Deletes internal margin configuration (productLevelMarginEnabled, activeMarginMode, agentLevelMarginPercent, adminManualMargin*).
+ * - Preserves the B2B Agent's own "Your Additional Markup" fields (theUnboundBaseSellingPrice, baseFinalSellingPrice, agentMarginType, agentMarginValue, agentMarginAmount, productLevelAgentMarkupTotal, overallAgentMarkupAmount, totalAgentAdditionalMarkupAmount, finalCustomerSellingPrice, adminBasePriceUpdatedNotification).
  */
 export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
   if (!quote) return quote;
   const clone: Quotation = JSON.parse(JSON.stringify(quote));
 
-  // Authoritative Agent-Facing Pricing Preservation (Section 5 & 8)
-  const baseFinalSellingPrice = roundCurrencyAmount(
-    clone.baseFinalSellingPrice ?? clone.base_final_selling_price ?? clone.totalSellingPrice,
+  const centralTotals = calculateQuoteTotal(clone, clone.activeOptionId, undefined, clone.currency);
+  const theUnboundBaseSellingPrice = roundCurrencyAmount(
+    centralTotals.theUnboundBaseSellingPrice > 0
+      ? centralTotals.theUnboundBaseSellingPrice
+      : (clone.theUnboundBaseSellingPrice ?? clone.baseFinalSellingPrice ?? clone.base_final_selling_price ?? clone.totalSellingPrice ?? 0),
     clone.currency
   );
   const agentMarginType = clone.agentMarginType ?? clone.agent_margin_type ?? 'PERCENTAGE';
-  const agentMarginValue = clone.agentMarginValue ?? clone.agent_margin_value ?? (clone.overallMarkupPercent ?? 0);
-  const agentMarginAmount = clone.agentMarginAmount ?? clone.agent_margin_amount ?? (
-    agentMarginType === 'PERCENTAGE'
-      ? roundCurrencyAmount(baseFinalSellingPrice * (agentMarginValue / 100), clone.currency)
-      : roundCurrencyAmount(agentMarginValue, clone.currency)
+  const rawAgentMarginValue = Number(clone.agentMarginValue ?? clone.agent_margin_value ?? (clone.overallMarkupPercent ?? 0));
+  const agentMarginValue = Number.isFinite(rawAgentMarginValue) && rawAgentMarginValue > 0 ? rawAgentMarginValue : 0;
+  const agentMarginAmount = roundCurrencyAmount(
+    centralTotals.markupAmount > 0
+      ? centralTotals.markupAmount
+      : (clone.agentMarginAmount ?? clone.agent_margin_amount ?? (
+          agentMarginType === 'PERCENTAGE'
+            ? roundCurrencyAmount(theUnboundBaseSellingPrice * (agentMarginValue / 100), clone.currency)
+            : roundCurrencyAmount(agentMarginValue, clone.currency)
+        )),
+    clone.currency
   );
   const finalCustomerSellingPrice = roundCurrencyAmount(
-    clone.finalCustomerSellingPrice ?? clone.final_customer_selling_price ?? (baseFinalSellingPrice + agentMarginAmount),
+    centralTotals.finalCustomerSellingPrice > 0
+      ? centralTotals.finalCustomerSellingPrice
+      : Math.max(theUnboundBaseSellingPrice, (clone.finalCustomerSellingPrice ?? clone.final_customer_selling_price ?? (theUnboundBaseSellingPrice + agentMarginAmount))),
     clone.currency
   );
 
-  // Set Agent-facing fields explicitly
-  clone.baseFinalSellingPrice = baseFinalSellingPrice;
-  clone.base_final_selling_price = baseFinalSellingPrice;
-  clone.baseFinalSellingPriceCurrency = clone.baseFinalSellingPriceCurrency || clone.currency;
-  clone.base_final_selling_price_currency = clone.base_final_selling_price_currency || clone.currency;
+  // Set authoritative agent-facing & customer-facing pricing fields
+  clone.theUnboundBaseSellingPrice = theUnboundBaseSellingPrice;
+  clone.baseFinalSellingPrice = theUnboundBaseSellingPrice;
+  clone.base_final_selling_price = theUnboundBaseSellingPrice;
   clone.agentMarginType = agentMarginType;
   clone.agent_margin_type = agentMarginType;
   clone.agentMarginValue = agentMarginValue;
   clone.agent_margin_value = agentMarginValue;
   clone.agentMarginAmount = agentMarginAmount;
   clone.agent_margin_amount = agentMarginAmount;
+  clone.productLevelAgentMarkupTotal = centralTotals.productLevelAgentMarkupTotal;
+  clone.overallAgentMarkupAmount = centralTotals.overallAgentMarkupAmount;
+  clone.totalAgentAdditionalMarkupAmount = agentMarginAmount;
   clone.finalCustomerSellingPrice = finalCustomerSellingPrice;
   clone.final_customer_selling_price = finalCustomerSellingPrice;
   clone.totalSellingPrice = finalCustomerSellingPrice;
 
-  // Strict Security Isolation: Strip internal commercial totals, rates, and supplier data (Section 5)
+  // Strict Security Isolation: Strip internal commercial totals, internal margin mechanisms, rates, and supplier data
   delete (clone as any).totalNetCost;
   delete (clone as any).totalMargin;
   delete (clone as any).internalNettCost;
@@ -622,6 +649,10 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
   delete (clone as any).admin_margin_mode;
   delete (clone as any).revisedSellingPrice;
   delete (clone as any).revised_selling_price;
+  delete (clone as any).pricingSettings;
+  delete (clone as any).productLevelMarginEnabled;
+  delete (clone as any).activeMarginMode;
+  delete (clone as any).agentLevelMarginPercent;
   if (clone.pricingSnapshot) {
     delete (clone.pricingSnapshot as any).adminManualMarginType;
     delete (clone.pricingSnapshot as any).adminManualMarginValue;
@@ -629,6 +660,16 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
     delete (clone.pricingSnapshot as any).adminMarginMode;
     delete (clone.pricingSnapshot as any).revisedSellingPrice;
     delete (clone.pricingSnapshot as any).totalNettCost;
+    clone.pricingSnapshot.theUnboundBaseSellingPrice = theUnboundBaseSellingPrice;
+    clone.pricingSnapshot.baseFinalSellingPrice = theUnboundBaseSellingPrice;
+    clone.pricingSnapshot.agentMarginType = agentMarginType;
+    clone.pricingSnapshot.agentMarginValue = agentMarginValue;
+    clone.pricingSnapshot.agentMarginAmount = agentMarginAmount;
+    clone.pricingSnapshot.productLevelAgentMarkupTotal = centralTotals.productLevelAgentMarkupTotal;
+    clone.pricingSnapshot.overallAgentMarkupAmount = centralTotals.overallAgentMarkupAmount;
+    clone.pricingSnapshot.totalAgentAdditionalMarkupAmount = agentMarginAmount;
+    clone.pricingSnapshot.finalCustomerSellingPrice = finalCustomerSellingPrice;
+    clone.pricingSnapshot.totalSellingPrice = finalCustomerSellingPrice;
   }
   if ((clone as any).pricing_snapshot) {
     delete ((clone as any).pricing_snapshot as any).adminManualMarginType;
@@ -654,6 +695,7 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
       delete (optClone as any).internalMarkup;
       delete (optClone as any).internalProfit;
       delete (optClone as any).supplierCost;
+      delete (optClone as any).agentMarkupPercent;
       if (optClone.items && Array.isArray(optClone.items)) {
         optClone.items = optClone.items.map(sanitizeQuoteItemForAgent);
       }
@@ -789,6 +831,36 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
   clone.finalCustomerSellingPrice = finalPrice;
   (clone as any).final_customer_selling_price = finalPrice;
 
+  // Strip all agent markup & base selling price fields from end-customer document
+  delete (clone as any).theUnboundBaseSellingPrice;
+  delete (clone as any).baseFinalSellingPrice;
+  delete (clone as any).base_final_selling_price;
+  delete (clone as any).baseFinalSellingPriceCurrency;
+  delete (clone as any).base_final_selling_price_currency;
+  delete (clone as any).agentMarginType;
+  delete (clone as any).agent_margin_type;
+  delete (clone as any).agentMarginValue;
+  delete (clone as any).agent_margin_value;
+  delete (clone as any).agentMarginAmount;
+  delete (clone as any).agent_margin_amount;
+  delete (clone as any).productLevelAgentMarkupTotal;
+  delete (clone as any).overallAgentMarkupAmount;
+  delete (clone as any).totalAgentAdditionalMarkupAmount;
+  delete (clone as any).overallMarkupPercent;
+  delete (clone as any).adminBasePriceUpdatedNotification;
+  if (clone.pricingSnapshot) {
+    delete (clone.pricingSnapshot as any).theUnboundBaseSellingPrice;
+    delete (clone.pricingSnapshot as any).baseFinalSellingPrice;
+    delete (clone.pricingSnapshot as any).agentMarginType;
+    delete (clone.pricingSnapshot as any).agentMarginValue;
+    delete (clone.pricingSnapshot as any).agentMarginAmount;
+    delete (clone.pricingSnapshot as any).productLevelAgentMarkupTotal;
+    delete (clone.pricingSnapshot as any).overallAgentMarkupAmount;
+    delete (clone.pricingSnapshot as any).totalAgentAdditionalMarkupAmount;
+    delete (clone.pricingSnapshot as any).overallMarkupPercent;
+    delete (clone.pricingSnapshot as any).adminBasePriceUpdatedNotification;
+  }
+
   // Sanitize items so no item-level pricing or calculations leak
   if (clone.items && Array.isArray(clone.items)) {
     clone.items = clone.items.map(it => {
@@ -799,6 +871,11 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
       delete (itClone as any).finalTotalSellingPrice;
       delete (itClone as any).sellingPriceFinal;
       delete (itClone as any).unitSellingPrice;
+      delete (itClone as any).theUnboundBaseSellingPrice;
+      delete (itClone as any).agentAdditionalMarkupType;
+      delete (itClone as any).agentAdditionalMarkupValue;
+      delete (itClone as any).agentAdditionalMarkupAmount;
+      delete (itClone as any).finalCustomerSellingPrice;
       if (itClone.manualHotelDetails) {
         delete (itClone.manualHotelDetails as any).costPerNight;
         delete (itClone.manualHotelDetails as any).sellingPrice;
@@ -821,6 +898,11 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
           delete (itClone as any).finalTotalSellingPrice;
           delete (itClone as any).sellingPriceFinal;
           delete (itClone as any).unitSellingPrice;
+          delete (itClone as any).theUnboundBaseSellingPrice;
+          delete (itClone as any).agentAdditionalMarkupType;
+          delete (itClone as any).agentAdditionalMarkupValue;
+          delete (itClone as any).agentAdditionalMarkupAmount;
+          delete (itClone as any).finalCustomerSellingPrice;
           return itClone;
         });
       }
@@ -831,3 +913,52 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
   return clone;
 }
 
+/**
+ * Strips confidential supplier nett costs, wholesale nett baselines, internal margin percentages,
+ * and commercial audit records from a Ready-Made Package record before returning to B2B Agents or public viewers.
+ */
+export function sanitizePackageForAgent(pkg: B2BPackage): B2BPackage {
+  if (!pkg) return pkg;
+  const clone: B2BPackage = JSON.parse(JSON.stringify(pkg));
+
+  // Strip top-level nett costs
+  delete (clone as any).baseNetCostUSD;
+  delete (clone as any).internalCostBreakdown;
+  delete (clone as any).supplierCosts;
+
+  // Sanitize pricingConfiguration to remove manual markups and nett base costs
+  if (clone.pricingConfiguration) {
+    delete (clone.pricingConfiguration as any).baseNetCostUSD;
+    delete (clone.pricingConfiguration as any).b2bMarkupPercent;
+    delete (clone.pricingConfiguration as any).buyerMarkupPercent;
+  }
+
+  // Sanitize manual hotels if any
+  if (Array.isArray(clone.manualHotels)) {
+    clone.manualHotels = clone.manualHotels.map(mh => {
+      const mhClone = { ...mh };
+      delete (mhClone as any).ratePerNight;
+      delete (mhClone as any).netCost;
+      delete (mhClone as any).totalSellingPrice;
+      delete (mhClone as any).costPerNight;
+      return mhClone;
+    });
+  }
+
+  // Sanitize routeHubs manual hotels
+  if (Array.isArray(clone.routeHubs)) {
+    clone.routeHubs = clone.routeHubs.map(rh => {
+      const rhClone = { ...rh };
+      if (rhClone.manualHotel) {
+        const mh = { ...rhClone.manualHotel };
+        delete (mh as any).ratePerNight;
+        delete (mh as any).netCost;
+        delete (mh as any).totalSellingPrice;
+        rhClone.manualHotel = mh;
+      }
+      return rhClone;
+    });
+  }
+
+  return clone;
+}

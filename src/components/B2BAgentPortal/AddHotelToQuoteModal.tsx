@@ -514,7 +514,25 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
             <div className="space-y-2">
               {roomTypes.map((room) => {
                 const isSelected = room.id === selectedRoomId;
-                const sellingRateUSD = (room as any).startingSellingRateUSD || (room.rates?.[0] as any)?.sellingRateUSD || Math.round(((room.rates?.[0]?.adultNettCost || room.rates?.[0]?.doubleNetRate || 380) * 1.3));
+                const roomStayCalc = calculateHotelStayPrice({
+                  hotel,
+                  roomType: room,
+                  rate: room.rates?.[0],
+                  checkInDate,
+                  nights: 1,
+                  roomsCount: 1,
+                  adults: Math.min(2, Math.max(1, adults)),
+                  children: 0,
+                  extraBeds: 0,
+                  targetCurrency: currency
+                });
+                const roomNightlySellingInCurrency = roomStayCalc.pricePerNightSelling > 0
+                  ? roomStayCalc.pricePerNightSelling
+                  : convertCurrency(
+                      (room as any).startingSellingRateUSD || (room.rates?.[0] as any)?.sellingRateUSD || 380,
+                      ((room as any).currency || room.rates?.[0]?.currency || hotel.currency || 'USD') as CurrencyCode,
+                      currency
+                    );
                 return (
                   <div
                     key={room.id}
@@ -553,7 +571,7 @@ export const AddHotelToQuoteModal: React.FC<AddHotelToQuoteModalProps> = ({
 
                     <div className="text-right pl-6 sm:pl-0 shrink-0">
                       <div className="text-xs font-black font-mono text-slate-900">
-                        {formatCurrency(convertCurrency(sellingRateUSD, 'USD', currency), currency)} <span className="text-[10px] font-normal text-slate-500">/ night</span>
+                        {formatCurrency(roomNightlySellingInCurrency, currency)} <span className="text-[10px] font-normal text-slate-500">/ night</span>
                       </div>
                       <span className="text-[10px] text-emerald-600 font-bold">
                         Guaranteed Tariff

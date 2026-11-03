@@ -3,7 +3,7 @@ import { Product, Quotation, CurrencyCode, User, Booking, BookingItem, B2BPackag
 import { AppDatabase } from '../services/db';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
-import { formatCurrency, calculateProductPrice, convertCurrency } from '../services/pricingEngine';
+import { formatCurrency, calculateProductPrice, convertCurrency, calculatePackagePrice } from '../services/pricingEngine';
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { googleCalendarAutomation } from '../services/googleCalendarAutomationService';
 import { 
@@ -145,17 +145,22 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   const isB2BAgent = currentUser && (currentUser.role === 'B2B_AGENT' || currentUser.role === 'AGENT' || currentUser.role === 'ADMIN');
 
-  // Calculate pricing for package
-  const packageBaseNetUSD = packageItem?.baseNetCostUSD || 2500;
-  const packageRetailUSD = packageItem?.suggestedSellingPriceUSD || Math.round(packageBaseNetUSD * 1.3);
-  const packageB2BUSD = Math.round(packageBaseNetUSD * (1 + (packageItem?.pricingConfiguration?.b2bMarkupPercent || 12) / 100));
+  // Calculate pricing for package using Centralized Pricing Engine
+  const packagePricingResult = packageItem ? calculatePackagePrice({
+    packageItem,
+    adults,
+    children,
+    infants,
+    travelDate,
+    targetCurrency: currency,
+    userRole: currentUser?.role || 'B2B_AGENT',
+    user: currentUser
+  }) : null;
 
-  const packagePerPaxPriceUSD = isB2BAgent ? packageB2BUSD : packageRetailUSD;
-  const packagePerPaxPrice = convertCurrency(packagePerPaxPriceUSD, 'USD', currency);
-  const packagePerPaxNet = convertCurrency(packageBaseNetUSD, 'USD', currency);
-
-  const packageTotalAmount = (packagePerPaxPrice * adults) + (packagePerPaxPrice * 0.75 * children);
-  const packageTotalNetCost = (packagePerPaxNet * adults) + (packagePerPaxNet * 0.75 * children);
+  const packagePerPaxPrice = packagePricingResult?.pricePerPerson || 0;
+  const packageTotalAmount = packagePricingResult?.finalSellingPrice || (packagePerPaxPrice * adults);
+  const packageTotalNetCost = packagePricingResult?.internalAudit?.totalNetCostTarget || 0;
+  const packagePerPaxNet = (adults + children + infants) > 0 ? Math.round(packageTotalNetCost / (adults + children + infants)) : 0;
 
   // Calculate pricing for single product
   const singleProductCalculation = product ? calculateProductPrice(product, {
@@ -537,7 +542,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                         <div>
                           <span>{addon.name}</span>
                           <span className="block text-[10px] text-slate-500 font-normal">
-                            +{formatCurrency(addon.pricePerPax, currency)} / pax
+                            +{formatCurrency(convertCurrency(addon.pricePerPax, (addon.currency || product.currency || 'USD') as CurrencyCode, currency), currency)} / pax
                           </span>
                         </div>
                         <input

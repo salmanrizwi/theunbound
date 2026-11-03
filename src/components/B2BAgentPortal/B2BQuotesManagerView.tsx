@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { Quotation, QuoteStatus, CurrencyCode } from '../../types';
 import { AppDatabase } from '../../services/db';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { ProposalDocumentView } from '../ProposalDocumentView';
@@ -239,12 +239,26 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
-                      {formatCurrency(quote.totalSellingPrice, quote.currency || currency)}
+                      {formatCurrency(
+                        convertCurrency(
+                          Number(quote.pricingSnapshot?.finalCustomerSellingPrice ?? quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0),
+                          (quote.currency || quote.pricingSnapshot?.currency || 'USD') as CurrencyCode,
+                          currency
+                        ),
+                        currency
+                      )}
                     </td>
 
                     {(user?.role === 'ADMIN' || user?.role === 'DMC_STAFF') && (
                       <td className="py-3.5 px-4 font-mono text-emerald-600 font-semibold">
-                        +{formatCurrency(quote.totalMarginAmount || (quote.totalSellingPrice * 0.15), quote.currency || currency)}
+                        +{formatCurrency(
+                          convertCurrency(
+                            Number(quote.totalMarginAmount || (quote.totalSellingPrice * 0.15)),
+                            (quote.currency || quote.pricingSnapshot?.currency || 'USD') as CurrencyCode,
+                            currency
+                          ),
+                          currency
+                        )}
                       </td>
                     )}
 

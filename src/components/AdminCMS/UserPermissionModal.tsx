@@ -12,6 +12,7 @@ import {
   isMasterAdmin, 
   canRevokeAdminPermissions 
 } from '../../services/permissionEngine';
+import { AppDatabase } from '../../services/db';
 import { 
   X, 
   Shield, 
@@ -100,8 +101,18 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
   const [iataOrAbtaNumber, setIataOrAbtaNumber] = useState<string>(user?.iataOrAbtaNumber || '');
   const [brandLogoUrl, setBrandLogoUrl] = useState<string>(user?.brandLogoUrl || user?.logoUrl || '');
 
-  const [buyerMargin, setBuyerMargin] = useState<number>(user?.customBuyerMarginPercent ?? 25);
-  const [agentMargin, setAgentMargin] = useState<number>(user?.customAgentMarginPercent ?? 10);
+  const db = AppDatabase.getInstance();
+  const initialAgencySettings = user ? db.resolveAgencyPricingSettings({ user }) : {
+    productLevelMarginEnabled: true,
+    activeMarginMode: 'PRODUCT_LEVEL' as const,
+    agentLevelMarginPercent: 0
+  };
+  const [productLevelMarginEnabled, setProductLevelMarginEnabled] = useState<boolean>(
+    initialAgencySettings.productLevelMarginEnabled !== false
+  );
+  const [agentMargin, setAgentMargin] = useState<number>(
+    initialAgencySettings.agentLevelMarginPercent ?? user?.customAgentMarginPercent ?? 0
+  );
   const [auditReason, setAuditReason] = useState<string>('');
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -169,8 +180,9 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       setIataOrAbtaNumber(user.iataOrAbtaNumber || '');
       setBrandLogoUrl(user.brandLogoUrl || user.logoUrl || '');
 
-      setBuyerMargin(user.customBuyerMarginPercent ?? 25);
-      setAgentMargin(user.customAgentMarginPercent ?? 10);
+      const resolvedPricing = db.resolveAgencyPricingSettings({ user });
+      setProductLevelMarginEnabled(resolvedPricing.productLevelMarginEnabled !== false);
+      setAgentMargin(resolvedPricing.agentLevelMarginPercent ?? user.customAgentMarginPercent ?? 0);
       setAuditReason('');
       setErrorBanner(null);
 
@@ -203,12 +215,12 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
 
   // Handle Role change: offer to load role defaults
   const handleRoleChange = (newRole: UserRole) => {
-    if (isMaster && newRole !== 'ADMIN') {
+    if (isMaster && newRole !== 'ADMIN' && newRole !== 'SUPER_ADMIN') {
       setErrorBanner('Protected: Cannot alter the role of the Primary Master Administrator.');
       return;
     }
     setRole(newRole);
-    const isInternal = newRole === 'ADMIN' || newRole === 'TEAM_MEMBER' || newRole === 'DMC_STAFF';
+    const isInternal = newRole === 'SUPER_ADMIN' || newRole === 'ADMIN' || newRole === 'TEAM_MEMBER' || newRole === 'DMC_STAFF';
     setCategory(isInternal ? 'INTERNAL' : 'EXTERNAL');
   };
 
@@ -302,6 +314,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       }
     }
 
+    const nowIso = new Date().toISOString();
     const finalFullName = name.trim() || `${firstName} ${lastName}`.trim() || user.name;
     const updatedUser: User = {
       ...user,
@@ -339,23 +352,39 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       verificationStatus,
       department: department.trim() || undefined,
       notes: notes.trim() || undefined,
-      customBuyerMarginPercent: Number(buyerMargin) || 0,
       customAgentMarginPercent: Number(agentMargin) || 0,
+      pricingSettings: {
+        productLevelMarginEnabled,
+        activeMarginMode: productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL',
+        agentLevelMarginPercent: Number(agentMargin) || 0,
+        lastUpdatedBy: currentUser?.id || 'SYSTEM',
+        lastUpdatedByName: currentUser?.name || 'Admin',
+        lastUpdatedAt: nowIso
+      },
       permissions: {
         ...perms,
-        canAccessPricingCalculator: perms.b2bQuoteBuilderAccess || perms.buyerQuoteBuilderAccess || false,
-        canAccessCMS: perms.canAccessCMS ?? (role === 'ADMIN' || role === 'TEAM_MEMBER'),
-        canAccessRoster: perms.cmsOperations?.rosterAndRoles ?? (role === 'ADMIN' || role === 'TEAM_MEMBER'),
-        canAccessFinancials: perms.cmsFinance?.financials ?? (role === 'ADMIN'),
-        canManageUsers: perms.cmsFinance?.accountManagement ?? (role === 'ADMIN'),
-        canManagePermissions: perms.cmsFinance?.userPermissionManagement ?? (role === 'ADMIN')
+        buyerQuoteBuilderAccess: false,
+        canAccessPricingCalculator: perms.b2bQuoteBuilderAccess || false,
+        canAccessCMS: perms.canAccessCMS ?? (role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'TEAM_MEMBER'),
+        canAccessRoster: perms.cmsOperations?.rosterAndRoles ?? (role === 'SUPER_ADMIN' || role === 'ADMIN' || role === 'TEAM_MEMBER'),
+        canAccessFinancials: perms.cmsFinance?.financials ?? (role === 'SUPER_ADMIN' || role === 'ADMIN'),
+        canManageUsers: perms.cmsFinance?.accountManagement ?? (role === 'SUPER_ADMIN' || role === 'ADMIN'),
+        canManagePermissions: perms.cmsFinance?.userPermissionManagement ?? (role === 'SUPER_ADMIN' || role === 'ADMIN')
       },
-      updatedAt: new Date().toISOString()
+      updatedAt: nowIso
     };
 
     try {
       setIsSubmitting(true);
       await onSave(updatedUser, auditReason.trim() || undefined);
+      db.updateAgencyPricingSettings(
+        updatedUser.companyId || updatedUser.id,
+        {
+          productLevelMarginEnabled,
+          agentLevelMarginPercent: Number(agentMargin) || 0
+        },
+        currentUser
+      );
       onClose();
     } catch (err: any) {
       setErrorBanner(err.message || 'Failed to save permissions. Please try again.');
@@ -815,8 +844,8 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                       <Compass className="w-4 h-4" />
                     </div>
                     <div>
-                      <h4 className="text-sm font-bold text-slate-900">Quote Builder Engine Access</h4>
-                      <p className="text-[11px] text-slate-500">Control B2B vs Buyer quotation generation and wholesale rate visibility</p>
+                      <h4 className="text-sm font-bold text-slate-900">B2B Quote Builder Engine Access</h4>
+                      <p className="text-[11px] text-slate-500">Control B2B quotation generation and wholesale rate visibility</p>
                     </div>
                   </div>
                 </div>
@@ -835,25 +864,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                     <div>
                       <div className="text-xs font-bold text-slate-900">B2B Guided Quote Builder</div>
                       <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
-                        Enables full itinerary building with multi-destination modules and agent commissions.
-                      </div>
-                    </div>
-                  </label>
-
-                  {/* Buyer Quote Builder Access */}
-                  <label className={`flex items-start space-x-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                    perms.buyerQuoteBuilderAccess ? 'bg-indigo-50/60 border-indigo-300' : 'bg-slate-50 border-slate-200'
-                  }`}>
-                    <input
-                      type="checkbox"
-                      checked={!!perms.buyerQuoteBuilderAccess}
-                      onChange={() => handleToggleTopPermission('buyerQuoteBuilderAccess')}
-                      className="mt-0.5 rounded text-indigo-600 focus:ring-0 w-4 h-4"
-                    />
-                    <div>
-                      <div className="text-xs font-bold text-slate-900">Buyer Direct Quote Builder</div>
-                      <div className="text-[11px] text-slate-500 leading-tight mt-0.5">
-                        Access for direct private clients with consumer-facing retail pricing.
+                        Enables full B2B itinerary building with multi-destination modules and exclusive margin logic.
                       </div>
                     </div>
                   </label>
@@ -1274,55 +1285,79 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: COMMERCIAL MARGINS */}
+          {/* TAB 2: COMMERCIAL MARGINS (PRICING & MARGIN CONFIGURATION) */}
           {activeTab === 'COMMERCIAL' && (
             <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-5">
-              <div className="flex items-center space-x-2 text-slate-900 font-bold text-sm pb-2 border-b border-slate-100">
-                <Percent className="w-4 h-4 text-[#00C6A6]" />
-                <span>Custom Client Commercial Parameters</span>
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                <div className="flex items-center space-x-2 text-slate-900 font-bold text-sm">
+                  <Percent className="w-4 h-4 text-[#00C6A6]" />
+                  <span>Pricing & Margin Configuration</span>
+                </div>
+                <span className={`px-2.5 py-1 rounded-lg text-xs font-black ${
+                  productLevelMarginEnabled ? 'bg-teal-50 text-[#008972] border border-teal-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}>
+                  Active Margin Mode: {productLevelMarginEnabled ? 'Product-Level' : 'Agent-Level'}
+                </span>
               </div>
               <p className="text-xs text-slate-500">
-                Configure specific pricing markups applied when this user builds itineraries in the Quote Builder.
+                Product-Level Margin and Agent-Level Margin are strictly mutually exclusive. They are never applied simultaneously.
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <label className="block text-xs font-bold text-slate-800 mb-1">
-                    Direct Buyer Margin Markup (%)
-                  </label>
-                  <p className="text-[11px] text-slate-500 mb-2">
-                    Applied on top of nett costs when viewing or quoting direct consumer packages.
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Product-Level Margin</span>
+                  <div className="flex items-center justify-between">
+                    <span className={`font-black text-sm ${productLevelMarginEnabled ? 'text-[#008972]' : 'text-slate-500'}`}>
+                      {productLevelMarginEnabled ? 'ON (Default)' : 'OFF'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setProductLevelMarginEnabled(prev => !prev)}
+                      className={`px-3 py-1 rounded-lg text-xs font-black cursor-pointer transition-colors ${
+                        productLevelMarginEnabled ? 'bg-[#00C6A6] text-slate-950' : 'bg-amber-500 text-slate-950'
+                      }`}
+                    >
+                      Toggle {productLevelMarginEnabled ? 'OFF' : 'ON'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {productLevelMarginEnabled
+                      ? 'Product-Level Margin applies. Agent-Level Margin is disabled (0%).'
+                      : 'Product-Level Margin is disabled (0%). Agent-Level Margin applies.'}
                   </p>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Active Margin Mode</span>
+                  <span className="font-black text-sm text-slate-900 block">
+                    {productLevelMarginEnabled ? 'Product-Level' : 'Agent-Level'}
+                  </span>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block pt-1">Agent-Level Margin Status</span>
+                  <span className={`font-black text-xs block ${!productLevelMarginEnabled ? 'text-amber-700' : 'text-slate-400'}`}>
+                    {!productLevelMarginEnabled ? `Active (${agentMargin}%)` : 'Inactive (Disabled)'}
+                  </span>
+                </div>
+
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                  <label className="block text-[10px] font-bold uppercase text-slate-500">
+                    Agent-Level Margin (%)
+                  </label>
                   <div className="flex items-center space-x-2">
                     <input
                       type="number"
                       min="0"
                       max="100"
-                      value={buyerMargin !== undefined && !Number.isNaN(buyerMargin) ? buyerMargin : ''}
-                      onChange={e => setBuyerMargin(Number(e.target.value))}
-                      className="w-24 p-2 bg-white border border-slate-300 rounded-lg font-mono font-bold text-sm text-slate-900 text-center"
+                      step="0.5"
+                      disabled={productLevelMarginEnabled}
+                      value={agentMargin !== undefined && !Number.isNaN(agentMargin) ? agentMargin : 0}
+                      onChange={e => setAgentMargin(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-24 p-2 bg-white border border-slate-300 rounded-lg font-mono font-bold text-sm text-slate-900 text-center disabled:bg-slate-100 disabled:text-slate-400"
                     />
                     <span className="text-xs font-bold text-slate-500">%</span>
                   </div>
-                </div>
-
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <label className="block text-xs font-bold text-slate-800 mb-1">
-                    B2B Travel Agent Commission (%)
-                  </label>
-                  <p className="text-[11px] text-slate-500 mb-2">
-                    Standard agency retention or commission percentage allocated for B2B accounts.
-                  </p>
-                  <div className="flex items-center space-x-2">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={agentMargin !== undefined && !Number.isNaN(agentMargin) ? agentMargin : ''}
-                      onChange={e => setAgentMargin(Number(e.target.value))}
-                      className="w-24 p-2 bg-white border border-slate-300 rounded-lg font-mono font-bold text-sm text-slate-900 text-center"
-                    />
-                    <span className="text-xs font-bold text-slate-500">%</span>
+                  <div className="text-[10px] text-slate-500 pt-1">
+                    <div><strong>Last Updated By:</strong> {user.pricingSettings?.lastUpdatedByName || currentUser?.name || 'System Admin'}</div>
+                    <div><strong>Last Updated At:</strong> {user.pricingSettings?.lastUpdatedAt ? new Date(user.pricingSettings.lastUpdatedAt).toLocaleString() : 'Active'}</div>
                   </div>
                 </div>
               </div>
@@ -1381,18 +1416,20 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                 <div>
                   <label className="block text-xs font-bold text-slate-800 mb-1.5">User Role</label>
                   <select
-                    value={role}
+                    value={role === 'AGENT' ? 'B2B_AGENT' : (role === 'DMC_STAFF' ? 'TEAM_MEMBER' : role)}
                     disabled={isMaster}
                     onChange={e => handleRoleChange(e.target.value as UserRole)}
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-1 focus:ring-[#00C6A6]"
                   >
-                    <option value="ADMIN">ADMIN (Full Access)</option>
-                    <option value="TEAM_MEMBER">TEAM MEMBER (Staff Operations)</option>
-                    <option value="DMC_STAFF">DMC STAFF (Ground Operations)</option>
-                    <option value="B2B_AGENT">B2B AGENT (Wholesale Partner)</option>
-                    <option value="AGENT">AGENT (Standard)</option>
-                    <option value="BUYER">BUYER (Direct Traveler)</option>
-                    <option value="VIEWER">VIEWER (Read-Only)</option>
+                    <optgroup label="External Users (Agency)">
+                      <option value="AGENCY_OWNER">Agency Owner</option>
+                      <option value="B2B_AGENT">B2B Agent</option>
+                    </optgroup>
+                    <optgroup label="Internal Users (DMC)">
+                      <option value="SUPER_ADMIN">Super Admin</option>
+                      <option value="ADMIN">Admin</option>
+                      <option value="TEAM_MEMBER">Team Member</option>
+                    </optgroup>
                   </select>
                 </div>
 
@@ -1405,7 +1442,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                     className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:ring-1 focus:ring-[#00C6A6]"
                   >
                     <option value="INTERNAL">INTERNAL (Company Staff / DMC)</option>
-                    <option value="EXTERNAL">EXTERNAL (B2B Partner / Direct Buyer)</option>
+                    <option value="EXTERNAL">EXTERNAL (Agency Owner / B2B Agent)</option>
                   </select>
                 </div>
 

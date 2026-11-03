@@ -1208,9 +1208,14 @@ export function buildQuotePresentationModel(
     effectiveCurrency
   );
   const finalCustomerSellingPriceFormatted = formatCurrency(finalCustomerSellingPriceNumeric, effectiveCurrency);
-  const baseSellingPriceNumeric = roundCurrencyAmount(centralTotals.baseSellingPrice, effectiveCurrency);
+  const baseSellingPriceNumeric = roundCurrencyAmount(
+    centralTotals.theUnboundBaseSellingPrice > 0
+      ? centralTotals.theUnboundBaseSellingPrice
+      : finalCustomerSellingPriceNumeric,
+    effectiveCurrency
+  );
   const baseSellingPriceFormatted = formatCurrency(baseSellingPriceNumeric, effectiveCurrency);
-  const agentMarginAmountNumeric = roundCurrencyAmount(centralTotals.markupAmount, effectiveCurrency);
+  const agentMarginAmountNumeric = roundCurrencyAmount(centralTotals.markupAmount || 0, effectiveCurrency);
   const agentMarginAmountFormatted = formatCurrency(agentMarginAmountNumeric, effectiveCurrency);
 
   // Authoritative total selling price across all channels
@@ -2054,6 +2059,7 @@ export function validateQuotePresentationCompleteness(
     { label: 'Destination', value: model.destination },
     { label: 'Passenger Summary', value: model.paxDetailsText },
     { label: 'Land Part Total', value: model.landPartTotalFormatted },
+    { label: 'Final Selling Price', value: model.finalCustomerSellingPriceFormatted },
     { label: 'Agent Name', value: model.agentName },
     { label: 'Agency Name', value: model.agencyName },
     { label: 'Valid Until Date', value: model.validUntilFormatted },

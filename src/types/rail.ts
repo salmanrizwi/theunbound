@@ -198,7 +198,7 @@ export interface RailMarkupRule {
   destinationId: string; // "dest-japan"
   railOperator: string;
   b2bAgentMarkupPercent: number; // default 12%
-  buyerMarkupPercent: number; // default 18%
+  buyerMarkupPercent?: number; // deprecated
   minMarginJPY: number; // default 500
   conciergeServiceFeeJPY: number; // default 0
   oversizedBaggageFeeJPY: number; // default 0 (free with reservation in smartEX)
@@ -218,6 +218,10 @@ export interface RailPricingParams {
   childrenCount: number;
   seatPreference?: 'WINDOW' | 'AISLE' | 'PAIR' | 'MT_FUJI' | 'OVERSIZED_BAGGAGE' | 'ANY';
   userRole?: UserRole;
+  companyId?: string;
+  agencyName?: string;
+  productLevelMarginEnabled?: boolean;
+  customAgentMarginPercent?: number;
   targetCurrency?: CurrencyCode;
 }
 

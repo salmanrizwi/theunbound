@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 import { Hotel, Destination, Product } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { calculateHotelStayPrice } from '../../utils/hotelHelpers';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { canonicalImageService } from '../../services/imageService';
@@ -210,7 +211,20 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
         {filteredHotels.map(hotel => {
           const inQuote = isHotelInQuote(hotel.id);
           const room = hotel.roomTypes?.[0];
-          const finalSellingPriceUSD = hotel.startingSellingPrice || Math.round((room?.rates?.[0]?.adultNettCost || room?.rates?.[0]?.doubleNetRate || hotel.startingNetPrice || 380) * 1.25);
+          const stayCalc = calculateHotelStayPrice({
+            hotel,
+            roomType: room,
+            rate: room?.rates?.[0],
+            nights: 1,
+            roomsCount: 1,
+            adults: 2,
+            children: 0,
+            extraBeds: 0,
+            targetCurrency: currency
+          });
+          const convertedNightlySellingPrice = stayCalc.pricePerNightSelling > 0
+            ? stayCalc.pricePerNightSelling
+            : convertCurrency(hotel.startingSellingPrice || 380, (hotel.currency || 'USD') as any, currency);
 
           return (
             <div
@@ -269,7 +283,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
                     <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">Final Selling Price</span>
                     <div className="flex items-baseline space-x-1">
                       <span className="text-base font-black text-slate-900 font-mono">
-                        {formatCurrency(finalSellingPriceUSD, currency)}
+                        {formatCurrency(convertedNightlySellingPrice, currency)}
                       </span>
                       <span className="text-[10px] text-slate-400">/ night</span>
                     </div>

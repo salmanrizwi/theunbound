@@ -212,9 +212,9 @@ export interface PricingConfigurationComponentProps {
   onCurrencyChange: (currency: CurrencyCode) => void;
   status?: string;
   
-  // Margin & Tax Rules
-  buyerMarginPercent: number;
-  onBuyerMarginChange: (margin: number) => void;
+  // Margin & Tax Rules (Product-Level B2B Margin only; Buyer-Level Margin removed)
+  buyerMarginPercent?: number;
+  onBuyerMarginChange?: (margin: number) => void;
   
   b2bAgentMarginPercent: number;
   onB2bAgentMarginChange: (margin: number) => void;
@@ -416,7 +416,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
     if (netVal === undefined || isNaN(netVal)) return undefined;
 
     const mType = tier.marginType || 'PERCENTAGE';
-    const mVal = tier.marginValue !== undefined ? tier.marginValue : (b2bAgentMarginPercent || buyerMarginPercent || 20);
+    const mVal = tier.marginValue !== undefined ? tier.marginValue : (b2bAgentMarginPercent || 15);
 
     const tType = tier.taxType || 'PERCENTAGE';
     const tVal = tType === 'NOT_APPLICABLE' ? 0 : (tier.taxValue !== undefined ? tier.taxValue : (taxPercent || 10));
@@ -642,7 +642,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       tierDescription = 'Baseline net rate (No tiers configured)';
     }
 
-    const b2bSelling = calcSellingPrice(totalNett, b2bAgentMarginPercent || buyerMarginPercent || 20);
+    const b2bSelling = calcSellingPrice(totalNett, b2bAgentMarginPercent || 15);
 
     return {
       pax,
@@ -653,7 +653,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       buyerSelling: b2bSelling,
       b2bSelling
     };
-  }, [testPassengerCount, pricingMode, tieredPricing, adultNetPrice, buyerMarginPercent, b2bAgentMarginPercent, physicalFleetCapacity, taxPercent, serviceFeeFixed]);
+  }, [testPassengerCount, pricingMode, tieredPricing, adultNetPrice, b2bAgentMarginPercent, physicalFleetCapacity, taxPercent, serviceFeeFixed]);
 
   // --------------------------------------------------------------------------
   // RESTAURANT MEAL PRICING HANDLERS (Sections 18 & 19)
@@ -681,27 +681,27 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       infantNettPrice: 0,
       currency,
       marginType: 'PERCENTAGE',
-      marginValue: buyerMarginPercent,
+      marginValue: b2bAgentMarginPercent,
       taxType: 'PERCENTAGE',
       taxValue: taxPercent,
       serviceChargeType: 'FIXED',
       serviceChargeValue: serviceFeeFixed,
-      adultFinalPrice: calcSellingPrice(adultNetPrice || (meal === 'Dinner' ? 12000 : 6500), buyerMarginPercent),
-      childFinalPrice: calcSellingPrice(childNetPrice || (meal === 'Dinner' ? 6000 : 3250), buyerMarginPercent),
+      adultFinalPrice: calcSellingPrice(adultNetPrice || (meal === 'Dinner' ? 12000 : 6500), b2bAgentMarginPercent),
+      childFinalPrice: calcSellingPrice(childNetPrice || (meal === 'Dinner' ? 6000 : 3250), b2bAgentMarginPercent),
       status: 'ACTIVE'
     }));
-  }, [mealPricing, restaurantConfig, activeMeals, adultNetPrice, childNetPrice, currency, buyerMarginPercent, taxPercent, serviceFeeFixed]);
+  }, [mealPricing, restaurantConfig, activeMeals, adultNetPrice, childNetPrice, currency, b2bAgentMarginPercent, taxPercent, serviceFeeFixed]);
 
   const handleUpdateMealPrice = (mealName: string, field: keyof RestaurantMealPriceItem, val: any) => {
     const updated = currentMealPricing.map(item => {
       if (item.meal.toLowerCase() !== mealName.toLowerCase()) return item;
       const nextItem = { ...item, [field]: val };
       if (field === 'adultNettPrice') {
-        nextItem.adultFinalPrice = calcSellingPrice(Number(val), nextItem.marginValue || buyerMarginPercent);
+        nextItem.adultFinalPrice = calcSellingPrice(Number(val), nextItem.marginValue || b2bAgentMarginPercent);
         if (mealName === 'Lunch' && onAdultNetPriceChange) onAdultNetPriceChange(Number(val));
       }
       if (field === 'childNettPrice') {
-        nextItem.childFinalPrice = calcSellingPrice(Number(val), nextItem.marginValue || buyerMarginPercent);
+        nextItem.childFinalPrice = calcSellingPrice(Number(val), nextItem.marginValue || b2bAgentMarginPercent);
         if (mealName === 'Lunch' && onChildNetPriceChange) onChildNetPriceChange(Number(val));
       }
       return nextItem;
@@ -732,18 +732,18 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         childNetPrice: childNetPrice || 2250,
         infantNetPrice: 0,
         currency,
-        sellingPriceStartingFrom: calcSellingPrice(adultNetPrice || 4500, buyerMarginPercent),
+        sellingPriceStartingFrom: calcSellingPrice(adultNetPrice || 4500, b2bAgentMarginPercent),
         status: 'ACTIVE'
       }
     ];
-  }, [ticketConfig, adultNetPrice, childNetPrice, currency, buyerMarginPercent]);
+  }, [ticketConfig, adultNetPrice, childNetPrice, currency, b2bAgentMarginPercent]);
 
   const handleUpdateTicketTier = (index: number, field: keyof TicketTierPrice, val: any) => {
     const updated = [...ticketTiers];
     const prev = updated[index] || ({} as TicketTierPrice);
     const nextItem: TicketTierPrice = { ...prev, [field]: val };
     if (field === 'adultNetPrice') {
-      nextItem.sellingPriceStartingFrom = calcSellingPrice(Number(val), buyerMarginPercent);
+      nextItem.sellingPriceStartingFrom = calcSellingPrice(Number(val), b2bAgentMarginPercent);
       if (index === 0 && onAdultNetPriceChange) onAdultNetPriceChange(Number(val));
     }
     if (field === 'childNetPrice' && index === 0 && onChildNetPriceChange) {
@@ -767,7 +767,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
       childNetPrice: childNetPrice || 2500,
       infantNetPrice: 0,
       currency,
-      sellingPriceStartingFrom: calcSellingPrice(adultNetPrice || 5000, buyerMarginPercent),
+      sellingPriceStartingFrom: calcSellingPrice(adultNetPrice || 5000, b2bAgentMarginPercent),
       status: 'ACTIVE'
     };
     if (onTicketConfigChange) {
@@ -828,15 +828,14 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         {/* Global Commercial Margins */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-[#008972] font-bold uppercase tracking-wider block">B2B Margin (%)</label>
+            <label className="text-[10px] text-[#008972] font-bold uppercase tracking-wider block">Product-Level Margin (%)</label>
             <input
               type="number"
               min="0"
-              value={safeNumVal(b2bAgentMarginPercent ?? buyerMarginPercent)}
+              value={safeNumVal(b2bAgentMarginPercent)}
               onChange={(e) => {
                 const val = Number(e.target.value);
                 onB2bAgentMarginChange(val);
-                if (onBuyerMarginChange) onBuyerMarginChange(val);
               }}
               className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
             />
@@ -878,8 +877,8 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             </thead>
             <tbody className="divide-y divide-slate-100">
               {currentMealPricing.map((item) => {
-                const adultFinal = calcSellingPrice(item.adultNettPrice, buyerMarginPercent);
-                const childFinal = calcSellingPrice(item.childNettPrice, buyerMarginPercent);
+                const adultFinal = calcSellingPrice(item.adultNettPrice, b2bAgentMarginPercent);
+                const childFinal = calcSellingPrice(item.childNettPrice, b2bAgentMarginPercent);
 
                 return (
                   <tr key={item.meal} className="hover:bg-slate-50/60 transition-colors">
@@ -971,19 +970,9 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Global Commercial Margins */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
-            <input
-              type="number"
-              min="0"
-              value={safeNumVal(buyerMarginPercent)}
-              onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Product-Level Margin (%)</label>
             <input
               type="number"
               min="0"
@@ -1030,8 +1019,8 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
             </thead>
             <tbody className="divide-y divide-slate-100">
               {ticketTiers.map((tier, idx) => {
-                const adultFinal = calcSellingPrice(tier.adultNetPrice, buyerMarginPercent);
-                const childFinal = calcSellingPrice(tier.childNetPrice || 0, buyerMarginPercent);
+                const adultFinal = calcSellingPrice(tier.adultNetPrice, b2bAgentMarginPercent);
+                const childFinal = calcSellingPrice(tier.childNetPrice || 0, b2bAgentMarginPercent);
 
                 return (
                   <tr key={tier.id} className="hover:bg-slate-50/60 transition-colors">
@@ -1102,7 +1091,6 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
   if (pricingMode === 'hourly_based') {
     const effectiveMinHours = minHours || 4;
     const hourlyNet = hourlyNetPrice || adultNetPrice || 6000;
-    const hourlySelling = calcSellingPrice(hourlyNet, buyerMarginPercent);
     const hourlyAgentSelling = calcSellingPrice(hourlyNet, b2bAgentMarginPercent);
 
     return (
@@ -1143,19 +1131,9 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Global Commercial Margins */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
-            <input
-              type="number"
-              min="0"
-              value={safeNumVal(buyerMarginPercent)}
-              onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Product-Level Margin (%)</label>
             <input
               type="number"
               min="0"
@@ -1227,8 +1205,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[9px] tracking-wider">
                 <th className="p-3.5">Duration</th>
                 <th className="p-3.5">Supplier Nett Cost</th>
-                <th className="p-3.5 text-[#008972]">Buyer Final Selling Price</th>
-                <th className="p-3.5 text-[#008972]">B2B Agent Final Price</th>
+                <th className="p-3.5 text-[#008972]">B2B Final Selling Price</th>
                 <th className="p-3.5 text-center">Status</th>
               </tr>
             </thead>
@@ -1236,7 +1213,6 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
               {[1, 2, 4, 6, 8].map((hrs) => {
                 const billable = Math.max(effectiveMinHours, hrs);
                 const net = billable * hourlyNet;
-                const buyerPrice = calcSellingPrice(net, buyerMarginPercent);
                 const agentPrice = calcSellingPrice(net, b2bAgentMarginPercent);
 
                 return (
@@ -1248,9 +1224,6 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                       {formatCurrency(net, currency)}
                     </td>
                     <td className="p-3.5 font-mono font-black text-[#008972]">
-                      {formatCurrency(buyerPrice, currency)}
-                    </td>
-                    <td className="p-3.5 font-mono font-bold text-[#008972]">
                       {formatCurrency(agentPrice, currency)}
                     </td>
                     <td className="p-3.5 text-center">
@@ -1272,10 +1245,6 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
   // 4. RENDER STANDARD PER-PERSON GROUP TOUR PRICING (Section 16)
   // --------------------------------------------------------------------------
   if (pricingMode === 'per_person') {
-    const adultSelling = calcSellingPrice(adultNetPrice, buyerMarginPercent);
-    const childSelling = calcSellingPrice(childNetPrice, buyerMarginPercent);
-    const infantSelling = calcSellingPrice(infantNetPrice, buyerMarginPercent);
-
     return (
       <div className="space-y-6 bg-white text-slate-800 border border-slate-200/90 rounded-2xl p-6 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-5">
@@ -1316,19 +1285,9 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
         </div>
 
         {/* Commercial margins grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 text-xs">
           <div>
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%)</label>
-            <input
-              type="number"
-              min="0"
-              value={safeNumVal(buyerMarginPercent)}
-              onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-              className="w-full mt-1 p-2 bg-white border border-slate-200 rounded-lg font-bold text-slate-900 text-xs focus:outline-none focus:border-[#00C6A6]"
-            />
-          </div>
-          <div>
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%)</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Product-Level Margin (%)</label>
             <input
               type="number"
               min="0"
@@ -1366,8 +1325,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[9px] tracking-wider">
                 <th className="p-3.5">Passenger Classification</th>
                 <th className="p-3.5">Wholesale Nett Cost ({currency}) *</th>
-                <th className="p-3.5 text-[#008972]">Buyer Final Selling Price</th>
-                <th className="p-3.5 text-[#008972]">B2B Agent Price</th>
+                <th className="p-3.5 text-[#008972]">B2B Final Selling Price</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1383,9 +1341,6 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   />
                 </td>
                 <td className="p-3.5 font-mono font-black text-[#008972]">
-                  {formatCurrency(adultSelling, currency)}
-                </td>
-                <td className="p-3.5 font-mono font-bold text-[#008972]">
                   {formatCurrency(calcSellingPrice(adultNetPrice, b2bAgentMarginPercent), currency)}
                 </td>
               </tr>
@@ -1402,9 +1357,6 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   />
                 </td>
                 <td className="p-3.5 font-mono font-black text-[#008972]">
-                  {formatCurrency(childSelling, currency)}
-                </td>
-                <td className="p-3.5 font-mono font-bold text-[#008972]">
                   {formatCurrency(calcSellingPrice(childNetPrice, b2bAgentMarginPercent), currency)}
                 </td>
               </tr>
@@ -1421,9 +1373,6 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                   />
                 </td>
                 <td className="p-3.5 font-mono font-black text-[#008972]">
-                  {formatCurrency(infantSelling, currency)}
-                </td>
-                <td className="p-3.5 font-mono font-bold text-[#008972]">
                   {formatCurrency(calcSellingPrice(infantNetPrice, b2bAgentMarginPercent), currency)}
                 </td>
               </tr>
@@ -1486,7 +1435,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
           <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider">Commercial Rules & Markups</h3>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3.5 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 text-xs">
           <div className="space-y-1">
             <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Native Currency *</label>
             <select
@@ -1507,22 +1456,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
           </div>
 
           <div className="space-y-1">
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Buyer Margin (%) *</label>
-            <div className="relative">
-              <input
-                type="number"
-                min="0"
-                max="200"
-                value={safeNumVal(buyerMarginPercent)}
-                onChange={(e) => onBuyerMarginChange(Number(e.target.value))}
-                className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800 text-xs focus:outline-none focus:border-[#00C6A6] focus:ring-1 focus:ring-[#00C6A6]"
-              />
-              <span className="absolute right-2.5 top-2 text-slate-400 font-bold text-[10px]">%</span>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">B2B Agent Margin (%) *</label>
+            <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Product-Level Margin (%) *</label>
             <div className="relative">
               <input
                 type="number"
@@ -1778,7 +1712,7 @@ export const PricingConfigurationComponent: React.FC<PricingConfigurationCompone
                         </select>
                         <DecimalInput
                           value={tier.marginValue}
-                          placeholder={`${buyerMarginPercent || 20}`}
+                          placeholder={`${b2bAgentMarginPercent || 15}`}
                           onChange={(num) => handleUpdateTier(idx, { marginValue: num })}
                         />
                       </div>

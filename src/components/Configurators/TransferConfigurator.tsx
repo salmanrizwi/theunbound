@@ -717,7 +717,7 @@ export const TransferConfigurator: React.FC<TransferConfiguratorProps> = ({
                       <div className="flex-1 min-w-0">
                         <div className="font-bold text-xs leading-snug">{upsell.name}</div>
                         <div className="text-[10px] text-slate-500 mt-0.5">
-                          +{formatCurrency(upsell.price, currency)} {upsell.priceType === 'PER_BOOKING' ? '(Total)' : '/ person'}
+                          +{formatCurrency(convertCurrency(upsell.price, ((upsell as any).currency || product.currency || 'USD') as CurrencyCode, currency), currency)} {upsell.priceType === 'PER_BOOKING' ? '(Total)' : '/ person'}
                         </div>
                       </div>
                     </button>

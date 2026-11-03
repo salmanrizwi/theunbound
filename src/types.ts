@@ -6,14 +6,27 @@ import type { RailBookingItemDetails } from './types/rail';
 export type UserCategory = 'EXTERNAL' | 'INTERNAL';
 
 export type UserRole = 
-  | 'BUYER'         // External: Buyer / Direct Client
+  | 'AGENCY_OWNER'  // External: Agency Owner
   | 'B2B_AGENT'     // External: B2B Travel Agent / Tour Operator
   | 'AGENT'         // Alias for B2B_AGENT
+  | 'SUPER_ADMIN'   // Internal: Super Admin
   | 'ADMIN'         // Internal: DMC Administrator
   | 'TEAM_MEMBER'   // Internal: Operations & Reservations Team Member
   | 'DMC_STAFF'     // Alias for TEAM_MEMBER
   | 'VIEWER' 
-  | 'PUBLIC';
+  | 'PUBLIC'
+  | 'BUYER';        // Legacy historical record compatibility only (disabled in active portal)
+
+export type ActiveMarginMode = 'PRODUCT_LEVEL' | 'AGENT_LEVEL';
+
+export interface AgencyPricingSettings {
+  productLevelMarginEnabled: boolean; // Default: true (ON)
+  activeMarginMode: ActiveMarginMode; // 'PRODUCT_LEVEL' when ON, 'AGENT_LEVEL' when OFF
+  agentLevelMarginPercent: number;    // Configured Agent-Level Margin % when Product-Level Margin is OFF
+  lastUpdatedBy?: string;
+  lastUpdatedByName?: string;
+  lastUpdatedAt?: string;
+}
 
 export type DestinationRegion = 'EUROPE' | 'UNITED_KINGDOM' | 'JAPAN' | 'SOUTHEAST_ASIA' | 'MIDDLE_EAST' | 'USA' | 'AUSTRALIA';
 
@@ -464,6 +477,7 @@ export interface Company {
   quoteTagline?: string;
   quoteFooterText?: string;
   quoteDisclaimer?: string;
+  pricingSettings?: AgencyPricingSettings;
   createdAt: string;
   updatedAt?: string;
 }
@@ -548,8 +562,8 @@ export interface User {
   deactivatedAt?: string;
   notes?: string;
   permissions?: UserPermissionAccess;
-  customBuyerMarginPercent?: number;
   customAgentMarginPercent?: number;
+  pricingSettings?: AgencyPricingSettings;
   contactNumber?: string;
   firstBookingWelcomeSentAt?: string;
   firstBookingWelcomeMessageId?: string;
@@ -1805,14 +1819,20 @@ export interface PricingCalculationRequest {
   quantity?: number;
   selectedAddonIds?: string[];
   selectedUpsellIds?: string[]; // Selected Master Upsell IDs
-  pricingTier?: PricingTier; // B2C (Retail Consumer / Buyer) or B2B (Travel Agent Wholesale)
+  pricingTier?: PricingTier; // B2B (Travel Agent Wholesale)
   userRole?: UserRole;
   user?: User | null;
+  companyId?: string;
+  agencyName?: string;
   customMarkupPercent?: number;
-  buyerMarkupPercent?: number;
   b2bAgentMarkupPercent?: number;
+  customAgentMarginPercent?: number;
   customDiscountPercent?: number;
-  agentClientMarkupPercent?: number; // Custom markup the B2B agent applies for their client
+  agentClientMarkupPercent?: number;
+  productLevelMarginEnabled?: boolean;
+  preserveHistoricalMarginMode?: boolean;
+  historicalProductLevelMarginEnabled?: boolean;
+  historicalMarginPercent?: number;
   vehicleId?: string;
   fleetId?: string;
   assetId?: string;
@@ -1842,7 +1862,9 @@ export interface PricingCalculationResult {
   addonsSubtotalNet: number;
   totalNetCost: number; // DMC Supplier Cost
   
-  // B2B Wholesale Tier specifics
+  // B2B Wholesale Tier & Exclusive Margin Mode specifics
+  activeMarginMode?: ActiveMarginMode;
+  productLevelMarginEnabled?: boolean;
   b2bWholesaleMarkupRate: number; // e.g. 0.10 for 10% wholesale markup
   b2bWholesaleNetToAgent: number; // Contracted net price to the Travel Agent
   agentClientMarkupRate: number; // Markup added by the agent for client
@@ -2014,6 +2036,8 @@ export interface AgentPricingResponse {
   };
 
   // Safe Metadata
+  activeMarginMode?: ActiveMarginMode;
+  productLevelMarginEnabled?: boolean;
   fxDetails?: FXRateDetails;
   rateEffectiveTo?: string;
   isAuthoritative?: boolean;
@@ -2099,6 +2123,13 @@ export interface QuoteItem {
   vehicleTypeSnapshot?: string;
   vehicleCapacitySnapshot?: number;
   metadata?: Record<string, any>;
+
+  // Agent-Controlled Additional Markup (Per-Product within Quotation)
+  theUnboundBaseSellingPrice?: number;
+  agentAdditionalMarkupType?: AgentMarginType;
+  agentAdditionalMarkupValue?: number;
+  agentAdditionalMarkupAmount?: number;
+  finalCustomerSellingPrice?: number;
 }
 
 export type QuoteStatus = 
@@ -2170,12 +2201,24 @@ export interface QuoteVersionRecord {
 
 export type AgentMarginType = 'PERCENTAGE' | 'FIXED';
 
+export interface AdminBasePriceUpdatedNotification {
+  previousBasePrice: number;
+  newBasePrice: number;
+  recalculatedFinalPrice: number;
+  updatedAt: string;
+  updatedBy: string;
+}
+
 export interface PricingSnapshot {
   baseFinalSellingPrice: number;
+  theUnboundBaseSellingPrice?: number;
   currency: CurrencyCode;
   agentMarginType: AgentMarginType;
   agentMarginValue: number;
   agentMarginAmount: number;
+  productLevelAgentMarkupTotal?: number;
+  overallAgentMarkupAmount?: number;
+  totalAgentAdditionalMarkupAmount?: number;
   finalCustomerSellingPrice: number;
   hotelAccommodationTotal?: number;
   landPartTotal?: number;
@@ -2385,10 +2428,11 @@ export interface Quotation {
   landPartTotal?: number;
   landPartTotalFormatted?: string;
 
-  // Authoritative Commercial & Agent Margin Architecture (Section 8 Compliance)
+  // Authoritative Commercial & Agent Additional Markup Architecture
   marginType?: AgentMarginType;
   marginValue?: number;
   marginAmount?: number;
+  theUnboundBaseSellingPrice?: number;
   baseFinalSellingPrice?: number;
   base_final_selling_price?: number;
   baseFinalSellingPriceCurrency?: CurrencyCode;
@@ -2399,11 +2443,15 @@ export interface Quotation {
   agent_margin_value?: number;
   agentMarginAmount?: number;
   agent_margin_amount?: number;
+  productLevelAgentMarkupTotal?: number;
+  overallAgentMarkupAmount?: number;
+  totalAgentAdditionalMarkupAmount?: number;
   finalCustomerSellingPrice?: number;
   final_customer_selling_price?: number;
   pricingCalculatedAt?: string;
   pricing_calculated_at?: string;
   pricingVersion?: number | string;
+  pricingVersionSnapshot?: number | string;
   pricing_version?: number | string;
   pricingSnapshot?: PricingSnapshot;
   pricing_snapshot?: PricingSnapshot;
@@ -2411,9 +2459,9 @@ export interface Quotation {
   currency_conversion_snapshot?: QuotationCurrencySnapshot;
   totalGroundLogisticsSnapshot?: number;
   transactionCurrencySnapshot?: CurrencyCode;
-  pricingVersionSnapshot?: number | string;
   updatedBy?: string;
   updated_by?: string;
+  adminBasePriceUpdatedNotification?: AdminBasePriceUpdatedNotification | null;
 
   // Admin Manual Margin on Nett Total
   adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
@@ -2509,6 +2557,7 @@ export interface AgentQuotationResponse {
   validUntil: string;
 
   // Authoritative Agent-Facing Commercial Fields (Section 5 & 8 Compliance)
+  theUnboundBaseSellingPrice?: number;
   baseFinalSellingPrice?: number;
   base_final_selling_price?: number;
   baseFinalSellingPriceCurrency?: CurrencyCode;
@@ -2519,6 +2568,9 @@ export interface AgentQuotationResponse {
   agent_margin_value?: number;
   agentMarginAmount?: number;
   agent_margin_amount?: number;
+  productLevelAgentMarkupTotal?: number;
+  overallAgentMarkupAmount?: number;
+  totalAgentAdditionalMarkupAmount?: number;
   finalCustomerSellingPrice?: number;
   final_customer_selling_price?: number;
   pricingCalculatedAt?: string;
@@ -2530,6 +2582,7 @@ export interface AgentQuotationResponse {
   currencyConversionSnapshot?: QuotationCurrencySnapshot;
   hotelAccommodationTotal?: number;
   landPartTotal?: number;
+  adminBasePriceUpdatedNotification?: AdminBasePriceUpdatedNotification | null;
 
   // Customer-Facing Totals ONLY
   totalSellingPrice: number;

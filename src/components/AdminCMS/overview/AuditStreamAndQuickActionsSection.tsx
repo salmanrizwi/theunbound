@@ -185,13 +185,13 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
           </div>
         ) : (
           <div className="divide-y divide-slate-100">
-            {auditLogs.slice(0, 6).map((log) => {
+            {auditLogs.slice(0, 6).map((log, idx) => {
               const timeStr = log.timestamp 
                 ? new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 : 'Just now';
 
               return (
-                <div key={log.id} className="py-3.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3 text-xs group">
+                <div key={`audit-${log.id || 'entry'}-${idx}`} className="py-3.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3 text-xs group">
                   <div className="flex items-start space-x-3 min-w-0">
                     <div className="w-7 h-7 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center shrink-0 mt-0.5">
                       <Clock className="w-3.5 h-3.5" />
@@ -318,8 +318,8 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
                   onChange={(e) => setSelectedQuoteId(e.target.value)}
                   className="w-full text-xs font-bold text-slate-800 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 outline-none focus:border-purple-500 transition-colors"
                 >
-                  {quotations.map(q => (
-                    <option key={q.id} value={q.id}>
+                  {quotations.map((q, idx) => (
+                    <option key={`quote-opt-${q.id || idx}-${idx}`} value={q.id}>
                       #{q.quoteNumber || q.id} — {q.clientName || 'Client'} ({q.destination || 'Destination'}) • {q.currency || 'USD'} {Number(q.totalPrice || 0).toLocaleString()} [{q.status || 'DRAFT'}]
                     </option>
                   ))}
@@ -466,7 +466,7 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
 
             <div className="space-y-2 text-xs">
               {systemHealth.services.slice(0, 4).map((srv, i) => (
-                <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/70">
+                <div key={`srv-${srv.name || 'health'}-${i}`} className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/70">
                   <div className="flex items-center space-x-2 min-w-0">
                     <span className={`w-2 h-2 rounded-full shrink-0 ${
                       srv.status === 'HEALTHY' ? 'bg-emerald-500' : 'bg-amber-500'

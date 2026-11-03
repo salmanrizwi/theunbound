@@ -255,20 +255,26 @@ export class RailPricingEngine {
     const totalChildSupplierJPY = childPerPaxSupplierJPY * childrenCount;
     const totalSupplierCostJPY = totalAdultSupplierJPY + totalChildSupplierJPY;
 
-    // 7. Apply TheUnbound DMC Commercial Markup
+    // 7. Apply TheUnbound DMC Commercial Markup (Mutually Exclusive Product-Level vs Agent-Level Margin)
     const markupRule = db.getRailMarkupRule() || INITIAL_RAIL_MARKUP_RULE;
-    const isB2BAgent = userRole === 'B2B_AGENT' || userRole === 'AGENT';
-    const rawMarkupPercent = isB2BAgent 
-      ? markupRule.b2bAgentMarkupPercent 
-      : markupRule.buyerMarkupPercent;
+    const agencySettings = db.resolveAgencyPricingSettings({
+      companyId: params.companyId,
+      agencyName: params.agencyName,
+      explicitProductLevelMarginEnabled: params.productLevelMarginEnabled,
+      explicitAgentLevelMarginPercent: params.customAgentMarginPercent
+    });
+    const isProductLevelMarginEnabled = agencySettings.productLevelMarginEnabled !== false;
+    const rawMarkupPercent = isProductLevelMarginEnabled
+      ? markupRule.b2bAgentMarkupPercent
+      : agencySettings.agentLevelMarginPercent;
     const appliedMarkupPercent = Number.isFinite(Number(rawMarkupPercent))
       ? Number(rawMarkupPercent)
-      : (isB2BAgent ? INITIAL_RAIL_MARKUP_RULE.b2bAgentMarkupPercent : INITIAL_RAIL_MARKUP_RULE.buyerMarkupPercent);
+      : (isProductLevelMarginEnabled ? INITIAL_RAIL_MARKUP_RULE.b2bAgentMarkupPercent : 0);
 
     const totalPax = Math.max(1, adultsCount + childrenCount);
-    const minMarginPerPax = Number.isFinite(Number(markupRule.minMarginJPY))
+    const minMarginPerPax = isProductLevelMarginEnabled && Number.isFinite(Number(markupRule.minMarginJPY))
       ? Number(markupRule.minMarginJPY)
-      : INITIAL_RAIL_MARKUP_RULE.minMarginJPY;
+      : 0;
     const minGuaranteedMargin = minMarginPerPax * totalPax;
     const calculatedMarkup = Math.round(totalSupplierCostJPY * (appliedMarkupPercent / 100));
     const totalMarkupJPY = Math.max(calculatedMarkup, minGuaranteedMargin);

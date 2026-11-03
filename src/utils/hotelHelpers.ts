@@ -29,9 +29,9 @@ export function collectHotelSurcharges(
 
 export interface HotelStayCalculationParams {
   hotel: Hotel;
-  roomType: HotelRoomType;
-  rate: HotelRate;
-  checkInDate: string;
+  roomType?: HotelRoomType;
+  rate?: HotelRate;
+  checkInDate?: string;
   checkOutDate?: string;
   nights: number;
   roomsCount: number;
@@ -103,9 +103,9 @@ export interface HotelStayCalculationResult {
 export function calculateHotelStayPrice(params: HotelStayCalculationParams): HotelStayCalculationResult {
   const {
     hotel,
-    roomType,
-    rate,
-    checkInDate,
+    roomType: rawRoomType,
+    rate: rawRate,
+    checkInDate: rawCheckInDate,
     nights: rawNights,
     roomsCount: rawRooms,
     adults: rawAdults,
@@ -115,6 +115,32 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     agentClientMarkupPercent = 12,
     customDiscountPercent = 0
   } = params;
+
+  const checkInDate = rawCheckInDate || '';
+  const roomType = rawRoomType || hotel.roomTypes?.[0] || {
+    id: 'default-room',
+    roomName: 'Luxury Room',
+    name: 'Luxury Room',
+    maxOccupancy: 2,
+    rates: []
+  } as any;
+  const fallbackNet = (roomType as any)?.baseRatePerNight || (roomType as any)?.ratePerNight || (roomType as any)?.startingNetPrice || hotel.startingNetPrice || 380;
+  const rate = rawRate || roomType?.rates?.[0] || {
+    id: 'default-rate',
+    mealPlan: (roomType?.mealPlan as MealPlanCode) || 'BB',
+    mealPlanName: 'Bed & Breakfast Included',
+    singleNetRate: fallbackNet,
+    doubleNetRate: fallbackNet,
+    tripleNetRate: fallbackNet,
+    extraBedRate: (roomType as any)?.extraAdultRate || 0,
+    childRate: (roomType as any)?.childWithBedRate || 0,
+    markupPercent: 20,
+    taxPercent: 10,
+    feePercent: 0,
+    currency: (roomType as any)?.currency || hotel.currency || 'USD',
+    validityFrom: '2026-01-01',
+    validityTo: '2026-12-31'
+  } as HotelRate;
 
   const nights = Math.max(1, rawNights || 1);
   const roomsCount = Math.max(1, rawRooms || 1);
@@ -147,7 +173,25 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
   const nativeChildrenNetCost = (rate.childRate || 0) * nights * children;
   const nativeTotalStayNetCost = nativeRoomsNetCost + nativeExtraBedsNetCost + nativeChildrenNetCost;
 
-  // Currency conversion FIRST -> Commercial margin/tax/fee calculation in targetCurrency
+  // COMMERCIAL PRICING PRINCIPLE: CALCULATE NATIVE FIRST, CONVERT SECOND (aligned with pricingEngine.ts)
+  const b2bMarkupPercent = rate.markupPercent ?? 20;
+  const b2bWholesaleMarkupRate = b2bMarkupPercent / 100;
+  const nativeMarginAmount = nativeTotalStayNetCost * b2bWholesaleMarkupRate;
+
+  const taxRate = (rate.taxPercent ?? 10) / 100;
+  const nativeTaxAmount = nativeMarginAmount * taxRate;
+
+  const nativeSubtotal = nativeTotalStayNetCost + nativeMarginAmount + nativeTaxAmount;
+
+  const serviceFeeRate = (rate.feePercent ?? 0) / 100;
+  const nativeServiceFee = nativeSubtotal * serviceFeeRate;
+
+  const discountRate = (customDiscountPercent || 0) / 100;
+  const nativeGrossTotal = nativeSubtotal + nativeServiceFee;
+  const nativeDiscountAmount = nativeGrossTotal * discountRate;
+  const nativeBaseSellingBeforeSurcharges = Math.max(0, nativeGrossTotal - nativeDiscountAmount);
+
+  // Convert native components into targetCurrency
   const nightlyBaseNetRate = roundCurrencyAmount(convertCurrency(baseNightlyRateInHotelCurr, hotelCurrency, targetCurrency), targetCurrency);
   const nightlyExtraBedNetRate = roundCurrencyAmount(convertCurrency(rate.extraBedRate || 0, hotelCurrency, targetCurrency), targetCurrency);
   const nightlyChildNetRate = roundCurrencyAmount(convertCurrency(rate.childRate || 0, hotelCurrency, targetCurrency), targetCurrency);
@@ -157,31 +201,13 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
   const childrenTotalNetCost = roundCurrencyAmount(convertCurrency(nativeChildrenNetCost, hotelCurrency, targetCurrency), targetCurrency);
   const totalStayNetCost = roundCurrencyAmount(convertCurrency(nativeTotalStayNetCost, hotelCurrency, targetCurrency), targetCurrency);
 
-  const b2bMarkupPercent = rate.markupPercent ?? 20;
-  const b2bWholesaleMarkupRate = b2bMarkupPercent / 100;
-  const marginAmount = roundCurrencyAmount(totalStayNetCost * b2bWholesaleMarkupRate, targetCurrency);
-
-  const taxRate = (rate.taxPercent ?? 10) / 100;
-  const taxAmount = roundCurrencyAmount(marginAmount * taxRate, targetCurrency);
-
-  const subtotal = roundCurrencyAmount(totalStayNetCost + marginAmount + taxAmount, targetCurrency);
-
-  const serviceFeeRate = (rate.feePercent ?? 0) / 100;
-  const serviceFee = roundCurrencyAmount(subtotal * serviceFeeRate, targetCurrency);
-
-  const discountRate = (customDiscountPercent || 0) / 100;
-  const grossTotal = roundCurrencyAmount(subtotal + serviceFee, targetCurrency);
-  const discountAmount = discountRate > 0 ? roundCurrencyAmount(grossTotal * discountRate, targetCurrency) : 0;
-  const baseSellingPriceBeforeSurcharges = Math.max(0, roundCurrencyAmount(grossTotal - discountAmount, targetCurrency));
-
-  // Native equivalent for surcharge evaluation
-  const nativeMarginAmount = nativeTotalStayNetCost * b2bWholesaleMarkupRate;
-  const nativeTaxAmount = nativeMarginAmount * taxRate;
-  const nativeSubtotal = nativeTotalStayNetCost + nativeMarginAmount + nativeTaxAmount;
-  const nativeServiceFee = nativeSubtotal * serviceFeeRate;
-  const nativeGrossTotal = nativeSubtotal + nativeServiceFee;
-  const nativeDiscountAmount = nativeGrossTotal * discountRate;
-  const nativeBaseSellingBeforeSurcharges = Math.max(0, nativeGrossTotal - nativeDiscountAmount);
+  const marginAmount = roundCurrencyAmount(convertCurrency(nativeMarginAmount, hotelCurrency, targetCurrency), targetCurrency);
+  const taxAmount = roundCurrencyAmount(convertCurrency(nativeTaxAmount, hotelCurrency, targetCurrency), targetCurrency);
+  const subtotal = roundCurrencyAmount(convertCurrency(nativeSubtotal, hotelCurrency, targetCurrency), targetCurrency);
+  const serviceFee = roundCurrencyAmount(convertCurrency(nativeServiceFee, hotelCurrency, targetCurrency), targetCurrency);
+  const grossTotal = roundCurrencyAmount(convertCurrency(nativeGrossTotal, hotelCurrency, targetCurrency), targetCurrency);
+  const discountAmount = discountRate > 0 ? roundCurrencyAmount(convertCurrency(nativeDiscountAmount, hotelCurrency, targetCurrency), targetCurrency) : 0;
+  const baseSellingPriceBeforeSurcharges = Math.max(0, roundCurrencyAmount(convertCurrency(nativeBaseSellingBeforeSurcharges, hotelCurrency, targetCurrency), targetCurrency));
 
   const effectiveValidFrom = rate.validity?.validFrom || rate.validityFrom || roomType?.validity?.validFrom || roomType?.validityFrom || hotel.validity?.validFrom || hotel.validityFrom || '';
   const effectiveValidTo = rate.validity?.validTo || rate.validityTo || roomType?.validity?.validTo || roomType?.validityTo || hotel.validity?.validTo || hotel.validityTo || '';
@@ -310,8 +336,8 @@ export function hotelToProduct(
       tripleNetRate: roomFallbackRate,
       extraBedRate: (selectedRoom as any)?.extraAdultRate || 0,
       childRate: (selectedRoom as any)?.childWithBedRate || 0,
-      markupPercent: 0,
-      taxPercent: 0,
+      markupPercent: 20,
+      taxPercent: 10,
       feePercent: 0,
       currency: (selectedRoom as any)?.currency || hotel.currency || 'USD',
       validityFrom: '2026-01-01',
@@ -330,8 +356,8 @@ export function hotelToProduct(
       tripleNetRate: roomFallbackRate,
       extraBedRate: (selectedRoom as any)?.extraAdultRate || 0,
       childRate: (selectedRoom as any)?.childWithBedRate || 0,
-      markupPercent: 0,
-      taxPercent: 0,
+      markupPercent: 20,
+      taxPercent: 10,
       feePercent: 0,
       currency: (selectedRoom as any)?.currency || hotel.currency || 'USD',
       validityFrom: '2026-01-01',
@@ -400,12 +426,13 @@ export function hotelToProduct(
     childNetPrice: 0,
     infantNetPrice: 0,
     currency: hotelCurr,
-    defaultMarkupPercent: 0,
-    b2bAgentMarkupPercent: 0,
-    buyerMarkupPercent: 0,
-    taxPercent: 0,
+    defaultMarkupPercent: selectedRate.markupPercent ?? 20,
+    b2bAgentMarkupPercent: selectedRate.markupPercent ?? 20,
+    buyerMarkupPercent: selectedRate.markupPercent ?? 20,
+    taxPercent: selectedRate.taxPercent ?? 10,
     commissionPercent: 0,
     serviceFeeFixed: 0,
+    serviceFeePercent: selectedRate.feePercent ?? 0,
     sellingPriceStartingFrom: totalNetPrice,
     season: 'All Year',
     validityFrom: effectiveValidFrom,

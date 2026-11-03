@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { B2BPackage, CurrencyCode, Booking } from '../types';
 import { AppDatabase } from '../services/db';
-import { formatCurrency, convertCurrency } from '../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculatePackagePrice } from '../services/pricingEngine';
 import { useAuth } from '../context/AuthContext';
 import { 
   Package, 
@@ -115,12 +115,12 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {packages.map(pkg => {
           const durationText = `${pkg.durationNights || (pkg.durationDays - 1)}N / ${pkg.durationDays}D`;
-          const baseNet = pkg.baseNetCostUSD || 2500;
-          const retailPriceUSD = pkg.suggestedSellingPriceUSD || Math.round(baseNet * 1.3);
-          const b2bPriceUSD = Math.round(baseNet * (1 + (pkg.pricingConfiguration?.b2bMarkupPercent || 12) / 100));
-
-          const priceInUSD = isB2BAgent ? b2bPriceUSD : retailPriceUSD;
-          const displayPrice = convertCurrency(priceInUSD, 'USD', currency);
+          const pkgPriceResult = calculatePackagePrice({
+            packageItem: pkg,
+            userRole: isB2BAgent ? 'B2B_AGENT' : 'BUYER',
+            targetCurrency: currency as CurrencyCode
+          });
+          const displayPrice = pkgPriceResult.pricePerPerson;
 
           return (
             <div

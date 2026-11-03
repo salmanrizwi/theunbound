@@ -23,6 +23,8 @@ import {
   UserRole,
   User,
   Company,
+  AgencyPricingSettings,
+  ActiveMarginMode,
   VerificationStatus,
   UserCategory,
   UserApprovalStatus,
@@ -257,8 +259,13 @@ import {
   sanitizeQuoteForAgent, 
   sanitizeQuoteDocumentForCustomer,
   sanitizeBookingForAgent, 
-  sanitizeProductForAgent 
+  sanitizeProductForAgent,
+  sanitizePackageForAgent 
 } from '../utils/customerQuoteSanitizer';
+import {
+  calculateQuoteTotal,
+  validateAgentAdditionalMarkup
+} from './pricingEngine';
 
 export function cleanForFirestore(data: any): any {
   if (data === undefined) {
@@ -7941,35 +7948,128 @@ export class AppDatabase {
         defaultActionDetails = customDetails || `Saved changes to quote ${quote.quoteNumber} (v${currentVersion})`;
     }
 
-    // Authoritative Agent Margin & Commercial Pricing Architecture (Section 5 & 8)
-    const baseFinalSellingPrice = quote.baseFinalSellingPrice 
-      ?? quote.base_final_selling_price 
-      ?? existingQuote?.baseFinalSellingPrice 
-      ?? existingQuote?.base_final_selling_price
-      ?? quote.totalSellingPrice
-      ?? 0;
-
-    const agentMarginType: AgentMarginType = (quote.agentMarginType ?? quote.agent_margin_type ?? existingQuote?.agentMarginType ?? 'PERCENTAGE') as AgentMarginType;
-    const rawMarginValue = quote.agentMarginValue ?? quote.agent_margin_value ?? existingQuote?.agentMarginValue ?? (quote.overallMarkupPercent ?? 12);
-    
-    // Server-side bounds validation: reject negative, cap percentage at 100%
-    const validatedMarginValue = Math.max(0, agentMarginType === 'PERCENTAGE' 
-      ? Math.min(100, isNaN(Number(rawMarginValue)) ? 0 : Number(rawMarginValue))
-      : Math.min(baseFinalSellingPrice * 5, isNaN(Number(rawMarginValue)) ? 0 : Number(rawMarginValue))
-    );
-
+    // Authoritative Agent Additional Markup & Commercial Pricing Architecture
     const quoteCurr = (quote.currency || existingQuote?.currency || 'USD').toUpperCase().trim();
     const roundForCurr = (val: number) =>
       quoteCurr === 'JPY' || quoteCurr === 'THB'
         ? Math.round(val)
         : Math.round((val + Number.EPSILON) * 100) / 100;
 
-    const agentMarginAmount = agentMarginType === 'PERCENTAGE'
-      ? roundForCurr(baseFinalSellingPrice * (validatedMarginValue / 100))
-      : roundForCurr(validatedMarginValue);
+    const agentMarginType: AgentMarginType = (quote.agentMarginType ?? quote.agent_margin_type ?? existingQuote?.agentMarginType ?? 'PERCENTAGE') as AgentMarginType;
+    const rawMarginValue = quote.agentMarginValue ?? quote.agent_margin_value ?? existingQuote?.agentMarginValue ?? (quote.overallMarkupPercent ?? 0);
 
-    const finalCustomerSellingPrice = roundForCurr(baseFinalSellingPrice + agentMarginAmount);
+    // Server-side non-negative validation: Agent can ONLY increase price (>= 0), never reduce below TheUnbound Base Selling Price
+    const marginValidation = validateAgentAdditionalMarkup(rawMarginValue);
+    const validatedMarginValue = roundForCurr(Math.max(0, marginValidation.sanitizedValue));
+
+    // Sanitize per-item additional markup values to ensure >= 0
+    const sanitizedItems = Array.isArray(quote.items)
+      ? quote.items.map(it => {
+          if (it.agentAdditionalMarkupValue !== undefined) {
+            const itemValCheck = validateAgentAdditionalMarkup(it.agentAdditionalMarkupValue);
+            return {
+              ...it,
+              agentAdditionalMarkupType: it.agentAdditionalMarkupType || 'PERCENTAGE',
+              agentAdditionalMarkupValue: roundForCurr(Math.max(0, itemValCheck.sanitizedValue))
+            };
+          }
+          return it;
+        })
+      : [];
+
+    const quoteWithSanitizedMarkups: Quotation = {
+      ...quote,
+      items: sanitizedItems,
+      agentMarginType,
+      agentMarginValue: validatedMarginValue
+    };
+
+    const centralTotals = calculateQuoteTotal(
+      quoteWithSanitizedMarkups,
+      quoteWithSanitizedMarkups.activeOptionId,
+      undefined,
+      quoteCurr
+    );
+
+    const fallbackBasePrice = roundForCurr(
+      quote.theUnboundBaseSellingPrice
+        ?? quote.baseFinalSellingPrice
+        ?? quote.base_final_selling_price
+        ?? existingQuote?.theUnboundBaseSellingPrice
+        ?? existingQuote?.baseFinalSellingPrice
+        ?? existingQuote?.base_final_selling_price
+        ?? quote.totalSellingPrice
+        ?? 0
+    );
+
+    const theUnboundBaseSellingPrice = centralTotals.theUnboundBaseSellingPrice > 0
+      ? centralTotals.theUnboundBaseSellingPrice
+      : fallbackBasePrice;
+
+    const baseFinalSellingPrice = theUnboundBaseSellingPrice;
+
+    const productLevelAgentMarkupTotal = centralTotals.theUnboundBaseSellingPrice > 0
+      ? centralTotals.productLevelAgentMarkupTotal
+      : 0;
+
+    const overallAgentMarkupAmount = centralTotals.theUnboundBaseSellingPrice > 0
+      ? centralTotals.overallAgentMarkupAmount
+      : (agentMarginType === 'PERCENTAGE'
+          ? roundForCurr(theUnboundBaseSellingPrice * (validatedMarginValue / 100))
+          : roundForCurr(validatedMarginValue));
+
+    const agentMarginAmount = roundForCurr(productLevelAgentMarkupTotal + overallAgentMarkupAmount);
+
+    const finalCustomerSellingPrice = Math.max(
+      theUnboundBaseSellingPrice,
+      centralTotals.finalCustomerSellingPrice > 0
+        ? centralTotals.finalCustomerSellingPrice
+        : roundForCurr(theUnboundBaseSellingPrice + agentMarginAmount)
+    );
+
+    // Enrich items with authoritative Stage 1 & Stage 2 breakdown values
+    const BreakdownById = new Map(
+      (centralTotals.breakdown?.items || []).map(bi => [bi.itemId, bi])
+    );
+    const enrichedItems = sanitizedItems.map(it => {
+      const bi = BreakdownById.get(it.id);
+      if (!bi) return it;
+      return {
+        ...it,
+        theUnboundBaseSellingPrice: bi.theUnboundBaseSellingPrice,
+        agentAdditionalMarkupType: bi.agentAdditionalMarkupType,
+        agentAdditionalMarkupValue: bi.agentAdditionalMarkupValue,
+        agentAdditionalMarkupAmount: bi.agentAdditionalMarkupAmount,
+        finalCustomerSellingPrice: bi.finalCustomerSellingPrice
+      };
+    });
+
     const pricingCalculatedAt = quote.pricingCalculatedAt || timestamp;
+
+    // Section 10: Detect if Admin updated TheUnbound Base Selling Price on an existing quote
+    const previousBaseSellingPrice = roundForCurr(
+      existingQuote?.theUnboundBaseSellingPrice
+        ?? existingQuote?.baseFinalSellingPrice
+        ?? existingQuote?.base_final_selling_price
+        ?? 0
+    );
+    let adminBasePriceUpdatedNotification = quote.adminBasePriceUpdatedNotification ?? existingQuote?.adminBasePriceUpdatedNotification;
+    if (
+      existingQuote &&
+      createdByUserType === 'ADMIN' &&
+      previousBaseSellingPrice > 0 &&
+      Math.abs(theUnboundBaseSellingPrice - previousBaseSellingPrice) >= 0.01
+    ) {
+      adminBasePriceUpdatedNotification = {
+        updatedAt: timestamp,
+        updatedBy: userName,
+        previousBaseSellingPrice,
+        newBaseSellingPrice: theUnboundBaseSellingPrice,
+        recalculatedFinalCustomerSellingPrice: finalCustomerSellingPrice,
+        agentMarkupPreserved: true,
+        message: `TheUnbound Base Selling Price was updated by Admin from ${quoteCurr} ${previousBaseSellingPrice.toLocaleString()} to ${quoteCurr} ${theUnboundBaseSellingPrice.toLocaleString()}. Your Additional Markup was preserved and your Final Customer Selling Price has been automatically recalculated to ${quoteCurr} ${finalCustomerSellingPrice.toLocaleString()}.`
+      };
+    }
 
     activityLog.push({
       id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
@@ -8003,10 +8103,12 @@ export class AppDatabase {
     });
 
     // Internal authoritative commercial preservation
-    const authoritativeNetCost = existingQuote?.totalNetCost ?? existingQuote?.internalNettCost ?? quote.totalNetCost ?? 0;
+    const authoritativeNetCost = centralTotals.totalNetCost > 0
+      ? centralTotals.totalNetCost
+      : (existingQuote?.totalNetCost ?? existingQuote?.internalNettCost ?? quote.totalNetCost ?? 0);
     const internalNettCost = authoritativeNetCost;
     const supplierCost = existingQuote?.supplierCost ?? authoritativeNetCost;
-    const internalMarkup = existingQuote?.internalMarkup ?? 0;
+    const internalMarkup = centralTotals.breakdown?.internalMarginAmount ?? existingQuote?.internalMarkup ?? 0;
     const agentMarkup = agentMarginAmount;
     const internalProfit = Math.max(0, finalCustomerSellingPrice - authoritativeNetCost);
 
@@ -8025,26 +8127,36 @@ export class AppDatabase {
     );
 
     const pricingSnapshot: PricingSnapshot = {
+      theUnboundBaseSellingPrice,
       baseFinalSellingPrice,
       currency: quote.currency,
       agentMarginType,
       agentMarginValue: validatedMarginValue,
       agentMarginAmount,
+      productLevelAgentMarkupTotal,
+      overallAgentMarkupAmount,
+      totalAgentAdditionalMarkupAmount: agentMarginAmount,
       finalCustomerSellingPrice,
+      hotelAccommodationTotal: centralTotals.hotelTotalSellingPrice,
+      landPartTotal: centralTotals.landPartTotalSellingPrice,
+      totalSellingPrice: finalCustomerSellingPrice,
       calculatedAt: timestamp,
       pricingVersion: currentVersion,
-      itemsCount: (quote.items || []).length,
+      itemsCount: enrichedItems.length,
       totalPax: quote.totalPax || ((quote.adultsCount || 2) + (quote.childrenCount || 0) + (quote.infantsCount || 0)),
       adminManualMarginType,
       adminManualMarginValue,
       adminManualMarginAmount,
       adminMarginMode,
-      revisedSellingPrice
+      revisedSellingPrice,
+      adminBasePriceUpdatedNotification
     };
 
     const updatedQuote: Quotation = {
       ...quote,
+      items: enrichedItems,
       overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? validatedMarginValue : quote.overallMarkupPercent,
+      theUnboundBaseSellingPrice,
       baseFinalSellingPrice,
       base_final_selling_price: baseFinalSellingPrice,
       baseFinalSellingPriceCurrency: quote.currency,
@@ -8065,9 +8177,15 @@ export class AppDatabase {
       agent_margin_value: validatedMarginValue,
       agentMarginAmount,
       agent_margin_amount: agentMarginAmount,
+      productLevelAgentMarkupTotal,
+      overallAgentMarkupAmount,
+      totalAgentAdditionalMarkupAmount: agentMarginAmount,
       finalCustomerSellingPrice,
       final_customer_selling_price: finalCustomerSellingPrice,
       totalSellingPrice: finalCustomerSellingPrice,
+      hotelAccommodationTotal: centralTotals.hotelTotalSellingPrice,
+      landPartTotal: centralTotals.landPartTotalSellingPrice,
+      adminBasePriceUpdatedNotification,
       pricingCalculatedAt,
       pricing_calculated_at: pricingCalculatedAt,
       pricingVersion: currentVersion,
@@ -8589,13 +8707,14 @@ export class AppDatabase {
     const bookingRef = `TUB-BK-${new Date().getFullYear()}-${randomRef}`;
     const newBookingId = `bk-${Date.now()}-${randomRef}`;
 
-    const effectiveTotalAmount = quote.finalCustomerSellingPrice 
-      || quote.final_customer_selling_price 
-      || quote.totalSellingPrice;
+    const centralBookingTotals = calculateQuoteTotal(quote, quote.activeOptionId, undefined, quote.currency);
+    const effectiveTotalAmount = centralBookingTotals.finalCustomerSellingPrice > 0
+      ? centralBookingTotals.finalCustomerSellingPrice
+      : (quote.finalCustomerSellingPrice || quote.final_customer_selling_price || quote.totalSellingPrice);
 
     const isAgent = user?.role === 'B2B_AGENT';
     const submittedByUserId = user?.id || quote.agentId || quote.createdBy || 'usr-b2b';
-    const submittedByUserRole = user?.role || (isAgent ? 'B2B_AGENT' : 'BUYER');
+    const submittedByUserRole = user?.role || 'B2B_AGENT';
     const submittingAgentId = isAgent ? user?.id : (quote.agentId || quote.createdBy);
     const submittingAgentNameSnapshot = isAgent ? user?.name : (quote.agentName || 'Partner Agent');
     const submittingAgentAgencySnapshot = isAgent ? (user?.agencyName || quote.agentAgency) : quote.agentAgency;
@@ -8712,27 +8831,36 @@ export class AppDatabase {
           status: 'DELIVERED'
         }
       ],
-      items: quote.items.map(item => ({
-        id: item.id || `bitem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        productId: item.product?.id || 'prod-custom',
-        productName: item.product?.name || 'Custom Travel Service',
-        productSku: item.product?.sku || 'SKU-CUSTOM',
-        destinationName: item.product?.destinationName || quote.destination || 'Japan',
-        city: item.product?.city || 'Tokyo',
-        category: item.product?.category || item.product?.productType || 'Activity',
-        travelDate: item.travelDate || quote.travelStartDate || new Date().toISOString().split('T')[0],
-        adults: item.pax?.adults ?? 2,
-        children: item.pax?.children ?? 0,
-        infants: item.pax?.infants ?? 0,
-        totalPax: (item.pax?.adults ?? 2) + (item.pax?.children ?? 0) + (item.pax?.infants ?? 0),
-        selectedAddonNames: [],
-        unitNetPrice: (item.calculation as any)?.totalNetCost || 0,
-        unitSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
-        totalPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || item.product?.sellingPriceStartingFrom || 0,
-        currency: quote.currency || 'USD',
-        supplierStatus: 'PENDING_DISPATCH' as const,
-        supplierNotes: item.notes
-      }))
+      items: quote.items.map(item => {
+        const bdItem = (centralBookingTotals.breakdown?.items || []).find(bi => bi.itemId === item.id);
+        const itemFinalSellingPrice = bdItem?.finalCustomerSellingPrice
+          || item.finalCustomerSellingPrice
+          || item.calculation?.finalTotalSellingPrice
+          || (item.calculation as any)?.sellingPriceFinal
+          || item.product?.sellingPriceStartingFrom
+          || 0;
+        return {
+          id: item.id || `bitem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          productId: item.product?.id || 'prod-custom',
+          productName: item.product?.name || 'Custom Travel Service',
+          productSku: item.product?.sku || 'SKU-CUSTOM',
+          destinationName: item.product?.destinationName || quote.destination || 'Japan',
+          city: item.product?.city || 'Tokyo',
+          category: item.product?.category || item.product?.productType || 'Activity',
+          travelDate: item.travelDate || quote.travelStartDate || new Date().toISOString().split('T')[0],
+          adults: item.pax?.adults ?? 2,
+          children: item.pax?.children ?? 0,
+          infants: item.pax?.infants ?? 0,
+          totalPax: (item.pax?.adults ?? 2) + (item.pax?.children ?? 0) + (item.pax?.infants ?? 0),
+          selectedAddonNames: [],
+          unitNetPrice: bdItem?.supplierNettCost || (item.calculation as any)?.totalNetCost || 0,
+          unitSellingPrice: itemFinalSellingPrice,
+          totalPrice: itemFinalSellingPrice,
+          currency: quote.currency || 'USD',
+          supplierStatus: 'PENDING_DISPATCH' as const,
+          supplierNotes: item.notes
+        };
+      })
     };
 
     // Save Booking
@@ -8849,9 +8977,10 @@ export class AppDatabase {
   // ==========================================
   // B2B READY-MADE PACKAGES MANAGEMENT
   // ==========================================
-  public getPackages(): B2BPackage[] {
+  public getPackages(user?: User | null): B2BPackage[] {
     const raw = this.getItem<B2BPackage[]>('b2b_packages', envService.allowDemoData() ? INITIAL_B2B_PACKAGES : []);
     const deletedSet = this.getDeletedEntityIds();
+    const isRestricted = user && (user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'BUYER' || !canUserViewInternalCostBreakdown(user));
     return raw
       .filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Package_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED')
       .map(p => {
@@ -8863,7 +8992,7 @@ export class AppDatabase {
           : Array.isArray((p as any).days)
             ? (p as any).days
             : [];
-        return {
+        const mapped: B2BPackage = {
           ...p,
           title,
           name: title,
@@ -8877,11 +9006,12 @@ export class AppDatabase {
           inclusions: Array.isArray(p.inclusions) ? p.inclusions : [],
           exclusions: Array.isArray(p.exclusions) ? p.exclusions : []
         };
+        return isRestricted ? sanitizePackageForAgent(mapped) : mapped;
       });
   }
 
-  public getPublishedB2BPackages(): B2BPackage[] {
-    return this.getPackages().filter(pkg => {
+  public getPublishedB2BPackages(user?: User | null): B2BPackage[] {
+    return this.getPackages(user).filter(pkg => {
       if ((pkg as any).isDeleted === true) return false;
       const statusUpper = String(pkg.status || '').toUpperCase();
       if (statusUpper === 'ARCHIVED' || statusUpper === 'DRAFT' || statusUpper === 'INACTIVE' || statusUpper === 'DELETED') {
@@ -8894,8 +9024,8 @@ export class AppDatabase {
     });
   }
 
-  public getPackageById(id: string): B2BPackage | null {
-    const pkgs = this.getPackages();
+  public getPackageById(id: string, user?: User | null): B2BPackage | null {
+    const pkgs = this.getPackages(user);
     return pkgs.find(p => p.id === id || p.slug === id) || null;
   }
 
@@ -17255,8 +17385,6 @@ export class AppDatabase {
         agencyName: 'TheUnbound DMC Global Headquarters',
         country: 'Global',
         approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
         contactNumber: '+91 9811654959',
         permissions: {
           canAccessPricingCalculator: true,
@@ -17280,8 +17408,6 @@ export class AppDatabase {
         agencyName: 'TheUnbound DMC Global Headquarters',
         country: 'Global',
         approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
         permissions: {
           canAccessPricingCalculator: true,
           canCreateBookings: true,
@@ -17304,8 +17430,6 @@ export class AppDatabase {
         agencyName: 'TheUnbound DMC Global Headquarters',
         country: 'Global',
         approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
         permissions: {
           canAccessPricingCalculator: true,
           canCreateBookings: true,
@@ -17328,8 +17452,6 @@ export class AppDatabase {
         agencyName: 'TheUnbound Ground Operations Hub',
         country: 'Japan',
         approvalStatus: 'APPROVED',
-        customBuyerMarginPercent: 25,
-        customAgentMarginPercent: 10,
         permissions: {
           canAccessPricingCalculator: true,
           canCreateBookings: true,
@@ -17357,14 +17479,26 @@ export class AppDatabase {
       }
     }
 
-    // Filter out deleted and tombstoned users
-    return candidateList.filter(u => {
-      if (!u || !u.id) return false;
-      if (deletedSet.has(u.id) || deletedSet.has(`User_${u.id}`) || deletedSet.has(`users_${u.id}`)) return false;
-      if (u.email && (deletedSet.has(u.email.toLowerCase().trim()) || deletedSet.has(`user_email_${u.email.toLowerCase().trim()}`))) return false;
-      if ((u as any).status === 'DELETED' || (u as any).isDeleted === true) return false;
-      return true;
-    });
+    // Filter out deleted/tombstoned users and deduplicate by ID and email
+    const seenIds = new Set<string>();
+    const seenEmails = new Set<string>();
+    const uniqueUsers: User[] = [];
+
+    for (const u of candidateList) {
+      if (!u || !u.id) continue;
+      if (deletedSet.has(u.id) || deletedSet.has(`User_${u.id}`) || deletedSet.has(`users_${u.id}`)) continue;
+      const cleanEmail = u.email ? u.email.toLowerCase().trim() : '';
+      if (cleanEmail && (deletedSet.has(cleanEmail) || deletedSet.has(`user_email_${cleanEmail}`))) continue;
+      if ((u as any).status === 'DELETED' || (u as any).isDeleted === true) continue;
+      if (seenIds.has(u.id)) continue;
+      if (cleanEmail && seenEmails.has(cleanEmail)) continue;
+
+      seenIds.add(u.id);
+      if (cleanEmail) seenEmails.add(cleanEmail);
+      uniqueUsers.push(u);
+    }
+
+    return uniqueUsers;
   }
 
   public getUserByEmail(email: string): User | undefined {
@@ -17401,6 +17535,11 @@ export class AppDatabase {
     const idx = users.findIndex(u => u.id === updatedUser.id);
     const previous = idx >= 0 ? { ...users[idx] } : null;
 
+    // Prevent active BUYER role assignment in B2B-only portal
+    if (updatedUser.role === 'BUYER' || (updatedUser as any).userType === 'BUYER') {
+      throw new Error('The Buyer user type is disabled. Supported roles are Agency Owner, B2B Agent, Super Admin, Admin, and Team Member.');
+    }
+
     if (idx >= 0) {
       users[idx] = updatedUser;
     } else {
@@ -17412,9 +17551,10 @@ export class AppDatabase {
     // Immediately synchronize active session cache
     syncSessionUserPermissions(updatedUser);
 
+    const effectiveSettings = this.resolveAgencyPricingSettings({ user: updatedUser });
     const detailText = auditDetails || (actionType === 'USER_PERMISSIONS_CHANGED'
       ? `Updated granular access permissions profile for ${updatedUser.name} (${updatedUser.email})`
-      : `Updated user status for ${updatedUser.name} (${updatedUser.email}): Role=${updatedUser.role}, Status=${updatedUser.approvalStatus || 'APPROVED'}, Margin Buyer=${updatedUser.customBuyerMarginPercent}%, Agent=${updatedUser.customAgentMarginPercent}%`);
+      : `Updated user status for ${updatedUser.name} (${updatedUser.email}): Role=${updatedUser.role}, Status=${updatedUser.approvalStatus || 'APPROVED'}, MarginMode=${effectiveSettings.activeMarginMode}, AgentMargin=${updatedUser.customAgentMarginPercent ?? effectiveSettings.agentLevelMarginPercent}%`);
 
     this.logAudit(
       actor,
@@ -17526,6 +17666,23 @@ export class AppDatabase {
   }
 
   public updateUserProfile(userId: string, updates: Partial<User>, actor: User | null): User | null {
+    const isAuthorizedAdmin =
+      !actor ||
+      actor.role === 'ADMIN' ||
+      actor.role === 'SUPER_ADMIN' ||
+      isMasterAdmin(actor) ||
+      ((actor.role === 'TEAM_MEMBER' || actor.role === 'DMC_STAFF') &&
+        Boolean(actor.permissions?.cmsFinance?.accountManagement || actor.permissions?.canManageUsers));
+
+    const safeUpdates: Partial<User> = { ...updates };
+    if (actor && !isAuthorizedAdmin) {
+      delete (safeUpdates as any).customAgentMarginPercent;
+      delete (safeUpdates as any).pricingSettings;
+      delete (safeUpdates as any).role;
+      delete (safeUpdates as any).permissions;
+      delete (safeUpdates as any).approvalStatus;
+    }
+
     const users = this.getUsers();
     const idx = users.findIndex(u => u.id === userId);
     if (idx === -1) {
@@ -17533,7 +17690,7 @@ export class AppDatabase {
       if (actor && actor.id === userId) {
         const newUser: User = {
           ...actor,
-          ...updates
+          ...safeUpdates
         };
         users.push(newUser);
         this.setItem('system_users', users);
@@ -17547,7 +17704,7 @@ export class AppDatabase {
     const current = users[idx];
     const updated: User = {
       ...current,
-      ...updates
+      ...safeUpdates
     };
     users[idx] = updated;
     this.setItem('system_users', users);
@@ -17609,6 +17766,14 @@ export class AppDatabase {
           primaryContactEmail: u.email,
           primaryContactPhone: u.contactNumber || u.phone,
           linkedUserIds: [u.id],
+          pricingSettings: u.pricingSettings || {
+            productLevelMarginEnabled: true,
+            activeMarginMode: 'PRODUCT_LEVEL',
+            agentLevelMarginPercent: typeof u.customAgentMarginPercent === 'number' ? u.customAgentMarginPercent : 10,
+            lastUpdatedBy: 'usr-admin-business',
+            lastUpdatedByName: 'System Default',
+            lastUpdatedAt: u.updatedAt || u.createdAt || new Date().toISOString()
+          },
           createdAt: u.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
@@ -17625,6 +17790,176 @@ export class AppDatabase {
       initialCompanies.forEach(c => this.syncFirestoreDoc('companies', c.id, c));
     }
     return initialCompanies;
+  }
+
+  /**
+   * Resolves the authoritative AgencyPricingSettings for an agency/company or user.
+   * Defaults to Product-Level Margin = ON (productLevelMarginEnabled: true) when not explicitly set to false.
+   */
+  public resolveAgencyPricingSettings(context?: {
+    companyId?: string;
+    agencyName?: string;
+    userId?: string;
+    user?: User | null;
+  }): AgencyPricingSettings {
+    const targetUserId = context?.userId || context?.user?.id;
+    const dbUser = targetUserId ? this.getUserById(targetUserId) : undefined;
+    const user = dbUser || context?.user || null;
+    const companyId = context?.companyId || user?.companyId || context?.user?.companyId;
+    const agencyName = (context?.agencyName || user?.agencyName || user?.companyName || context?.user?.agencyName || context?.user?.companyName || '').trim().toLowerCase();
+
+    const companies = this.getCompanies();
+    let company: Company | undefined;
+
+    if (companyId) {
+      company = companies.find(c => c.id === companyId);
+    }
+    if (!company && user?.id) {
+      company = companies.find(c => Array.isArray(c.linkedUserIds) && c.linkedUserIds.includes(user.id));
+    }
+    if (!company && agencyName) {
+      company = companies.find(
+        c => (c.name || '').trim().toLowerCase() === agencyName || (c.legalName || '').trim().toLowerCase() === agencyName
+      );
+    }
+
+    const rawSettings = company?.pricingSettings || user?.pricingSettings;
+    const productLevelMarginEnabled = rawSettings?.productLevelMarginEnabled !== undefined
+      ? Boolean(rawSettings.productLevelMarginEnabled)
+      : true; // Default: ON
+
+    const activeMarginMode: ActiveMarginMode = productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL';
+
+    const rawAgentMargin =
+      rawSettings?.agentLevelMarginPercent !== undefined
+        ? Number(rawSettings.agentLevelMarginPercent)
+        : user?.customAgentMarginPercent !== undefined
+          ? Number(user.customAgentMarginPercent)
+          : 10;
+
+    return {
+      productLevelMarginEnabled,
+      activeMarginMode,
+      agentLevelMarginPercent: Number.isFinite(rawAgentMargin) && rawAgentMargin >= 0 ? rawAgentMargin : 10,
+      lastUpdatedBy: rawSettings?.lastUpdatedBy || 'usr-admin-business',
+      lastUpdatedByName: rawSettings?.lastUpdatedByName || 'System Default',
+      lastUpdatedAt: rawSettings?.lastUpdatedAt || company?.updatedAt || user?.updatedAt || new Date().toISOString()
+    };
+  }
+
+  /**
+   * Authoritative Account Management update for an agency/account's Product-Level Margin (ON/OFF) and Agent-Level Margin (%).
+   * Strictly restricted to authorized internal administrators.
+   */
+  public updateAgencyPricingSettings(
+    companyOrUserId: string,
+    settingsInput: {
+      productLevelMarginEnabled: boolean;
+      agentLevelMarginPercent?: number;
+    },
+    actor: User | null
+  ): AgencyPricingSettings {
+    // Enforce RBAC: External users (B2B_AGENT, AGENCY_OWNER, BUYER) can NEVER modify Account Management margin controls
+    const isAuthorizedAdmin =
+      !actor ||
+      actor.role === 'ADMIN' ||
+      actor.role === 'SUPER_ADMIN' ||
+      isMasterAdmin(actor) ||
+      ((actor.role === 'TEAM_MEMBER' || actor.role === 'DMC_STAFF') &&
+        (actor.permissions?.cmsFinance?.accountManagement === true || actor.permissions?.canManageUsers === true));
+
+    if (actor && !isAuthorizedAdmin) {
+      throw new Error('Unauthorized: Only authorized internal administrators can modify Account Management Product-Level Margin settings.');
+    }
+
+    const companies = this.getCompanies();
+    const users = this.getUsers();
+
+    let targetCompany = companies.find(
+      c => c.id === companyOrUserId || (Array.isArray(c.linkedUserIds) && c.linkedUserIds.includes(companyOrUserId))
+    );
+    const targetUser = users.find(u => u.id === companyOrUserId);
+
+    if (!targetCompany && targetUser) {
+      const cName = (targetUser.companyName || targetUser.agencyName || '').trim().toLowerCase();
+      if (cName) {
+        targetCompany = companies.find(c => (c.name || '').trim().toLowerCase() === cName);
+      }
+      if (!targetCompany && (targetUser.companyName || targetUser.agencyName)) {
+        this.syncUserCompanyProfile(targetUser, actor);
+        targetCompany = this.getCompanies().find(
+          c => c.id === targetUser.companyId || (Array.isArray(c.linkedUserIds) && c.linkedUserIds.includes(targetUser.id))
+        );
+      }
+    }
+
+    const currentSettings = this.resolveAgencyPricingSettings({
+      companyId: targetCompany?.id,
+      userId: targetUser?.id,
+      user: targetUser
+    });
+
+    const productLevelMarginEnabled = Boolean(settingsInput.productLevelMarginEnabled);
+    const activeMarginMode: ActiveMarginMode = productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL';
+    const agentLevelMarginPercent =
+      settingsInput.agentLevelMarginPercent !== undefined && Number.isFinite(Number(settingsInput.agentLevelMarginPercent))
+        ? Math.max(0, Number(settingsInput.agentLevelMarginPercent))
+        : currentSettings.agentLevelMarginPercent;
+
+    const nowIso = new Date().toISOString();
+    const nextSettings: AgencyPricingSettings = {
+      productLevelMarginEnabled,
+      activeMarginMode,
+      agentLevelMarginPercent,
+      lastUpdatedBy: actor?.id || 'usr-admin-business',
+      lastUpdatedByName: actor?.name || actor?.email || 'Administrator',
+      lastUpdatedAt: nowIso
+    };
+
+    if (targetCompany) {
+      const updatedCompany: Company = {
+        ...targetCompany,
+        pricingSettings: nextSettings,
+        updatedAt: nowIso
+      };
+      this.saveCompany(
+        updatedCompany,
+        actor,
+        'COMPANY_MARGIN_SETTINGS_UPDATED',
+        `Updated Account Management Pricing & Margin Configuration for ${updatedCompany.name}: Product-Level Margin=${productLevelMarginEnabled ? 'ON' : 'OFF'}, Active Mode=${activeMarginMode}, Agent-Level Margin=${agentLevelMarginPercent}%`
+      );
+    }
+
+    // Also update targetUser and any users belonging to this company
+    const latestUsers = this.getUsers();
+    let usersModified = false;
+    const companyNameLower = (targetCompany?.name || targetUser?.companyName || targetUser?.agencyName || '').trim().toLowerCase();
+
+    latestUsers.forEach(u => {
+      const matchesUser = u.id === companyOrUserId;
+      const matchesCompanyId = Boolean(targetCompany && (u.companyId === targetCompany.id || targetCompany.linkedUserIds?.includes(u.id)));
+      const matchesCompanyName = Boolean(
+        companyNameLower &&
+          ((u.companyName || '').trim().toLowerCase() === companyNameLower ||
+            (u.agencyName || '').trim().toLowerCase() === companyNameLower)
+      );
+
+      if (matchesUser || matchesCompanyId || matchesCompanyName) {
+        u.pricingSettings = nextSettings;
+        u.customAgentMarginPercent = agentLevelMarginPercent;
+        u.updatedAt = nowIso;
+        usersModified = true;
+        this.syncFirestoreDoc('users', u.id, u);
+        syncSessionUserPermissions(u);
+      }
+    });
+
+    if (usersModified) {
+      this.setItem('system_users', latestUsers);
+    }
+
+    this.notify();
+    return nextSettings;
   }
 
   public getCompanyById(id: string): Company | null {
@@ -17690,8 +18025,13 @@ export class AppDatabase {
           u.quoteFooterText = updatedCompany.quoteFooterText || u.quoteFooterText;
           u.quoteDisclaimer = updatedCompany.quoteDisclaimer || u.quoteDisclaimer;
           u.verificationStatus = updatedCompany.verificationStatus;
+          if (updatedCompany.pricingSettings) {
+            u.pricingSettings = updatedCompany.pricingSettings;
+            u.customAgentMarginPercent = updatedCompany.pricingSettings.agentLevelMarginPercent;
+          }
           usersChanged = true;
           this.syncFirestoreDoc('users', u.id, u);
+          syncSessionUserPermissions(u);
         }
       });
       if (usersChanged) {
@@ -17699,6 +18039,7 @@ export class AppDatabase {
       }
     }
 
+    this.notify();
     return updatedCompany;
   }
 
@@ -17801,6 +18142,14 @@ export class AppDatabase {
           primaryContactEmail: user.email,
           primaryContactPhone: user.contactNumber || user.phone,
           linkedUserIds: [user.id],
+          pricingSettings: user.pricingSettings || {
+            productLevelMarginEnabled: true,
+            activeMarginMode: 'PRODUCT_LEVEL',
+            agentLevelMarginPercent: typeof user.customAgentMarginPercent === 'number' ? user.customAgentMarginPercent : 10,
+            lastUpdatedBy: actor?.id || 'usr-admin-business',
+            lastUpdatedByName: actor?.name || 'System Default',
+            lastUpdatedAt: new Date().toISOString()
+          },
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
@@ -17944,10 +18293,17 @@ export class AppDatabase {
       };
     }
 
-    const isB2BAgent = userData.role === 'B2B_AGENT' || userData.role === 'AGENT';
-    const isInternal = userData.role === 'ADMIN' || userData.role === 'TEAM_MEMBER';
+    if (userData.role === 'BUYER' || (userData as any).userType === 'BUYER') {
+      return {
+        success: false,
+        error: 'Direct consumer (Buyer) accounts are not supported. TheUnbound is a B2B-only travel portal.'
+      };
+    }
+
+    const isB2BAgent = userData.role === 'B2B_AGENT' || userData.role === 'AGENT' || userData.role === 'AGENCY_OWNER';
+    const isInternal = userData.role === 'ADMIN' || userData.role === 'SUPER_ADMIN' || userData.role === 'TEAM_MEMBER' || userData.role === 'DMC_STAFF';
     
-    // For B2B Agent, agency name is mandatory
+    // For B2B Agent / Agency Owner, agency name is mandatory
     if (isB2BAgent && !userData.agencyName && !userData.companyName) {
       return { success: false, error: 'Travel Agency or Company Name is required for B2B Agent registration.' };
     }
@@ -17957,7 +18313,7 @@ export class AppDatabase {
     const category: UserCategory = isInternal ? 'INTERNAL' : 'EXTERNAL';
 
     const newUser: User = {
-      id: `usr-${isB2BAgent ? 'agent' : (userData.role || 'buyer').toLowerCase()}-${Date.now()}`,
+      id: `usr-${isB2BAgent ? 'agent' : (userData.role || 'agent').toLowerCase()}-${Date.now()}`,
       name: trimmedName,
       firstName: trimmedFirst || undefined,
       lastName: trimmedLast || undefined,
@@ -17975,8 +18331,14 @@ export class AppDatabase {
       iataOrAbtaNumber: userData.iataOrAbtaNumber?.trim() || '',
       createdAt: new Date().toISOString().split('T')[0],
       approvalStatus,
-      customBuyerMarginPercent: 25,
-      customAgentMarginPercent: 10,
+      pricingSettings: {
+        productLevelMarginEnabled: true,
+        activeMarginMode: 'PRODUCT_LEVEL',
+        agentLevelMarginPercent: 10,
+        lastUpdatedBy: 'usr-admin-business',
+        lastUpdatedByName: 'System Default',
+        lastUpdatedAt: new Date().toISOString()
+      },
       permissions: approvalStatus === 'APPROVED' 
         ? getDefaultPermissionsForRole(userData.role)
         : {

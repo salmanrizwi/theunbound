@@ -1,7 +1,7 @@
 import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice, InventoryValidity, InventorySurcharge, AppliedSurchargeDetail, SurchargeOverlapWarning, InventoryValidityEvaluation, SurchargeApplicationBasis, TripRouteHub, Quotation, QuoteItem, CurrencyConversionLineRecord, QuotationCurrencySnapshot, SurchargeMaster, QuotationSurchargeOverride } from '../types';
 import { currencyEngine, convertCurrency as engineConvert, formatCurrency as engineFormat, getExchangeRateInfo, BASELINE_USD_RATES } from './currencyEngine';
 import { AppDatabase } from './db';
-import { hotelToProduct } from '../utils/hotelHelpers';
+import { hotelToProduct, manualHotelToProduct } from '../utils/hotelHelpers';
 import { sanitizePricingResultForAgent } from '../utils/customerQuoteSanitizer';
 import { RailPricingEngine } from './railPricingEngine';
 import { resolveRailRateNettPrice } from '../types/rail';
@@ -1003,7 +1003,11 @@ export function calculateDeliveredPriceForUser(
   targetCurrency: CurrencyCode = 'USD'
 ): DeliveredPriceInfo {
   const role: UserRole = user?.role || 'B2B_AGENT';
-  const isAdmin = role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
+  const isAdmin =
+    role === 'ADMIN' ||
+    role === 'SUPER_ADMIN' ||
+    ((role === 'TEAM_MEMBER' || role === 'DMC_STAFF') &&
+      Boolean(user?.permissions?.cmsFinance?.financialSummary || user?.permissions?.canManagePricing));
   const userTier: 'BUYER' | 'B2B_AGENT' | 'ADMIN' = isAdmin ? 'ADMIN' : 'B2B_AGENT';
 
   const isRail =
@@ -1080,25 +1084,25 @@ export function calculateDeliveredPriceForUser(
       deliveredPrice: railRes.finalSellingPriceTargetCurrency,
       totalSellingPrice: railRes.finalSellingPriceTargetCurrency,
       rawPriceInBaseCurrency: railRes.finalSellingPriceJPY,
-      baseAdultNet: railRes.adultPerPaxSupplierJPY,
-      baseChildNet: railRes.childPerPaxSupplierJPY,
+      baseAdultNet: isAdmin ? railRes.adultPerPaxSupplierJPY : 0,
+      baseChildNet: isAdmin ? railRes.childPerPaxSupplierJPY : 0,
       baseInfantNet: 0,
-      appliedMarkupPercent: railRes.appliedMarkupPercent,
+      appliedMarkupPercent: isAdmin ? railRes.appliedMarkupPercent : 0,
       userTier,
       isCustomMargin: false,
       currency: targetCurrency
     };
   }
 
-  let appliedMarkupPercent = product.b2bAgentMarkupPercent !== undefined 
-    ? product.b2bAgentMarkupPercent 
-    : (product.defaultMarkupPercent !== undefined ? product.defaultMarkupPercent : 20);
-  let isCustomMargin = false;
+  const agencyPricing = AppDatabase.getInstance().resolveAgencyPricingSettings({ user });
+  const isProductLevelEnabled = agencyPricing.productLevelMarginEnabled !== false;
 
-  if (user?.customAgentMarginPercent !== undefined) {
-    appliedMarkupPercent = user.customAgentMarginPercent;
-    isCustomMargin = true;
-  }
+  const appliedMarkupPercent = isProductLevelEnabled
+    ? (product.b2bAgentMarkupPercent !== undefined
+        ? product.b2bAgentMarkupPercent
+        : (product.defaultMarkupPercent !== undefined ? product.defaultMarkupPercent : 20))
+    : agencyPricing.agentLevelMarginPercent;
+  const isCustomMargin = !isProductLevelEnabled;
 
   const isCapacity = isCapacityBasedProduct(product);
   const baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? 0;
@@ -1122,7 +1126,10 @@ export function calculateDeliveredPriceForUser(
                              7;
     const vehicleModel = product.vehicleConfig?.vehicleModel || product.vehicleConfig?.vehicleName || product.name;
 
-    const tierMargin = (firstTier as any)?.b2bMargin ?? firstTier?.marginValue ?? appliedMarkupPercent;
+    const tierMargin = isProductLevelEnabled
+      ? ((firstTier as any)?.b2bMargin ?? firstTier?.marginValue ?? appliedMarkupPercent)
+      : agencyPricing.agentLevelMarginPercent;
+    const tierMarginType = isProductLevelEnabled ? (firstTier?.marginType || 'PERCENTAGE') : 'PERCENTAGE';
     const tierTax = firstTier?.taxValue ?? product.taxPercent ?? 10;
     const tierSvcValue = firstTier?.serviceChargeValue ?? (product as any).serviceFeePercent ?? (product as any).serviceFeeFixed ?? 0;
     const tierSvcType = firstTier?.serviceChargeType ?? ((product as any).serviceFeePercent !== undefined ? 'PERCENTAGE' : 'FIXED');
@@ -1130,7 +1137,7 @@ export function calculateDeliveredPriceForUser(
     const unifiedRes = calculateUnifiedPrice({
       nettPrice: vehicleCost,
       quantity: 1,
-      marginType: firstTier?.marginType || 'PERCENTAGE',
+      marginType: tierMarginType,
       marginValue: tierMargin,
       taxPercent: tierTax,
       serviceChargeType: tierSvcType as any,
@@ -1147,19 +1154,19 @@ export function calculateDeliveredPriceForUser(
       deliveredPrice: totalVehicleSellingPrice,
       totalSellingPrice: totalVehicleSellingPrice,
       rawPriceInBaseCurrency: rawVehicleSelling,
-      baseAdultNet: vehicleCost,
+      baseAdultNet: isAdmin ? vehicleCost : 0,
       baseChildNet: 0,
       baseInfantNet: 0,
-      appliedMarkupPercent: tierMargin,
+      appliedMarkupPercent: isAdmin ? tierMargin : 0,
       userTier,
-      isCustomMargin,
+      isCustomMargin: isAdmin ? isCustomMargin : false,
       currency: targetCurrency,
       isCapacityBased: true,
       totalVehicleSellingPrice,
       perPersonStartingFrom,
       vehicleCapacity: startingCapacity,
       vehicleModel,
-      unitVehicleNetCost: vehicleCost
+      unitVehicleNetCost: isAdmin ? vehicleCost : undefined
     };
   }
 
@@ -1176,12 +1183,12 @@ export function calculateDeliveredPriceForUser(
     deliveredPrice,
     totalSellingPrice: deliveredPrice,
     rawPriceInBaseCurrency: rawSellingInBase,
-    baseAdultNet,
-    baseChildNet,
-    baseInfantNet,
-    appliedMarkupPercent,
+    baseAdultNet: isAdmin ? baseAdultNet : 0,
+    baseChildNet: isAdmin ? baseChildNet : 0,
+    baseInfantNet: isAdmin ? baseInfantNet : 0,
+    appliedMarkupPercent: isAdmin ? appliedMarkupPercent : 0,
     userTier,
-    isCustomMargin,
+    isCustomMargin: isAdmin ? isCustomMargin : false,
     currency: targetCurrency,
     isCapacityBased: false
   };
@@ -1241,9 +1248,46 @@ export function calculateProductPrice(
   }
 
   const user = request.user || null;
-  const userRole = request.userRole || user?.role || 'BUYER';
-  const isAgent = userRole === 'B2B_AGENT' || userRole === 'AGENT' || request.pricingTier === 'B2B';
-  const pricingTier: 'B2C' | 'B2B' = isAgent ? 'B2B' : 'B2C';
+  const userRole = request.userRole || user?.role || 'B2B_AGENT';
+  const pricingTier: 'B2C' | 'B2B' = 'B2B';
+
+  // Strict Validation Rule: Product-Level Margin and Agent-Level Margin can NEVER be applied simultaneously
+  if ((request as any).applyProductLevelMargin === true && (request as any).applyAgentLevelMargin === true) {
+    throw new Error('Exclusive Margin Violation: Product-Level Margin and Agent-Level Margin can never be applied simultaneously.');
+  }
+
+  // Resolve authoritative Account Management Pricing & Margin Configuration for this agency/account
+  let isProductLevelMarginEnabled = true;
+  let configuredAgentLevelMarginPercent = 10;
+
+  try {
+    const db = AppDatabase.getInstance();
+    const agencySettings = db.resolveAgencyPricingSettings({
+      companyId: request.companyId || user?.companyId,
+      agencyName: request.agencyName || user?.agencyName || user?.companyName,
+      userId: user?.id,
+      user
+    });
+    isProductLevelMarginEnabled = agencySettings.productLevelMarginEnabled;
+    configuredAgentLevelMarginPercent = agencySettings.agentLevelMarginPercent;
+  } catch {
+    // Fallback to default ON
+  }
+
+  if (request.preserveHistoricalMarginMode) {
+    isProductLevelMarginEnabled = request.historicalProductLevelMarginEnabled !== false;
+    if (typeof request.historicalMarginPercent === 'number') {
+      configuredAgentLevelMarginPercent = request.historicalMarginPercent;
+    }
+  } else if (typeof request.productLevelMarginEnabled === 'boolean') {
+    isProductLevelMarginEnabled = request.productLevelMarginEnabled;
+  }
+
+  if (typeof request.customAgentMarginPercent === 'number') {
+    configuredAgentLevelMarginPercent = request.customAgentMarginPercent;
+  }
+
+  const activeMarginMode: 'PRODUCT_LEVEL' | 'AGENT_LEVEL' = isProductLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL';
 
   const adults = Math.max(1, request.adults || 1);
   const children = Math.max(0, request.children || 0);
@@ -1253,29 +1297,117 @@ export function calculateProductPrice(
   const explicitServiceDate = request.travelDate && request.travelDate.trim() ? request.travelDate.trim() : undefined;
   const travelDate = explicitServiceDate || new Date().toISOString().split('T')[0];
 
-  // If product was sanitized for agent view (adultNetPrice stripped), restore master fields from AppDatabase
-  if (product && product.adultNetPrice === undefined && product.adultNettCost === undefined && (product as any).basePrice === undefined) {
+  // If product was sanitized for agent view (adultNetPrice or markup fields stripped), restore master fields from AppDatabase
+  if (
+    product &&
+    (product.adultNetPrice === undefined ||
+      (product.b2bAgentMarkupPercent === undefined && product.defaultMarkupPercent === undefined))
+  ) {
     try {
       const db = AppDatabase.getInstance();
-      const masterProd = db.getProducts().find(p => p.id === product.id || (product.sku && p.sku === product.sku));
-      if (masterProd) {
+      const prodAny = product as any;
+
+      if ((prodAny.accommodationType === 'manual' || prodAny.isManualHotel) && prodAny.manualHotelDetails) {
+        const rebuiltManual = manualHotelToProduct(prodAny.manualHotelDetails);
         product = {
-          ...masterProd,
+          ...rebuiltManual,
           ...product,
-          adultNetPrice: masterProd.adultNetPrice,
-          adultNettCost: masterProd.adultNettCost,
-          childNetPrice: masterProd.childNetPrice,
-          childNettCost: masterProd.childNettCost,
-          infantNetPrice: masterProd.infantNetPrice,
-          infantNettCost: masterProd.infantNettCost,
-          defaultMarkupPercent: masterProd.defaultMarkupPercent,
-          b2bAgentMarkupPercent: masterProd.b2bAgentMarkupPercent,
-          buyerMarkupPercent: masterProd.buyerMarkupPercent,
-          taxPercent: masterProd.taxPercent,
-          serviceFeeFixed: masterProd.serviceFeeFixed,
-          currency: product.currency || masterProd.currency,
-          nativeCurrency: product.nativeCurrency || masterProd.nativeCurrency || masterProd.currency
-        };
+          adultNetPrice: rebuiltManual.adultNetPrice,
+          adultNettCost: rebuiltManual.adultNettCost,
+          basePrice: (rebuiltManual as any).basePrice,
+          defaultMarkupPercent: rebuiltManual.defaultMarkupPercent,
+          b2bAgentMarkupPercent: rebuiltManual.b2bAgentMarkupPercent,
+          buyerMarkupPercent: rebuiltManual.buyerMarkupPercent,
+          taxPercent: rebuiltManual.taxPercent,
+          serviceFeePercent: rebuiltManual.serviceFeePercent,
+          currency: rebuiltManual.currency,
+          nativeCurrency: rebuiltManual.nativeCurrency || rebuiltManual.currency
+        } as Product;
+      } else if (
+        product.id?.startsWith('hotel-prod-') ||
+        prodAny.hotelId ||
+        product.productType === 'Hotel' ||
+        product.productType === 'Hotel & Resort'
+      ) {
+        const allHotels = db.getHotels();
+        const matchedHotel = allHotels.find(
+          h =>
+            (prodAny.hotelId && h.id === prodAny.hotelId) ||
+            (product.id && product.id.startsWith(`hotel-prod-${h.id}-`)) ||
+            (h.name && product.name && h.name.toLowerCase() === product.name.toLowerCase())
+        );
+        if (matchedHotel) {
+          const matchedRoom =
+            matchedHotel.roomTypes?.find(
+              r =>
+                (prodAny.roomTypeId && r.id === prodAny.roomTypeId) ||
+                (product.id && product.id.includes(`-${r.id}-`)) ||
+                (r.roomName && product.shortDescription?.toLowerCase().includes(r.roomName.toLowerCase()))
+            ) || matchedHotel.roomTypes?.[0];
+          const matchedRate = matchedRoom?.rates?.[0];
+          const nights = Math.max(1, Number(prodAny.nights) || 1);
+          const roomsCount = Math.max(1, Number(prodAny.roomsCount) || Math.ceil(adults / 2));
+          const rebuiltHotelProd = hotelToProduct(matchedHotel, matchedRoom, matchedRate, nights, roomsCount);
+          if (rebuiltHotelProd) {
+            product = {
+              ...rebuiltHotelProd,
+              ...product,
+              adultNetPrice: rebuiltHotelProd.adultNetPrice,
+              adultNettCost: rebuiltHotelProd.adultNettCost,
+              childNetPrice: rebuiltHotelProd.childNetPrice,
+              childNettCost: rebuiltHotelProd.childNettCost,
+              infantNetPrice: rebuiltHotelProd.infantNetPrice,
+              infantNettCost: rebuiltHotelProd.infantNettCost,
+              basePrice: (rebuiltHotelProd as any).basePrice,
+              defaultMarkupPercent: rebuiltHotelProd.defaultMarkupPercent,
+              b2bAgentMarkupPercent: rebuiltHotelProd.b2bAgentMarkupPercent,
+              buyerMarkupPercent: rebuiltHotelProd.buyerMarkupPercent,
+              taxPercent: rebuiltHotelProd.taxPercent,
+              serviceFeePercent: rebuiltHotelProd.serviceFeePercent,
+              surcharges: rebuiltHotelProd.surcharges,
+              currency: rebuiltHotelProd.currency,
+              nativeCurrency: rebuiltHotelProd.nativeCurrency || rebuiltHotelProd.currency
+            } as Product;
+          }
+        }
+      } else {
+        const masterProd = db.getProducts().find(
+          p =>
+            p.id === product.id ||
+            p.product_id === product.id ||
+            (prodAny.master_product_id && (p.id === prodAny.master_product_id || p.product_id === prodAny.master_product_id)) ||
+            (product.sku && p.sku === product.sku)
+        );
+        if (masterProd) {
+          product = {
+            ...masterProd,
+            ...product,
+            adultNetPrice: masterProd.adultNetPrice,
+            adultNettCost: masterProd.adultNettCost,
+            childNetPrice: masterProd.childNetPrice,
+            childNettCost: masterProd.childNettCost,
+            infantNetPrice: masterProd.infantNetPrice,
+            infantNettCost: masterProd.infantNettCost,
+            basePrice: (masterProd as any).basePrice ?? masterProd.adultNetPrice,
+            defaultMarkupPercent: masterProd.defaultMarkupPercent,
+            b2bAgentMarkupPercent: masterProd.b2bAgentMarkupPercent,
+            buyerMarkupPercent: masterProd.buyerMarkupPercent,
+            taxPercent: masterProd.taxPercent,
+            serviceFeeFixed: masterProd.serviceFeeFixed,
+            serviceFeePercent: masterProd.serviceFeePercent,
+            tieredPricing: masterProd.tieredPricing,
+            vehicleConfig: masterProd.vehicleConfig || product.vehicleConfig,
+            ticketConfig: masterProd.ticketConfig || product.ticketConfig,
+            guideConfig: masterProd.guideConfig || product.guideConfig,
+            restaurantConfig: masterProd.restaurantConfig || product.restaurantConfig,
+            mealPricing: masterProd.mealPricing || product.mealPricing,
+            upsells: masterProd.upsells || product.upsells,
+            addons: masterProd.addons || product.addons,
+            surcharges: masterProd.surcharges || product.surcharges,
+            currency: product.currency || masterProd.currency,
+            nativeCurrency: product.nativeCurrency || masterProd.nativeCurrency || masterProd.currency
+          };
+        }
       }
     } catch {
       // Ignore if DB not initialized
@@ -1625,43 +1757,72 @@ export function calculateProductPrice(
 
   rawTotalNetCostInNative += addonsNetInNative;
 
-  // Configurable Commercial Rates with User-Type Hierarchy & Rate Sheet Overrides:
+  // =========================================================================
+  // STRICTLY EXCLUSIVE MARGIN ENGINE (PRODUCT-LEVEL vs AGENT-LEVEL)
+  // =========================================================================
+  // Rule 1: IF Product-Level Margin = ON  -> Apply Product-Level Margin; Agent-Level Margin = 0 / DISABLED
+  // Rule 2: IF Product-Level Margin = OFF -> Product-Level Margin = 0 / DISABLED; Apply Agent-Level Margin
+  // Rule 3: Never apply both Product-Level Margin and Agent-Level Margin simultaneously.
+  // Rule 4: Buyer-Level Margin is completely removed from all calculations.
   let configuredMarkupPercent = 20;
-  if (isFixedStayHotel && request.customMarkupPercent === undefined) {
-    configuredMarkupPercent = product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 0;
-  } else if (request.customMarkupPercent !== undefined) {
+  let selectedMarginRuleId = (product as any).rateId || authoritativeRateId || `RULE-PROD-${product.id}`;
+  let selectedMarginType: 'PERCENTAGE' | 'FIXED' = 'PERCENTAGE';
+  let selectedMarginValue = 20;
+  let selectedMarginReason = 'System fallback default margin (20%)';
+
+  if (request.customMarkupPercent !== undefined) {
     configuredMarkupPercent = request.customMarkupPercent;
-  } else if (pricingTier === 'B2B') {
-    // SECTION 5: BUYER MARGIN MUST NOT BE USED for B2B. Use B2B Agent Margin only.
-    if (user?.customAgentMarginPercent !== undefined) {
-      configuredMarkupPercent = user.customAgentMarginPercent;
-    } else if (rateMarkupAgent !== undefined) {
+    selectedMarginValue = configuredMarkupPercent;
+    selectedMarginRuleId = 'RULE-CUSTOM-OVERRIDE';
+    selectedMarginReason = `Explicit request customMarkupPercent (${request.customMarkupPercent}%)`;
+  } else if (!isProductLevelMarginEnabled) {
+    // CASE 2: Product-Level Margin = OFF -> Apply ONLY Agent-Level Margin (Product-Level Margin = 0 / DISABLED)
+    configuredMarkupPercent = configuredAgentLevelMarginPercent;
+    selectedMarginValue = configuredMarkupPercent;
+    selectedMarginType = 'PERCENTAGE';
+    selectedMarginRuleId = 'RULE-AGENT-LEVEL-MARGIN';
+    selectedMarginReason = `Agent-Level Margin (${configuredMarkupPercent}%) — Product-Level Margin OFF`;
+  } else if (isFixedStayHotel) {
+    // CASE 1 (Hotel): Product-Level Margin = ON
+    configuredMarkupPercent = product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 0;
+    selectedMarginValue = configuredMarkupPercent;
+    selectedMarginRuleId = `RULE-HOTEL-${product.id}`;
+    selectedMarginReason = product.b2bAgentMarkupPercent !== undefined
+      ? `Hotel B2B Agent margin (${product.b2bAgentMarkupPercent}%)`
+      : `Hotel default margin (${configuredMarkupPercent}%)`;
+  } else {
+    // CASE 1 (Product): Product-Level Margin = ON -> Apply Product-Level Margin; Agent-Level Margin is DISABLED
+    if (rateMarkupAgent !== undefined) {
       configuredMarkupPercent = rateMarkupAgent;
+      selectedMarginValue = rateMarkupAgent;
+      selectedMarginRuleId = authoritativeRateId || `RULE-RATE-${product.id}`;
+      selectedMarginReason = `Active Master Rate Sheet B2B margin (${rateMarkupAgent}%)`;
     } else if (isCapacity && matchingTierFound && (matchingTierFound as any).b2bMargin !== undefined) {
       configuredMarkupPercent = (matchingTierFound as any).b2bMargin;
+      selectedMarginValue = configuredMarkupPercent;
+      selectedMarginRuleId = (matchingTierFound as any).pricingRuleId || matchingTierFound.id || `RULE-TIER-${product.id}`;
+      selectedMarginReason = `Capacity tier B2B margin (${configuredMarkupPercent}%) for ${matchingTierFound.minPax}-${matchingTierFound.maxPax} pax`;
     } else if (isCapacity && matchingTierFound && matchingTierFound.marginValue !== undefined) {
       configuredMarkupPercent = matchingTierFound.marginValue;
+      selectedMarginValue = matchingTierFound.marginValue;
+      selectedMarginType = matchingTierFound.marginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+      selectedMarginRuleId = (matchingTierFound as any).pricingRuleId || matchingTierFound.id || `RULE-TIER-${product.id}`;
+      selectedMarginReason = `Capacity tier margin rule ${(matchingTierFound as any).pricingRuleId || matchingTierFound.id} (${matchingTierFound.marginValue}${selectedMarginType === 'PERCENTAGE' ? '%' : ' fixed'}) for ${matchingTierFound.minPax}-${matchingTierFound.maxPax} pax`;
     } else if (product.b2bAgentMarkupPercent !== undefined) {
       configuredMarkupPercent = product.b2bAgentMarkupPercent;
+      selectedMarginValue = product.b2bAgentMarkupPercent;
+      selectedMarginRuleId = `RULE-PROD-B2B-${product.id}`;
+      selectedMarginReason = `Product B2B Agent margin b2bAgentMarkupPercent (${product.b2bAgentMarkupPercent}%)`;
     } else if (product.defaultMarkupPercent !== undefined) {
       configuredMarkupPercent = product.defaultMarkupPercent;
+      selectedMarginValue = product.defaultMarkupPercent;
+      selectedMarginRuleId = `RULE-PROD-DEFAULT-${product.id}`;
+      selectedMarginReason = `Product default margin defaultMarkupPercent (${product.defaultMarkupPercent}%) — no distinct B2B override configured`;
     } else {
       configuredMarkupPercent = 20;
-    }
-  } else {
-    // Buyer tier (B2C)
-    if (user?.customBuyerMarginPercent !== undefined) {
-      configuredMarkupPercent = user.customBuyerMarginPercent;
-    } else if (rateMarkupBuyer !== undefined) {
-      configuredMarkupPercent = rateMarkupBuyer;
-    } else if (isCapacity && matchingTierFound && (matchingTierFound as any).buyerMargin !== undefined) {
-      configuredMarkupPercent = (matchingTierFound as any).buyerMargin;
-    } else if (isCapacity && matchingTierFound && matchingTierFound.marginValue !== undefined) {
-      configuredMarkupPercent = matchingTierFound.marginValue;
-    } else if (product.buyerMarkupPercent !== undefined) {
-      configuredMarkupPercent = product.buyerMarkupPercent;
-    } else {
-      configuredMarkupPercent = product.defaultMarkupPercent ?? 30;
+      selectedMarginValue = 20;
+      selectedMarginRuleId = 'RULE-SYSTEM-DEFAULT-20';
+      selectedMarginReason = 'Centralized system fallback B2B margin (20%)';
     }
   }
 
@@ -1676,13 +1837,21 @@ export function calculateProductPrice(
   let markupRate = configuredMarkupPercent / 100;
   let nativeMarkupAmount = nativeTotalNetCost * markupRate;
 
-  // Support for configured fixed margin amounts (Section 23)
-  if (isCapacity && matchingTierFound && matchingTierFound.marginType === 'FIXED' && matchingTierFound.marginValue !== undefined) {
-    nativeMarkupAmount = matchingTierFound.marginValue * quantity;
-    markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
-  } else if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
-    nativeMarkupAmount = Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax);
-    markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
+  // Support for configured fixed margin amounts ONLY when Product-Level Margin is ON
+  if (isProductLevelMarginEnabled && request.customMarkupPercent === undefined) {
+    if (isCapacity && matchingTierFound && matchingTierFound.marginType === 'FIXED' && matchingTierFound.marginValue !== undefined) {
+      nativeMarkupAmount = matchingTierFound.marginValue * quantity;
+      markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
+      selectedMarginType = 'FIXED';
+      selectedMarginValue = matchingTierFound.marginValue;
+    } else if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
+      nativeMarkupAmount = Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax);
+      markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
+      selectedMarginType = 'FIXED';
+      selectedMarginValue = Number((product as any).marginFixed);
+      selectedMarginRuleId = `RULE-PROD-FIXED-${product.id}`;
+      selectedMarginReason = `Product fixed margin (${selectedMarginValue} ${nativeCurrency})`;
+    }
   }
 
   // Authoritative Tax on Margin (Section 4 & 24)
@@ -1706,7 +1875,7 @@ export function calculateProductPrice(
     } else if (sType === 'FIXED') {
       nativeServiceFee = matchingTierFound.serviceChargeValue * quantity;
     }
-  } else if ((product as any).serviceFeeFixed !== undefined) {
+  } else if (Number((product as any).serviceFeeFixed) > 0) {
     nativeServiceFee = Number((product as any).serviceFeeFixed) * (isCapacity ? 1 : totalPax);
   } else if ((product as any).serviceFeePercent !== undefined) {
     nativeServiceFee = nativeSubtotal * ((product as any).serviceFeePercent / 100);
@@ -1851,9 +2020,9 @@ export function calculateProductPrice(
   // Compute commercial components in targetCurrency from converted totalNetCost so line-item sum is 100% consistent
   let markupAmount = 0;
   if (combinedFxValid) {
-    if (isCapacity && matchingTierFound && matchingTierFound.marginType === 'FIXED' && matchingTierFound.marginValue !== undefined) {
+    if (isProductLevelMarginEnabled && request.customMarkupPercent === undefined && isCapacity && matchingTierFound && matchingTierFound.marginType === 'FIXED' && matchingTierFound.marginValue !== undefined) {
       markupAmount = conv(matchingTierFound.marginValue * quantity);
-    } else if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
+    } else if (isProductLevelMarginEnabled && request.customMarkupPercent === undefined && (product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
       markupAmount = conv(Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax));
     } else {
       markupAmount = roundCurrencyAmount(totalNetCost * markupRate, targetCurrency);
@@ -1939,10 +2108,12 @@ export function calculateProductPrice(
     infantsSubtotalNet,
     addonsSubtotalNet,
     totalNetCost,
+    activeMarginMode,
+    productLevelMarginEnabled: isProductLevelMarginEnabled,
     b2bWholesaleMarkupRate,
     b2bWholesaleNetToAgent,
-    agentClientMarkupRate,
-    agentProfitAmount,
+    agentClientMarkupRate: 0,
+    agentProfitAmount: 0,
     markupRate,
     markupAmount,
     grossBeforeTax,
@@ -1992,6 +2163,12 @@ export function calculateProductPrice(
     pricingRequestId: `PRQ-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
     calculatedAt: new Date().toISOString(),
 
+    // Calculation-Level Margin Diagnostics (Internal/Admin/Dev only; stripped for B2B Agents)
+    marginRuleId: selectedMarginRuleId,
+    marginType: selectedMarginType,
+    marginValue: selectedMarginValue,
+    marginSelectionReason: selectedMarginReason,
+
     // Validity & Surcharge Evaluation Snapshot
     validityCheck,
     appliedSurcharges: centralizedSurchargeEval.appliedSurcharges,
@@ -1999,7 +2176,85 @@ export function calculateProductPrice(
     surchargeTotal: convertedSurchargeTotal,
     baseSellingPriceBeforeSurcharges,
     surchargeValidationMessage: centralizedSurchargeEval.validationMessage || centralizedSurchargeEval.fxError
-  };
+  } as PricingCalculationResult;
+}
+
+export interface ComponentCalculationDiagnostic {
+  packageId: string;
+  productId: string;
+  productName: string;
+  nettPrice: number;
+  sourceCurrency: CurrencyCode;
+  marginRuleId: string;
+  marginType: 'PERCENTAGE' | 'FIXED';
+  marginValue: number;
+  b2bAgent: string;
+  convertedNettPrice: number;
+  targetCurrency: CurrencyCode;
+  calculatedSellingPrice: number;
+  selectionReason: string;
+}
+
+/**
+ * Generates and logs calculation-level diagnostics for Ready-Made Package components.
+ * Restricted strictly to Admin / Internal users or development diagnostics; never exposed to B2B Agents.
+ */
+export function buildPackageCalculationDiagnostics(
+  packageId: string,
+  packageName: string,
+  items: Array<{ product: Product; pax?: { adults: number; children: number; infants: number }; travelDate?: string }>,
+  targetCurrency: CurrencyCode = 'USD',
+  user?: User | null
+): ComponentCalculationDiagnostic[] {
+  const isInternalOrAdmin = user?.role === 'ADMIN' || user?.role === 'DMC_STAFF' || user?.category === 'INTERNAL';
+  const isDevEnv = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
+  if (!isInternalOrAdmin && !isDevEnv) {
+    return [];
+  }
+
+  const db = AppDatabase.getInstance();
+  const masterProducts = db.getProducts();
+  const agentLabel = user ? `${user.name || user.email} (${user.role})` : 'B2B_AGENT (Standard Tier)';
+
+  const diagnostics: ComponentCalculationDiagnostic[] = items.map(item => {
+    const masterProd = masterProducts.find(
+      p => p.id === item.product.id || p.product_id === item.product.id || (item.product.sku && p.sku === item.product.sku)
+    ) || item.product;
+
+    const fullCalc = calculateProductPrice(masterProd, {
+      productId: masterProd.id,
+      pricingTier: 'B2B',
+      adults: item.pax?.adults ?? 2,
+      children: item.pax?.children ?? 0,
+      infants: item.pax?.infants ?? 0,
+      travelDate: item.travelDate || new Date().toISOString().split('T')[0],
+      targetCurrency,
+      userRole: 'B2B_AGENT',
+      user
+    }) as any;
+
+    return {
+      packageId,
+      productId: masterProd.id,
+      productName: masterProd.name,
+      nettPrice: fullCalc.nativeTotalNetCost ?? 0,
+      sourceCurrency: (fullCalc.nativeCurrency || masterProd.currency || 'USD') as CurrencyCode,
+      marginRuleId: fullCalc.marginRuleId || fullCalc.rateId || `RULE-PROD-${masterProd.id}`,
+      marginType: fullCalc.marginType || 'PERCENTAGE',
+      marginValue: fullCalc.marginValue ?? Math.round((fullCalc.markupRate || 0) * 10000) / 100,
+      b2bAgent: agentLabel,
+      convertedNettPrice: fullCalc.totalNetCost ?? 0,
+      targetCurrency,
+      calculatedSellingPrice: fullCalc.finalTotalSellingPrice ?? 0,
+      selectionReason: fullCalc.marginSelectionReason || 'Database product B2B margin rule'
+    };
+  });
+
+  if (isInternalOrAdmin) {
+    console.debug(`[PricingEngine Diagnostics] Package "${packageName}" (${packageId}) — ${diagnostics.length} components:`, diagnostics);
+  }
+
+  return diagnostics;
 }
 
 /**
@@ -2040,6 +2295,21 @@ export interface PackagePricingRequest {
   customDiscountPercent?: number;
 }
 
+export interface PackagePricingComponent {
+  id: string;
+  name: string;
+  category: string;
+  type: 'SERVICE' | 'HOTEL';
+  dayNumber?: number;
+  hubName?: string;
+  netPrice: number;        // underlying supplier nett cost in targetCurrency
+  sellingPrice: number;    // B2B selling price in targetCurrency from central engine
+  retailPrice: number;     // Retail selling price in targetCurrency from central engine
+  marginAmount: number;    // sellingPrice - netPrice
+  marginPercent: number;   // margin percentage applied by centralized rules
+  currency: CurrencyCode;
+}
+
 export interface PackagePricingResult {
   success: boolean;
   packageId: string;
@@ -2061,16 +2331,34 @@ export interface PackagePricingResult {
   internalAudit?: {
     totalNetCostUSD: number;
     totalNetCostTarget: number;
+    totalB2BSellingPrice: number;
+    totalRetailSellingPrice: number;
     markupAmount: number;
     effectiveMarkupPercent: number;
     pricingMode: string;
     itemsCount: number;
+    servicesNetCost: number;
+    servicesSellingPrice: number;
+    hotelsNetCost: number;
+    hotelsSellingPrice: number;
+    componentBreakdown: PackagePricingComponent[];
   };
 }
 
 export function calculatePackagePrice(request: PackagePricingRequest): PackagePricingResult {
   const db = AppDatabase.getInstance();
-  const pkg: B2BPackage | undefined = request.packageItem || (request.packageId ? db.getPackages().find(p => p.id === request.packageId || p.slug === request.packageId) : undefined);
+  const targetId = request.packageItem?.id || request.packageId;
+  const masterPkg = targetId
+    ? db.getPackages().find(p => p.id === targetId || p.slug === targetId)
+    : undefined;
+  const pkg: B2BPackage | undefined = masterPkg && request.packageItem
+    ? {
+        ...masterPkg,
+        ...request.packageItem,
+        routeHubs: masterPkg.routeHubs || request.packageItem.routeHubs,
+        manualHotels: masterPkg.manualHotels || request.packageItem.manualHotels
+      }
+    : (request.packageItem || masterPkg);
 
   if (!pkg) {
     return {
@@ -2099,73 +2387,304 @@ export function calculatePackagePrice(request: PackagePricingRequest): PackagePr
   const totalPax = adults + children + infants;
   const targetCurrency: CurrencyCode = request.targetCurrency || pkg.currency || 'USD';
 
-  const userRole = request.userRole || request.user?.role || 'BUYER';
-  const isAgent = userRole === 'B2B_AGENT' || userRole === 'AGENT' || request.pricingTier === 'B2B';
-  const isAdminOrStaff = userRole === 'ADMIN' || userRole === 'DMC_STAFF';
+  const userRole = request.userRole || request.user?.role || 'B2B_AGENT';
+  const isAdminOrStaff = userRole === 'SUPER_ADMIN' || userRole === 'ADMIN' || userRole === 'DMC_STAFF' || userRole === 'TEAM_MEMBER';
+  const reqCompanyId = (request as any).companyId || request.user?.companyId;
+  const reqAgencyName = (request as any).agencyName || request.user?.agencyName;
 
-  // 1. Base component cost determination:
-  let evaluatedNetCostUSD = pkg.baseNetCostUSD || 2500;
-  let itemsCount = 0;
+  const allProducts = db.getProducts();
+  const allHotels = db.getHotels();
+  const travelDate = request.travelDate || new Date().toISOString().split('T')[0];
 
-  if (pkg.pricingConfiguration?.pricingMode === 'LIVE') {
-    let dynamicSum = 0;
-    const allProducts = db.getProducts();
-    if (pkg.productIds && pkg.productIds.length > 0) {
-      pkg.productIds.forEach(pid => {
-        const prod = allProducts.find(p => p.id === pid);
+  const componentBreakdown: PackagePricingComponent[] = [];
+  let servicesNetCost = 0;
+  let servicesB2BSelling = 0;
+
+  let hotelsNetCost = 0;
+  let hotelsB2BSelling = 0;
+
+  // 1. Process Itinerary & Products (Ground Services, Excursions, Transfers, Rail)
+  const processedProductIds = new Set<string>();
+
+  if (Array.isArray(pkg.itinerary) && pkg.itinerary.length > 0) {
+    pkg.itinerary.forEach(day => {
+      const dayNum = Math.max(1, Number(day.dayNumber) || 1);
+      const hubName = day.hubName;
+      const dayDateObj = new Date(travelDate);
+      if (!isNaN(dayDateObj.getTime())) {
+        dayDateObj.setDate(dayDateObj.getDate() + (dayNum - 1));
+      }
+      const dayTravelDate = !isNaN(dayDateObj.getTime())
+        ? dayDateObj.toISOString().split('T')[0]
+        : travelDate;
+
+      const productIdsToPrice: string[] = Array.from(
+        new Set(
+          [
+            ...(Array.isArray(day.productIds) ? day.productIds : []),
+            ...(day.transferId ? [day.transferId] : []),
+            ...(day.railId ? [day.railId] : [])
+          ].filter(Boolean)
+        )
+      );
+
+      productIdsToPrice.forEach(prodId => {
+        processedProductIds.add(prodId);
+        const prod = allProducts.find(p => p.id === prodId || p.product_id === prodId || p.sku === prodId);
         if (prod) {
-          dynamicSum += convertCurrency(prod.adultNetPrice, prod.currency || 'USD', 'USD');
-          itemsCount++;
+          // Calculate using Centralized Pricing Engine for B2B Wholesale (respecting Agency Product-Level vs Agent-Level Margin setting)
+          const b2bCalc = calculateProductPrice(prod, {
+            productId: prod.id,
+            adults,
+            children,
+            infants,
+            travelDate: dayTravelDate,
+            targetCurrency,
+            pricingTier: 'B2B',
+            userRole: 'B2B_AGENT',
+            user: request.user,
+            companyId: reqCompanyId,
+            agencyName: reqAgencyName,
+            customMarkupPercent: request.agentClientMarkupPercent
+          });
+
+          const cNet = roundCurrencyAmount(b2bCalc.totalNetCost, targetCurrency);
+          const cSelling = roundCurrencyAmount(b2bCalc.finalTotalSellingPrice, targetCurrency);
+          const cMargin = roundCurrencyAmount(cSelling - cNet, targetCurrency);
+          const cMarginPct = cNet > 0 ? Math.round(((cSelling - cNet) / cNet) * 100 * 10) / 10 : (prod.b2bAgentMarkupPercent ?? prod.defaultMarkupPercent ?? 12);
+
+          servicesNetCost += cNet;
+          servicesB2BSelling += cSelling;
+
+          componentBreakdown.push({
+            id: prod.id,
+            name: prod.name,
+            category: prod.category || 'Service',
+            type: 'SERVICE',
+            dayNumber: dayNum,
+            hubName,
+            netPrice: cNet,
+            sellingPrice: cSelling,
+            retailPrice: cSelling,
+            marginAmount: cMargin,
+            marginPercent: cMarginPct,
+            currency: targetCurrency
+          });
+        }
+      });
+    });
+  }
+
+  // Also include any top-level productIds not already processed in itinerary
+  if (Array.isArray(pkg.productIds)) {
+    pkg.productIds.forEach(prodId => {
+      if (!processedProductIds.has(prodId)) {
+        processedProductIds.add(prodId);
+        const prod = allProducts.find(p => p.id === prodId || p.product_id === prodId || p.sku === prodId);
+        if (prod) {
+          const b2bCalc = calculateProductPrice(prod, {
+            productId: prod.id,
+            adults,
+            children,
+            infants,
+            travelDate,
+            targetCurrency,
+            pricingTier: 'B2B',
+            userRole: 'B2B_AGENT',
+            user: request.user,
+            companyId: reqCompanyId,
+            agencyName: reqAgencyName
+          });
+
+          const cNet = roundCurrencyAmount(b2bCalc.totalNetCost, targetCurrency);
+          const cSelling = roundCurrencyAmount(b2bCalc.finalTotalSellingPrice, targetCurrency);
+          const cMargin = roundCurrencyAmount(cSelling - cNet, targetCurrency);
+          const cMarginPct = cNet > 0 ? Math.round(((cSelling - cNet) / cNet) * 100 * 10) / 10 : (prod.b2bAgentMarkupPercent ?? prod.defaultMarkupPercent ?? 12);
+
+          servicesNetCost += cNet;
+          servicesB2BSelling += cSelling;
+
+          componentBreakdown.push({
+            id: prod.id,
+            name: prod.name,
+            category: prod.category || 'Service',
+            type: 'SERVICE',
+            netPrice: cNet,
+            sellingPrice: cSelling,
+            retailPrice: cSelling,
+            marginAmount: cMargin,
+            marginPercent: cMarginPct,
+            currency: targetCurrency
+          });
+        }
+      }
+    });
+  }
+
+  // 2. Process Accommodations (Hotels) if not Land-Only
+  if (!pkg.isLandOnly) {
+    if (Array.isArray(pkg.routeHubs) && pkg.routeHubs.length > 0) {
+      pkg.routeHubs.forEach(hub => {
+        if (hub.accommodationType === 'NO_ACCOMMODATION' || hub.accommodationType === 'none') {
+          return;
+        }
+
+        const nights = Math.max(1, hub.nights || 1);
+        const rooms = Math.max(1, hub.roomsCount || Math.ceil(adults / 2));
+
+        if ((hub.accommodationType === 'MANUAL' || hub.accommodationType === 'manual' || hub.isManualHotel) && hub.manualHotel) {
+          const manualProd = manualHotelToProduct(hub.manualHotel, { id: hub.destinationId, name: hub.destinationName }, { adults, children, infants });
+          const b2bCalc = calculateProductPrice(manualProd, {
+            productId: manualProd.id,
+            adults,
+            children,
+            infants,
+            travelDate,
+            targetCurrency,
+            pricingTier: 'B2B',
+            userRole: 'B2B_AGENT',
+            user: request.user,
+            companyId: reqCompanyId,
+            agencyName: reqAgencyName
+          });
+
+          const cNet = roundCurrencyAmount(b2bCalc.totalNetCost, targetCurrency);
+          const cSelling = roundCurrencyAmount(b2bCalc.finalTotalSellingPrice, targetCurrency);
+          const cMargin = roundCurrencyAmount(cSelling - cNet, targetCurrency);
+          const cMarginPct = cNet > 0 ? Math.round(((cSelling - cNet) / cNet) * 100 * 10) / 10 : 15;
+
+          hotelsNetCost += cNet;
+          hotelsB2BSelling += cSelling;
+
+          componentBreakdown.push({
+            id: `manual-hotel-${hub.id}`,
+            name: hub.manualHotel.hotelName || 'Manual Accommodation',
+            category: 'Accommodation',
+            type: 'HOTEL',
+            hubName: hub.hubName,
+            netPrice: cNet,
+            sellingPrice: cSelling,
+            retailPrice: cSelling,
+            marginAmount: cMargin,
+            marginPercent: cMarginPct,
+            currency: targetCurrency
+          });
+        } else if (hub.hotelId) {
+          const hotel = allHotels.find(h => h.id === hub.hotelId || (h.name || '').toLowerCase() === (hub.hotelId || '').toLowerCase());
+          if (hotel) {
+            const roomType = hotel.roomTypes?.find(r => r.id === hub.roomTypeId) || hotel.roomTypes?.[0];
+            const hotelProd = hotelToProduct(hotel, roomType, undefined, nights, rooms);
+            const b2bCalc = calculateProductPrice(hotelProd, {
+              productId: hotelProd.id,
+              adults,
+              children,
+              infants,
+              travelDate,
+              targetCurrency,
+              pricingTier: 'B2B',
+              userRole: 'B2B_AGENT',
+              user: request.user,
+              companyId: reqCompanyId,
+              agencyName: reqAgencyName
+            });
+
+            const cNet = roundCurrencyAmount(b2bCalc.totalNetCost, targetCurrency);
+            const cSelling = roundCurrencyAmount(b2bCalc.finalTotalSellingPrice, targetCurrency);
+            const cMargin = roundCurrencyAmount(cSelling - cNet, targetCurrency);
+            const cMarginPct = cNet > 0 ? Math.round(((cSelling - cNet) / cNet) * 100 * 10) / 10 : (roomType?.rates?.[0]?.markupPercent ?? 18);
+
+            hotelsNetCost += cNet;
+            hotelsB2BSelling += cSelling;
+
+            componentBreakdown.push({
+              id: hotel.id,
+              name: `${hotel.name} (${roomType?.roomName || 'Room'} • ${nights}N)`,
+              category: 'Accommodation',
+              type: 'HOTEL',
+              hubName: hub.hubName,
+              netPrice: cNet,
+              sellingPrice: cSelling,
+              retailPrice: cSelling,
+              marginAmount: cMargin,
+              marginPercent: cMarginPct,
+              currency: targetCurrency
+            });
+          }
+        }
+      });
+    } else if (Array.isArray(pkg.hotelsSummary) && pkg.hotelsSummary.length > 0) {
+      pkg.hotelsSummary.forEach((hs, idx) => {
+        const hotel = allHotels.find(h => (hs.hotelId && h.id === hs.hotelId) || (h.name || '').toLowerCase() === (hs.name || '').toLowerCase());
+        const nights = Math.max(1, hs.nights || 1);
+        const rooms = 1;
+        if (hotel) {
+          const roomType = hotel.roomTypes?.find(r => (r.roomName || '').toLowerCase().includes((hs.roomType || '').toLowerCase())) || hotel.roomTypes?.[0];
+          const hotelProd = hotelToProduct(hotel, roomType, undefined, nights, rooms);
+          const b2bCalc = calculateProductPrice(hotelProd, {
+            productId: hotelProd.id,
+            adults,
+            children,
+            infants,
+            travelDate,
+            targetCurrency,
+            pricingTier: 'B2B',
+            userRole: 'B2B_AGENT',
+            user: request.user,
+            companyId: reqCompanyId,
+            agencyName: reqAgencyName
+          });
+
+          const cNet = roundCurrencyAmount(b2bCalc.totalNetCost, targetCurrency);
+          const cSelling = roundCurrencyAmount(b2bCalc.finalTotalSellingPrice, targetCurrency);
+          const cMargin = roundCurrencyAmount(cSelling - cNet, targetCurrency);
+          const cMarginPct = cNet > 0 ? Math.round(((cSelling - cNet) / cNet) * 100 * 10) / 10 : 18;
+
+          hotelsNetCost += cNet;
+          hotelsB2BSelling += cSelling;
+
+          componentBreakdown.push({
+            id: hotel.id || `hs-${idx}`,
+            name: `${hs.name} (${hs.roomType || 'Room'} • ${nights}N)`,
+            category: 'Accommodation',
+            type: 'HOTEL',
+            hubName: hs.cityName,
+            netPrice: cNet,
+            sellingPrice: cSelling,
+            retailPrice: cSelling,
+            marginAmount: cMargin,
+            marginPercent: cMarginPct,
+            currency: targetCurrency
+          });
         }
       });
     }
-
-    const allHotels = db.getHotels();
-    if (pkg.hotelsSummary && pkg.hotelsSummary.length > 0) {
-      pkg.hotelsSummary.forEach(hs => {
-        const htl = allHotels.find(h => (h.id && h.id === hs.hotelId) || ((h.name || '').toLowerCase() === (hs.name || '').toLowerCase()));
-        const nightRate = htl?.startingNetPrice || 350;
-        dynamicSum += (nightRate * (hs.nights || 1));
-        itemsCount++;
-      });
-    }
-
-    if (dynamicSum > 0) {
-      evaluatedNetCostUSD = dynamicSum;
-    }
   }
 
-  // 2. Markup determination:
-  let markupPercent = 25;
-  if (isAgent) {
-    markupPercent = pkg.pricingConfiguration?.b2bMarkupPercent ?? 12;
-    if (request.agentClientMarkupPercent) {
-      markupPercent += request.agentClientMarkupPercent;
-    }
-  } else {
-    markupPercent = pkg.pricingConfiguration?.buyerMarkupPercent ?? 25;
+  // 3. Fallback for unconfigured or template packages
+  if (componentBreakdown.length === 0) {
+    const rawNetUSD = pkg.baseNetCostUSD || 2500;
+    const netTarget = convertCurrency(rawNetUSD, 'USD', targetCurrency);
+    servicesNetCost = netTarget;
+    servicesB2BSelling = roundCurrencyAmount(netTarget * 1.12, targetCurrency);
   }
 
-  if (request.customMarkupPercent !== undefined) {
-    markupPercent = request.customMarkupPercent;
-  }
+  // 4. Authoritative Total Price Determinations
+  // Package Selling Price Formula:
+  // Agent Package Price = Sum of Current B2B Selling Prices of Included Components
+  const totalNetCostTarget = roundCurrencyAmount(servicesNetCost + hotelsNetCost, targetCurrency);
+  const totalB2BSellingPrice = roundCurrencyAmount(servicesB2BSelling + hotelsB2BSelling, targetCurrency);
 
-  // 3. Authoritative per person price:
-  let perPersonUSD = 0;
-  if (!isAgent && (pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD) && pkg.pricingConfiguration?.pricingMode !== 'LIVE') {
-    perPersonUSD = pkg.finalSellingPriceUSD || pkg.suggestedSellingPriceUSD || Math.round(evaluatedNetCostUSD * 1.25);
-  } else {
-    perPersonUSD = Math.round(evaluatedNetCostUSD * (1 + markupPercent / 100));
-  }
+  let finalSellingPrice = totalB2BSellingPrice;
 
+  // Apply custom overall discount if specified
   if (request.customDiscountPercent) {
-    perPersonUSD = Math.round(perPersonUSD * (1 - request.customDiscountPercent / 100));
+    finalSellingPrice = Math.max(0, roundCurrencyAmount(finalSellingPrice * (1 - request.customDiscountPercent / 100), targetCurrency));
   }
 
-  // Convert to target currency
-  const pricePerPerson = convertCurrency(perPersonUSD, 'USD', targetCurrency);
-  const childPricePerPerson = Math.round(pricePerPerson * 0.75);
-  const finalSellingPrice = (adults * pricePerPerson) + (children * childPricePerPerson);
+  const pricePerPerson = totalPax > 0 ? Math.max(0, roundCurrencyAmount(finalSellingPrice / totalPax, targetCurrency)) : finalSellingPrice;
+  const totalNetCostUSD = convertCurrency(totalNetCostTarget, targetCurrency, 'USD');
+  const markupAmount = roundCurrencyAmount(finalSellingPrice - totalNetCostTarget, targetCurrency);
+  const effectiveMarkupPercent = totalNetCostTarget > 0 ? Math.round((markupAmount / totalNetCostTarget) * 100 * 10) / 10 : 0;
 
   const result: PackagePricingResult = {
     success: true,
@@ -2178,20 +2697,25 @@ export function calculatePackagePrice(request: PackagePricingRequest): PackagePr
     isAuthoritative: true,
     calculatedAt: new Date().toISOString(),
     rateId: `PKG-RATE-${pkg.id}`,
-    rateVersion: pkg.pricingConfiguration?.pricingMode === 'LIVE' ? 'LIVE-V1' : 'FIXED-V1'
+    rateVersion: 'CENTRALIZED-v2'
   };
 
-  // Only expose internal breakdown for ADMIN or DMC_STAFF
+  // Strictly present internal breakdown ONLY for ADMIN or DMC_STAFF
   if (isAdminOrStaff) {
-    const totalNetCostTarget = convertCurrency(evaluatedNetCostUSD, 'USD', targetCurrency);
-    const markupAmount = finalSellingPrice - (totalNetCostTarget * adults + totalNetCostTarget * 0.75 * children);
     result.internalAudit = {
-      totalNetCostUSD: evaluatedNetCostUSD,
+      totalNetCostUSD,
       totalNetCostTarget,
+      totalB2BSellingPrice,
+      totalRetailSellingPrice: totalB2BSellingPrice,
       markupAmount,
-      effectiveMarkupPercent: markupPercent,
-      pricingMode: pkg.pricingConfiguration?.pricingMode || 'FIXED',
-      itemsCount
+      effectiveMarkupPercent,
+      pricingMode: 'CENTRALIZED_ENGINE',
+      itemsCount: componentBreakdown.length,
+      servicesNetCost: roundCurrencyAmount(servicesNetCost, targetCurrency),
+      servicesSellingPrice: roundCurrencyAmount(servicesB2BSelling, targetCurrency),
+      hotelsNetCost: roundCurrencyAmount(hotelsNetCost, targetCurrency),
+      hotelsSellingPrice: roundCurrencyAmount(hotelsB2BSelling, targetCurrency),
+      componentBreakdown
     };
   }
 
@@ -2784,6 +3308,11 @@ export interface InternalBreakdownItemResult {
   surchargeTotal?: number;
   appliedSurcharges?: AppliedSurchargeDetail[];
   finalSellingPrice: number;
+  theUnboundBaseSellingPrice?: number;
+  agentAdditionalMarkupType?: 'PERCENTAGE' | 'FIXED';
+  agentAdditionalMarkupValue?: number;
+  agentAdditionalMarkupAmount?: number;
+  finalCustomerSellingPrice?: number;
   isExcludedNoAccommodation: boolean;
   hasValidRate: boolean;
   incompleteReason?: string;
@@ -2796,6 +3325,11 @@ export interface QuoteInternalBreakdownParams {
   agentMarginValue?: number;
   overallDiscountPercent?: number;
   userRole?: string;
+  user?: User | null;
+  companyId?: string;
+  agencyName?: string;
+  productLevelMarginEnabled?: boolean;
+  customAgentMarginPercent?: number;
   scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
   routeHubs?: TripRouteHub[];
   adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
@@ -2809,6 +3343,9 @@ export interface QuoteInternalBreakdownParams {
 
 export interface QuoteInternalBreakdownResult {
   isComplete: boolean;
+  activeMarginMode?: 'PRODUCT_LEVEL' | 'AGENT_LEVEL';
+  productLevelMarginEnabled?: boolean;
+  configuredAgentLevelMarginPercent?: number;
   incompleteWarnings: Array<{
     itemId: string;
     productName: string;
@@ -2819,12 +3356,16 @@ export interface QuoteInternalBreakdownResult {
   totalNettCost: number;          // Combined underlying nett cost before margin, taxes, service fees
   totalMargin: number;            // Applicable authorized margin amount (underlying markups + partner margin - discounts)
   underlyingMarginAmount: number; // Underlying inventory markup
-  partnerMarginAmount: number;    // Additional partner margin
+  partnerMarginAmount: number;    // Additional partner margin (Product-level + Overall agent markup)
+  productLevelAgentMarkupTotal?: number; // Sum of per-product agent additional markups
+  overallAgentMarkupAmount?: number;     // Overall quotation agent additional markup
+  totalAgentAdditionalMarkupAmount?: number; // Total agent additional markup
   taxAmount: number;              // Applicable tax calculated according to existing pricing rules
   serviceFee: number;             // Applicable service fee calculated according to existing pricing rules
   surchargesTotal?: number;       // Total converted selling surcharges across items
   appliedSurcharges?: AppliedSurchargeDetail[]; // Aggregated applied surcharge records
-  baseSellingPrice: number;       // Base selling price before partner margin
+  baseSellingPrice: number;       // TheUnbound Base Selling Price before agent additional markup
+  theUnboundBaseSellingPrice?: number; // Explicit alias for TheUnbound Base Selling Price
   discountAmount: number;         // Overall package discount amount
   finalPackagePrice: number;      // Customer-facing total produced by existing Pricing Engine
   hotelAccommodationTotal?: number; // Authoritative converted Hotel Accommodation Total
@@ -2835,6 +3376,46 @@ export interface QuoteInternalBreakdownResult {
   existingMarginAmount?: number;
   revisedSellingPrice?: number;
   adminFinalTotal?: number;
+}
+
+/**
+ * Authoritative validation helper for Agent-Controlled Additional Markup ("Your Additional Markup").
+ * Enforces the commercial restriction:
+ * - Markup value MUST be >= 0 (never negative).
+ * - Final Customer Selling Price MUST be >= TheUnbound Base Selling Price.
+ */
+export function validateAgentAdditionalMarkup(
+  rawValue: unknown,
+  theUnboundBaseSellingPrice?: number,
+  finalCustomerSellingPrice?: number
+): {
+  isValid: boolean;
+  sanitizedValue: number;
+  errorMessage?: string;
+} {
+  const numericVal = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+  if (rawValue !== undefined && rawValue !== null && rawValue !== '' && (Number.isNaN(numericVal) || numericVal < 0)) {
+    return {
+      isValid: false,
+      sanitizedValue: 0,
+      errorMessage: 'Validation Error: Additional markup cannot be negative. You can only increase the selling price above TheUnbound Base Selling Price.'
+    };
+  }
+  if (
+    typeof theUnboundBaseSellingPrice === 'number' &&
+    typeof finalCustomerSellingPrice === 'number' &&
+    finalCustomerSellingPrice + 0.001 < theUnboundBaseSellingPrice
+  ) {
+    return {
+      isValid: false,
+      sanitizedValue: Math.max(0, Number.isFinite(numericVal) ? numericVal : 0),
+      errorMessage: 'Validation Error: Final Customer Selling Price cannot be lower than TheUnbound Base Selling Price.'
+    };
+  }
+  return {
+    isValid: true,
+    sanitizedValue: Math.max(0, Number.isFinite(numericVal) ? numericVal : 0)
+  };
 }
 
 /**
@@ -2871,8 +3452,11 @@ export function calculateQuoteInternalBreakdown(
     items = [],
     targetCurrency = 'USD',
     agentMarginType = 'PERCENTAGE',
-    agentMarginValue = 10,
+    agentMarginValue = 0,
     overallDiscountPercent = 0,
+    user,
+    companyId,
+    agencyName,
     scope,
     routeHubs = [],
     preserveHistoricalSnapshot = false,
@@ -2880,6 +3464,25 @@ export function calculateQuoteInternalBreakdown(
     surchargeOverrides,
     bookingDate
   } = params;
+
+  const agencySettings = AppDatabase.getInstance().resolveAgencyPricingSettings({
+    companyId: companyId || user?.companyId,
+    agencyName: agencyName || user?.agencyName || user?.companyName,
+    userId: user?.id,
+    user
+  });
+
+  const isProductLevelMarginEnabled =
+    params.productLevelMarginEnabled !== undefined
+      ? Boolean(params.productLevelMarginEnabled)
+      : agencySettings.productLevelMarginEnabled;
+
+  const configuredAgentLevelMarginPercent =
+    params.customAgentMarginPercent !== undefined
+      ? Number(params.customAgentMarginPercent)
+      : agencySettings.agentLevelMarginPercent;
+
+  const activeMarginMode: 'PRODUCT_LEVEL' | 'AGENT_LEVEL' = isProductLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL';
 
   const isLandOnlyQuote = scope === 'LAND_ONLY';
   const noAccommodationHubIds = new Set(
@@ -3187,14 +3790,35 @@ export function calculateQuoteInternalBreakdown(
         ov => !ov.itemId || ov.itemId === item.id || !ov.productId || ov.productId === item.product?.id
       );
 
+      const existingCalcMarginMode = (existingCalc as any)?.activeMarginMode;
+      const isMarginModeStillCurrent =
+        preserveHistoricalSnapshot ||
+        (existingCalcMarginMode === activeMarginMode &&
+          (isProductLevelMarginEnabled ||
+            Math.abs(((existingCalc?.markupRate || 0) * 100) - configuredAgentLevelMarginPercent) < 0.001));
+
       const hasValidExistingCalc = Boolean(
         !hasItemSurchargeOverrides &&
         existingCalc &&
         typeof existingCalc.totalNetCost === 'number' &&
         existingCalc.totalNetCost > 0 &&
         existingCalcCurrency === targetCurrency &&
-        isRateStillCurrent
+        isRateStillCurrent &&
+        isMarginModeStillCurrent
       );
+
+      const enrichedItemProduct: Product =
+        item.isManualHotel && item.manualHotelDetails
+          ? manualHotelToProduct(item.manualHotelDetails)
+          : ({
+              ...item.product,
+              ...(item.hotelId ? { hotelId: item.hotelId } : {}),
+              ...(item.roomTypeId ? { roomTypeId: item.roomTypeId } : {}),
+              ...(item.nights ? { nights: item.nights } : {}),
+              ...(item.roomsCount ? { roomsCount: item.roomsCount } : {}),
+              ...(item.manualHotelDetails ? { manualHotelDetails: item.manualHotelDetails } : {}),
+              ...(item.master_product_id ? { master_product_id: item.master_product_id } : {})
+            } as Product);
 
       const calc = hasValidExistingCalc
         ? {
@@ -3208,11 +3832,16 @@ export function calculateQuoteInternalBreakdown(
             surchargeTotal: roundCurrencyAmount(existingCalc!.surchargeTotal || 0, targetCurrency),
             appliedSurcharges: existingCalc!.appliedSurcharges || snapshotLine?.appliedSurcharges || []
           }
-        : calculateProductPrice(item.product, {
-            productId: item.product.id,
+        : calculateProductPrice(enrichedItemProduct, {
+            productId: enrichedItemProduct.id,
             itemId: item.id,
             pricingTier: 'B2B',
             userRole: 'ADMIN',
+            user,
+            companyId,
+            agencyName,
+            productLevelMarginEnabled: isProductLevelMarginEnabled,
+            customAgentMarginPercent: configuredAgentLevelMarginPercent,
             adults: item.pax?.adults || 2,
             children: item.pax?.children || 0,
             infants: item.pax?.infants || 0,
@@ -3389,23 +4018,17 @@ export function calculateQuoteInternalBreakdown(
     roundCurrencyAmount(stage1PreDiscountTotal - discountAmount, targetCurrency)
   );
 
-  // STAGE 2: Additional Agent Margin — Always uses Stage 1's Final Total (adminFinalTotal) as Existing Final Price
+  // STAGE 2: Agent-Controlled Additional Markup ("Your Additional Markup")
+  // Commercial Rules:
+  // 1. Stage 1 (adminFinalTotal) is TheUnbound Base Selling Price (already incorporating Product-Level Margin when ON or Internal Agent-Level Margin when OFF).
+  // 2. Stage 2 is the B2B Agent's own additional markup ("Your Additional Markup"), which works whether Product-Level Margin is ON or OFF.
+  // 3. Increase-Only Rule: Markup must be >= 0. Negative markups are rejected/clamped to 0 so Final Customer Selling Price >= TheUnbound Base Selling Price.
+  // 4. Deterministic No-Double-Application Rule:
+  //    - If a line item has an individual Product-Level Additional Markup (> 0), that specific markup applies to that item.
+  //    - Overall Quotation Percentage Markup applies only to items that do NOT already have an individual Product-Level Additional Markup.
   const baseSellingPrice = adminFinalTotal;
 
-  const partnerMarginAmount = agentMarginType === 'PERCENTAGE'
-    ? roundCurrencyAmount(baseSellingPrice * ((agentMarginValue || 0) / 100), targetCurrency)
-    : roundCurrencyAmount(agentMarginValue || 0, targetCurrency);
-
-  const finalPackagePrice = Math.max(
-    0,
-    roundCurrencyAmount(baseSellingPrice + partnerMarginAmount, targetCurrency)
-  );
-  const totalMargin = roundCurrencyAmount(
-    effectiveUnderlyingMargin + partnerMarginAmount - discountAmount,
-    targetCurrency
-  );
-
-  // Compute exact Hotel Accommodation Total & Land Part Total using identical Stage 1 & Stage 2 rules
+  // Compute Stage 1 Hotel & Land bases before Stage 2 Agent Additional Markup
   const roundedHotelNet = roundCurrencyAmount(hotelNetCost, targetCurrency);
   const roundedLandNet = roundCurrencyAmount(landNetCost, targetCurrency);
   const roundedHotelBaseSelling = roundCurrencyAmount(hotelSellingPrice, targetCurrency);
@@ -3446,11 +4069,123 @@ export function calculateQuoteInternalBreakdown(
     ? roundCurrencyAmount(effectiveHotelStage1 * (overallDiscountPercent / 100), targetCurrency)
     : 0;
   const stage1HotelAfterDiscount = Math.max(0, roundCurrencyAmount(effectiveHotelStage1 - hotelDiscount, targetCurrency));
-  const hotelPartnerMargin = agentMarginType === 'PERCENTAGE'
-    ? roundCurrencyAmount(stage1HotelAfterDiscount * ((agentMarginValue || 0) / 100), targetCurrency)
-    : (baseSellingPrice > 0
-        ? roundCurrencyAmount(partnerMarginAmount * (stage1HotelAfterDiscount / baseSellingPrice), targetCurrency)
-        : 0);
+
+  const validatedOverallAgentMarginValue = validateAgentAdditionalMarkup(agentMarginValue).sanitizedValue;
+  const stage1ScaleRatio = accumulatedSellingPrice > 0 ? (baseSellingPrice / accumulatedSellingPrice) : 1;
+
+  let productLevelAgentMarkupTotal = 0;
+  let hotelProductLevelMarkupTotal = 0;
+  let unmarkedItemsStage1Base = 0;
+  let unmarkedHotelStage1Base = 0;
+
+  for (const ib of itemizedBreakdown) {
+    if (ib.isExcludedNoAccommodation) {
+      ib.theUnboundBaseSellingPrice = 0;
+      ib.agentAdditionalMarkupAmount = 0;
+      ib.finalCustomerSellingPrice = 0;
+      continue;
+    }
+    const matchedItem = items.find(i => i.id === ib.itemId) as any;
+    const catLower = (ib.category || matchedItem?.product?.category || '').toLowerCase();
+    const ibIsHotel = Boolean(
+      catLower.includes('hotel') ||
+      catLower.includes('accommodation') ||
+      catLower.includes('resort') ||
+      catLower.includes('ryokan') ||
+      matchedItem?.isManualHotel ||
+      matchedItem?.manualHotelDetails ||
+      matchedItem?.hotelId
+    );
+    const itemStage1Base = Math.abs(stage1ScaleRatio - 1) > 0.00001
+      ? roundCurrencyAmount(ib.finalSellingPrice * stage1ScaleRatio, targetCurrency)
+      : roundCurrencyAmount(ib.finalSellingPrice, targetCurrency);
+
+    ib.theUnboundBaseSellingPrice = itemStage1Base;
+
+    const rawItemMarkupVal = matchedItem?.agentAdditionalMarkupValue;
+    const itemMarkupValidation = validateAgentAdditionalMarkup(rawItemMarkupVal);
+    const itemMarkupVal = itemMarkupValidation.sanitizedValue;
+    const itemMarkupType: 'PERCENTAGE' | 'FIXED' =
+      matchedItem?.agentAdditionalMarkupType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+
+    if (itemMarkupVal > 0) {
+      const itemMarkupAmt = itemMarkupType === 'PERCENTAGE'
+        ? roundCurrencyAmount(itemStage1Base * (itemMarkupVal / 100), targetCurrency)
+        : roundCurrencyAmount(itemMarkupVal, targetCurrency);
+      ib.agentAdditionalMarkupType = itemMarkupType;
+      ib.agentAdditionalMarkupValue = itemMarkupVal;
+      ib.agentAdditionalMarkupAmount = itemMarkupAmt;
+      ib.finalCustomerSellingPrice = roundCurrencyAmount(itemStage1Base + itemMarkupAmt, targetCurrency);
+
+      productLevelAgentMarkupTotal = roundCurrencyAmount(productLevelAgentMarkupTotal + itemMarkupAmt, targetCurrency);
+      if (ibIsHotel) {
+        hotelProductLevelMarkupTotal = roundCurrencyAmount(hotelProductLevelMarkupTotal + itemMarkupAmt, targetCurrency);
+      }
+    } else {
+      unmarkedItemsStage1Base = roundCurrencyAmount(unmarkedItemsStage1Base + itemStage1Base, targetCurrency);
+      if (ibIsHotel) {
+        unmarkedHotelStage1Base = roundCurrencyAmount(unmarkedHotelStage1Base + itemStage1Base, targetCurrency);
+      }
+    }
+  }
+
+  // If no items have individual product-level markups, use the exact Stage 1 bases to avoid any sum-of-parts rounding drift
+  if (productLevelAgentMarkupTotal === 0) {
+    unmarkedItemsStage1Base = baseSellingPrice;
+    unmarkedHotelStage1Base = stage1HotelAfterDiscount;
+  }
+
+  const overallAgentMarkupAmount = validatedOverallAgentMarginValue > 0
+    ? (agentMarginType === 'PERCENTAGE'
+        ? roundCurrencyAmount(unmarkedItemsStage1Base * (validatedOverallAgentMarginValue / 100), targetCurrency)
+        : roundCurrencyAmount(validatedOverallAgentMarginValue, targetCurrency))
+    : 0;
+
+  // Populate allocated overall markup on unmarked items for complete line-level customer price transparency
+  for (const ib of itemizedBreakdown) {
+    if (ib.isExcludedNoAccommodation) continue;
+    if ((ib.agentAdditionalMarkupAmount || 0) > 0) continue;
+    const itemStage1Base = ib.theUnboundBaseSellingPrice ?? ib.finalSellingPrice;
+    let allocatedOverallMarkup = 0;
+    if (overallAgentMarkupAmount > 0 && unmarkedItemsStage1Base > 0) {
+      allocatedOverallMarkup = agentMarginType === 'PERCENTAGE'
+        ? roundCurrencyAmount(itemStage1Base * (validatedOverallAgentMarginValue / 100), targetCurrency)
+        : roundCurrencyAmount(overallAgentMarkupAmount * (itemStage1Base / unmarkedItemsStage1Base), targetCurrency);
+    }
+    ib.agentAdditionalMarkupType = agentMarginType;
+    ib.agentAdditionalMarkupValue = validatedOverallAgentMarginValue;
+    ib.agentAdditionalMarkupAmount = allocatedOverallMarkup;
+    ib.finalCustomerSellingPrice = roundCurrencyAmount(itemStage1Base + allocatedOverallMarkup, targetCurrency);
+  }
+
+  const partnerMarginAmount = roundCurrencyAmount(
+    productLevelAgentMarkupTotal + overallAgentMarkupAmount,
+    targetCurrency
+  );
+
+  const finalPackagePrice = Math.max(
+    baseSellingPrice,
+    roundCurrencyAmount(baseSellingPrice + partnerMarginAmount, targetCurrency)
+  );
+  const totalMargin = roundCurrencyAmount(
+    effectiveUnderlyingMargin + partnerMarginAmount - discountAmount,
+    targetCurrency
+  );
+
+  const hotelOverallMarkup = validatedOverallAgentMarginValue > 0
+    ? (agentMarginType === 'PERCENTAGE'
+        ? roundCurrencyAmount(unmarkedHotelStage1Base * (validatedOverallAgentMarginValue / 100), targetCurrency)
+        : (unmarkedItemsStage1Base > 0
+            ? roundCurrencyAmount(overallAgentMarkupAmount * (unmarkedHotelStage1Base / unmarkedItemsStage1Base), targetCurrency)
+            : (baseSellingPrice > 0
+                ? roundCurrencyAmount(overallAgentMarkupAmount * (stage1HotelAfterDiscount / baseSellingPrice), targetCurrency)
+                : 0)))
+    : 0;
+
+  const hotelPartnerMargin = roundCurrencyAmount(
+    hotelProductLevelMarkupTotal + hotelOverallMarkup,
+    targetCurrency
+  );
   const hotelAccommodationTotal = Math.max(0, roundCurrencyAmount(stage1HotelAfterDiscount + hotelPartnerMargin, targetCurrency));
   const landPartTotal = Math.max(0, roundCurrencyAmount(finalPackagePrice - hotelAccommodationTotal, targetCurrency));
 
@@ -3458,17 +4193,24 @@ export function calculateQuoteInternalBreakdown(
 
   return {
     isComplete,
+    activeMarginMode,
+    productLevelMarginEnabled: isProductLevelMarginEnabled,
+    configuredAgentLevelMarginPercent,
     incompleteWarnings,
     missingCurrencyPairs: Array.from(missingCurrencyPairsSet),
     totalNettCost,
     totalMargin,
     underlyingMarginAmount: existingMarginAmount,
     partnerMarginAmount,
+    productLevelAgentMarkupTotal,
+    overallAgentMarkupAmount,
+    totalAgentAdditionalMarkupAmount: partnerMarginAmount,
     taxAmount,
     serviceFee: serviceFeeAmount,
     surchargesTotal,
     appliedSurcharges: allAppliedSurcharges,
     baseSellingPrice,
+    theUnboundBaseSellingPrice: baseSellingPrice,
     discountAmount,
     finalPackagePrice,
     hotelAccommodationTotal,
@@ -3609,6 +4351,8 @@ export function calculateQuoteTotal(
       : ((quote as any).agent_margin_value !== undefined ? (quote as any).agent_margin_value : (quote.overallMarkupPercent || 0));
     discountPercent = quote.overallDiscountPercent || 0;
 
+    const hasAnyItemLevelAgentMarkup = activeItems.some(it => Number(it.agentAdditionalMarkupValue) > 0);
+
     // HISTORICAL QUOTE PROTECTION:
     // If the quote has a valid immutable currencyConversionSnapshot for this targetCurrency
     // and its margin & item count match (or the quote is locked/finalized), return the exact snapshot values!
@@ -3619,6 +4363,7 @@ export function calculateQuoteTotal(
       (
         quote.isLocked ||
         (
+          !hasAnyItemLevelAgentMarkup &&
           activeCurrencySnapshot.lineItems.length === activeItems.length &&
           activeCurrencySnapshot.totals.additionalAgentMarginType === marginType &&
           Number(activeCurrencySnapshot.totals.additionalAgentMarginValue || 0) === Number(marginValue || 0)
@@ -3839,8 +4584,10 @@ export function calculateQuoteTotal(
     const savedStage1Base =
       (quoteOrItems as any).revisedSellingPrice ??
       (quoteOrItems as any).revised_selling_price ??
+      (quoteOrItems as any).theUnboundBaseSellingPrice ??
       (quoteOrItems as any).baseFinalSellingPrice ??
       (quoteOrItems as any).base_final_selling_price ??
+      activePricingSnapshot?.theUnboundBaseSellingPrice ??
       activePricingSnapshot?.baseFinalSellingPrice;
     if (typeof savedStage1Base === 'number' && savedStage1Base > 0 && (!isLandOnly || hotelBaseSellingPrice === 0)) {
       effectiveBaseSellingPrice = roundCurrencyAmount(savedStage1Base, effectiveCurrency);
@@ -3858,29 +4605,86 @@ export function calculateQuoteTotal(
     : 0;
   const stage1FinalBase = Math.max(0, roundCurrencyAmount(effectiveBaseSellingPrice - stage1DiscountAmount, effectiveCurrency));
 
-  const markupAmount = marginType === 'PERCENTAGE'
-    ? roundCurrencyAmount(stage1FinalBase * (marginValue / 100), effectiveCurrency)
-    : roundCurrencyAmount(marginValue, effectiveCurrency);
-
-  const discountAmount = stage1DiscountAmount;
-  const finalCustomerSellingPrice = Math.max(0, roundCurrencyAmount(stage1FinalBase + markupAmount, effectiveCurrency));
-
-  // Calculate Hotel Accommodation Total and Land Part Total using identical margin/discount rules
   const hotelDiscountAmount = discountPercent > 0 && stage1DiscountAmount > 0
     ? roundCurrencyAmount(effectiveHotelBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
     : 0;
   const stage1HotelFinalBase = Math.max(0, roundCurrencyAmount(effectiveHotelBaseSellingPrice - hotelDiscountAmount, effectiveCurrency));
-
-  const hotelMarkupAmount = marginType === 'PERCENTAGE'
-    ? roundCurrencyAmount(stage1HotelFinalBase * (marginValue / 100), effectiveCurrency)
-    : (stage1FinalBase > 0
-        ? roundCurrencyAmount(markupAmount * (stage1HotelFinalBase / stage1FinalBase), effectiveCurrency)
-        : 0);
-  let hotelTotalSellingPrice = Math.max(0, roundCurrencyAmount(stage1HotelFinalBase + hotelMarkupAmount, effectiveCurrency));
-
-  const landMarkupAmount = roundCurrencyAmount(markupAmount - hotelMarkupAmount, effectiveCurrency);
-  const landDiscountAmount = roundCurrencyAmount(discountAmount - hotelDiscountAmount, effectiveCurrency);
+  const landDiscountAmount = roundCurrencyAmount(stage1DiscountAmount - hotelDiscountAmount, effectiveCurrency);
   const stage1LandFinalBase = Math.max(0, roundCurrencyAmount(effectiveLandBaseSellingPrice - landDiscountAmount, effectiveCurrency));
+
+  // STAGE 2: Agent-Controlled Additional Markup ("Your Additional Markup")
+  // Enforce non-negative validation and deterministic No-Double-Application rule
+  const validatedOverallMarginValue = validateAgentAdditionalMarkup(marginValue).sanitizedValue;
+  const stage1ScaleRatio = baseSellingPrice > 0 ? (stage1FinalBase / baseSellingPrice) : 1;
+
+  let productLevelMarkupTotal = 0;
+  let hotelProductLevelMarkupTotal = 0;
+  let unmarkedItemsStage1Base = 0;
+  let unmarkedHotelStage1Base = 0;
+
+  hotelItems.forEach((it, idx) => {
+    const rawSelling = resolvedHotels[idx]?.selling || 0;
+    const itemStage1 = Math.abs(stage1ScaleRatio - 1) > 0.00001
+      ? roundCurrencyAmount(rawSelling * stage1ScaleRatio, effectiveCurrency)
+      : roundCurrencyAmount(rawSelling, effectiveCurrency);
+    const itemMarkupVal = validateAgentAdditionalMarkup(it.agentAdditionalMarkupValue).sanitizedValue;
+    const itemMarkupType = it.agentAdditionalMarkupType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+    if (itemMarkupVal > 0) {
+      const itemMarkupAmt = itemMarkupType === 'PERCENTAGE'
+        ? roundCurrencyAmount(itemStage1 * (itemMarkupVal / 100), effectiveCurrency)
+        : roundCurrencyAmount(itemMarkupVal, effectiveCurrency);
+      productLevelMarkupTotal = roundCurrencyAmount(productLevelMarkupTotal + itemMarkupAmt, effectiveCurrency);
+      hotelProductLevelMarkupTotal = roundCurrencyAmount(hotelProductLevelMarkupTotal + itemMarkupAmt, effectiveCurrency);
+    } else {
+      unmarkedItemsStage1Base = roundCurrencyAmount(unmarkedItemsStage1Base + itemStage1, effectiveCurrency);
+      unmarkedHotelStage1Base = roundCurrencyAmount(unmarkedHotelStage1Base + itemStage1, effectiveCurrency);
+    }
+  });
+
+  landItems.forEach((it, idx) => {
+    const rawSelling = resolvedLands[idx]?.selling || 0;
+    const itemStage1 = Math.abs(stage1ScaleRatio - 1) > 0.00001
+      ? roundCurrencyAmount(rawSelling * stage1ScaleRatio, effectiveCurrency)
+      : roundCurrencyAmount(rawSelling, effectiveCurrency);
+    const itemMarkupVal = validateAgentAdditionalMarkup(it.agentAdditionalMarkupValue).sanitizedValue;
+    const itemMarkupType = it.agentAdditionalMarkupType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+    if (itemMarkupVal > 0) {
+      const itemMarkupAmt = itemMarkupType === 'PERCENTAGE'
+        ? roundCurrencyAmount(itemStage1 * (itemMarkupVal / 100), effectiveCurrency)
+        : roundCurrencyAmount(itemMarkupVal, effectiveCurrency);
+      productLevelMarkupTotal = roundCurrencyAmount(productLevelMarkupTotal + itemMarkupAmt, effectiveCurrency);
+    } else {
+      unmarkedItemsStage1Base = roundCurrencyAmount(unmarkedItemsStage1Base + itemStage1, effectiveCurrency);
+    }
+  });
+
+  if (productLevelMarkupTotal === 0) {
+    unmarkedItemsStage1Base = stage1FinalBase;
+    unmarkedHotelStage1Base = stage1HotelFinalBase;
+  }
+
+  const overallAgentMarkupAmount = validatedOverallMarginValue > 0
+    ? (marginType === 'PERCENTAGE'
+        ? roundCurrencyAmount(unmarkedItemsStage1Base * (validatedOverallMarginValue / 100), effectiveCurrency)
+        : roundCurrencyAmount(validatedOverallMarginValue, effectiveCurrency))
+    : 0;
+
+  const markupAmount = roundCurrencyAmount(productLevelMarkupTotal + overallAgentMarkupAmount, effectiveCurrency);
+  const discountAmount = stage1DiscountAmount;
+  const finalCustomerSellingPrice = Math.max(stage1FinalBase, roundCurrencyAmount(stage1FinalBase + markupAmount, effectiveCurrency));
+
+  const hotelOverallMarkupAmount = validatedOverallMarginValue > 0
+    ? (marginType === 'PERCENTAGE'
+        ? roundCurrencyAmount(unmarkedHotelStage1Base * (validatedOverallMarginValue / 100), effectiveCurrency)
+        : (unmarkedItemsStage1Base > 0
+            ? roundCurrencyAmount(overallAgentMarkupAmount * (unmarkedHotelStage1Base / unmarkedItemsStage1Base), effectiveCurrency)
+            : (stage1FinalBase > 0
+                ? roundCurrencyAmount(overallAgentMarkupAmount * (stage1HotelFinalBase / stage1FinalBase), effectiveCurrency)
+                : 0)))
+    : 0;
+
+  const hotelMarkupAmount = roundCurrencyAmount(hotelProductLevelMarkupTotal + hotelOverallMarkupAmount, effectiveCurrency);
+  let hotelTotalSellingPrice = Math.max(0, roundCurrencyAmount(stage1HotelFinalBase + hotelMarkupAmount, effectiveCurrency));
   let landPartTotalSellingPrice = Math.max(0, roundCurrencyAmount(finalCustomerSellingPrice - hotelTotalSellingPrice, effectiveCurrency));
 
   // If saved snapshot has explicit hotelAccommodationTotal / landPartTotal and total matches, honor them

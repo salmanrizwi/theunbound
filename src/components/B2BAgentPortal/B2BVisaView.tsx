@@ -321,7 +321,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
     const effectiveDate = coverageStartDate || travelStartDate || new Date().toISOString().split('T')[0];
     const dailyPrice = plan.sellingPricePerDay > 0 ? plan.sellingPricePerDay : (plan.sellingPricePerTrip > 0 ? plan.sellingPricePerTrip / coverageDays : 0);
     if (dailyPrice <= 0) return;
-    const childDailyPrice = Math.round(dailyPrice * 0.7);
+    const childDailyPrice = dailyPrice * 0.7;
     const totalAdultCost = dailyPrice * coverageDays;
     const totalChildCost = childDailyPrice * coverageDays;
     const baseSellingNative = (totalAdultCost * adults) + (totalChildCost * children);
@@ -476,7 +476,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       duration: 'Single Service',
       operatingDays: ['All Days'],
       operatingHours: '24/7 Service',
-      adultNetPrice: service.netCost,
+      adultNetPrice: sellingPrice,
       childNetPrice: 0,
       infantNetPrice: 0,
       currency: nativeCurrency,
@@ -586,7 +586,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
       duration: `${plan.validityDays} Days`,
       operatingDays: ['All Days'],
       operatingHours: 'Instant Digital Activation',
-      adultNetPrice: plan.netCost * quantity,
+      adultNetPrice: sellingPrice,
       childNetPrice: 0,
       infantNetPrice: 0,
       currency: nativeCurrency,
@@ -898,7 +898,7 @@ Support: visa-operations@theunbound.in
               {filteredVisas.map(visa => {
                 const inQuote = isItemInQuote(visa.id);
                 const quoteItem = getQuoteItemByProductId(visa.id);
-                const displayPrice = convertCurrency(visa.suggestedSellingUSD, 'USD', currency);
+                const displayPrice = convertCurrency(visa.suggestedSellingUSD, (visa.currency || 'USD') as CurrencyCode, currency);
 
                 return (
                   <div
@@ -1086,15 +1086,21 @@ Support: visa-operations@theunbound.in
                       <div className="grid grid-cols-3 gap-2 bg-blue-50/50 p-2.5 rounded-xl border border-blue-100 text-center">
                         <div>
                           <span className="text-[9px] text-blue-600 font-bold uppercase block">Medical</span>
-                          <span className="text-xs font-black text-slate-900 font-mono">${(plan.medicalCoverageAmount / 1000).toFixed(0)}k</span>
+                          <span className="text-[11px] font-black text-slate-900 font-mono">
+                            {formatCurrency(convertCurrency(plan.medicalCoverageAmount, plan.currency || 'USD', currency), currency)}
+                          </span>
                         </div>
                         <div>
                           <span className="text-[9px] text-blue-600 font-bold uppercase block">Cancellation</span>
-                          <span className="text-xs font-black text-slate-900 font-mono">${(plan.tripCancellationAmount / 1000).toFixed(0)}k</span>
+                          <span className="text-[11px] font-black text-slate-900 font-mono">
+                            {formatCurrency(convertCurrency(plan.tripCancellationAmount, plan.currency || 'USD', currency), currency)}
+                          </span>
                         </div>
                         <div>
                           <span className="text-[9px] text-blue-600 font-bold uppercase block">Baggage</span>
-                          <span className="text-xs font-black text-slate-900 font-mono">${(plan.baggageLossAmount / 1000).toFixed(0)}k</span>
+                          <span className="text-[11px] font-black text-slate-900 font-mono">
+                            {formatCurrency(convertCurrency(plan.baggageLossAmount, plan.currency || 'USD', currency), currency)}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -1499,7 +1505,7 @@ Support: visa-operations@theunbound.in
               <div>
                 <span className="text-[10px] text-slate-400 block font-bold uppercase">From Selling Rate</span>
                 <span className="text-base font-extrabold text-slate-900 font-mono">
-                  {formatCurrency(convertCurrency(selectedVisaDetails.suggestedSellingUSD, 'USD', currency), currency)}
+                  {formatCurrency(convertCurrency(selectedVisaDetails.suggestedSellingUSD, (selectedVisaDetails.currency || 'USD') as CurrencyCode, currency), currency)}
                 </span>
               </div>
 

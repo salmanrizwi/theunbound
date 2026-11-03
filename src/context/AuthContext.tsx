@@ -32,6 +32,18 @@ interface AuthContextType {
 
 const STORAGE_KEY_AUTH = 'theunbound_auth_user';
 
+function sanitizeUserForClientSession(u: User | null): User | null {
+  if (!u) return null;
+  const clone: User = { ...u };
+  delete clone.password;
+  const isAgentRole = clone.role === 'B2B_AGENT' || clone.role === 'AGENT' || clone.role === 'AGENCY_OWNER';
+  if (isAgentRole) {
+    delete (clone as any).pricingSettings;
+    delete (clone as any).customAgentMarginPercent;
+  }
+  return clone;
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -39,7 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authError, setAuthError] = useState<string | null>(() => authService.getAuthError());
 
   // Initialize user strictly from authoritative AuthService
-  const [user, setUser] = useState<User | null>(() => authService.getCurrentUser());
+  const [user, setUser] = useState<User | null>(() => sanitizeUserForClientSession(authService.getCurrentUser()));
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState<string>('Access Protected Pricing Calculator');
@@ -53,12 +65,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAuthError(error || null);
 
       if (state === 'AUTHENTICATED_READY' && authoritativeUser) {
-        setUser(authoritativeUser);
+        const sanitized = sanitizeUserForClientSession(authoritativeUser);
+        setUser(sanitized);
         try {
-          // Store sanitized display profile without password
-          const sanitized = { ...authoritativeUser };
-          delete sanitized.password;
-          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
+          if (sanitized) {
+            localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
+          }
         } catch (e) {
           // Ignore
         }
@@ -82,11 +94,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const handleAuthChanged = (e: any) => {
       if (e.detail) {
-        setUser(e.detail);
+        const sanitized = sanitizeUserForClientSession(e.detail);
+        setUser(sanitized);
         try {
-          const sanitized = { ...e.detail };
-          delete sanitized.password;
-          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
+          if (sanitized) {
+            localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
+          }
         } catch (err) {
           // Ignore
         }
@@ -121,7 +134,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const result = await authService.login(cleanEmail, password, role);
 
     if (result.success && result.user) {
-      setUser(result.user);
+      setUser(sanitizeUserForClientSession(result.user));
       setIsAuthModalOpen(false);
 
       if (pendingCallback) {
@@ -153,8 +166,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return result;
     }
 
-    // Auto-approved buyer or internal user
-    setUser(result.user);
+    // Auto-approved internal user
+    setUser(sanitizeUserForClientSession(result.user));
     setIsAuthModalOpen(false);
 
     if (pendingCallback) {
@@ -190,29 +203,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    */
   const updateUserProfile = async (updates: Partial<User>): Promise<User | null> => {
     if (!user) return null;
-    const updated = await authService.updateUserProfile(user.id, updates);
+    const safeUpdates = { ...updates };
+    if (user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'AGENCY_OWNER') {
+      delete (safeUpdates as any).customAgentMarginPercent;
+      delete (safeUpdates as any).pricingSettings;
+    }
+    const updated = await authService.updateUserProfile(user.id, safeUpdates);
     if (updated) {
-      setUser(updated);
+      const sanitized = sanitizeUserForClientSession(updated);
+      setUser(sanitized);
       try {
-        const sanitized = { ...updated };
-        delete sanitized.password;
-        localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
+        if (sanitized) {
+          localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
+        }
       } catch (e) {
         // Ignore
       }
-      return updated;
+      return sanitized;
     }
 
     // Local fallback
-    const fallbackUser: User = {
+    const fallbackUser = sanitizeUserForClientSession({
       ...user,
-      ...updates
-    };
+      ...safeUpdates
+    });
     setUser(fallbackUser);
     try {
-      const sanitized = { ...fallbackUser };
-      delete sanitized.password;
-      localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(sanitized));
+      if (fallbackUser) {
+        localStorage.setItem(STORAGE_KEY_AUTH, JSON.stringify(fallbackUser));
+      }
     } catch (e) {
       // Ignore
     }

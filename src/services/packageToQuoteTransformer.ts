@@ -14,6 +14,7 @@ import {
 } from '../types';
 import { db } from './db';
 import {
+  buildPackageCalculationDiagnostics,
   calculateProductPrice,
   calculateProductPriceForAgent,
   resolveInventoryValidity
@@ -198,6 +199,7 @@ export function normalizePackageRecord(raw: any): B2BPackage {
     description: raw.description || raw.detailedDescription || '',
     detailedDescription: raw.detailedDescription || raw.description || '',
     isLandOnly: Boolean(raw.isLandOnly),
+    routeHubs: Array.isArray(raw.routeHubs) ? raw.routeHubs : [],
     manualHotels: Array.isArray(raw.manualHotels) ? raw.manualHotels : [],
     routeSummary,
     hotelsSummary: Array.isArray(raw.hotelsSummary) ? raw.hotelsSummary : [],
@@ -427,7 +429,20 @@ export function transformPackageToQuoteState(
     infantsCount?: number;
   }
 ): TransformedPackageQuoteState {
-  const pkg = normalizePackageRecord(rawPackage);
+  // Always resolve the authoritative unsanitized master package from db so manual hotel rates and routeHubs are intact during pricing calculation
+  const masterPkg = rawPackage?.id ? db.getPackageById(rawPackage.id) : null;
+  const effectiveRawPkg = masterPkg
+    ? {
+        ...masterPkg,
+        ...rawPackage,
+        routeHubs: masterPkg.routeHubs || rawPackage.routeHubs,
+        manualHotels: masterPkg.manualHotels || rawPackage.manualHotels,
+        hotelReferences: masterPkg.hotelReferences || rawPackage.hotelReferences,
+        hotelsSummary: masterPkg.hotelsSummary || rawPackage.hotelsSummary,
+        itinerary: masterPkg.itinerary || rawPackage.itinerary
+      }
+    : rawPackage;
+  const pkg = normalizePackageRecord(effectiveRawPkg);
   const user = options?.user || null;
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
   const isAgent = !canViewInternalCosts;
@@ -654,21 +669,55 @@ export function transformPackageToQuoteState(
       };
     }
 
-    // Check if package has a configured hotel for this hub:
+    // Check if package has a configured hotel for this hub (checking routeHubs first, then hotelReferences, manualHotels, hotelsSummary, hotelRoster, itinerary):
+    const pkgRouteHub = (pkg.routeHubs || []).find(
+      rh =>
+        rh.hubId === spec.hubId ||
+        rh.id === spec.hubId ||
+        (rh.hubName || '').toLowerCase() === spec.hubName.toLowerCase()
+    ) || (pkg.routeHubs || [])[idx];
+
+    if (
+      pkgRouteHub &&
+      (pkgRouteHub.accommodationType === 'NO_ACCOMMODATION' || pkgRouteHub.accommodationType === 'none')
+    ) {
+      return {
+        id: hubRecordId,
+        hubId: spec.hubId,
+        hubName: spec.hubName,
+        destinationId: matchedDestination.id,
+        destinationName: matchedDestination.name,
+        nights: spec.nights,
+        order: hubOrder,
+        checkInDate: checkInIso,
+        checkOutDate: checkOutIso,
+        accommodationType: 'NO_ACCOMMODATION',
+        notes: `Stay in ${spec.hubName} (No Accommodation Included)`
+      };
+    }
+
     const hotelRef = (pkg.hotelReferences || []).find(
       hr =>
         hr.hubId === spec.hubId ||
         (hr.hubName || '').toLowerCase() === spec.hubName.toLowerCase()
     ) || (pkg.hotelReferences || [])[idx];
 
-    const manualHotelCfg = (pkg.manualHotels || []).find(
-      mh =>
-        mh.hubId === spec.hubId ||
-        (mh.city || '').toLowerCase() === spec.hubName.toLowerCase()
-    ) || (pkg.manualHotels || [])[idx];
+    const manualHotelCfg =
+      ((pkgRouteHub?.accommodationType === 'MANUAL' ||
+        pkgRouteHub?.accommodationType === 'manual' ||
+        pkgRouteHub?.isManualHotel) &&
+      pkgRouteHub?.manualHotel
+        ? pkgRouteHub.manualHotel
+        : undefined) ||
+      (pkg.manualHotels || []).find(
+        mh =>
+          mh.hubId === spec.hubId ||
+          (mh.city || '').toLowerCase() === spec.hubName.toLowerCase()
+      ) ||
+      (pkg.manualHotels || [])[idx];
 
     const summaryCfg = (pkg.hotelsSummary || []).find(
-      hs => (hs.cityName || '').toLowerCase() === spec.hubName.toLowerCase() || hs.hotelId
+      hs => (hs.cityName || '').toLowerCase() === spec.hubName.toLowerCase()
     ) || (pkg.hotelsSummary || [])[idx];
 
     const rosterCfg = ((pkg as any).hotelRoster || []).find(
@@ -685,6 +734,11 @@ export function transformPackageToQuoteState(
     );
 
     const candidateHotelId =
+      (pkgRouteHub?.accommodationType !== 'MANUAL' &&
+      pkgRouteHub?.accommodationType !== 'manual' &&
+      !pkgRouteHub?.isManualHotel
+        ? pkgRouteHub?.hotelId
+        : undefined) ||
       hotelRef?.hotelId ||
       summaryCfg?.hotelId ||
       rosterCfg?.hotelId ||
@@ -697,7 +751,10 @@ export function transformPackageToQuoteState(
       dayWithHotel?.hotelName ||
       manualHotelCfg?.hotelName;
 
-    const candidateRoomTypeId = hotelRef?.roomTypeId || dayWithHotel?.roomTypeId;
+    const candidateRoomTypeId =
+      pkgRouteHub?.roomTypeId ||
+      hotelRef?.roomTypeId ||
+      dayWithHotel?.roomTypeId;
     const candidateRoomTypeName =
       hotelRef?.roomTypeName ||
       summaryCfg?.roomType ||
@@ -705,6 +762,8 @@ export function transformPackageToQuoteState(
       manualHotelCfg?.roomType;
 
     const candidateMealPlan =
+      pkgRouteHub?.mealPlanCode ||
+      (pkgRouteHub as any)?.mealPlan ||
       hotelRef?.mealPlanCode ||
       summaryCfg?.mealPlan ||
       dayWithHotel?.mealPlan ||
@@ -713,7 +772,9 @@ export function transformPackageToQuoteState(
     // Try matching a Master Hotel from db.getHotels()
     let matchedMasterHotel: Hotel | undefined;
     if (candidateHotelId) {
-      matchedMasterHotel = allHotels.find(h => h.id === candidateHotelId);
+      matchedMasterHotel = allHotels.find(
+        h => h.id === candidateHotelId || (h.name || '').toLowerCase() === String(candidateHotelId).toLowerCase()
+      );
     }
     if (!matchedMasterHotel && candidateHotelName) {
       const nameLower = candidateHotelName.toLowerCase();
@@ -733,7 +794,7 @@ export function transformPackageToQuoteState(
             (candidateRoomTypeName && (r.roomName || '').toLowerCase() === candidateRoomTypeName.toLowerCase())
         ) || matchedMasterHotel.roomTypes?.[0];
       const selectedRate = selectedRoom?.rates?.[0];
-      const safeRooms = Math.max(1, Math.ceil(adults / 2));
+      const safeRooms = Math.max(1, Number(pkgRouteHub?.roomsCount || hotelRef?.roomsCount) || Math.ceil(adults / 2));
 
       const hotelProd = hotelToProduct(
         matchedMasterHotel,
@@ -1003,6 +1064,11 @@ export function transformPackageToQuoteState(
   }
   if (pkg.importantInformation) {
     summaryLines.push(`Important Information: ${cleanPackageText(pkg.importantInformation)}`);
+  }
+
+  // 9. Calculation-Level Diagnostics (Admin / Dev only — never exposed to B2B Agents)
+  if (canViewInternalCosts) {
+    buildPackageCalculationDiagnostics(pkg.id, pkg.title, quoteItems, targetCurrency, user);
   }
 
   return {

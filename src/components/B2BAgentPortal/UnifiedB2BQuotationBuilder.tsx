@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { 
   Building2, 
   MapPin, 
@@ -44,8 +44,10 @@ import {
   Copy,
   Columns,
   Split,
-  Check
+  Check,
+  Loader2
 } from 'lucide-react';
+import { sanitizeProductForAgent } from '../../utils/customerQuoteSanitizer';
 import { StepByStepQuotationWorkspace } from './StepByStepQuotationWorkspace';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
 import { OptionComparisonMatrixModal } from './OptionComparisonMatrixModal';
@@ -279,10 +281,23 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setIsQuoteDrawerOpen(false);
   }, []);
 
-  // Local agent markup & margin state (Section 2 & Step 9)
+  // Local agent markup & margin state (Section 2 & Step 9) — Default is 0 (no unrequested 10% markup)
   const [agentMarginType, setAgentMarginType] = useState<AgentMarginType>('PERCENTAGE');
-  const [agentMarginValue, setAgentMarginValue] = useState<number>(10);
-  const [agentMarkupPercent, setAgentMarkupPercent] = useState<number>(10);
+  const [agentMarginValue, setAgentMarginValue] = useState<number>(0);
+  const [agentMarkupPercent, setAgentMarkupPercent] = useState<number>(0);
+  const [adminBasePriceUpdatedNotification, setAdminBasePriceUpdatedNotification] = useState<Quotation['adminBasePriceUpdatedNotification']>(undefined);
+
+  const updateItemAdditionalMarkup = useCallback((itemId: string, markupType: AgentMarginType, markupValue: number) => {
+    const safeVal = Number.isFinite(Number(markupValue)) && Number(markupValue) > 0 ? Number(markupValue) : 0;
+    setItems(prev => prev.map(it => {
+      if (it.id !== itemId) return it;
+      return {
+        ...it,
+        agentAdditionalMarkupType: markupType,
+        agentAdditionalMarkupValue: safeVal
+      };
+    }));
+  }, [setItems]);
 
   // Admin Manual Margin on Total Nett Cost (Step 7) — Default mode is 'ADD' (Add to Existing Margin)
   const [adminManualMarginType, setAdminManualMarginType] = useState<'PERCENTAGE' | 'FIXED'>('PERCENTAGE');
@@ -430,7 +445,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       items: [],
       routeHubs: [],
       dayThemes: {},
-      agentMarkupPercent: 12,
+      agentMarkupPercent: 0,
       overallDiscountPercent: 0
     },
     2: {
@@ -442,7 +457,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       items: [],
       routeHubs: [],
       dayThemes: {},
-      agentMarkupPercent: 15,
+      agentMarkupPercent: 0,
       overallDiscountPercent: 0
     },
     3: {
@@ -454,7 +469,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       items: [],
       routeHubs: [],
       dayThemes: {},
-      agentMarkupPercent: 18,
+      agentMarkupPercent: 0,
       overallDiscountPercent: 0
     }
   });
@@ -491,14 +506,21 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // Dynamic Internal Cost Access check
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
 
-  // Helper to recalculate all quote items when passenger counts or dates change
-  const recalculateItemsForPaxAndDateShift = (
+  // Live Pricing State for Ready-Made Packages & Quotation Tariffs
+  const [packagePricingStatus, setPackagePricingStatus] = useState<'IDLE' | 'CALCULATING' | 'SUCCESS' | 'ERROR'>('IDLE');
+  const [packagePricingError, setPackagePricingError] = useState<{ message: string; failedItems: string[] } | null>(null);
+  const activePricingRequestIdRef = useRef<number>(0);
+  const lastCalculatedPackageSessionRef = useRef<string>('');
+
+  // Authoritative Central Pricing Engine: recalculate all quote items with latest database tariffs, margin rules, and pax
+  const recalculateItemsWithLatestTariffs = useCallback((
     targetItems: QuoteItem[],
     nextAdults: number,
     nextChildren: number,
     nextInfants: number,
+    targetCurrency: CurrencyCode,
     dateDiffDays: number = 0
-  ): QuoteItem[] => {
+  ): { updatedItems: QuoteItem[]; failedItems: Array<{ id: string; name: string; error?: string }> } => {
     const pricingTier = user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C';
     const shiftIsoDate = (iso?: string): string | undefined => {
       if (!iso || dateDiffDays === 0) return iso;
@@ -508,10 +530,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       return d.toISOString().split('T')[0];
     };
 
-    return targetItems.map(item => {
+    const db = AppDatabase.getInstance();
+    const masterProducts = db.getProducts();
+    const masterHotels = db.getHotels();
+    const failedItems: Array<{ id: string; name: string; error?: string }> = [];
+
+    const updatedItems = targetItems.map(item => {
       const nextTravelDate = shiftIsoDate(item.travelDate) || item.travelDate;
-      const nextCheckIn = shiftIsoDate(item.checkInDate);
-      const nextCheckOut = shiftIsoDate(item.checkOutDate);
+      const nextCheckIn = shiftIsoDate(item.checkInDate) || item.checkInDate;
+      const nextCheckOut = shiftIsoDate(item.checkOutDate) || item.checkOutDate;
       const nextManualDetails = item.manualHotelDetails
         ? {
             ...item.manualHotelDetails,
@@ -520,32 +547,118 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           }
         : item.manualHotelDetails;
 
+      // 1. Retrieve current product Nett Prices and latest master records
+      let effectiveProduct: Product = item.product;
+      if ((item.isManualHotel || (item.product as any)?.accommodationType === 'manual') && nextManualDetails) {
+        effectiveProduct = manualHotelToProduct(nextManualDetails, currentDestination);
+      } else if (
+        item.hotelId ||
+        item.product.id?.startsWith('hotel-prod-') ||
+        item.product.productType === 'Hotel' ||
+        item.product.productType === 'Hotel & Resort'
+      ) {
+        const hotel = masterHotels.find(
+          h =>
+            (item.hotelId && h.id === item.hotelId) ||
+            (item.product.id && item.product.id.startsWith(`hotel-prod-${h.id}-`)) ||
+            (h.name || '').toLowerCase() === (item.product.name || '').toLowerCase()
+        );
+        if (hotel) {
+          const roomType =
+            hotel.roomTypes?.find(
+              r =>
+                r.id === item.roomTypeId ||
+                (item.product.id && item.product.id.includes(`-${r.id}-`)) ||
+                (r.roomName && item.product.shortDescription?.toLowerCase().includes(r.roomName.toLowerCase()))
+            ) || hotel.roomTypes?.[0];
+          const rate = roomType?.rates?.[0];
+          const nights = item.nights || (item.product as any)?.nights || 1;
+          const safeRooms = item.roomsCount || (item.product as any)?.roomsCount || Math.max(1, Math.ceil(nextAdults / 2));
+          const hotelProd = hotelToProduct(hotel, roomType, rate, nights, safeRooms);
+          if (hotelProd) {
+            effectiveProduct = hotelProd;
+          }
+        }
+      } else {
+        const matched = masterProducts.find(p =>
+          p.id === item.product.id ||
+          p.product_id === item.product.id ||
+          (item.master_product_id && (p.id === item.master_product_id || p.product_id === item.master_product_id)) ||
+          (item.service_id && (p.id === item.service_id || p.product_id === item.service_id)) ||
+          (item.product.sku && p.sku === item.product.sku)
+        );
+        if (matched) {
+          effectiveProduct = matched;
+        }
+      }
+
+      // 2. Sanitize product for B2B Agents to conceal internal nett costs
+      const sanitizedProduct = !canViewInternalCosts ? sanitizeProductForAgent(effectiveProduct) : effectiveProduct;
+
+      // 3. Centralized Pricing Engine Execution
       const calcParams = {
-        productId: item.product.id,
-        pricingTier: pricingTier as 'B2B' | 'B2C',
+        productId: effectiveProduct.id,
+        pricingTier: 'B2B' as const,
         adults: nextAdults,
         children: nextChildren,
         infants: nextInfants,
         travelDate: nextTravelDate,
-        targetCurrency: currency,
-        selectedAddonIds: item.selectedAddonIds || []
+        targetCurrency,
+        selectedAddonIds: item.selectedAddonIds || [],
+        userRole: user?.role || 'B2B_AGENT',
+        user,
+        companyId: user?.companyId,
+        agencyName: user?.agencyName
       };
 
-      const calculation = !canViewInternalCosts
-        ? (calculateProductPriceForAgent(item.product, calcParams) as any)
-        : calculateProductPrice(item.product, calcParams);
+      let calculation: any;
+      try {
+        calculation = !canViewInternalCosts
+          ? (calculateProductPriceForAgent(effectiveProduct, calcParams) as any)
+          : calculateProductPrice(effectiveProduct, calcParams);
+      } catch (err: any) {
+        console.error(`Tariff calculation error for ${effectiveProduct.name}:`, err);
+        failedItems.push({ id: item.id, name: effectiveProduct.name || item.product.name, error: err?.message });
+        calculation = item.calculation;
+      }
 
       return {
         ...item,
+        product: sanitizedProduct,
         pax: { adults: nextAdults, children: nextChildren, infants: nextInfants },
         travelDate: nextTravelDate,
         checkInDate: nextCheckIn,
         checkOutDate: nextCheckOut,
         manualHotelDetails: nextManualDetails,
-        calculation
+        calculation,
+        pricing_snapshot: {
+          ...(item.pricing_snapshot || {}),
+          ...calculation,
+          inventoryId: effectiveProduct.id,
+          selectedServiceDate: nextTravelDate,
+          basePriceSnapshot: calculation?.baseSellingPriceBeforeSurcharges ?? calculation?.finalTotalSellingPrice ?? 0,
+          currency: targetCurrency,
+          finalCalculatedPrice: calculation?.finalTotalSellingPrice ?? calculation?.sellingPriceFinal ?? 0,
+          pricingRuleVersion: calculation?.rateVersion || 'v2.1-validity-surcharge',
+          capturedAt: new Date().toISOString()
+        },
+        currency_snapshot: targetCurrency
       };
     });
-  };
+
+    return { updatedItems, failedItems };
+  }, [user, canViewInternalCosts, currentDestination]);
+
+  // Backward-compatible helper for pax and date delta changes
+  const recalculateItemsForPaxAndDateShift = useCallback((
+    targetItems: QuoteItem[],
+    nextAdults: number,
+    nextChildren: number,
+    nextInfants: number,
+    dateDiffDays: number = 0
+  ): QuoteItem[] => {
+    return recalculateItemsWithLatestTariffs(targetItems, nextAdults, nextChildren, nextInfants, currency, dateDiffDays).updatedItems;
+  }, [recalculateItemsWithLatestTariffs, currency]);
 
   // Handle Start Date change (automatically shifts End Date and all scheduled items by the date delta)
   const handleChangeStartDate = (newStartDate: string) => {
@@ -710,7 +823,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       if (q.infantsCount !== undefined) setInfantsCount(q.infantsCount);
       if (q.childAges) setChildAges(q.childAges);
       if (q.agentMarginType) setAgentMarginType(q.agentMarginType);
-      if (q.agentMarginValue !== undefined) setAgentMarginValue(q.agentMarginValue);
+      if (q.agentMarginValue !== undefined) {
+        const safeMarginVal = Math.max(0, Number(q.agentMarginValue) || 0);
+        setAgentMarginValue(safeMarginVal);
+        if ((q.agentMarginType || 'PERCENTAGE') === 'PERCENTAGE') {
+          setAgentMarkupPercent(safeMarginVal);
+        }
+      }
+      if (q.adminBasePriceUpdatedNotification) {
+        setAdminBasePriceUpdatedNotification(q.adminBasePriceUpdatedNotification);
+      }
       const savedAdminMarginType = q.adminManualMarginType || (q as any).admin_manual_margin_type || q.pricingSnapshot?.adminManualMarginType || (q as any).pricing_snapshot?.adminManualMarginType;
       if (savedAdminMarginType) setAdminManualMarginType(savedAdminMarginType);
       const savedAdminMarginValue = q.adminManualMarginValue ?? (q as any).admin_manual_margin_value ?? q.pricingSnapshot?.adminManualMarginValue ?? (q as any).pricing_snapshot?.adminManualMarginValue;
@@ -855,6 +977,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setLoadError(null);
       setAutoSaveStatus('IDLE');
       setBrandingMode('STANDARD');
+      setAgentMarginType('PERCENTAGE');
+      setAgentMarginValue(0);
+      setAgentMarkupPercent(0);
+      setOverallDiscountPercent(0);
       setAdminManualMarginType('PERCENTAGE');
       setAdminManualMarginValue(0);
       setAdminMarginMode('ADD');
@@ -900,9 +1026,30 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setActiveViewTab('BUILDER');
       setActiveOptionTab(1);
       setBrandingMode('STANDARD');
+      setAgentMarginType('PERCENTAGE');
+      setAgentMarginValue(0);
+      setAgentMarkupPercent(0);
+      setOverallDiscountPercent(0);
       setAdminManualMarginType('PERCENTAGE');
       setAdminManualMarginValue(0);
       setAdminMarginMode('ADD');
+      if (!quoteTitle && sourcePackageName) {
+        setQuoteTitle(sourcePackageName);
+      }
+      if (contextStartDate) {
+        setStartDate(contextStartDate);
+      }
+      if (contextEndDate) {
+        setEndDate(contextEndDate);
+      }
+      if (contextPaxConfig) {
+        setAdultsCount(contextPaxConfig.adults ?? 2);
+        setChildrenCount(contextPaxConfig.children ?? 0);
+        setInfantsCount(contextPaxConfig.infants ?? 0);
+        if (contextPaxConfig.childAges) {
+          setChildAges(contextPaxConfig.childAges);
+        }
+      }
       if (contextQuotationScope) {
         setQuotationScope(contextQuotationScope);
       }
@@ -937,6 +1084,149 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       }));
     }
   }, [targetQuoteId, isNewQuoteMode, prefillLead, sourcePackageId]);
+
+  // Automatically execute live pricing calculation as soon as a Ready-Made Package is loaded
+  useEffect(() => {
+    const isPackageSession = Boolean(sourcePackageId || quoteSource === 'PACKAGE');
+    if (!isPackageSession) {
+      return;
+    }
+    if (!items || items.length === 0) {
+      return;
+    }
+
+    const sessionKey = `${sourcePackageId || 'pkg'}_items_${items.length}_pax_${adultsCount}_${childrenCount}_${infantsCount}_curr_${currency}_start_${startDate}_tgt_${targetQuoteId || 'new'}`;
+
+    if (lastCalculatedPackageSessionRef.current === sessionKey) {
+      return;
+    }
+
+    setPackagePricingStatus('CALCULATING');
+    setPackagePricingError(null);
+    const requestId = ++activePricingRequestIdRef.current;
+
+    try {
+      const { updatedItems, failedItems } = recalculateItemsWithLatestTariffs(
+        items,
+        adultsCount,
+        childrenCount,
+        infantsCount,
+        currency,
+        0
+      );
+
+      if (activePricingRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      if (failedItems.length > 0 && failedItems.length === items.length) {
+        setPackagePricingStatus('ERROR');
+        setPackagePricingError({
+          message: 'Unable to calculate live wholesale tariffs for package components.',
+          failedItems: failedItems.map(f => f.name)
+        });
+        return;
+      }
+
+      setItems(updatedItems);
+      setOptionsData(prev => ({
+        ...prev,
+        1: {
+          ...prev[1],
+          items: updatedItems
+        }
+      }));
+      lastCalculatedPackageSessionRef.current = sessionKey;
+      setPackagePricingStatus('SUCCESS');
+
+      if (failedItems.length > 0) {
+        setPackagePricingError({
+          message: `${failedItems.length} component(s) could not be live-priced and used baseline catalog rate.`,
+          failedItems: failedItems.map(f => f.name)
+        });
+      }
+    } catch (err: any) {
+      if (activePricingRequestIdRef.current === requestId) {
+        setPackagePricingStatus('ERROR');
+        setPackagePricingError({
+          message: err?.message || 'Error executing live pricing calculation.',
+          failedItems: []
+        });
+      }
+    }
+  }, [
+    sourcePackageId, 
+    quoteSource, 
+    items, 
+    adultsCount, 
+    childrenCount, 
+    infantsCount, 
+    currency, 
+    startDate, 
+    targetQuoteId, 
+    recalculateItemsWithLatestTariffs, 
+    setItems
+  ]);
+
+  const handleRetryPackagePricing = useCallback(() => {
+    lastCalculatedPackageSessionRef.current = '';
+    setPackagePricingStatus('CALCULATING');
+    setPackagePricingError(null);
+    const requestId = ++activePricingRequestIdRef.current;
+
+    setTimeout(() => {
+      try {
+        const { updatedItems, failedItems } = recalculateItemsWithLatestTariffs(
+          items,
+          adultsCount,
+          childrenCount,
+          infantsCount,
+          currency,
+          0
+        );
+        if (activePricingRequestIdRef.current !== requestId) return;
+        if (failedItems.length > 0 && failedItems.length === items.length) {
+          setPackagePricingStatus('ERROR');
+          setPackagePricingError({
+            message: 'Unable to calculate live wholesale tariffs for package components.',
+            failedItems: failedItems.map(f => f.name)
+          });
+          return;
+        }
+        setItems(updatedItems);
+        setOptionsData(prev => ({
+          ...prev,
+          1: {
+            ...prev[1],
+            items: updatedItems
+          }
+        }));
+        lastCalculatedPackageSessionRef.current = `${sourcePackageId || 'pkg'}_items_${items.length}_pax_${adultsCount}_${childrenCount}_${infantsCount}_curr_${currency}_start_${startDate}_tgt_${targetQuoteId || 'new'}`;
+        setPackagePricingStatus('SUCCESS');
+        showBuilderToast('Live pricing recalculated successfully', 'SUCCESS');
+      } catch (err: any) {
+        if (activePricingRequestIdRef.current === requestId) {
+          setPackagePricingStatus('ERROR');
+          setPackagePricingError({
+            message: err?.message || 'Error recalculating tariffs.',
+            failedItems: []
+          });
+        }
+      }
+    }, 40);
+  }, [
+    items, 
+    adultsCount, 
+    childrenCount, 
+    infantsCount, 
+    currency, 
+    startDate, 
+    sourcePackageId, 
+    targetQuoteId, 
+    recalculateItemsWithLatestTariffs, 
+    setItems,
+    showBuilderToast
+  ]);
 
   // City Hubs for Destination (strictly destination-aware via DestinationRelevanceService)
   const destinationHubs = useMemo(() => {
@@ -1552,7 +1842,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         items: clonedItems,
         routeHubs: clonedHubs,
         dayThemes: clonedThemes,
-        agentMarkupPercent: sourceOpt?.agentMarkupPercent ?? 15,
+        agentMarkupPercent: sourceOpt?.agentMarkupPercent ?? 0,
         overallDiscountPercent: sourceOpt?.overallDiscountPercent ?? 0
       }
     }));
@@ -1563,7 +1853,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setRouteHubs(clonedHubs);
     setContextRouteHubs(clonedHubs);
     setDayThemes(clonedThemes);
-    setAgentMarkupPercent(sourceOpt?.agentMarkupPercent ?? 15);
+    setAgentMarkupPercent(sourceOpt?.agentMarkupPercent ?? 0);
     setOverallDiscountPercent(sourceOpt?.overallDiscountPercent ?? 0);
     setActiveOptionTab(toOptNum);
 
@@ -1864,15 +2154,20 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
 
-  const step7InternalBreakdown = useMemo(() => {
-    if (!canViewInternalCosts) return null;
+  const agencyPricingSettings = useMemo(() => db.resolveAgencyPricingSettings({ user }), [user]);
+  const isProductLevelMarginActive = agencyPricingSettings.productLevelMarginEnabled !== false;
+
+  const liveQuoteBreakdown = useMemo(() => {
     return calculateQuoteInternalBreakdown({
       items: effectivePricedItems,
       targetCurrency: currency,
       agentMarginType,
-      agentMarginValue,
+      agentMarginValue: Math.max(0, Number(agentMarginValue) || 0),
       overallDiscountPercent: overallDiscountPercent || 0,
       userRole: user?.role,
+      user,
+      companyId: user?.companyId,
+      agencyName: user?.agencyName,
       scope: quotationScope,
       routeHubs,
       adminManualMarginType,
@@ -1880,13 +2175,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       adminMarginMode
     });
   }, [
-    canViewInternalCosts,
     effectivePricedItems,
     currency,
     agentMarginType,
     agentMarginValue,
     overallDiscountPercent,
-    user?.role,
+    user,
     quotationScope,
     routeHubs,
     adminManualMarginType,
@@ -1894,7 +2188,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     adminMarginMode
   ]);
 
+  const step7InternalBreakdown = canViewInternalCosts ? liveQuoteBreakdown : null;
+
   const baseFinalSellingPrice = useMemo(() => {
+    if (liveQuoteBreakdown && liveQuoteBreakdown.theUnboundBaseSellingPrice > 0) {
+      return liveQuoteBreakdown.theUnboundBaseSellingPrice;
+    }
+
     const rawSellingPrice = roundCurrencyAmount(
       quotationScope === 'LAND_ONLY'
         ? effectivePricedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0)
@@ -1922,6 +2222,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     return rawSellingPrice;
   }, [
+    liveQuoteBreakdown,
     totalSellingPrice,
     quotationScope,
     effectivePricedItems,
@@ -1936,15 +2237,22 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   ]);
 
   const additionalMarginAmount = useMemo(() => {
-    if (agentMarginType === 'PERCENTAGE') {
-      return roundCurrencyAmount(baseFinalSellingPrice * ((agentMarginValue || 0) / 100), currency);
+    if (liveQuoteBreakdown && (liveQuoteBreakdown.theUnboundBaseSellingPrice > 0 || liveQuoteBreakdown.partnerMarginAmount > 0)) {
+      return roundCurrencyAmount(Math.max(0, liveQuoteBreakdown.partnerMarginAmount), currency);
     }
-    return roundCurrencyAmount(agentMarginValue || 0, currency);
-  }, [baseFinalSellingPrice, agentMarginType, agentMarginValue, currency]);
+    const safeVal = Math.max(0, Number(agentMarginValue) || 0);
+    if (agentMarginType === 'PERCENTAGE') {
+      return roundCurrencyAmount(baseFinalSellingPrice * (safeVal / 100), currency);
+    }
+    return roundCurrencyAmount(safeVal, currency);
+  }, [liveQuoteBreakdown, baseFinalSellingPrice, agentMarginType, agentMarginValue, currency]);
 
   const finalCustomerSellingPrice = useMemo(() => {
-    return roundCurrencyAmount(baseFinalSellingPrice + additionalMarginAmount, currency);
-  }, [baseFinalSellingPrice, additionalMarginAmount, currency]);
+    if (liveQuoteBreakdown && liveQuoteBreakdown.finalPackagePrice > 0) {
+      return Math.max(baseFinalSellingPrice, roundCurrencyAmount(liveQuoteBreakdown.finalPackagePrice, currency));
+    }
+    return Math.max(baseFinalSellingPrice, roundCurrencyAmount(baseFinalSellingPrice + additionalMarginAmount, currency));
+  }, [liveQuoteBreakdown, baseFinalSellingPrice, additionalMarginAmount, currency]);
 
   const finalClientPrice = finalCustomerSellingPrice;
 
@@ -1957,7 +2265,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             scope: quotationScope,
             items: effectivePricedItems,
             routeHubs,
-            agentMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
+            agentMarkupPercent: agentMarginType === 'PERCENTAGE' ? Math.max(0, agentMarginValue) : 0,
             overallDiscountPercent,
             title: optionsData[optNum]?.title || `Option ${optNum}`,
             badge: optionsData[optNum]?.badge || '',
@@ -1969,7 +2277,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               ? (optionsData[optNum]?.items || []).filter(it => !isHotelQuoteItem(it))
               : (optionsData[optNum]?.items || []),
             routeHubs: optionsData[optNum]?.routeHubs || [],
-            agentMarkupPercent: optionsData[optNum]?.agentMarkupPercent ?? 12,
+            agentMarkupPercent: Math.max(0, optionsData[optNum]?.agentMarkupPercent ?? 0),
             overallDiscountPercent: optionsData[optNum]?.overallDiscountPercent ?? 0,
             title: optionsData[optNum]?.title || `Option ${optNum}`,
             badge: optionsData[optNum]?.badge || '',
@@ -1977,36 +2285,33 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           };
 
       const optItems = optState.items;
-      const selling = roundCurrencyAmount(
-        optItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || it.product.priceSelling * ((it.pax?.adults || 2) + (it.pax?.children || 0))), 0),
-        currency
-      );
+      const optBreakdown = calculateQuoteInternalBreakdown({
+        items: optItems,
+        targetCurrency: currency,
+        agentMarginType: isCurrentActiveOption ? agentMarginType : 'PERCENTAGE',
+        agentMarginValue: isCurrentActiveOption ? Math.max(0, agentMarginValue) : Math.max(0, optState.agentMarkupPercent ?? 0),
+        overallDiscountPercent: optState.overallDiscountPercent ?? 0,
+        userRole: user?.role,
+        user,
+        companyId: user?.companyId,
+        agencyName: user?.agencyName,
+        scope: optState.scope,
+        routeHubs: optState.routeHubs,
+        ...(isCurrentActiveOption
+          ? {
+              adminManualMarginType,
+              adminManualMarginValue,
+              adminMarginMode
+            }
+          : {})
+      });
+
       const optMarkupAmount = isCurrentActiveOption
         ? additionalMarginAmount
-        : roundCurrencyAmount(selling * ((optState.agentMarkupPercent || 12) / 100), currency);
+        : optBreakdown.partnerMarginAmount;
       const optFinalClientPrice = isCurrentActiveOption
         ? finalCustomerSellingPrice
-        : roundCurrencyAmount((selling + optMarkupAmount) * (1 - (optState.overallDiscountPercent || 0) / 100), currency);
-
-      const optBreakdown = canViewInternalCosts
-        ? calculateQuoteInternalBreakdown({
-            items: optItems,
-            targetCurrency: currency,
-            agentMarginType: isCurrentActiveOption ? agentMarginType : 'PERCENTAGE',
-            agentMarginValue: isCurrentActiveOption ? agentMarginValue : (optState.agentMarkupPercent ?? 12),
-            overallDiscountPercent: optState.overallDiscountPercent ?? 0,
-            userRole: user?.role,
-            scope: optState.scope,
-            routeHubs: optState.routeHubs,
-            ...(isCurrentActiveOption
-              ? {
-                  adminManualMarginType,
-                  adminManualMarginValue,
-                  adminMarginMode
-                }
-              : {})
-          })
-        : null;
+        : optBreakdown.finalPackagePrice;
 
       return {
         id: `opt-${optNum}`,
@@ -2020,7 +2325,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         totalNetCost: canViewInternalCosts && optBreakdown && optBreakdown.isComplete ? optBreakdown.totalNettCost : 0,
         totalSellingPrice: isCurrentActiveOption
           ? finalCustomerSellingPrice
-          : (canViewInternalCosts && optBreakdown ? optBreakdown.finalPackagePrice : optFinalClientPrice),
+          : optFinalClientPrice,
         totalMargin: canViewInternalCosts && optBreakdown ? optBreakdown.totalMargin : optMarkupAmount,
         totalTaxes: canViewInternalCosts && optBreakdown ? optBreakdown.taxAmount : 0
       };
@@ -2041,7 +2346,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     activeOptionTab,
     canViewInternalCosts,
     currency,
-    user?.role
+    user
   ]);
 
   // Sync / Auto-Save Quote to AppDatabase
@@ -2672,8 +2977,16 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   };
 
-  // Validate that all items have valid exchange rates before final quote generation
+  // Validate that all items have valid exchange rates and live tariffs before final quote generation
   const validateFxBeforeFinalGeneration = (): boolean => {
+    if (packagePricingStatus === 'CALCULATING') {
+      showBuilderToast('Live wholesale tariffs are currently calculating. Please wait a moment...', 'WARNING');
+      return false;
+    }
+    if (packagePricingStatus === 'ERROR') {
+      showBuilderToast('Cannot generate quote: live pricing calculation encountered an error. Please retry tariffs.', 'WARNING');
+      return false;
+    }
     const missingPairs = new Set<string>(step7InternalBreakdown?.missingCurrencyPairs || []);
     effectivePricedItems.forEach(it => {
       const fx = it.calculation?.fxDetails;
@@ -3091,7 +3404,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         pricingMode: packageFormData.pricingMode,
         baseNetCostUSD: 0,
         suggestedSellingPriceUSD: finalClientPrice || 3250,
-        b2bMarkupPercent: agentMarkupPercent || 12,
         currency
       },
       highlights: [
@@ -3468,16 +3780,33 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             {/* Generate Quote */}
             <button
               type="button"
+              disabled={packagePricingStatus === 'CALCULATING'}
               onClick={() => {
+                if (packagePricingStatus === 'CALCULATING') {
+                  showBuilderToast('Live wholesale tariffs are currently calculating. Please wait...', 'WARNING');
+                  return;
+                }
+                if (packagePricingStatus === 'ERROR') {
+                  showBuilderToast('Cannot generate quote: live pricing calculation encountered an error. Please retry tariffs.', 'WARNING');
+                  return;
+                }
                 handleSaveDraft(true);
                 setActiveViewTab('PROPOSAL_PREVIEW');
               }}
-              className="h-[34px] px-3 rounded-lg bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs"
+              className={`h-[34px] px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs ${
+                packagePricingStatus === 'CALCULATING'
+                  ? 'bg-slate-200 text-slate-500 cursor-not-allowed opacity-75'
+                  : 'bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 cursor-pointer'
+              }`}
               title="Generate and preview client quotation"
               aria-label="Generate Quote"
             >
-              <Sparkles className="w-3.5 h-3.5 shrink-0" />
-              <span>Generate Quote</span>
+              {packagePricingStatus === 'CALCULATING' ? (
+                <RefreshCw className="w-3.5 h-3.5 shrink-0 animate-spin text-teal-600" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5 shrink-0" />
+              )}
+              <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Generate Quote'}</span>
             </button>
           </div>
         </div>
@@ -3690,6 +4019,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               updateItemTravelDate={updateItemTravelDate}
               updateItemServiceTime={updateItemServiceTime}
               updateItemNotes={updateItemNotes}
+              updateItemAdditionalMarkup={updateItemAdditionalMarkup}
+              adminBasePriceUpdatedNotification={adminBasePriceUpdatedNotification}
+              onDismissAdminBasePriceNotification={() => setAdminBasePriceUpdatedNotification(undefined)}
               baseFinalSellingPrice={baseFinalSellingPrice}
               adminManualMarginType={adminManualMarginType}
               setAdminManualMarginType={setAdminManualMarginType}
@@ -3704,16 +4036,18 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               }}
               agentMarginValue={agentMarginValue}
               setAgentMarginValue={(val) => {
-                setAgentMarginValue(val);
-                if (agentMarginType === 'PERCENTAGE') setAgentMarkupPercent(val);
+                const safeVal = Math.max(0, Number(val) || 0);
+                setAgentMarginValue(safeVal);
+                if (agentMarginType === 'PERCENTAGE') setAgentMarkupPercent(safeVal);
               }}
               agentMarginAmount={additionalMarginAmount}
               finalCustomerSellingPrice={finalCustomerSellingPrice}
               agentMarkupPercent={agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0}
               setAgentMarkupPercent={(val) => {
+                const safeVal = Math.max(0, Number(val) || 0);
                 setAgentMarginType('PERCENTAGE');
-                setAgentMarginValue(val);
-                setAgentMarkupPercent(val);
+                setAgentMarginValue(safeVal);
+                setAgentMarkupPercent(safeVal);
               }}
               overallDiscountPercent={overallDiscountPercent}
               setOverallDiscountPercent={setOverallDiscountPercent}
@@ -3772,6 +4106,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               itineraryOverview={itineraryOverview}
               setItineraryOverview={handleUpdateItineraryOverview}
               sourcePackageName={sourcePackageName}
+              packagePricingStatus={packagePricingStatus}
+              packagePricingError={packagePricingError}
+              onRetryPackagePricing={handleRetryPackagePricing}
               quoteTitle={quoteTitle}
               setQuoteTitle={setQuoteTitle}
               brandingMode={brandingMode}

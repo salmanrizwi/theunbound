@@ -12,7 +12,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { useRoster } from '../context/RosterContext';
-import { formatCurrency, convertCurrency } from '../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculatePackagePrice, calculateDeliveredPriceForUser } from '../services/pricingEngine';
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { calculateHotelStayPrice, getMealPlanLabel, hotelToProduct } from '../utils/hotelHelpers';
 import { RosterCalendarPicker } from './RosterCalendarPicker';
@@ -99,19 +99,29 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
   const isAuthorized = canUserAccessB2BInventory(user).allowed;
 
   // 1. STANDARD PRODUCT STATE & CALCULATIONS
-  const productStartingPrice = product ? convertCurrency(
-    product.sellingPriceStartingFrom,
-    product.currency,
-    currency
-  ) : 0;
+  const productStartingPrice = product
+    ? calculateDeliveredPriceForUser(product, user, currency).deliveredPrice
+    : 0;
 
   // 2. HOTEL STATE & CALCULATIONS
   const roomTypes = hotel?.roomTypes || [];
   const hotelStartingPrice = useMemo(() => {
     if (!hotel) return 0;
-    const netConverted = convertCurrency(hotel.startingNetPrice || 400, hotel.currency || 'USD', currency);
-    // Add typical 12% markup and 10% tax for buyer starting estimation
-    return Math.round(netConverted * 1.12 * 1.1);
+    const firstRoom = hotel.roomTypes?.[0];
+    const stayCalc = calculateHotelStayPrice({
+      hotel,
+      roomType: firstRoom,
+      rate: firstRoom?.rates?.[0],
+      nights: 1,
+      roomsCount: 1,
+      adults: 2,
+      children: 0,
+      extraBeds: 0,
+      targetCurrency: currency
+    });
+    return stayCalc.pricePerNightSelling > 0
+      ? stayCalc.pricePerNightSelling
+      : convertCurrency(hotel.startingSellingPrice || hotel.startingNetPrice || 380, hotel.currency || 'USD', currency);
   }, [hotel, currency]);
 
   // 3. PACKAGE STATE & CALCULATIONS
@@ -122,14 +132,16 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
     ? `${packageItem.durationNights || (packageItem.durationDays - 1)} Nights / ${packageItem.durationDays} Days`
     : '';
 
-  const packageDisplayPrice = useMemo(() => {
-    if (!packageItem) return 0;
-    const netCost = packageItem.baseNetCostUSD || 2500;
-    const retailPrice = packageItem.suggestedSellingPriceUSD || Math.round(netCost * 1.3);
-    const b2bAgentPrice = Math.round(netCost * (1 + (packageItem.pricingConfiguration?.b2bMarkupPercent || 12) / 100));
-    const priceUSD = role === 'B2B_AGENT' || role === 'AGENT' || role === 'ADMIN' ? b2bAgentPrice : retailPrice;
-    return convertCurrency(priceUSD, 'USD', currency);
+  const packagePricingResult = useMemo(() => {
+    if (!packageItem) return null;
+    return calculatePackagePrice({
+      packageItem,
+      userRole: role || 'B2B_AGENT',
+      targetCurrency: currency as CurrencyCode
+    });
   }, [packageItem, role, currency]);
+
+  const packageDisplayPrice = packagePricingResult?.pricePerPerson || 0;
 
   // Clean State Reset on Item Switch
   useEffect(() => {
@@ -811,7 +823,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                     </p>
                     <p className="text-slate-600">
                       {product && `Contracted Net Adult: ${formatCurrency(product.adultNetPrice, product.currency)} (Margin: ${product.defaultMarkupPercent}%)`}
-                      {packageItem && `Base Net Cost: ${formatCurrency(packageItem.baseNetCostUSD || 2500, 'USD')} (B2B Markup: ${packageItem.pricingConfiguration?.b2bMarkupPercent || 12}%)`}
+                      {packageItem && packagePricingResult?.internalAudit && `Total Component Nett: ${formatCurrency(packagePricingResult.internalAudit.totalNetCostTarget, currency)} (Centralized Margin: +${formatCurrency(packagePricingResult.internalAudit.markupAmount, currency)})`}
                     </p>
                   </div>
                 )}

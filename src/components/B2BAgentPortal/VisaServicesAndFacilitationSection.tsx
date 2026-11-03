@@ -37,7 +37,7 @@ import {
   VipGroundService,
   ConnectivityPlan
 } from '../../types';
-import { formatCurrency, convertCurrency, evaluateInventoryValidity, evaluateApplicableSurcharges } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateProductPrice, evaluateInventoryValidity, evaluateApplicableSurcharges } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
 import { VisaServiceAndFacilitationConfigurator } from '../Configurators/VisaServiceAndFacilitationConfigurator';
 import { canonicalImageService } from '../../services/imageService';
@@ -435,7 +435,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     const effectiveDate = coverageStartDate || startDate;
     const dailyPrice = plan.sellingPricePerDay > 0 ? plan.sellingPricePerDay : (plan.sellingPricePerTrip > 0 ? plan.sellingPricePerTrip / coverageDays : 0);
     if (dailyPrice <= 0) return;
-    const childDailyPrice = Math.round(dailyPrice * 0.7);
+    const childDailyPrice = dailyPrice * 0.7;
     const totalAdultCost = dailyPrice * coverageDays;
     const totalChildCost = childDailyPrice * coverageDays;
     const baseSellingNative = (totalAdultCost * adults) + (totalChildCost * children);
@@ -589,8 +589,8 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       duration: 'Flexible',
       operatingDays: ['All Days'],
       operatingHours: '24/7 Operations',
-      adultNetPrice: isPerGroup ? sellingPrice : service.netCost,
-      childNetPrice: isPerGroup ? 0 : Math.round(service.netCost * 0.7),
+      adultNetPrice: sellingPrice,
+      childNetPrice: 0,
       infantNetPrice: 0,
       currency: nativeCurrency,
       defaultMarkupPercent: 0,
@@ -698,7 +698,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
       duration: `${plan.validityDays} Days`,
       operatingDays: ['All Days'],
       operatingHours: 'Instant Digital Activation',
-      adultNetPrice: unitSellingUSD * devicesCount,
+      adultNetPrice: unitSellingUSD,
       childNetPrice: 0,
       infantNetPrice: 0,
       currency: nativeCurrency,
@@ -1255,7 +1255,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                               {plan.provider}
                             </span>
                             <span className="text-[11px] font-extrabold text-blue-700 font-mono">
-                              ${(plan.medicalCoverageAmount / 1000).toFixed(0)}k USD Medical Cover
+                              {formatCurrency(convertCurrency(plan.medicalCoverageAmount, plan.currency || 'USD', currency), currency)} Medical Cover
                             </span>
                           </div>
 
@@ -1273,11 +1273,11 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                             </div>
                             <div className="flex items-center space-x-1.5">
                               <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                              <span>Trip Cancellation: <strong>${(plan.tripCancellationAmount / 1000).toFixed(0)}k USD Cover</strong></span>
+                              <span>Trip Cancellation: <strong>{formatCurrency(convertCurrency(plan.tripCancellationAmount, plan.currency || 'USD', currency), currency)} Cover</strong></span>
                             </div>
                             <div className="flex items-center space-x-1.5">
                               <Check className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                              <span>Baggage & Loss: <strong>${(plan.baggageLossAmount / 1000).toFixed(0)}k USD Protection</strong></span>
+                              <span>Baggage & Loss: <strong>{formatCurrency(convertCurrency(plan.baggageLossAmount, plan.currency || 'USD', currency), currency)} Protection</strong></span>
                             </div>
                           </div>
                         </div>
@@ -1570,8 +1570,16 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredOtherAncillaries.map((prod) => {
                     const isInQuote = items.some(it => it.master_product_id === prod.id || it.product.id === prod.id);
-                    const sellingVal = prod.sellingPriceStartingFrom || prod.adultNetPrice || 0;
-                    const unitPriceQuote = convertCurrency(sellingVal, prod.currency || 'USD', currency);
+                    const ancillaryCalc = calculateProductPrice(prod, {
+                      productId: prod.id,
+                      pricingTier: 'B2B',
+                      adults: adultsCount,
+                      children: childrenCount,
+                      infants: infantsCount,
+                      travelDate: startDate,
+                      targetCurrency: currency
+                    });
+                    const unitPriceQuote = ancillaryCalc.finalTotalSellingPrice;
 
                     return (
                       <div
@@ -1778,15 +1786,21 @@ const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = 
           <div className="grid grid-cols-3 gap-2 bg-blue-50/60 p-3.5 rounded-2xl border border-blue-100 text-center">
             <div>
               <span className="text-[10px] text-blue-700 font-bold uppercase block">Medical</span>
-              <span className="text-sm font-black text-slate-900 font-mono">${(plan.medicalCoverageAmount / 1000).toFixed(0)}k</span>
+              <span className="text-xs font-black text-slate-900 font-mono">
+                {formatCurrency(convertCurrency(plan.medicalCoverageAmount, plan.currency || 'USD', currentCurrency), currentCurrency)}
+              </span>
             </div>
             <div>
               <span className="text-[10px] text-blue-700 font-bold uppercase block">Cancellation</span>
-              <span className="text-sm font-black text-slate-900 font-mono">${(plan.tripCancellationAmount / 1000).toFixed(0)}k</span>
+              <span className="text-xs font-black text-slate-900 font-mono">
+                {formatCurrency(convertCurrency(plan.tripCancellationAmount, plan.currency || 'USD', currentCurrency), currentCurrency)}
+              </span>
             </div>
             <div>
               <span className="text-[10px] text-blue-700 font-bold uppercase block">Baggage</span>
-              <span className="text-sm font-black text-slate-900 font-mono">${(plan.baggageLossAmount / 1000).toFixed(0)}k</span>
+              <span className="text-xs font-black text-slate-900 font-mono">
+                {formatCurrency(convertCurrency(plan.baggageLossAmount, plan.currency || 'USD', currentCurrency), currentCurrency)}
+              </span>
             </div>
           </div>
 

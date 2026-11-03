@@ -38,9 +38,6 @@ export const B2BAccountView: React.FC = () => {
   const [quoteTagline, setQuoteTagline] = useState(
     user?.quoteTagline || 'Official Travel Proposal & Bespoke Concierge Itinerary'
   );
-  const [defaultMarkup, setDefaultMarkup] = useState(
-    String(user?.customAgentMarginPercent ?? 15)
-  );
   const [logoUrl, setLogoUrl] = useState(user?.brandLogoUrl || user?.logoUrl || '');
   const [brandPrimaryColor, setBrandPrimaryColor] = useState(user?.brandPrimaryColor || '#0f172a');
   const [brandAccentColor, setBrandAccentColor] = useState(user?.brandAccentColor || '#4f46e5');
@@ -69,7 +66,6 @@ export const B2BAccountView: React.FC = () => {
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    const parsedMarkup = parseFloat(defaultMarkup);
     updateUserProfile({
       name: consultantName.trim() || user?.name || 'Senior Travel Specialist',
       agencyName: agencyName.trim(),
@@ -88,8 +84,7 @@ export const B2BAccountView: React.FC = () => {
       brandPrimaryColor,
       brandAccentColor,
       quoteDisclaimer: proposalDisclaimer.trim(),
-      quoteFooterText: proposalFooter.trim(),
-      customAgentMarginPercent: !isNaN(parsedMarkup) ? parsedMarkup : 15
+      quoteFooterText: proposalFooter.trim()
     });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 4000);
@@ -249,31 +244,16 @@ export const B2BAccountView: React.FC = () => {
           </div>
 
           <div className="space-y-6">
-            {/* Card 2: Commercial Margins & Default Currency */}
+            {/* Card 2: Working Currency Preferences */}
             <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 space-y-5 shadow-xs">
               <div className="flex items-center space-x-2 border-b border-slate-100 pb-3">
                 <DollarSign className="w-4 h-4 text-[#00C6A6]" />
-                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Commercial Markup & Currency Defaults</h2>
+                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Working Currency Preferences</h2>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+              <div className="grid grid-cols-1 gap-4 text-xs">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Default Agency Commission / Markup %</label>
-                  <div className="relative">
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={defaultMarkup}
-                      onChange={(e) => setDefaultMarkup(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-900 outline-none focus:border-[#00C6A6]"
-                    />
-                    <span className="absolute right-3 top-1/2 -translate-y-1/2 font-bold text-slate-400">%</span>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 block mb-1">Default Working Currency</label>
+                  <label className="font-bold text-slate-700 block mb-1">Preferred Quotation Currency</label>
                   <select
                     value={currency}
                     onChange={(e) => setCurrency(e.target.value as any)}

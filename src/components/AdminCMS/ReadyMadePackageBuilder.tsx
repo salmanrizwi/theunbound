@@ -14,7 +14,7 @@ import {
   AccommodationType,
   MealPlanCode
 } from '../../types';
-import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculatePackagePrice, PackagePricingComponent } from '../../services/pricingEngine';
 import { hotelToProduct, manualHotelToProduct, isManualHotelPricingComplete } from '../../utils/hotelHelpers';
 import { 
   Package, 
@@ -103,8 +103,6 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
       pricingMode: 'LIVE',
       baseNetCostUSD: cloned.baseNetCostUSD || 2500,
       suggestedSellingPriceUSD: cloned.suggestedSellingPriceUSD || 3500,
-      buyerMarkupPercent: 25,
-      b2bMarkupPercent: 12,
       currency: cloned.currency || 'USD'
     };
     return cloned;
@@ -374,14 +372,22 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     showToast(`Added manual custom hotel: "${safeManual.hotelName}"`, 'success');
   };
 
-  // Centralized Pricing Calculations
+  // Centralized Pricing Calculations using authoritative Centralized Pricing Engine
   const calculatedPricing = useMemo(() => {
     const targetCurrency = pkg.currency || 'USD';
-    let totalServicesNetUSD = 0;
-    let totalHotelsNetUSD = 0;
+    const pkgResult = calculatePackagePrice({
+      packageItem: pkg,
+      targetCurrency,
+      userRole: 'ADMIN',
+      pricingTier: 'B2B',
+      adults: 2,
+      children: 0,
+      infants: 0
+    });
+
     const incompleteWarnings: string[] = [];
 
-    // 1. Calculate Day Itinerary Services
+    // Check for products with $0 net price
     (pkg.itinerary || []).forEach(day => {
       (day.productIds || []).forEach(prodId => {
         const prod = products.find(p => p.id === prodId);
@@ -390,89 +396,72 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
           if (rawPrice <= 0) {
             incompleteWarnings.push(`Day ${day.dayNumber}: "${prod.name}" has $0 net price.`);
           }
-          const priceInUSD = convertCurrency(rawPrice, prod.currency || 'USD', 'USD');
-          totalServicesNetUSD += priceInUSD;
         }
       });
     });
 
-    // 2. Calculate Accommodations (strictly 0 if isLandOnly)
+    // Check manual hotel pricing completeness
     if (!pkg.isLandOnly) {
       (pkg.routeHubs || []).forEach(hub => {
-        if (hub.accommodationType === 'NO_ACCOMMODATION' || hub.accommodationType === 'none') {
-          // Zero cost
-          return;
-        }
-
         if (hub.accommodationType === 'MANUAL' && hub.manualHotel) {
           if (!isManualHotelPricingComplete(hub.manualHotel)) {
             incompleteWarnings.push(`Manual hotel "${hub.manualHotel.hotelName}" in ${hub.hubName} has incomplete pricing.`);
-          }
-          const manualProd = manualHotelToProduct(hub.manualHotel);
-          const rawPrice = manualProd.adultNetPrice || 0;
-          const priceInUSD = convertCurrency(rawPrice, manualProd.currency || 'USD', 'USD');
-          totalHotelsNetUSD += priceInUSD;
-        } else if (hub.accommodationType === 'HOTEL' && hub.hotelId) {
-          const hotel = hotels.find(h => h.id === hub.hotelId);
-          if (hotel) {
-            const roomType = hotel.roomTypes?.find(r => r.id === hub.roomTypeId) || hotel.roomTypes?.[0];
-            const nights = hub.nights || 1;
-            const rooms = hub.roomsCount || 1;
-            const nightlyRate = roomType?.rates?.[0]?.rate || hotel.starRating * 50 || 200;
-            const hotelCurrency = (roomType?.rates?.[0]?.currency || hotel.currency || 'USD') as CurrencyCode;
-            const stayTotalNative = nightlyRate * nights * rooms;
-            const stayTotalUSD = convertCurrency(stayTotalNative, hotelCurrency, 'USD');
-            totalHotelsNetUSD += stayTotalUSD;
           }
         }
       });
     }
 
-    const totalNetUSD = Math.round(totalServicesNetUSD + totalHotelsNetUSD);
-    const b2bMarkupPercent = pkg.pricingConfiguration?.b2bMarkupPercent ?? 12;
-    const buyerMarkupPercent = pkg.pricingConfiguration?.buyerMarkupPercent ?? 25;
-
-    const b2bPriceUSD = Math.round(totalNetUSD * (1 + b2bMarkupPercent / 100));
-    const retailPriceUSD = Math.round(totalNetUSD * (1 + buyerMarkupPercent / 100));
-
-    // Convert to target currency
-    const totalNetTarget = convertCurrency(totalNetUSD, 'USD', targetCurrency);
-    const b2bPriceTarget = convertCurrency(b2bPriceUSD, 'USD', targetCurrency);
-    const retailPriceTarget = convertCurrency(retailPriceUSD, 'USD', targetCurrency);
+    const audit = pkgResult.internalAudit;
+    const totalNetTarget = audit?.totalNetCostTarget || 0;
+    const totalNetUSD = audit?.totalNetCostUSD || Math.round(convertCurrency(totalNetTarget, targetCurrency, 'USD'));
+    const b2bPriceTarget = audit?.totalB2BSellingPrice || pkgResult.finalSellingPrice;
+    const b2bPriceUSD = Math.round(convertCurrency(b2bPriceTarget, targetCurrency, 'USD'));
+    const retailPriceTarget = audit?.totalRetailSellingPrice || Math.round(b2bPriceTarget * 1.15);
+    const retailPriceUSD = Math.round(convertCurrency(retailPriceTarget, targetCurrency, 'USD'));
 
     return {
-      servicesNetUSD: totalServicesNetUSD,
-      hotelsNetUSD: totalHotelsNetUSD,
+      servicesNetUSD: Math.round(convertCurrency(audit?.servicesNetCost || 0, targetCurrency, 'USD')),
+      hotelsNetUSD: Math.round(convertCurrency(audit?.hotelsNetCost || 0, targetCurrency, 'USD')),
+      servicesNetTarget: audit?.servicesNetCost || 0,
+      hotelsNetTarget: audit?.hotelsNetCost || 0,
+      servicesSellingTarget: audit?.servicesSellingPrice || 0,
+      hotelsSellingTarget: audit?.hotelsSellingPrice || 0,
       totalNetUSD,
-      b2bPriceUSD,
-      retailPriceUSD,
       totalNetTarget,
+      b2bPriceUSD,
       b2bPriceTarget,
+      retailPriceUSD,
       retailPriceTarget,
+      markupAmountTarget: audit?.markupAmount || (b2bPriceTarget - totalNetTarget),
+      effectiveMarkupPercent: audit?.effectiveMarkupPercent || 0,
+      componentBreakdown: audit?.componentBreakdown || [],
       incompleteWarnings,
       isComplete: incompleteWarnings.length === 0 && totalNetUSD > 0
     };
-  }, [pkg.itinerary, pkg.routeHubs, pkg.isLandOnly, pkg.currency, pkg.pricingConfiguration, products, hotels]);
+  }, [pkg.itinerary, pkg.routeHubs, pkg.isLandOnly, pkg.currency, products, hotels]);
 
-  // Sync calculated price to package if pricing mode is LIVE
+  // Sync calculated price to package if changed
   useEffect(() => {
-    if (pkg.pricingConfiguration?.pricingMode === 'LIVE') {
-      if (calculatedPricing.totalNetUSD !== pkg.baseNetCostUSD) {
-        setPkg(prev => ({
-          ...prev,
+    if (
+      calculatedPricing.totalNetUSD !== pkg.baseNetCostUSD ||
+      calculatedPricing.b2bPriceUSD !== pkg.finalSellingPriceUSD ||
+      calculatedPricing.retailPriceUSD !== pkg.suggestedSellingPriceUSD
+    ) {
+      setPkg(prev => ({
+        ...prev,
+        baseNetCostUSD: calculatedPricing.totalNetUSD,
+        suggestedSellingPriceUSD: calculatedPricing.retailPriceUSD,
+        finalSellingPriceUSD: calculatedPricing.b2bPriceUSD,
+        pricingConfiguration: {
+          pricingMode: 'LIVE',
+          currency: prev.currency || 'USD',
           baseNetCostUSD: calculatedPricing.totalNetUSD,
           suggestedSellingPriceUSD: calculatedPricing.retailPriceUSD,
-          finalSellingPriceUSD: calculatedPricing.retailPriceUSD,
-          pricingConfiguration: {
-            ...(prev.pricingConfiguration || { pricingMode: 'LIVE', currency: prev.currency || 'USD' }),
-            baseNetCostUSD: calculatedPricing.totalNetUSD,
-            suggestedSellingPriceUSD: calculatedPricing.retailPriceUSD,
-            finalSellingPriceUSD: calculatedPricing.retailPriceUSD
-          }
-        }));
-      }
+          finalSellingPriceUSD: calculatedPricing.b2bPriceUSD
+        }
+      }));
     }
-  }, [calculatedPricing, pkg.pricingConfiguration?.pricingMode, pkg.baseNetCostUSD]);
+  }, [calculatedPricing.totalNetUSD, calculatedPricing.b2bPriceUSD, calculatedPricing.retailPriceUSD, pkg.baseNetCostUSD, pkg.finalSellingPriceUSD, pkg.suggestedSellingPriceUSD]);
 
   // Pre-Publish Validation
   const validationErrors = useMemo(() => {
@@ -1729,121 +1718,50 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
           {/* TAB 4: PRICING ENGINE & CURRENCY INTEGRATION */}
           {activeTab === 'PRICING' && (
             <div className="space-y-6">
-              {/* Pricing Engine Header */}
+              {/* Centralized Engine Header */}
               <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-5">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h3 className="text-base font-black text-slate-900 flex items-center space-x-2">
-                      <DollarSign className="w-4 h-4 text-[#008972]" />
+                      <DollarSign className="w-5 h-5 text-[#008972]" />
                       <span>Centralized Pricing Engine & Margin Control</span>
                     </h3>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      Calculates authoritative package price derived from configured services and applicable accommodation stays.
+                    <p className="text-xs text-slate-500 mt-1">
+                      Authoritative pricing calculated directly from configured itinerary services and accommodations using centralized commercial margin rules.
                     </p>
                   </div>
 
-                  <div className="flex items-center space-x-2">
-                    <button
-                      type="button"
-                      onClick={() => setPkg({
-                        ...pkg,
-                        pricingConfiguration: {
-                          ...(pkg.pricingConfiguration || { baseNetCostUSD: 2500, currency: 'USD' }),
-                          pricingMode: 'LIVE'
-                        }
-                      })}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                        (pkg.pricingConfiguration?.pricingMode || 'LIVE') === 'LIVE'
-                          ? 'bg-[#008972] text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      <span>Live Engine Mode</span>
-                    </button>
+                  <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-2xl px-3 py-1.5">
+                      <label className="text-xs font-bold text-slate-600">Display Currency:</label>
+                      <select
+                        value={pkg.currency || 'USD'}
+                        onChange={(e) => setPkg({ ...pkg, currency: e.target.value as CurrencyCode })}
+                        className="bg-transparent text-xs font-black text-slate-900 outline-none cursor-pointer"
+                      >
+                        {SUPPORTED_CURRENCIES.map(curr => (
+                          <option key={curr.code} value={curr.code}>{curr.code} ({curr.name})</option>
+                        ))}
+                      </select>
+                    </div>
 
-                    <button
-                      type="button"
-                      onClick={() => setPkg({
-                        ...pkg,
-                        pricingConfiguration: {
-                          ...(pkg.pricingConfiguration || { baseNetCostUSD: 2500, currency: 'USD' }),
-                          pricingMode: 'LOCKED'
-                        }
-                      })}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                        pkg.pricingConfiguration?.pricingMode === 'LOCKED'
-                          ? 'bg-slate-900 text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      <Lock className="w-3.5 h-3.5" />
-                      <span>Locked Fixed Mode</span>
-                    </button>
+                    <span className="px-3 py-1.5 rounded-2xl bg-emerald-50 text-[#008972] border border-emerald-200 text-xs font-extrabold flex items-center space-x-1.5 shadow-2xs">
+                      <Sparkles className="w-3.5 h-3.5 text-[#00C6A6]" />
+                      <span>Dynamic Centralized Margins</span>
+                    </span>
                   </div>
                 </div>
 
-                {/* Currency Selector */}
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 pt-2 border-t border-slate-100">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">Display Currency</label>
-                    <select
-                      value={pkg.currency || 'USD'}
-                      onChange={(e) => setPkg({ ...pkg, currency: e.target.value as CurrencyCode })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none cursor-pointer"
-                    >
-                      {SUPPORTED_CURRENCIES.map(curr => (
-                        <option key={curr.code} value={curr.code}>{curr.code} ({curr.name})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">Wholesale Net Cost (USD)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      disabled={pkg.pricingConfiguration?.pricingMode === 'LIVE'}
-                      value={pkg.baseNetCostUSD || 0}
-                      onChange={(e) => setPkg({ ...pkg, baseNetCostUSD: parseFloat(e.target.value) || 0 })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black font-mono text-slate-900 outline-none disabled:bg-slate-100"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">B2B Agent Markup %</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={pkg.pricingConfiguration?.b2bMarkupPercent ?? 12}
-                      onChange={(e) => setPkg({
-                        ...pkg,
-                        pricingConfiguration: {
-                          ...(pkg.pricingConfiguration || { pricingMode: 'LIVE', baseNetCostUSD: 2500, currency: 'USD' }),
-                          b2bMarkupPercent: parseFloat(e.target.value) || 0
-                        }
-                      })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black font-mono text-slate-900 outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-700">Retail Markup %</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      value={pkg.pricingConfiguration?.buyerMarkupPercent ?? 25}
-                      onChange={(e) => setPkg({
-                        ...pkg,
-                        pricingConfiguration: {
-                          ...(pkg.pricingConfiguration || { pricingMode: 'LIVE', baseNetCostUSD: 2500, currency: 'USD' }),
-                          buyerMarkupPercent: parseFloat(e.target.value) || 0
-                        }
-                      })}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black font-mono text-slate-900 outline-none"
-                    />
+                {/* Centralized Architecture Notice */}
+                <div className="p-4 bg-teal-50/70 rounded-2xl border border-teal-200/80 flex items-start space-x-3 text-xs text-teal-900">
+                  <CheckCircle2 className="w-4 h-4 text-[#008972] shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <p className="font-bold text-teal-950">
+                      Centralized Margin Control Enforced
+                    </p>
+                    <p className="text-teal-800 text-[11px] leading-relaxed">
+                      All component margins are derived directly from underlying Product Master records and Centralized Margin rules. Manual package-level fixed margins, Replace Base Margin, and Add to Existing Margin are removed to prevent double-margin stacking.
+                    </p>
                   </div>
                 </div>
 
@@ -1863,49 +1781,170 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                 )}
               </div>
 
-              {/* ROLE-BASED PRICING PREVIEW BANNER */}
-              <div className="bg-emerald-950 text-white rounded-3xl p-6 border border-emerald-800 shadow-md space-y-4">
-                <div className="flex items-center justify-between border-b border-emerald-800/80 pb-3">
+              {/* ROLE-BASED PRICING PREVIEW BANNER (Admin Sees Both Nett & Selling Price) */}
+              <div className="bg-slate-900 text-white rounded-3xl p-6 border border-slate-800 shadow-lg space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                   <div className="flex items-center space-x-2">
                     <Sparkles className="w-4 h-4 text-[#00C6A6]" />
-                    <span className="text-xs font-black uppercase tracking-wider">Role-Based Quotation Output</span>
+                    <span className="text-xs font-black uppercase tracking-wider text-slate-200">Package Pricing Summary</span>
                   </div>
-                  <span className="text-[10px] font-mono text-emerald-300">
-                    Mode: {pkg.pricingConfiguration?.pricingMode || 'LIVE'}
+                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 border border-emerald-800 px-2 py-0.5 rounded-full">
+                    Engine: Live Centralized
                   </span>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-emerald-300 block">Wholesale Net Cost (Internal Only)</span>
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-6">
+                  {/* Card 1: Nett Cost */}
+                  <div className="bg-slate-800/60 p-4 rounded-2xl border border-slate-700/60">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block tracking-wider">
+                      Wholesale Nett Cost (Internal Only)
+                    </span>
                     <span className="text-2xl font-black font-mono text-white mt-1 block">
                       {formatCurrency(calculatedPricing.totalNetTarget, pkg.currency || 'USD')}
                     </span>
-                    <span className="text-[10px] text-emerald-400 mt-0.5 block">
-                      Ground Services: {formatCurrency(calculatedPricing.servicesNetUSD, 'USD')} • Accommodations: {formatCurrency(calculatedPricing.hotelsNetUSD, 'USD')}
+                    <span className="text-[10px] text-slate-400 mt-1 block">
+                      Services: {formatCurrency(calculatedPricing.servicesNetTarget, pkg.currency || 'USD')} • Hotels: {formatCurrency(calculatedPricing.hotelsNetTarget, pkg.currency || 'USD')}
                     </span>
                   </div>
 
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-emerald-300 block">B2B Agent Wholesale Rate</span>
+                  {/* Card 2: B2B Selling Price */}
+                  <div className="bg-emerald-950/40 p-4 rounded-2xl border border-emerald-700/60">
+                    <span className="text-[10px] font-bold uppercase text-emerald-300 block tracking-wider">
+                      B2B Agent Selling Price
+                    </span>
                     <span className="text-2xl font-black font-mono text-[#00C6A6] mt-1 block">
                       {formatCurrency(calculatedPricing.b2bPriceTarget, pkg.currency || 'USD')}
                     </span>
-                    <span className="text-[10px] text-emerald-400 mt-0.5 block">
-                      Includes {pkg.pricingConfiguration?.b2bMarkupPercent ?? 12}% wholesale margin
+                    <span className="text-[10px] text-emerald-300/80 mt-1 block">
+                      Sum of Component B2B Selling Prices
                     </span>
                   </div>
 
-                  <div>
-                    <span className="text-[10px] font-bold uppercase text-emerald-300 block">Published Retail Price</span>
+                  {/* Card 3: Retail Price */}
+                  <div className="bg-amber-950/40 p-4 rounded-2xl border border-amber-700/60">
+                    <span className="text-[10px] font-bold uppercase text-amber-300 block tracking-wider">
+                      Published Retail Price
+                    </span>
                     <span className="text-2xl font-black font-mono text-amber-300 mt-1 block">
                       {formatCurrency(calculatedPricing.retailPriceTarget, pkg.currency || 'USD')}
                     </span>
-                    <span className="text-[10px] text-emerald-400 mt-0.5 block">
-                      Includes {pkg.pricingConfiguration?.buyerMarkupPercent ?? 25}% retail margin
+                    <span className="text-[10px] text-amber-300/80 mt-1 block">
+                      Sum of Component Retail Selling Prices
+                    </span>
+                  </div>
+
+                  {/* Card 4: Total Margin */}
+                  <div className="bg-teal-950/40 p-4 rounded-2xl border border-teal-700/60">
+                    <span className="text-[10px] font-bold uppercase text-teal-300 block tracking-wider">
+                      Total Centralized Margin
+                    </span>
+                    <span className="text-2xl font-black font-mono text-teal-200 mt-1 block">
+                      +{formatCurrency(calculatedPricing.markupAmountTarget, pkg.currency || 'USD')}
+                    </span>
+                    <span className="text-[10px] text-teal-300/80 mt-1 block">
+                      Effective Margin: {calculatedPricing.effectiveMarkupPercent}%
                     </span>
                   </div>
                 </div>
+              </div>
+
+              {/* COMPONENT-BY-COMPONENT PRICING & MARGIN BREAKDOWN TABLE */}
+              <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h4 className="text-sm font-black text-slate-900 flex items-center space-x-2">
+                      <Layers className="w-4 h-4 text-[#008972]" />
+                      <span>Component-by-Component Pricing & Margin Breakdown</span>
+                    </h4>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Admin view showing underlying supplier Nett Price and Centralized Selling Price for every component.
+                    </p>
+                  </div>
+                  <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+                    {calculatedPricing.componentBreakdown.length} {calculatedPricing.componentBreakdown.length === 1 ? 'Component' : 'Components'}
+                  </span>
+                </div>
+
+                {calculatedPricing.componentBreakdown.length === 0 ? (
+                  <div className="py-12 text-center text-slate-400 text-xs">
+                    <Package className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+                    <p className="font-bold text-slate-600">No components added to this package yet</p>
+                    <p className="mt-1">Add excursions, transfers, or hotels in the Itinerary and Route & Stays tabs to see live pricing.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-[11px] font-bold uppercase text-slate-400 bg-slate-50/70">
+                          <th className="py-2.5 px-3">Component / Service</th>
+                          <th className="py-2.5 px-3">Type</th>
+                          <th className="py-2.5 px-3">Day / Hub</th>
+                          <th className="py-2.5 px-3 text-right">Nett Price (Cost)</th>
+                          <th className="py-2.5 px-3 text-right">Centralized Margin</th>
+                          <th className="py-2.5 px-3 text-right text-emerald-800">B2B Selling Price</th>
+                          <th className="py-2.5 px-3 text-right text-amber-800">Retail Price</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-xs">
+                        {calculatedPricing.componentBreakdown.map((item, idx) => (
+                          <tr key={`${item.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900">{item.name}</div>
+                              <div className="text-[11px] text-slate-400">{item.category}</div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <span className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                item.type === 'HOTEL' 
+                                  ? 'bg-amber-100 text-amber-800' 
+                                  : 'bg-teal-100 text-teal-800'
+                              }`}>
+                                {item.type === 'HOTEL' ? 'Accommodation' : 'Ground Service'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-slate-600 text-[11px]">
+                              {item.dayNumber ? `Day ${item.dayNumber}` : ''}
+                              {item.dayNumber && item.hubName ? ' • ' : ''}
+                              {item.hubName || '—'}
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-700">
+                              {formatCurrency(item.netPrice, item.currency)}
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono text-slate-600">
+                              <span className="font-bold text-teal-700">+{formatCurrency(item.marginAmount, item.currency)}</span>
+                              <span className="text-[10px] text-slate-400 block">({item.marginPercent}%)</span>
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-black text-[#008972]">
+                              {formatCurrency(item.sellingPrice, item.currency)}
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-amber-700">
+                              {formatCurrency(item.retailPrice, item.currency)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-slate-300 bg-slate-50 font-black text-xs">
+                          <td className="py-3.5 px-3 uppercase text-slate-900" colSpan={3}>
+                            Total Package Commercials (Sum of Components)
+                          </td>
+                          <td className="py-3.5 px-3 text-right font-mono text-slate-900">
+                            {formatCurrency(calculatedPricing.totalNetTarget, pkg.currency || 'USD')}
+                          </td>
+                          <td className="py-3.5 px-3 text-right font-mono text-teal-800">
+                            +{formatCurrency(calculatedPricing.markupAmountTarget, pkg.currency || 'USD')}
+                            <span className="text-[10px] font-normal text-slate-500 block">({calculatedPricing.effectiveMarkupPercent}%)</span>
+                          </td>
+                          <td className="py-3.5 px-3 text-right font-mono text-lg text-[#008972]">
+                            {formatCurrency(calculatedPricing.b2bPriceTarget, pkg.currency || 'USD')}
+                          </td>
+                          <td className="py-3.5 px-3 text-right font-mono text-amber-700">
+                            {formatCurrency(calculatedPricing.retailPriceTarget, pkg.currency || 'USD')}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}

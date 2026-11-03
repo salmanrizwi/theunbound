@@ -175,7 +175,7 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
             <Sparkles className="w-3.5 h-3.5" />
             <span>Ready-Made B2B Packages</span>
           </div>
-          <h2 className="text-3xl font-extrabold tracking-tight mb-2">
+          <h2 className="text-3xl font-extrabold tracking-tight mb-2 text-white">
             Pre-Curated Multi-Day Itineraries
           </h2>
           <p className="text-slate-300 text-sm leading-relaxed">
