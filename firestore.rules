@@ -75,7 +75,7 @@ service cloud.firestore {
             'CANCELLED', 'Cancelled', 'COMPLETED', 'Completed', 'NEW', 'New',
             'CONTACTED', 'Contacted', 'PROPOSAL_SENT', 'Proposal Sent', 'NEGOTIATION', 'Negotiation',
             'WON', 'Won', 'LOST', 'Lost', 'QUALIFIED', 'Qualified', 'PENDING_APPROVAL', 'SUSPENDED',
-            'SYNCED', 'Synced'
+            'SYNCED', 'Synced', 'REVIEW', 'Review'
           ]
         ) &&
         (!('role' in request.resource.data) || (request.resource.data.role != 'B2B_AGENT' && request.resource.data.role != 'BUYER')) &&
@@ -584,12 +584,14 @@ service cloud.firestore {
 
     match /faqs/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
     }
 
     match /destination_faqs/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
     }
 
     match /custom_pages/{document=**} {
@@ -610,12 +612,14 @@ service cloud.firestore {
 
     match /promotions/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
     }
 
     match /gallery_items/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
     }
 
     match /image_metadata/{document=**} {
@@ -626,7 +630,8 @@ service cloud.firestore {
 
     match /google_reviews/{document=**} {
       allow read: if true;
-      allow write: if canAccessCMSContent();
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
     }
 
     match /blog_articles/{document=**} {

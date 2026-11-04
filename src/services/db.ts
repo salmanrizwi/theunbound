@@ -770,7 +770,10 @@ export class AppDatabase {
       const demoProductIds = new Set([
         'p-tokyo-01', 'p-kyoto-01', 'p-singapore-01', 'p-bali-01', 'p-vietnam-01',
         'p-london-01', 'p-scotland-01', 'p-paris-01', 'p-amalfi-01', 'p-swiss-01',
-        'p-dubai-01', 'p-bangkok-01', 'p-phuket-01'
+        'p-dubai-01', 'p-bangkok-01', 'p-phuket-01',
+        'prod-1792664042651-5779', 'prod-1792664069356-8605', 'prod-1792664123979-7843',
+        'prod-1792664146523-8685', 'prod-kyoto-arashiyama-zen', 'prod-tokyo-imperial-tour',
+        'prod-tokyo-private-arrival-trf'
       ]);
       const currentProducts = this.getItem<Product[]>('products', []);
       const cleanedProducts = currentProducts.filter(p => p && p.id && !demoProductIds.has(p.id) && !p.id.startsWith('p-demo-'));
@@ -787,25 +790,14 @@ export class AppDatabase {
       }
 
       // 3. Purge demo hotels
-      const demoHotelIds = new Set(['htl-01', 'htl-02', 'htl-03', 'htl-04', 'htl-05', 'htl-06', 'htl-07', 'htl-08']);
+      const demoHotelIds = new Set([
+        'htl-01', 'htl-02', 'htl-03', 'htl-04', 'htl-05', 'htl-06', 'htl-07', 'htl-08',
+        'htl-kyoto-ritz', 'htl-tokyo-palace'
+      ]);
       const currentHotels = this.getItem<Hotel[]>('hotels', []);
       const cleanedHotels = currentHotels.filter(h => h && h.id && !demoHotelIds.has(h.id));
       if (cleanedHotels.length !== currentHotels.length) {
         this.setItem('hotels', cleanedHotels, false);
-      }
-
-      // 4. Purge demo city hubs
-      const demoHubIds = new Set([
-        'hub-tokyo', 'hub-kyoto', 'hub-osaka', 'hub-london', 'hub-edinburgh',
-        'hub-paris', 'hub-nice', 'hub-rome', 'hub-amalfi', 'hub-zurich',
-        'hub-geneva', 'hub-dubai', 'hub-bangkok', 'hub-phuket', 'hub-singapore',
-        'hub-bali', 'hub-hanoi', 'hub-saigon', 'hub-newyork', 'hub-losangeles',
-        'hub-sydney', 'hub-melbourne'
-      ]);
-      const currentHubs = this.getItem<CityHub[]>('city_hubs', []);
-      const cleanedHubs = currentHubs.filter(h => h && h.id && !demoHubIds.has(h.id));
-      if (cleanedHubs.length !== currentHubs.length) {
-        this.setItem('city_hubs', cleanedHubs, false);
       }
 
       // 5. Purge demo system users (keep only real authenticated users)
@@ -1763,6 +1755,54 @@ export class AppDatabase {
     }, 150);
   }
 
+  public async hydrateFromFirestoreNow(): Promise<void> {
+    const collectionsToHydrate: Array<{ collectionName: string; storageKey: string }> = [
+      { collectionName: 'inventory_tombstones', storageKey: 'inventory_tombstones_raw' },
+      { collectionName: 'master_regions', storageKey: 'master_regions' },
+      { collectionName: 'destinations', storageKey: 'destinations' },
+      { collectionName: 'regions', storageKey: 'regions' },
+      { collectionName: 'city_hubs', storageKey: 'city_hubs' },
+      { collectionName: 'products', storageKey: 'products' },
+      { collectionName: 'hotels', storageKey: 'hotels' },
+      { collectionName: 'b2b_packages', storageKey: 'b2b_packages' },
+      { collectionName: 'promotions', storageKey: 'promotions' },
+      { collectionName: 'google_reviews', storageKey: 'reviews' },
+      { collectionName: 'campaigns', storageKey: 'campaigns' },
+      { collectionName: 'faqs', storageKey: 'destination_faqs' }
+    ];
+
+    for (const { collectionName, storageKey } of collectionsToHydrate) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, collectionName));
+        if (collectionName === 'inventory_tombstones') {
+          const current = this.getItem<string[]>('inventory_tombstones', []);
+          const set = new Set(current);
+          snap.forEach(docSnap => {
+            const data = docSnap.data();
+            if (data.recordId) set.add(data.recordId);
+            if (data.id) set.add(data.id);
+            set.add(docSnap.id);
+          });
+          this.setItem('inventory_tombstones', Array.from(set), false);
+          continue;
+        }
+        const deletedSet = this.getDeletedEntityIds();
+        const list: any[] = [];
+        snap.forEach(docSnap => {
+          const raw = docSnap.data();
+          const id = raw.id || docSnap.id;
+          if (raw.isDeleted === true || raw.status === 'DELETED') return;
+          if (deletedSet.has(docSnap.id) || deletedSet.has(id)) return;
+          list.push({ ...raw, id });
+        });
+        this.setItem(storageKey, list, false);
+      } catch (err) {
+        console.debug(`hydrateFromFirestoreNow note (${collectionName}):`, err);
+      }
+    }
+    this.notify();
+  }
+
   private async initFirestoreSync(): Promise<void> {
     if (this.isFirestoreInitialized || typeof window === 'undefined') return;
     this.isFirestoreInitialized = true;
@@ -1844,11 +1884,13 @@ export class AppDatabase {
             remoteMap.set(id, { ...raw, id });
           });
         }
-        const currentLocal = this.getItem<EmailCampaignConfig[]>('campaigns', INITIAL_CAMPAIGNS);
+        const currentLocal = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
         const mergedMap = new Map<string, EmailCampaignConfig>();
-        INITIAL_CAMPAIGNS.forEach(initCamp => {
-          mergedMap.set(initCamp.id, { ...initCamp });
-        });
+        if (envService.allowDemoData()) {
+          INITIAL_CAMPAIGNS.forEach(initCamp => {
+            mergedMap.set(initCamp.id, { ...initCamp });
+          });
+        }
         currentLocal.forEach(localCamp => {
           if (localCamp && localCamp.id && !deletedSet.has(localCamp.id) && !deletedSet.has(`campaigns_${localCamp.id}`)) {
             mergedMap.set(localCamp.id, { ...(mergedMap.get(localCamp.id) || {}), ...localCamp });
@@ -2021,7 +2063,7 @@ export class AppDatabase {
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_customers')) this.setItem('b2b_customers', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'b2b_tasks')) this.setItem('b2b_tasks', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'roster_resources')) this.setItem('roster_resources', []);
-      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) this.setItem('campaigns', INITIAL_CAMPAIGNS);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaigns')) this.setItem('campaigns', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'invoices')) this.setItem('invoices', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'vouchers')) this.setItem('vouchers', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'job_sheets')) this.setItem('job_sheets', []);
@@ -2046,12 +2088,8 @@ export class AppDatabase {
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'supplier_requests')) this.setItem('supplier_requests', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'uploaded_invoices')) this.setItem('uploaded_invoices', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'campaign_events')) this.setItem('campaign_events', []);
-      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_masters')) this.setItem('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
-      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_product_mappings')) {
-        const initProducts = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
-        const initMappings = INITIAL_SURCHARGE_MASTERS.flatMap(s => buildMappingsForSurcharge(s, initProducts));
-        this.setItem('surcharge_product_mappings', initMappings);
-      }
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_masters')) this.setItem('surcharge_masters', []);
+      if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_product_mappings')) this.setItem('surcharge_product_mappings', []);
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_history')) this.setItem('surcharge_history', []);
 
       try {
@@ -5065,7 +5103,7 @@ export class AppDatabase {
   // ==========================================
   public getVehicles(): VehicleMaster[] {
     const deleted = this.getDeletedEntityIds();
-    const raw = this.getItem<VehicleMaster[]>('master_vehicles', INITIAL_VEHICLES);
+    const raw = this.getItem<VehicleMaster[]>('master_vehicles', envService.allowDemoData() ? INITIAL_VEHICLES : []);
     return raw.filter(v => v && v.id && !deleted.has(v.id) && !deleted.has(`VehicleMaster_${v.id}`));
   }
 
@@ -5126,7 +5164,7 @@ export class AppDatabase {
 
   public getYachts(): YachtMaster[] {
     const deleted = this.getDeletedEntityIds();
-    const raw = this.getItem<YachtMaster[]>('master_yachts', INITIAL_YACHTS);
+    const raw = this.getItem<YachtMaster[]>('master_yachts', envService.allowDemoData() ? INITIAL_YACHTS : []);
     return raw.filter(y => y && y.id && !deleted.has(y.id) && !deleted.has(`YachtMaster_${y.id}`));
   }
 
@@ -5187,7 +5225,7 @@ export class AppDatabase {
 
   public getFerries(): FerryMaster[] {
     const deleted = this.getDeletedEntityIds();
-    const raw = this.getItem<FerryMaster[]>('master_ferries', INITIAL_FERRIES);
+    const raw = this.getItem<FerryMaster[]>('master_ferries', envService.allowDemoData() ? INITIAL_FERRIES : []);
     return raw.filter(f => f && f.id && !deleted.has(f.id) && !deleted.has(`FerryMaster_${f.id}`));
   }
 
@@ -5255,13 +5293,15 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_stations_${id}`) || deleted.has(`RailStation_${id}`);
 
     const stationsMap = new Map<string, RailStation>();
-    for (const initStation of INITIAL_RAIL_STATIONS) {
-      if (initStation && initStation.stationId && !isDeleted(initStation.stationId)) {
-        stationsMap.set(initStation.stationId, { ...initStation });
+    if (envService.allowDemoData()) {
+      for (const initStation of INITIAL_RAIL_STATIONS) {
+        if (initStation && initStation.stationId && !isDeleted(initStation.stationId)) {
+          stationsMap.set(initStation.stationId, { ...initStation });
+        }
       }
     }
 
-    const raw = this.getItem<RailStation[]>('rail_stations', INITIAL_RAIL_STATIONS);
+    const raw = this.getItem<RailStation[]>('rail_stations', envService.allowDemoData() ? INITIAL_RAIL_STATIONS : []);
     if (Array.isArray(raw)) {
       for (const s of raw) {
         if (s && s.stationId && !isDeleted(s.stationId)) {
@@ -5340,13 +5380,15 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_routes_${id}`) || deleted.has(`RailRoute_${id}`);
 
     const routesMap = new Map<string, RailRoute>();
-    for (const initRoute of INITIAL_RAIL_ROUTES) {
-      if (initRoute && initRoute.routeId && !isDeleted(initRoute.routeId)) {
-        routesMap.set(initRoute.routeId, { ...initRoute });
+    if (envService.allowDemoData()) {
+      for (const initRoute of INITIAL_RAIL_ROUTES) {
+        if (initRoute && initRoute.routeId && !isDeleted(initRoute.routeId)) {
+          routesMap.set(initRoute.routeId, { ...initRoute });
+        }
       }
     }
 
-    const raw = this.getItem<RailRoute[]>('rail_routes', INITIAL_RAIL_ROUTES);
+    const raw = this.getItem<RailRoute[]>('rail_routes', envService.allowDemoData() ? INITIAL_RAIL_ROUTES : []);
     if (Array.isArray(raw)) {
       for (const r of raw) {
         if (r && r.routeId && !isDeleted(r.routeId)) {
@@ -5425,13 +5467,15 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_rates_${id}`) || deleted.has(`RailRate_${id}`);
 
     const ratesMap = new Map<string, RailRate>();
-    for (const initRate of INITIAL_RAIL_RATES) {
-      if (initRate && initRate.rateId && !isDeleted(initRate.rateId)) {
-        ratesMap.set(initRate.rateId, { ...initRate });
+    if (envService.allowDemoData()) {
+      for (const initRate of INITIAL_RAIL_RATES) {
+        if (initRate && initRate.rateId && !isDeleted(initRate.rateId)) {
+          ratesMap.set(initRate.rateId, { ...initRate });
+        }
       }
     }
 
-    const raw = this.getItem<RailRate[]>('rail_rates', INITIAL_RAIL_RATES);
+    const raw = this.getItem<RailRate[]>('rail_rates', envService.allowDemoData() ? INITIAL_RAIL_RATES : []);
     if (Array.isArray(raw)) {
       for (const r of raw) {
         if (r && r.rateId && !isDeleted(r.rateId)) {
@@ -5624,13 +5668,15 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_seasons_${id}`) || deleted.has(`RailSeason_${id}`);
 
     const seasonsMap = new Map<string, RailSeasonCalendarPeriod>();
-    for (const initSeason of INITIAL_RAIL_SEASON_CALENDAR) {
-      if (initSeason && initSeason.id && !isDeleted(initSeason.id)) {
-        seasonsMap.set(initSeason.id, { ...initSeason });
+    if (envService.allowDemoData()) {
+      for (const initSeason of INITIAL_RAIL_SEASON_CALENDAR) {
+        if (initSeason && initSeason.id && !isDeleted(initSeason.id)) {
+          seasonsMap.set(initSeason.id, { ...initSeason });
+        }
       }
     }
 
-    const raw = this.getItem<RailSeasonCalendarPeriod[]>('rail_seasons', INITIAL_RAIL_SEASON_CALENDAR);
+    const raw = this.getItem<RailSeasonCalendarPeriod[]>('rail_seasons', envService.allowDemoData() ? INITIAL_RAIL_SEASON_CALENDAR : []);
     if (Array.isArray(raw)) {
       for (const s of raw) {
         if (s && s.id && !isDeleted(s.id)) {
@@ -6189,17 +6235,64 @@ export class AppDatabase {
       }
     }
 
-    // CANONICAL HIERARCHY VALIDATION (Sections 12, 25 & 32)
+    // CANONICAL HIERARCHY VALIDATION (Destination -> Region -> Hub -> Product)
     const masterData = MasterDataService.getInstance();
-    const effectiveHubId = product.hubId || (Array.isArray(product.hubIds) && product.hubIds.length > 0 ? product.hubIds[0] : (prev?.hubId || ''));
+    const rawHubId = (product.hubId || '').trim();
+    const prevHubId = (prev?.hubId || '').trim();
+    const hubIdChanged = Boolean(rawHubId && rawHubId !== prevHubId);
+
+    let effectiveHubIds: string[] = [];
+    if (Array.isArray(product.hubIds) && product.hubIds.length > 0) {
+      if (hubIdChanged && product.hubIds.length === 1 && prev?.hubIds?.length === 1 && product.hubIds[0] === prev.hubIds[0]) {
+        effectiveHubIds = [rawHubId];
+      } else {
+        effectiveHubIds = product.hubIds.map(h => (h || '').trim()).filter(Boolean);
+      }
+    } else if (rawHubId) {
+      effectiveHubIds = [rawHubId];
+    } else if (Array.isArray(prev?.hubIds) && prev!.hubIds!.length > 0) {
+      effectiveHubIds = prev!.hubIds!;
+    } else if (prevHubId) {
+      effectiveHubIds = [prevHubId];
+    }
+
+    const effectiveHubId = rawHubId || effectiveHubIds[0] || '';
+    const candidateDestId = product.destinationId || prev?.destinationId;
+    let candidateRegId = product.regionId || prev?.regionId;
+
+    // If hub changed on a single-hub product and regionId was not explicitly changed, align regionId with the new hub's regionId
+    if (hubIdChanged && effectiveHubIds.length === 1 && (!product.regionId || product.regionId === prev?.regionId)) {
+      const targetHubObj = masterData.getHubById(effectiveHubId, true);
+      if (targetHubObj && targetHubObj.regionId) {
+        candidateRegId = targetHubObj.regionId;
+      }
+    }
+
     const hierarchy = masterData.validateHierarchy(
-      product.regionId || prev?.regionId,
-      product.destinationId || prev?.destinationId,
-      effectiveHubId
+      candidateRegId,
+      candidateDestId,
+      effectiveHubId,
+      effectiveHubIds
     );
     if (!hierarchy.valid) {
       throw new Error(`Data Integrity Error: ${hierarchy.error}`);
     }
+
+    const canonicalHubIds = Array.from(
+      new Set(
+        effectiveHubIds
+          .map(hid => masterData.getHubById(hid, true)?.id || hid)
+          .filter(Boolean)
+      )
+    );
+    const canonicalRegionIds = Array.from(
+      new Set(
+        canonicalHubIds
+          .map(hid => masterData.getHubById(hid, true)?.regionId)
+          .filter((rid): rid is string => Boolean(rid))
+      )
+    );
+    const resolvedDestRegion = hierarchy.destinationRegion || (hierarchy.hub?.regionId ? masterData.getDestinationRegionById(hierarchy.hub.regionId, true) : undefined);
 
     const resolvedValidFrom = (
       product.validity?.validFrom !== undefined
@@ -6274,12 +6367,14 @@ export class AppDatabase {
     const savedProd: Product = {
       ...productWithMasterConfig,
       id: effectiveId,
-      regionId: hierarchy.region!.id,
-      regionName: hierarchy.region!.name,
+      regionId: resolvedDestRegion ? resolvedDestRegion.id : hierarchy.region!.id,
+      regionName: resolvedDestRegion ? resolvedDestRegion.name : hierarchy.region!.name,
+      ...(canonicalRegionIds.length > 0 ? { regionIds: canonicalRegionIds } : {}),
       destinationId: hierarchy.destination!.id,
       destinationName: hierarchy.destination!.name,
       country: hierarchy.destination!.country || hierarchy.destination!.name,
       hubId: hierarchy.hub ? hierarchy.hub.id : effectiveHubId,
+      hubIds: canonicalHubIds.length > 0 ? canonicalHubIds : (hierarchy.hub ? [hierarchy.hub.id] : []),
       city: hierarchy.hub ? hierarchy.hub.name : (product.city || hierarchy.destination!.name),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
@@ -7024,15 +7119,11 @@ export class AppDatabase {
     if (!destination.name || !destination.name.trim()) {
       throw new Error('Destination name is required.');
     }
-    if (!destination.regionId || !destination.regionId.trim()) {
-      throw new Error('Parent Master Region is required. A destination must belong to a Master Region.');
-    }
 
     const masterRegions = this.getMasterRegions();
-    const parentRegion = masterRegions.find(r => r.id === destination.regionId.trim());
-    if (!parentRegion) {
-      throw new Error(`Parent Master Region "${destination.regionId}" does not exist. Please select a valid Master Region.`);
-    }
+    const parentRegion = destination.regionId
+      ? masterRegions.find(r => r.id === destination.regionId.trim())
+      : masterRegions[0];
 
     const cleanName = destination.name.trim();
     const cleanSlug = (destination.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
@@ -7050,6 +7141,7 @@ export class AppDatabase {
 
     const destId = destination.id && destination.id.trim() ? destination.id.trim() : `dest-${cleanSlug}`;
     const now = new Date().toISOString();
+    const childRegions = this.getRegions().filter(r => r.destinationId === destId);
 
     const recordToSave: Destination & {
       updatedByRole: string;
@@ -7063,9 +7155,11 @@ export class AppDatabase {
       id: destId,
       name: cleanName,
       slug: cleanSlug,
-      regionId: parentRegion.id,
-      regionName: parentRegion.name,
+      regionId: parentRegion?.id || destination.regionId || 'REG-001',
+      regionName: parentRegion?.name || destination.regionName || 'East Asia',
+      regions: childRegions,
       status: destination.status || 'ACTIVE',
+      isActive: (destination.status || 'ACTIVE') === 'ACTIVE',
       createdBy: (destination as any).createdBy || user?.id || 'usr-admin-business',
       createdAt: (destination as any).createdAt || now,
       updatedBy: user?.id || 'usr-admin-business',
@@ -7088,11 +7182,23 @@ export class AppDatabase {
     }
     this.setItem('destinations', existing);
 
-    this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destId, `${index >= 0 ? 'Updated' : 'Created'} Destination: ${cleanName} in ${parentRegion.name}`);
+    this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destId, `${index >= 0 ? 'Updated' : 'Created'} Destination: ${cleanName}`);
     return recordToSave;
   }
 
   public deleteDestination(destinationId: string, user: User | null): void {
+    const childRegions = this.getRegions().filter(r => r.destinationId === destinationId);
+    if (childRegions.length > 0) {
+      throw new Error(`Cannot delete Destination: It has ${childRegions.length} dependent Region(s). Delete or reassign child regions first.`);
+    }
+    const childHubs = this.getCityHubs().filter(h => h.destinationId === destinationId);
+    if (childHubs.length > 0) {
+      throw new Error(`Cannot delete Destination: It has ${childHubs.length} dependent City Hub(s). Delete or reassign child hubs first.`);
+    }
+    const childProducts = this.getProducts().filter(p => p.destinationId === destinationId);
+    if (childProducts.length > 0) {
+      throw new Error(`Cannot delete Destination: It has ${childProducts.length} dependent Product(s). Reassign or delete linked products first.`);
+    }
     const destinations = this.getDestinations();
     const target = destinations.find(d => d.id === destinationId);
     this.setItem('destinations', destinations.filter(d => d.id !== destinationId));
@@ -7113,9 +7219,19 @@ export class AppDatabase {
     const target = destinations.find(d => d.id === destinationId);
     if (!target) return true;
 
+    const childRegions = this.getRegions().filter(r => r.destinationId === destinationId);
+    if (childRegions.length > 0) {
+      throw new Error(`Cannot delete Destination "${target.name}": It has ${childRegions.length} dependent Region(s) (${childRegions.map(r => r.name).join(', ')}). Delete or reassign child regions first.`);
+    }
+
     const childHubs = this.getCityHubs().filter(h => h.destinationId === destinationId);
     if (childHubs.length > 0) {
-      throw new Error(`Cannot delete Destination "${target.name}": It has ${childHubs.length} child City Hub(s) (${childHubs.map(h => h.name).join(', ')}). Delete or reassign child hubs first.`);
+      throw new Error(`Cannot delete Destination "${target.name}": It has ${childHubs.length} dependent City Hub(s) (${childHubs.map(h => h.name).join(', ')}). Delete or reassign child hubs first.`);
+    }
+
+    const childProducts = this.getProducts().filter(p => p.destinationId === destinationId);
+    if (childProducts.length > 0) {
+      throw new Error(`Cannot delete Destination "${target.name}": It has ${childProducts.length} dependent Product(s). Reassign or delete linked products first.`);
     }
 
     await this.deleteFirestoreDocAsync('destinations', destinationId);
@@ -7125,16 +7241,22 @@ export class AppDatabase {
   }
 
   // ==========================================
-  // DESTINATION REGIONS CRUD
+  // DESTINATION REGIONS CRUD (DESTINATION -> REGION)
   // ==========================================
   public getRegions(): DestinationRegionItem[] {
-    const initial = DESTINATIONS.flatMap(d => d.regions || []);
-    return this.getItem<DestinationRegionItem[]>('regions', initial);
+    const initial = envService.allowDemoData() ? DESTINATIONS.flatMap(d => d.regions || []) : [];
+    const raw = this.getItem<DestinationRegionItem[]>('regions', initial);
+    const deletedSet = this.getDeletedEntityIds();
+    return (raw || []).filter(
+      r => r && r.id && !deletedSet.has(r.id) && !deletedSet.has(`DestinationRegion_${r.id}`) && !(r as any).isDeleted && (r as any).status !== 'DELETED'
+    );
   }
 
   public getRegionsByDestination(destinationId: string): DestinationRegionItem[] {
     if (!destinationId || destinationId === 'all') return this.getRegions();
-    return this.getRegions().filter(r => r.destinationId === destinationId);
+    const resolvedDest = MasterDataService.getInstance().getDestinationById(destinationId, true);
+    const targetDestId = resolvedDest ? resolvedDest.id : destinationId;
+    return this.getRegions().filter(r => r.destinationId === targetDestId);
   }
 
   public getRegionById(regionId: string): DestinationRegionItem | undefined {
@@ -7142,27 +7264,205 @@ export class AppDatabase {
   }
 
   public saveRegion(region: DestinationRegionItem, user: User | null): void {
-    const regions = this.getRegions();
-    const index = regions.findIndex(r => r.id === region.id);
-    if (index >= 0) {
-      regions[index] = region;
-      this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', region.id, `Updated region: ${region.name} (${region.destinationName})`);
-    } else {
-      regions.push(region);
-      this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', region.id, `Added region: ${region.name} (${region.destinationName})`);
+    const masterData = MasterDataService.getInstance();
+    const validation = masterData.validateRegionRelationship(region.destinationId);
+    if (!validation.valid || !validation.destination) {
+      throw new Error(`Data Integrity Error: ${validation.error || 'Region must reference an existing Destination.'}`);
     }
-    this.syncFirestoreDoc('regions', region.id, region);
+    const parentDest = validation.destination;
+    const cleanName = (region.name || '').trim();
+    if (!cleanName) {
+      throw new Error('Region name is required.');
+    }
+    const cleanSlug = (region.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
+    const regions = this.getRegions();
+    const duplicate = regions.find(
+      r => r.id !== region.id && r.destinationId === parentDest.id && r.name.toLowerCase() === cleanName.toLowerCase()
+    );
+    if (duplicate) {
+      throw new Error(`A Region named "${cleanName}" already exists under Destination "${parentDest.name}".`);
+    }
+
+    const enrichedRegion: DestinationRegionItem = {
+      ...region,
+      id: region.id && region.id.trim() ? region.id.trim() : `region-${parentDest.slug || parentDest.id.toLowerCase()}-${cleanSlug}`,
+      name: cleanName,
+      slug: cleanSlug,
+      destinationId: parentDest.id,
+      destinationName: parentDest.name,
+      status: region.status || 'ACTIVE',
+      isActive: (region.status || 'ACTIVE') === 'ACTIVE'
+    };
+
+    const index = regions.findIndex(r => r.id === enrichedRegion.id);
+    if (index >= 0) {
+      regions[index] = enrichedRegion;
+      this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', enrichedRegion.id, `Updated region: ${enrichedRegion.name} (${parentDest.name})`);
+    } else {
+      regions.push(enrichedRegion);
+      this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', enrichedRegion.id, `Added region: ${enrichedRegion.name} (${parentDest.name})`);
+    }
+    this.unmarkEntityDeleted('regions', enrichedRegion.id);
+    this.unmarkEntityDeleted('DestinationRegion', enrichedRegion.id);
+    this.syncFirestoreDoc('regions', enrichedRegion.id, enrichedRegion);
     this.setItem('regions', regions);
+
+    // Synchronize parent Destination's embedded regions array
+    const destinations = this.getDestinations();
+    const dIdx = destinations.findIndex(d => d.id === parentDest.id);
+    if (dIdx >= 0) {
+      const destRegions = regions.filter(r => r.destinationId === parentDest.id);
+      destinations[dIdx] = { ...destinations[dIdx], regions: destRegions };
+      this.setItem('destinations', destinations);
+      this.syncFirestoreDoc('destinations', parentDest.id, destinations[dIdx]);
+    }
+  }
+
+  public async saveRegionAsync(region: DestinationRegionItem, user: User | null): Promise<DestinationRegionItem> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to modify Regions.');
+    }
+
+    const masterData = MasterDataService.getInstance();
+    const validation = masterData.validateRegionRelationship(region.destinationId);
+    if (!validation.valid || !validation.destination) {
+      throw new Error(`Data Integrity Error: ${validation.error || 'Region must reference an existing Destination.'}`);
+    }
+    const parentDest = validation.destination;
+    const cleanName = (region.name || '').trim();
+    if (!cleanName) {
+      throw new Error('Region name is required.');
+    }
+    const cleanSlug = (region.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
+    const regions = this.getRegions();
+    const duplicate = regions.find(
+      r => r.id !== region.id && r.destinationId === parentDest.id && r.name.toLowerCase() === cleanName.toLowerCase()
+    );
+    if (duplicate) {
+      throw new Error(`A Region named "${cleanName}" already exists under Destination "${parentDest.name}".`);
+    }
+
+    const regId = region.id && region.id.trim() ? region.id.trim() : `region-${parentDest.slug || parentDest.id.toLowerCase()}-${cleanSlug}`;
+    const now = new Date().toISOString();
+
+    const recordToSave: DestinationRegionItem & Record<string, any> = {
+      ...region,
+      id: regId,
+      name: cleanName,
+      slug: cleanSlug,
+      destinationId: parentDest.id,
+      destinationName: parentDest.name,
+      status: region.status || 'ACTIVE',
+      isActive: (region.status || 'ACTIVE') === 'ACTIVE',
+      orderIndex: Number(region.orderIndex) || (regions.filter(r => r.destinationId === parentDest.id).length + 1),
+      updatedBy: user?.id || 'usr-admin-business',
+      updatedByRole: 'ADMIN',
+      updatedByEmail: user?.email || 'business@theunbound.in',
+      updatedAt: now
+    };
+
+    this.unmarkEntityDeleted('regions', regId);
+    this.unmarkEntityDeleted('DestinationRegion', regId);
+
+    const cleanData = cleanForFirestore(recordToSave);
+    await setDoc(doc(firestoreDb, 'regions', regId), cleanData, { merge: true });
+
+    const index = regions.findIndex(r => r.id === regId);
+    if (index >= 0) {
+      regions[index] = recordToSave;
+    } else {
+      regions.push(recordToSave);
+    }
+    this.setItem('regions', regions);
+
+    // Synchronize parent Destination's embedded regions array
+    const destinations = this.getDestinations();
+    const dIdx = destinations.findIndex(d => d.id === parentDest.id);
+    if (dIdx >= 0) {
+      const destRegions = regions.filter(r => r.destinationId === parentDest.id);
+      destinations[dIdx] = { ...destinations[dIdx], regions: destRegions };
+      this.setItem('destinations', destinations);
+      this.syncFirestoreDoc('destinations', parentDest.id, destinations[dIdx]);
+    }
+
+    this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', regId, `${index >= 0 ? 'Updated' : 'Created'} Region: ${cleanName} under ${parentDest.name}`);
+    return recordToSave;
   }
 
   public deleteRegion(regionId: string, user: User | null): void {
+    const childHubs = this.getCityHubs().filter(h => h.regionId === regionId);
+    if (childHubs.length > 0) {
+      throw new Error(`Cannot delete Region: It has ${childHubs.length} dependent City Hub(s) (${childHubs.map(h => h.name).join(', ')}). Delete or reassign child hubs first.`);
+    }
+    const childProducts = this.getProducts().filter(
+      p => p.regionId === regionId || (Array.isArray((p as any).regionIds) && (p as any).regionIds.includes(regionId))
+    );
+    if (childProducts.length > 0) {
+      throw new Error(`Cannot delete Region: It has ${childProducts.length} dependent Product(s). Reassign or delete linked products first.`);
+    }
+
     const regions = this.getRegions();
     const target = regions.find(r => r.id === regionId);
-    this.setItem('regions', regions.filter(r => r.id !== regionId));
+    const remaining = regions.filter(r => r.id !== regionId);
+    this.setItem('regions', remaining);
     this.deleteFirestoreDoc('regions', regionId);
     if (target) {
+      const destinations = this.getDestinations();
+      const dIdx = destinations.findIndex(d => d.id === target.destinationId);
+      if (dIdx >= 0) {
+        destinations[dIdx] = {
+          ...destinations[dIdx],
+          regions: remaining.filter(r => r.destinationId === target.destinationId)
+        };
+        this.setItem('destinations', destinations);
+        this.syncFirestoreDoc('destinations', target.destinationId, destinations[dIdx]);
+      }
       this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', regionId, `Deleted region: ${target.name}`);
     }
+  }
+
+  public async deleteRegionAsync(regionId: string, user: User | null): Promise<boolean> {
+    const isExplicitAdmin = (user?.role === 'ADMIN' || (user as any)?.role === 'SUPER_ADMIN') ||
+      (user?.email && ['business@theunbound.in', 'admin@theunbound.com', 'marcus@theunbound.in'].includes(user.email.toLowerCase()));
+    if (!isExplicitAdmin && user) {
+      throw new Error('Unauthorized: Administrator privilege required to delete Regions.');
+    }
+
+    const regions = this.getRegions();
+    const target = regions.find(r => r.id === regionId);
+    if (!target) return true;
+
+    const childHubs = this.getCityHubs().filter(h => h.regionId === regionId);
+    if (childHubs.length > 0) {
+      throw new Error(`Cannot delete Region "${target.name}": It has ${childHubs.length} dependent City Hub(s) (${childHubs.map(h => h.name).join(', ')}). Delete or reassign child hubs first.`);
+    }
+
+    const childProducts = this.getProducts().filter(
+      p => p.regionId === regionId || (Array.isArray((p as any).regionIds) && (p as any).regionIds.includes(regionId))
+    );
+    if (childProducts.length > 0) {
+      throw new Error(`Cannot delete Region "${target.name}": It has ${childProducts.length} dependent Product(s). Reassign or delete linked products first.`);
+    }
+
+    await this.deleteFirestoreDocAsync('regions', regionId);
+    const remaining = regions.filter(r => r.id !== regionId);
+    this.setItem('regions', remaining);
+
+    const destinations = this.getDestinations();
+    const dIdx = destinations.findIndex(d => d.id === target.destinationId);
+    if (dIdx >= 0) {
+      destinations[dIdx] = {
+        ...destinations[dIdx],
+        regions: remaining.filter(r => r.destinationId === target.destinationId)
+      };
+      this.setItem('destinations', destinations);
+      this.syncFirestoreDoc('destinations', target.destinationId, destinations[dIdx]);
+    }
+
+    this.logAudit(user, 'DESTINATION_UPDATED', 'DestinationRegion', regionId, `Deleted region: ${target.name}`);
+    return true;
   }
 
   // ==========================================
@@ -9266,7 +9566,7 @@ export class AppDatabase {
       package_id: pkg.id,
       title: pkg.title || pkg.name || 'Custom Package Itinerary',
       name: pkg.title || pkg.name || 'Custom Package Itinerary',
-      heroImage: pkgPrimaryDto.url,
+      heroImage: pkg.heroImage || pkgPrimaryDto.url,
       primaryImageId: pkgPrimaryDto.imageId,
       primaryImage: pkgPrimaryDto as any,
       status,
@@ -9311,29 +9611,38 @@ export class AppDatabase {
       throw new Error('Package title is required.');
     }
 
-    const dup = this.checkDuplicateRecord('Package', {
-      id: pkg.id,
-      title: pkg.title,
-      slug: pkg.slug,
-      destinationId: pkg.destinationId
-    });
-    if (dup.isDuplicate && dup.duplicateType === 'EXACT') {
-      throw new Error(dup.message || 'An active package with this Title or Slug already exists.');
-    }
-
     const pkgs = this.getPackages();
-    const idx = pkgs.findIndex(p => p.id === pkg.id);
+    let idx = pkgs.findIndex(p => p.id === pkg.id);
+    if (idx < 0) {
+      // Check if an existing package matches by slug or title in the same destination for idempotent update
+      const dupIdx = pkgs.findIndex(
+        p =>
+          p.destinationId === pkg.destinationId &&
+          ((pkg.slug && (p.slug || '').toLowerCase() === pkg.slug.toLowerCase()) ||
+            (p.title || '').trim().toLowerCase() === pkg.title.trim().toLowerCase())
+      );
+      if (dupIdx >= 0) {
+        idx = dupIdx;
+        pkg = { ...pkg, id: pkgs[dupIdx].id, package_id: pkgs[dupIdx].id };
+      }
+    }
     const timestamp = new Date().toISOString();
     const isNew = idx < 0;
 
     const status = pkg.status || (pkg.isPublished ? 'PUBLISHED' : 'DRAFT');
     const isPublished = pkg.status ? pkg.status === 'PUBLISHED' : Boolean(pkg.isPublished);
 
+    canonicalImageService.extractAllImagesFromRecord(pkg, 'PACKAGE', pkg.id);
+    const pkgPrimaryDto = canonicalImageService.getCanonicalImageDto(pkg, 'PACKAGE');
+
     const updatedPkg: B2BPackage = {
       ...pkg,
       package_id: pkg.id,
       title: pkg.title || pkg.name || 'Custom Package Itinerary',
       name: pkg.title || pkg.name || 'Custom Package Itinerary',
+      heroImage: pkg.heroImage || pkgPrimaryDto.url,
+      primaryImageId: pkgPrimaryDto.imageId,
+      primaryImage: pkgPrimaryDto as any,
       status,
       isPublished,
       updatedBy: user?.name || user?.email || 'Admin CMS',
@@ -9349,6 +9658,7 @@ export class AppDatabase {
     }
 
     this.setItem('b2b_packages', pkgs);
+    canonicalImageService.notify();
 
     this.unmarkEntityDeleted('b2b_packages', pkg.id);
     this.unmarkEntityDeleted('Package', pkg.id);
@@ -14350,16 +14660,28 @@ export class AppDatabase {
   }
 
   public saveCityHub(cityHub: CityHub, user: User | null): void {
-    const hubs = this.getCityHubs();
-    const index = hubs.findIndex(c => c.id === cityHub.id);
-    if (index >= 0) {
-      hubs[index] = cityHub;
-      this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', cityHub.id, `Updated city hub: ${cityHub.name} (${cityHub.destinationName})`);
-    } else {
-      hubs.push(cityHub);
-      this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', cityHub.id, `Added city hub: ${cityHub.name} (${cityHub.destinationName})`);
+    const masterData = MasterDataService.getInstance();
+    const validation = masterData.validateHubRelationship(cityHub.destinationId, cityHub.regionId);
+    if (!validation.valid || !validation.destination || !validation.destinationRegion) {
+      throw new Error(`Data Integrity Error: ${validation.error || 'City Hub must reference a valid Destination and Region.'}`);
     }
-    this.syncFirestoreDoc('city_hubs', cityHub.id, cityHub);
+    const enrichedHub: CityHub = {
+      ...cityHub,
+      destinationId: validation.destination.id,
+      destinationName: validation.destination.name,
+      regionId: validation.destinationRegion.id,
+      regionName: validation.destinationRegion.name
+    };
+    const hubs = this.getCityHubs();
+    const index = hubs.findIndex(c => c.id === enrichedHub.id);
+    if (index >= 0) {
+      hubs[index] = enrichedHub;
+      this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', enrichedHub.id, `Updated city hub: ${enrichedHub.name} (${enrichedHub.destinationName})`);
+    } else {
+      hubs.push(enrichedHub);
+      this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', enrichedHub.id, `Added city hub: ${enrichedHub.name} (${enrichedHub.destinationName})`);
+    }
+    this.syncFirestoreDoc('city_hubs', enrichedHub.id, enrichedHub);
     this.setItem('city_hubs', hubs);
   }
 
@@ -14373,19 +14695,14 @@ export class AppDatabase {
     if (!cityHub.name || !cityHub.name.trim()) {
       throw new Error('City Hub name is required.');
     }
-    if (!cityHub.destinationId || !cityHub.destinationId.trim()) {
-      throw new Error('Parent Destination is required. A City Hub must belong to a Destination.');
-    }
 
-    const destinations = this.getDestinations();
-    const parentDest = destinations.find(d => d.id === cityHub.destinationId.trim());
-    if (!parentDest) {
-      throw new Error(`Parent Destination "${cityHub.destinationId}" does not exist. Please select a valid Destination.`);
+    const masterData = MasterDataService.getInstance();
+    const validation = masterData.validateHubRelationship(cityHub.destinationId, cityHub.regionId);
+    if (!validation.valid || !validation.destination || !validation.destinationRegion) {
+      throw new Error(`Data Integrity Error: ${validation.error || 'City Hub must reference a valid Destination and Region.'}`);
     }
-
-    const masterRegions = this.getMasterRegions();
-    const effectiveRegionId = cityHub.regionId || parentDest.regionId;
-    const parentRegion = masterRegions.find(r => r.id === effectiveRegionId);
+    const parentDest = validation.destination;
+    const parentRegion = validation.destinationRegion;
 
     const cleanName = cityHub.name.trim();
     const cleanSlug = (cityHub.slug || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
@@ -14419,8 +14736,9 @@ export class AppDatabase {
       slug: cleanSlug,
       destinationId: parentDest.id,
       destinationName: parentDest.name,
-      regionId: parentRegion?.id || parentDest.regionId || '',
-      regionName: parentRegion?.name || parentDest.regionName || '',
+      country: parentDest.name,
+      regionId: parentRegion.id,
+      regionName: parentRegion.name,
       status: cityHub.status || 'ACTIVE',
       isPublished: cityHub.isPublished ?? true,
       displayOrder: Number(cityHub.displayOrder) || (existing.length + 1),
@@ -14446,11 +14764,21 @@ export class AppDatabase {
     }
     this.setItem('city_hubs', existing);
 
-    this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', hubId, `${index >= 0 ? 'Updated' : 'Created'} City Hub: ${cleanName} in ${parentDest.name}`);
+    this.logAudit(user, 'DESTINATION_UPDATED', 'CityHub', hubId, `${index >= 0 ? 'Updated' : 'Created'} City Hub: ${cleanName} in ${parentRegion.name}, ${parentDest.name}`);
     return recordToSave;
   }
 
   public deleteCityHub(cityHubId: string, user: User | null): void {
+    const linkedProducts = this.getProducts().filter(
+      p => p.hubId === cityHubId || (p as any).cityHubId === cityHubId || (Array.isArray(p.hubIds) && p.hubIds.includes(cityHubId))
+    );
+    if (linkedProducts.length > 0) {
+      throw new Error(`Cannot delete City Hub: It has ${linkedProducts.length} linked Product(s). Reassign or delete linked products first.`);
+    }
+    const linkedHotels = this.getHotels().filter(h => h.hubId === cityHubId || h.cityId === cityHubId);
+    if (linkedHotels.length > 0) {
+      throw new Error(`Cannot delete City Hub: It has ${linkedHotels.length} linked Hotel(s). Reassign or delete linked hotels first.`);
+    }
     const hubs = this.getCityHubs();
     const target = hubs.find(c => c.id === cityHubId);
     this.setItem('city_hubs', hubs.filter(c => c.id !== cityHubId));
@@ -14471,10 +14799,17 @@ export class AppDatabase {
     const target = hubs.find(c => c.id === cityHubId);
     if (!target) return true;
 
-    // Check if any products reference this hub
-    const linkedProducts = this.getProducts().filter(p => p.hubId === cityHubId || (p as any).cityHubId === cityHubId);
+    // Check if any products reference this hub (including multi-hub products)
+    const linkedProducts = this.getProducts().filter(
+      p => p.hubId === cityHubId || (p as any).cityHubId === cityHubId || (Array.isArray(p.hubIds) && p.hubIds.includes(cityHubId))
+    );
     if (linkedProducts.length > 0) {
       throw new Error(`Cannot delete City Hub "${target.name}": It has ${linkedProducts.length} linked Product(s). Reassign or delete linked products first.`);
+    }
+
+    const linkedHotels = this.getHotels().filter(h => h.hubId === cityHubId || h.cityId === cityHubId);
+    if (linkedHotels.length > 0) {
+      throw new Error(`Cannot delete City Hub "${target.name}": It has ${linkedHotels.length} linked Hotel(s). Reassign or delete linked hotels first.`);
     }
 
     await this.deleteFirestoreDocAsync('city_hubs', cityHubId);
@@ -17354,17 +17689,17 @@ export class AppDatabase {
   // ==========================================
   public getEmailCampaigns(): EmailCampaignConfig[] {
     const deletedSet = this.getDeletedEntityIds();
-    const rawList = this.getItem<EmailCampaignConfig[]>('campaigns', INITIAL_CAMPAIGNS);
+    const rawList = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
     const mergedMap = new Map<string, EmailCampaignConfig>();
 
-    // Always seed canonical system triggers first so none are ever missing in Production or Demo modes
-    INITIAL_CAMPAIGNS.forEach(initItem => {
-      if (initItem && initItem.id) {
-        mergedMap.set(initItem.id, { ...initItem });
-      }
-    });
+    if (envService.allowDemoData()) {
+      INITIAL_CAMPAIGNS.forEach(initItem => {
+        if (initItem && initItem.id) {
+          mergedMap.set(initItem.id, { ...initItem });
+        }
+      });
+    }
 
-    // Overlay stored/Firestore configurations
     if (Array.isArray(rawList)) {
       rawList.forEach(item => {
         if (!item || !item.id) return;
@@ -23287,11 +23622,11 @@ export class AppDatabase {
     totalSurcharges: number;
   } {
     const products = this.getProducts();
-    const existingMasters = this.getItem<SurchargeMaster[]>('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
+    const existingMasters = this.getItem<SurchargeMaster[]>('surcharge_masters', envService.allowDemoData() ? INITIAL_SURCHARGE_MASTERS : []);
     const existingMappings = this.getItem<SurchargeProductMapping[]>('surcharge_product_mappings', []);
     const existingHistory = this.getItem<SurchargeHistoryRecord[]>('surcharge_history', []);
 
-    const { migratedMasters, historyRecords, migratedCount } = migrateLegacyProductSurcharges(
+    const { migratedMasters, historyRecords } = migrateLegacyProductSurcharges(
       products,
       existingMasters
     );
@@ -23321,9 +23656,9 @@ export class AppDatabase {
   }
 
   public getSurchargeMasters(includeArchived: boolean = true): SurchargeMaster[] {
-    const raw = this.getItem<SurchargeMaster[]>('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
+    const raw = this.getItem<SurchargeMaster[]>('surcharge_masters', envService.allowDemoData() ? INITIAL_SURCHARGE_MASTERS : []);
     const deletedSet = this.getDeletedEntityIds();
-    const list = (Array.isArray(raw) && raw.length > 0 ? raw : INITIAL_SURCHARGE_MASTERS)
+    const list = (Array.isArray(raw) ? raw : [])
       .filter(s => s && s.id && !deletedSet.has(s.id) && !deletedSet.has(`surcharge_masters_${s.id}`))
       .map(s => ({
         ...s,

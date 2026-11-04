@@ -7,6 +7,7 @@ import {
   Supplier, 
   CityHub, 
   MasterRegion,
+  DestinationRegionItem,
   TieredPrice,
   ProductUpsell,
   SurchargeApplicationBasis
@@ -70,6 +71,7 @@ interface ProductUpdateWorkspaceProps {
   product: Product | null; // null means Create mode
   destinations: Destination[];
   masterRegions: MasterRegion[];
+  regions?: DestinationRegionItem[];
   cityHubs: CityHub[];
   suppliers: Supplier[];
   onSave: (savedProduct: Product) => Promise<Product | void> | void;
@@ -107,12 +109,14 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
   product,
   destinations,
   masterRegions,
+  regions: propRegions,
   cityHubs,
   suppliers,
   onSave,
   onCancel
 }) => {
   const db = AppDatabase.getInstance();
+  const regions = propRegions && propRegions.length > 0 ? propRegions : db.getRegions();
 
   // Form State
   const [activeCategory, setActiveCategory] = useState<ProductCategory>(
@@ -1206,39 +1210,10 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                 />
               </FormField>
 
-              {/* Cascading Region (Tier 1) */}
-              <FormField label="Master Region (Tier 1)" required>
+              {/* Cascading Destination (Tier 1) */}
+              <FormField label="1. Destination (Tier 1)" required>
                 <select
                   required
-                  value={formData.regionId || ''}
-                  onChange={e => {
-                    const regId = e.target.value;
-                    const reg = masterRegions.find(r => r.id === regId);
-                    setFormData({ 
-                      ...formData, 
-                      regionId: reg?.id || '', 
-                      regionName: reg?.name || '',
-                      destinationId: '',
-                      destinationName: '',
-                      hubId: '',
-                      city: '',
-                      country: ''
-                    });
-                  }}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none"
-                >
-                  <option value="">-- Select Master Region --</option>
-                  {masterRegions.map(r => (
-                    <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
-                  ))}
-                </select>
-              </FormField>
-
-              {/* Cascading Destination (Tier 2) strictly filtered by selected Region */}
-              <FormField label="Destination (Tier 2)" required>
-                <select
-                  required
-                  disabled={!formData.regionId}
                   value={formData.destinationId || ''}
                   onChange={e => {
                     const destId = e.target.value;
@@ -1248,24 +1223,54 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                       destinationId: dest?.id || '', 
                       destinationName: dest?.name || '',
                       country: dest?.country || dest?.name || '',
+                      regionId: '',
+                      regionName: '',
                       hubId: '',
-                      city: ''
+                      city: '',
+                      hubIds: []
                     });
                   }}
-                  className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.regionId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none"
                 >
-                  <option value="">{formData.regionId ? '-- Select Destination --' : '-- Select Region First --'}</option>
-                  {destinations
-                    .filter(d => d.regionId === formData.regionId)
-                    .map(d => (
-                      <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                  <option value="">-- Select Destination --</option>
+                  {destinations.map(d => (
+                    <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                  ))}
+                </select>
+              </FormField>
+
+              {/* Cascading Region (Tier 2) strictly filtered by selected Destination */}
+              <FormField label="2. Region (Tier 2)" required>
+                <select
+                  required
+                  disabled={!formData.destinationId}
+                  value={formData.regionId || ''}
+                  onChange={e => {
+                    const regId = e.target.value;
+                    const reg = regions.find(r => r.id === regId);
+                    setFormData({ 
+                      ...formData, 
+                      regionId: reg?.id || '', 
+                      regionName: reg?.name || '',
+                      hubId: '',
+                      city: '',
+                      hubIds: []
+                    });
+                  }}
+                  className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                >
+                  <option value="">{formData.destinationId ? '-- Select Region --' : '-- Select Destination First --'}</option>
+                  {regions
+                    .filter(r => r.destinationId === formData.destinationId)
+                    .map(r => (
+                      <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
                     ))}
                 </select>
               </FormField>
 
-              {/* Cascading City Hub (Tier 3) strictly filtered by selected Destination */}
+              {/* Cascading City Hub (Tier 3) strictly filtered by selected Destination & Region */}
               {activeCategory === 'Rail' ? (
-                <FormField label="Associated City Hubs (Multi-Hub Selection)" required>
+                <FormField label="3. Associated City Hubs (Multi-Hub Selection)" required>
                   <div className={`p-3 bg-white border border-slate-200 rounded-lg space-y-2 max-h-40 overflow-y-auto ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}>
                     {!formData.destinationId ? (
                       <div className="text-slate-400 text-xs">-- Select Destination First --</div>
@@ -1288,16 +1293,25 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                                   } else {
                                     nextIds = currentIds.filter(id => id !== h.id);
                                   }
+                                  const primaryHub = cityHubs.find(ch => ch.id === nextIds[0]);
+                                  const nextRegIds = Array.from(new Set(
+                                    nextIds
+                                      .map(id => cityHubs.find(ch => ch.id === id)?.regionId)
+                                      .filter(Boolean) as string[]
+                                  ));
                                   setFormData({
                                     ...formData,
                                     hubIds: nextIds,
                                     hubId: nextIds[0] || '',
-                                    city: cityHubs.find(ch => ch.id === nextIds[0])?.name || ''
+                                    city: primaryHub?.name || '',
+                                    regionId: primaryHub?.regionId || formData.regionId || '',
+                                    regionName: primaryHub?.regionName || formData.regionName || '',
+                                    regionIds: nextRegIds
                                   });
                                 }}
                                 className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
                               />
-                              <span>{h.name} ({h.id})</span>
+                              <span>{h.name} ({h.regionName || h.id})</span>
                             </label>
                           );
                         })
@@ -1305,7 +1319,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                   </div>
                 </FormField>
               ) : (
-                <FormField label="City Hub (Tier 3)" required>
+                <FormField label="3. City Hub (Tier 3)" required>
                   <select
                     required
                     disabled={!formData.destinationId}
@@ -1317,16 +1331,19 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                         ...formData, 
                         hubId: hub?.id || '', 
                         city: hub?.name || '',
-                        hubIds: hub?.id ? [hub.id] : []
+                        hubIds: hub?.id ? [hub.id] : [],
+                        regionId: hub?.regionId || formData.regionId || '',
+                        regionName: hub?.regionName || formData.regionName || '',
+                        regionIds: hub?.regionId ? [hub.regionId] : []
                       });
                     }}
                     className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
                   >
                     <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
                     {cityHubs
-                      .filter(h => h.destinationId === formData.destinationId)
+                      .filter(h => h.destinationId === formData.destinationId && (!formData.regionId || h.regionId === formData.regionId))
                       .map(h => (
-                        <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                        <option key={h.id} value={h.id}>{h.name} ({h.regionName || h.id})</option>
                       ))}
                   </select>
                 </FormField>

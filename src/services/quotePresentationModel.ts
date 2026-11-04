@@ -2128,13 +2128,14 @@ export function validateQuotePresentationCompleteness(
 
   requiredTokens.forEach(token => {
     if (!token.value) return;
-    if (!email.htmlBody.includes(token.value)) {
+    const valLower = token.value.toLowerCase();
+    if (!email.htmlBody.includes(token.value) && !email.htmlBody.toLowerCase().includes(valLower)) {
       missingInEmailHtml.push(token.label);
     }
-    if (!email.textBody.includes(token.value)) {
+    if (!email.textBody.includes(token.value) && !email.textBody.toLowerCase().includes(valLower)) {
       missingInEmailText.push(token.label);
     }
-    if (!whatsapp.includes(token.value)) {
+    if (!whatsapp.includes(token.value) && !whatsapp.toLowerCase().includes(valLower)) {
       missingInWhatsApp.push(token.label);
     }
   });

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../../services/db';
 import { countingEngine } from '../../services/countingEngine';
-import { CityHub, Destination, MasterRegion } from '../../types';
+import { CityHub, Destination, DestinationRegionItem } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
@@ -33,7 +33,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
   const [cityHubs, setCityHubs] = useState<CityHub[]>(db.getCityHubs());
-  const [masterRegions, setMasterRegions] = useState<MasterRegion[]>(db.getMasterRegions());
+  const [regions, setRegions] = useState<DestinationRegionItem[]>(db.getRegions());
   const [destinations, setDestinations] = useState<Destination[]>(propDestinations || db.getDestinations());
   const [selectedDestinationFilter, setSelectedDestinationFilter] = useState<string>('all');
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>('all');
@@ -49,35 +49,43 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
   useEffect(() => {
     return db.subscribe(() => {
       setCityHubs(db.getCityHubs());
-      setMasterRegions(db.getMasterRegions());
+      setRegions(db.getRegions());
       setDestinations(db.getDestinations());
     });
   }, []);
 
-  const availableDestinationsForFilter = selectedRegionFilter === 'all'
-    ? destinations
-    : destinations.filter(d => !d.regionId || d.regionId === selectedRegionFilter);
+  const availableRegionsForFilter = selectedDestinationFilter === 'all'
+    ? regions
+    : regions.filter(r => r.destinationId === selectedDestinationFilter);
 
   const filteredHubs = cityHubs.filter(hub => {
-    const matchesRegion = selectedRegionFilter === 'all' || hub.regionId === selectedRegionFilter;
     const matchesDest = selectedDestinationFilter === 'all' || hub.destinationId === selectedDestinationFilter;
+    const matchesRegion = selectedRegionFilter === 'all' || hub.regionId === selectedRegionFilter;
     const q = (searchQuery || '').toLowerCase();
     const matchesSearch = !q ||
                           (hub.name || '').toLowerCase().includes(q) || 
                           (hub.tagline || '').toLowerCase().includes(q) ||
                           (hub.regionName || '').toLowerCase().includes(q) ||
                           (hub.destinationName || '').toLowerCase().includes(q);
-    return matchesRegion && matchesDest && matchesSearch;
+    return matchesDest && matchesRegion && matchesSearch;
   });
 
   const handleOpenAdd = () => {
     setSaveError(null);
+    const defaultDest = selectedDestinationFilter !== 'all'
+      ? destinations.find(d => d.id === selectedDestinationFilter)
+      : destinations.find(d => d.status === 'ACTIVE') || destinations[0];
+    const destRegions = defaultDest ? regions.filter(r => r.destinationId === defaultDest.id) : [];
+    const defaultRegion = selectedRegionFilter !== 'all'
+      ? destRegions.find(r => r.id === selectedRegionFilter)
+      : destRegions[0];
+
     setEditingHub({
       id: '',
-      regionId: '',
-      regionName: '',
-      destinationId: '',
-      destinationName: '',
+      destinationId: defaultDest?.id || '',
+      destinationName: defaultDest?.name || '',
+      regionId: defaultRegion?.id || '',
+      regionName: defaultRegion?.name || '',
       name: '',
       tagline: '',
       description: '',
@@ -86,7 +94,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
       productCount: 0,
       hotelCount: 0,
       displayOrder: cityHubs.length + 1,
-      highlights: ['Local Sightseeing', 'Private Transit Hub'],
+      highlights: [],
       isPublished: true,
       status: 'ACTIVE'
     });
@@ -108,13 +116,22 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
       return;
     }
 
+    if (!editingHub.regionId?.trim()) {
+      setSaveError('Parent Region is required. Please select a Region under the Destination.');
+      return;
+    }
+
     const targetDest = destinations.find(d => d.id === editingHub.destinationId);
     if (!targetDest) {
       setSaveError('Selected Destination was not found. Please select a valid Destination.');
       return;
     }
 
-    const targetRegion = masterRegions.find(r => r.id === (editingHub.regionId || targetDest.regionId));
+    const targetRegion = regions.find(r => r.id === editingHub.regionId && r.destinationId === targetDest.id);
+    if (!targetRegion) {
+      setSaveError('Selected Region does not belong to the chosen Destination. Please select a valid Region.');
+      return;
+    }
 
     const cleanName = editingHub.name.trim();
     const cleanSlug = (editingHub.slug?.trim() || cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-')).replace(/(^-|-$)/g, '');
@@ -124,8 +141,9 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
       id: hubId,
       destinationId: targetDest.id,
       destinationName: targetDest.name,
-      regionId: targetRegion?.id || targetDest.regionId || '',
-      regionName: targetRegion?.name || targetDest.regionName || '',
+      country: targetDest.name,
+      regionId: targetRegion.id,
+      regionName: targetRegion.name,
       name: cleanName,
       slug: cleanSlug,
       tagline: editingHub.tagline?.trim() || '',
@@ -147,7 +165,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
       setCityHubs(db.getCityHubs());
       setIsEditing(false);
       setEditingHub(null);
-      setSaveSuccessMsg(`City Hub "${completeHub.name}" successfully saved to Firestore!`);
+      setSaveSuccessMsg(`City Hub "${completeHub.name}" saved under ${targetRegion.name}, ${targetDest.name}!`);
       setTimeout(() => setSaveSuccessMsg(null), 5000);
     } catch (err: any) {
       console.error('[CityHubsCMS] Save error:', err);
@@ -162,10 +180,6 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
     const targetName = target ? target.name : 'City Hub';
     setDeleteTarget({ id, name: targetName });
   };
-
-  const modalAvailableDestinations = editingHub?.regionId
-    ? destinations.filter(d => !d.regionId || d.regionId === editingHub.regionId)
-    : destinations;
 
   return (
     <div className="space-y-6">
@@ -183,11 +197,11 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
         <div>
           <div className="flex items-center space-x-2 text-[#00C6A6] font-bold text-xs uppercase tracking-wider mb-1">
             <Building2 className="w-4 h-4" />
-            <span>Tier 3: City Hubs & Touring Gateways</span>
+            <span>Tier 3: Destination → Region → City Hub</span>
           </div>
           <h2 className="text-xl font-bold text-slate-900">Destination Cities & Hubs Manager</h2>
           <p className="text-sm text-slate-500">
-            Structure primary transit and touring hubs (e.g. Tokyo, Kyoto, Osaka, Bangkok, London) linked to Parent Master Regions and Destinations.
+            Structure primary transit and touring hubs (e.g. Tokyo, Kyoto, Osaka) strictly linked to their Parent Destination and Region.
           </p>
         </div>
         <button
@@ -211,26 +225,26 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
           />
         </div>
         <select
-          value={selectedRegionFilter}
+          value={selectedDestinationFilter}
           onChange={e => {
-            setSelectedRegionFilter(e.target.value);
-            setSelectedDestinationFilter('all');
+            setSelectedDestinationFilter(e.target.value);
+            setSelectedRegionFilter('all');
           }}
           className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-semibold"
         >
-          <option value="all">All Master Regions ({masterRegions.length})</option>
-          {masterRegions.map(r => (
-            <option key={r.id} value={r.id}>{r.name} ({r.code})</option>
+          <option value="all">All Destinations ({destinations.length})</option>
+          {destinations.map(d => (
+            <option key={d.id} value={d.id}>{d.name} ({cityHubs.filter(h => h.destinationId === d.id).length} Hubs)</option>
           ))}
         </select>
         <select
-          value={selectedDestinationFilter}
-          onChange={e => setSelectedDestinationFilter(e.target.value)}
+          value={selectedRegionFilter}
+          onChange={e => setSelectedRegionFilter(e.target.value)}
           className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm font-semibold"
         >
-          <option value="all">All Destinations ({availableDestinationsForFilter.length})</option>
-          {availableDestinationsForFilter.map(d => (
-            <option key={d.id} value={d.id}>{d.name} {d.regionName ? `(${d.regionName})` : ''}</option>
+          <option value="all">All Regions ({availableRegionsForFilter.length})</option>
+          {availableRegionsForFilter.map(r => (
+            <option key={r.id} value={r.id}>{r.name} ({r.destinationName})</option>
           ))}
         </select>
       </div>
@@ -351,14 +365,14 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
               {/* Live Hierarchy Breadcrumb Preview */}
               <div className="p-2 rounded-lg bg-white border border-slate-200 flex items-center gap-1.5 text-[11px] flex-wrap">
                 <span className="font-bold text-slate-400 uppercase text-[9px]">Hierarchy:</span>
-                <span className="font-bold text-[#008f77] flex items-center gap-1">
-                  <Globe2 className="w-3 h-3" />
-                  {editingHub.regionName || 'Select Region'}
-                </span>
-                <ChevronRight className="w-3 h-3 text-slate-400" />
                 <span className="font-bold text-slate-800 flex items-center gap-1">
                   <MapPin className="w-3 h-3 text-[#00C6A6]" />
                   {editingHub.destinationName || 'Select Destination'}
+                </span>
+                <ChevronRight className="w-3 h-3 text-slate-400" />
+                <span className="font-bold text-[#008f77] flex items-center gap-1">
+                  <Globe2 className="w-3 h-3" />
+                  {editingHub.regionName || 'Select Region'}
                 </span>
                 <ChevronRight className="w-3 h-3 text-slate-400" />
                 <span className="font-bold text-slate-900 bg-slate-50 px-1.5 py-0.5 rounded border border-slate-200">
@@ -415,120 +429,75 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
               ) : (
                 <>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* 1. Parent Master Region */}
+                {/* 1. Parent Destination */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    1. Master Region (Tier 1) *
+                    1. Parent Destination (Tier 1) *
                   </label>
                   <select
-                    value={editingHub.regionId || ''}
-                    onChange={e => {
-                      const regId = e.target.value;
-                      const reg = masterRegions.find(r => r.id === regId);
-                      setEditingHub({
-                        ...editingHub,
-                        regionId: regId,
-                        regionName: reg?.name || '',
-                        destinationId: '',
-                        destinationName: ''
-                      });
-                    }}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold bg-white"
-                  >
-                    <option value="">-- Select Master Region --</option>
-                    {masterRegions.map(r => (
-                      <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* 2. Destination */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    2. Destination Country (Tier 2) *
-                  </label>
-                  <select
-                    disabled={!editingHub.regionId}
+                    required
                     value={editingHub.destinationId || ''}
                     onChange={e => {
                       const destId = e.target.value;
                       const d = destinations.find(dest => dest.id === destId);
-                      setEditingHub({ 
-                        ...editingHub, 
+                      const destRegions = regions.filter(r => r.destinationId === destId);
+                      const firstReg = destRegions[0];
+                      setEditingHub({
+                        ...editingHub,
                         destinationId: destId,
-                        destinationName: d?.name || ''
+                        destinationName: d?.name || '',
+                        regionId: firstReg?.id || '',
+                        regionName: firstReg?.name || ''
                       });
                     }}
-                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold bg-white ${!editingHub.regionId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold bg-white"
                   >
-                    <option value="">{editingHub.regionId ? '-- Select Destination --' : '-- Select Region First --'}</option>
-                    {destinations
-                      .filter(d => d.regionId === editingHub.regionId)
-                      .map(d => (
-                        <option key={d.id} value={d.id}>
-                          {d.name} ({d.id})
+                    <option value="">-- Select Destination --</option>
+                    {destinations.map(d => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} ({d.id})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 2. Parent Region under Destination */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    2. Parent Region (Tier 2) *
+                  </label>
+                  <select
+                    required
+                    disabled={!editingHub.destinationId}
+                    value={editingHub.regionId || ''}
+                    onChange={e => {
+                      const regId = e.target.value;
+                      const reg = regions.find(r => r.id === regId && r.destinationId === editingHub.destinationId);
+                      setEditingHub({
+                        ...editingHub,
+                        regionId: regId,
+                        regionName: reg?.name || ''
+                      });
+                    }}
+                    className={`w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold bg-white ${!editingHub.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                  >
+                    <option value="">
+                      {editingHub.destinationId ? '-- Select Region --' : '-- Select Destination First --'}
+                    </option>
+                    {regions
+                      .filter(r => r.destinationId === editingHub.destinationId)
+                      .map(r => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} ({r.id})
                         </option>
                       ))}
                   </select>
                 </div>
               </div>
 
-              {/* Sub-Region Selection for Hierarchical Grouping */}
-              {(() => {
-                const currentDest = destinations.find(d => d.id === editingHub.destinationId);
-                const subRegs = currentDest?.regions || [];
-                return (
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center justify-between">
-                      <span>3. Sub-Region / Territory (Hierarchical Tag)</span>
-                      {subRegs.length > 0 && <span className="text-[10px] text-[#00C6A6] font-bold">Suggested from Destination</span>}
-                    </label>
-                    {subRegs.length > 0 ? (
-                      <div className="space-y-1.5">
-                        <select
-                          value={editingHub.regionName || ''}
-                          onChange={e => {
-                            const val = e.target.value;
-                            const matched = subRegs.find(sr => sr.name === val || sr.id === val);
-                            setEditingHub({
-                              ...editingHub,
-                              regionName: matched ? matched.name : val,
-                              regionId: matched ? matched.id : editingHub.regionId
-                            });
-                          }}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold bg-white"
-                        >
-                          <option value="">-- Custom or Top-Level Region --</option>
-                          {subRegs.map((sr, srIdx) => (
-                            <option key={`subreg-opt-${sr.id || sr.name}-${srIdx}`} value={sr.name}>
-                              {sr.name}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          value={editingHub.regionName || ''}
-                          onChange={e => setEditingHub({ ...editingHub, regionName: e.target.value })}
-                          className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs text-slate-600"
-                          placeholder="Or type custom sub-region name..."
-                        />
-                      </div>
-                    ) : (
-                      <input
-                        type="text"
-                        value={editingHub.regionName || ''}
-                        onChange={e => setEditingHub({ ...editingHub, regionName: e.target.value })}
-                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm"
-                        placeholder="e.g. Kanto, Kansai, Central Honshu, Bavarian Alps"
-                      />
-                    )}
-                  </div>
-                );
-              })()}
-
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                  4. City / Hub Name (e.g. Tokyo, Kyoto, Osaka, Bangkok) *
+                  3. City / Hub Name (Tier 3) *
                 </label>
                 <input
                   type="text"
@@ -536,7 +505,7 @@ export const CityHubsManager: React.FC<CityHubsManagerProps> = ({ destinations: 
                   value={editingHub.name || ''}
                   onChange={e => setEditingHub({ ...editingHub, name: e.target.value })}
                   className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-[#00C6A6]"
-                  placeholder="e.g. Kyoto"
+                  placeholder="e.g. Tokyo, Kyoto, Osaka"
                 />
               </div>
 

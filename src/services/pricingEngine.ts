@@ -4243,8 +4243,12 @@ export function calculateQuoteTotal(
 ): {
   baseSellingPrice: number;
   baseTotalPrice: number;
+  theUnboundBaseSellingPrice: number;
   markupAmount: number;
   marginAmount: number;
+  additionalAgentMarginAmount: number;
+  productLevelAgentMarkupTotal: number;
+  overallAgentMarkupAmount: number;
   discountAmount: number;
   finalCustomerSellingPrice: number;
   finalTotalSellingPrice: number;
@@ -4385,11 +4389,23 @@ export function calculateQuoteTotal(
       const landSelling = roundCurrencyAmount(snapTotals.landPartTotal, effectiveCurrency);
       const finalPrice = isLandOnly ? landSelling : roundCurrencyAmount(snapTotals.finalCustomerSellingPrice, effectiveCurrency);
 
+      const snapB2BBase = roundCurrencyAmount(
+        (snapTotals as any).theUnboundBaseSellingPrice ?? snapTotals.b2bSellingPriceTotal ?? snapTotals.finalCustomerSellingPrice,
+        effectiveCurrency
+      );
+      const snapMarkup = roundCurrencyAmount(snapTotals.additionalAgentMarginAmount ?? 0, effectiveCurrency);
+      const snapProductMarkup = roundCurrencyAmount((snapTotals as any).productLevelAgentMarkupTotal ?? 0, effectiveCurrency);
+      const snapOverallMarkup = roundCurrencyAmount((snapTotals as any).overallAgentMarkupAmount ?? snapMarkup, effectiveCurrency);
+
       return {
-        baseSellingPrice: roundCurrencyAmount(snapTotals.b2bSellingPriceTotal, effectiveCurrency),
-        baseTotalPrice: roundCurrencyAmount(snapTotals.b2bSellingPriceTotal, effectiveCurrency),
-        markupAmount: roundCurrencyAmount(snapTotals.additionalAgentMarginAmount, effectiveCurrency),
-        marginAmount: roundCurrencyAmount(snapTotals.additionalAgentMarginAmount, effectiveCurrency),
+        baseSellingPrice: snapB2BBase,
+        baseTotalPrice: snapB2BBase,
+        theUnboundBaseSellingPrice: snapB2BBase,
+        markupAmount: snapMarkup,
+        marginAmount: snapMarkup,
+        additionalAgentMarginAmount: snapMarkup,
+        productLevelAgentMarkupTotal: snapProductMarkup,
+        overallAgentMarkupAmount: snapOverallMarkup,
         discountAmount: roundCurrencyAmount(snapTotals.discountsTotal, effectiveCurrency),
         finalCustomerSellingPrice: finalPrice,
         finalTotalSellingPrice: finalPrice,
@@ -4414,12 +4430,47 @@ export function calculateQuoteTotal(
     (activePricingSnapshot && currencyEngine.normalizeCurrencyCode(activePricingSnapshot.currency) === effectiveCurrency)
   );
 
+  // Authoritatively resolve agency margin settings to ensure margin mechanism (Product-Level vs Internal Agent-Level) is respected
+  let isProductLevelMarginEnabled = true;
+  let customAgentMarginPercent = 10;
+  if (!Array.isArray(quoteOrItems)) {
+    const qAny = quoteOrItems as any;
+    if (typeof qAny.productLevelMarginEnabled === 'boolean') {
+      isProductLevelMarginEnabled = qAny.productLevelMarginEnabled;
+    } else if (typeof qAny.agencyPricingSettings?.productLevelMarginEnabled === 'boolean') {
+      isProductLevelMarginEnabled = qAny.agencyPricingSettings.productLevelMarginEnabled;
+    } else {
+      try {
+        const resolved = AppDatabase.getInstance().resolveAgencyPricingSettings({
+          companyId: qAny.companyId,
+          agencyName: qAny.agentAgency || qAny.agencyName,
+          userId: qAny.agentId
+        });
+        isProductLevelMarginEnabled = resolved.productLevelMarginEnabled;
+        customAgentMarginPercent = resolved.agentLevelMarginPercent;
+      } catch {
+        // default
+      }
+    }
+
+    if (typeof qAny.agentLevelMarginPercent === 'number') {
+      customAgentMarginPercent = qAny.agentLevelMarginPercent;
+    } else if (typeof qAny.agencyPricingSettings?.agentLevelMarginPercent === 'number') {
+      customAgentMarginPercent = qAny.agencyPricingSettings.agentLevelMarginPercent;
+    }
+  }
+
+  const expectedMarginMode = isProductLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL';
+
   // Resolve each item's calculation in effectiveCurrency.
-  // If an item's cached calculation is in a different currency (and not locked), recalculate in effectiveCurrency.
+  // If an item's cached calculation is in a different currency or obsolete margin mode (and not locked), recalculate in effectiveCurrency.
   const resolveItemInTargetCurrency = (it: QuoteItem): { selling: number; net: number; feeAndTax: number } => {
     const calc = it.calculation as any;
     const calcCurrency = calc?.currency ? currencyEngine.normalizeCurrencyCode(calc.currency) : undefined;
-    if (calc && calcCurrency === effectiveCurrency) {
+    const calcMarginMode = calc?.activeMarginMode;
+    const isMarginModeMatching = !calcMarginMode || calcMarginMode === expectedMarginMode;
+
+    if (calc && calcCurrency === effectiveCurrency && isMarginModeMatching) {
       const selling =
         calc.finalTotalSellingPrice ??
         calc.totalSellingPrice ??
@@ -4446,7 +4497,9 @@ export function calculateQuoteTotal(
         infants: it.pax?.infants || 0,
         travelDate: it.travelDate,
         targetCurrency: effectiveCurrency,
-        selectedAddonIds: it.selectedAddonIds || []
+        selectedAddonIds: it.selectedAddonIds || [],
+        productLevelMarginEnabled: isProductLevelMarginEnabled,
+        customAgentMarginPercent: customAgentMarginPercent
       });
       return {
         selling: roundCurrencyAmount(freshCalc.finalTotalSellingPrice, effectiveCurrency),
@@ -4726,8 +4779,12 @@ export function calculateQuoteTotal(
   return {
     baseSellingPrice: stage1FinalBase,
     baseTotalPrice: stage1FinalBase,
+    theUnboundBaseSellingPrice: stage1FinalBase,
     markupAmount,
     marginAmount: markupAmount,
+    additionalAgentMarginAmount: markupAmount,
+    productLevelAgentMarkupTotal: productLevelMarkupTotal,
+    overallAgentMarkupAmount,
     discountAmount,
     finalCustomerSellingPrice,
     finalTotalSellingPrice: finalCustomerSellingPrice,
@@ -4759,6 +4816,11 @@ export function buildQuotationCurrencySnapshot(params: {
   scope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
   routeHubs?: TripRouteHub[];
   userRole?: UserRole;
+  user?: any;
+  companyId?: string;
+  agencyName?: string;
+  productLevelMarginEnabled?: boolean;
+  customAgentMarginPercent?: number;
   adminMarginMode?: 'ADD' | 'REPLACE';
   adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
   adminManualMarginValue?: number;
@@ -4778,6 +4840,11 @@ export function buildQuotationCurrencySnapshot(params: {
     scope = 'HOTEL_LAND',
     routeHubs = [],
     userRole,
+    user,
+    companyId,
+    agencyName,
+    productLevelMarginEnabled,
+    customAgentMarginPercent,
     adminMarginMode = 'ADD',
     adminManualMarginType = 'PERCENTAGE',
     adminManualMarginValue = 0,
@@ -4796,6 +4863,11 @@ export function buildQuotationCurrencySnapshot(params: {
     scope,
     routeHubs,
     userRole,
+    user,
+    companyId,
+    agencyName,
+    productLevelMarginEnabled,
+    customAgentMarginPercent,
     adminMarginMode,
     adminManualMarginType,
     adminManualMarginValue,
@@ -4905,9 +4977,12 @@ export function buildQuotationCurrencySnapshot(params: {
       surchargesTotal,
       discountsTotal: breakdown.discountAmount,
       b2bSellingPriceTotal: breakdown.baseSellingPrice,
+      theUnboundBaseSellingPrice: breakdown.theUnboundBaseSellingPrice ?? breakdown.baseSellingPrice,
       additionalAgentMarginType: agentMarginType,
       additionalAgentMarginValue: agentMarginValue,
       additionalAgentMarginAmount: breakdown.partnerMarginAmount,
+      productLevelAgentMarkupTotal: breakdown.productLevelAgentMarkupTotal ?? 0,
+      overallAgentMarkupAmount: breakdown.overallAgentMarkupAmount ?? breakdown.partnerMarginAmount,
       hotelAccommodationTotal,
       landPartTotal,
       finalCustomerSellingPrice
@@ -4916,7 +4991,10 @@ export function buildQuotationCurrencySnapshot(params: {
     existingBaseMarginAmount,
     manualMarginAdjustmentAmount,
     manualMarginAdjustedTotal: breakdown.baseSellingPrice,
+    theUnboundBaseSellingPrice: breakdown.theUnboundBaseSellingPrice ?? breakdown.baseSellingPrice,
     additionalAgentMarginAmount: breakdown.partnerMarginAmount,
+    productLevelAgentMarkupTotal: breakdown.productLevelAgentMarkupTotal ?? 0,
+    overallAgentMarkupAmount: breakdown.overallAgentMarkupAmount ?? breakdown.partnerMarginAmount,
     taxAmount: breakdown.taxAmount,
     surchargesTotal,
     appliedSurcharges: breakdown.appliedSurcharges || [],

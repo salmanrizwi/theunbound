@@ -216,6 +216,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   }, [db]);
 
   // Filters State
+  const [selectedRegion, setSelectedRegion] = useState<string>('');
   const [filters, setFilters] = useState<ProductFilterState>({
     searchQuery: '',
     destination: destination ? destination.name : '',
@@ -231,6 +232,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   // Reset or adjust filters when destination changes
   useEffect(() => {
+    setSelectedRegion('');
     setFilters(prev => ({
       ...prev,
       destination: destination ? destination.name : '',
@@ -240,55 +242,39 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   const [expandedFaqIdx, setExpandedFaqIdx] = useState<number | null>(null);
 
-  // Products belonging to current destination or all destinations
+  // Products belonging to current destination (and optional selected region) or all destinations
   const safeProducts = products || [];
   const safeAllDestinations = allDestinations || [];
 
   const destinationProducts = useMemo(() => {
     if (isAllDestinations) {
-      return safeProducts;
+      return countingEngine.getFilteredProducts({
+        regionId: selectedRegion || undefined
+      });
     }
-    return countingEngine.getFilteredProducts({ destinationId: destination?.slug || destination?.id }) || [];
-  }, [safeProducts, destination, isAllDestinations]);
+    return countingEngine.getFilteredProducts({
+      destinationId: destination?.id || destination?.slug,
+      regionId: selectedRegion || undefined
+    }) || [];
+  }, [safeProducts, destination, isAllDestinations, selectedRegion]);
 
-  // Hotels filtered for this destination / city
+  // Hotels filtered for this destination / region / city
   const destinationHotels = useMemo(() => {
     return countingEngine.getFilteredHotels({
-      destinationId: isAllDestinations ? undefined : (destination?.slug || destination?.id),
+      destinationId: isAllDestinations ? undefined : (destination?.id || destination?.slug),
+      regionId: selectedRegion || undefined,
       hubId: filters.city || undefined
     });
-  }, [isAllDestinations, destination, filters.city, hotels]);
+  }, [isAllDestinations, destination, selectedRegion, filters.city, hotels]);
 
-  // Hierarchical Hubs tagged for this destination (or all destinations)
+  // Hierarchical Hubs tagged for this destination (or all destinations) from authoritative database records
   const activeHubs = useMemo(() => {
     let hubsList: CityHub[] = [];
 
     if (isAllDestinations) {
-      hubsList = cityHubs || [];
+      hubsList = countingEngine.getFilteredHubs({}) || [];
     } else if (destination) {
-      hubsList = countingEngine.getFilteredHubs({ destinationId: destination.slug || destination.id }) || [];
-
-      // If no hubs found in cityHubs table yet for this destination, fallback to destination.cities
-      if ((hubsList || []).length === 0 && destination.cities && (destination.cities || []).length > 0) {
-        hubsList = (destination.cities || []).map((c, idx) => ({
-          id: c.id,
-          destinationId: destination.id,
-          destinationName: destination.name,
-          regionId: destination.regionId || '',
-          regionName: destination.regionName || '',
-          name: c.name,
-          tagline: c.tagline || 'Contracted Touring Gateway',
-          description: 'Key regional gateway with verified direct DMC contracts and expert local guides.',
-          heroImage: c.image,
-          images: [c.image],
-          productCount: c.productCount || 0,
-          hotelCount: 3,
-          displayOrder: idx + 1,
-          highlights: ['Local Sightseeing', 'Private Transit', 'Bespoke Guides'],
-          isPublished: true,
-          status: 'ACTIVE'
-        }));
-      }
+      hubsList = countingEngine.getFilteredHubs({ destinationId: destination.id || destination.slug }) || [];
     }
 
     // Enhance with live product and hotel counts and sort by hierarchical displayOrder
@@ -304,22 +290,17 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
       .sort((a, b) => (a.displayOrder || 1) - (b.displayOrder || 1));
   }, [isAllDestinations, destination, cityHubs, destinationProducts, hotels]);
 
-  // Legacy active cities for dropdown filters
+  // Active cities for dropdown filters (from authoritative hubs only)
   const activeCities = useMemo(() => {
-    let rawList: { id: string; name: string; tagline?: string; image?: string; productCount?: number }[] = [];
-    if (activeHubs.length > 0) {
-      rawList = activeHubs.map(h => ({
+    const rawList = activeHubs
+      .filter(h => !selectedRegion || h.regionId === selectedRegion || h.regionName === selectedRegion)
+      .map(h => ({
         id: h.id,
         name: h.name,
         tagline: h.tagline,
         image: h.heroImage,
         productCount: h.productCount
       }));
-    } else if (isAllDestinations) {
-      rawList = allDestinations.flatMap(d => (d.cities || []));
-    } else if (destination) {
-      rawList = destination.cities || [];
-    }
     
     // Deduplicate by city name to prevent duplicate entries/keys
     const seen = new Set<string>();
@@ -329,7 +310,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
       seen.add(key);
       return true;
     });
-  }, [activeHubs, isAllDestinations, allDestinations, destination]);
+  }, [activeHubs, selectedRegion]);
 
   // Unique categories & live category counts in this destination / all destinations
   const availableCategories = useMemo(() => {
@@ -347,29 +328,27 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
     return counts;
   }, [destinationProducts]);
 
-  // Filtered & Sorted Products
+  // Filtered & Sorted Products using authoritative ID-based hub & region relationships
   const filteredProducts = useMemo(() => {
-    let list = destinationProducts.filter((p) => {
+    const baseHubFiltered = filters.city
+      ? countingEngine.getFilteredProducts({
+          destinationId: isAllDestinations ? undefined : (destination?.id || destination?.slug),
+          regionId: selectedRegion || undefined,
+          hubId: filters.city
+        })
+      : destinationProducts;
+
+    let list = baseHubFiltered.filter((p) => {
       // Search query
       if (filters.searchQuery) {
         const q = (filters.searchQuery || '').toLowerCase();
         const matchesName = (p.name || '').toLowerCase().includes(q);
         const matchesCity = (p.city || '').toLowerCase().includes(q);
+        const matchesRegion = (p.regionName || '').toLowerCase().includes(q);
         const matchesDesc = (p.shortDescription || '').toLowerCase().includes(q);
         const matchesSku = (p.sku || '').toLowerCase().includes(q);
         const matchesDest = (p.destinationName || '').toLowerCase().includes(q) || (p.country || '').toLowerCase().includes(q);
-        if (!matchesName && !matchesCity && !matchesDesc && !matchesSku && !matchesDest) return false;
-      }
-
-      // City filter
-      if (filters.city) {
-        const cityLower = (filters.city || '').toLowerCase();
-        const pCityLower = (p.city || '').toLowerCase();
-        const matchesExact = pCityLower === cityLower;
-        const matchesSub = pCityLower.includes(cityLower) || p.category === 'Rail';
-        if (!matchesExact && !matchesSub) {
-          return false;
-        }
+        if (!matchesName && !matchesCity && !matchesRegion && !matchesDesc && !matchesSku && !matchesDest) return false;
       }
 
       // Category filter
@@ -410,7 +389,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
     });
 
     return list;
-  }, [destinationProducts, filters, currency]);
+  }, [destinationProducts, isAllDestinations, destination, selectedRegion, filters, currency]);
 
   // Active destination-specific promo
   const destPromo = useMemo(() => {
@@ -490,6 +469,11 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
           cities={activeCities}
           selectedCity={filters.city}
           onSelectCity={handleCitySelect}
+          selectedRegion={selectedRegion}
+          onSelectRegion={(reg) => {
+            setSelectedRegion(reg);
+            setFilters(prev => ({ ...prev, city: '' }));
+          }}
           destinationName={destination?.name || 'All Destinations'}
           parentRegionName={destination?.regionName || 'Global DMC Portfolio'}
           totalProductsCount={destinationProducts.length}
@@ -669,32 +653,9 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
             }
           }
 
-          // Fallbacks if no custom FAQs configured yet
+          // Never fabricate fallback FAQs when none are configured in database
           if (displayedFaqs.length === 0) {
-            displayedFaqs = [
-              {
-                q: isAllDestinations
-                  ? `What is the standard cancellation window across ${allDestinations.map(d => d.name).join(', ')}?`
-                  : `What is the standard cancellation window for ${destination?.name} private tours?`,
-                a: `Most contracted ground services allow full refunds up to 72 hours prior to scheduled departure. Specialty private charters, Michelin dining reservations, and peak seasonal allocations require 7 to 14 days advance written notice.`
-              },
-              {
-                q: isAllDestinations
-                  ? 'How do multi-currency conversions and VAT work across all destinations?'
-                  : `How do currency conversions and VAT work for ${destination?.name}?`,
-                a: `Published rates in our portal automatically convert native ground supplier contracts (${allDestinations.map(d => d.currency).join(', ')}) into your selected billing currency using real-time dynamic exchange rate formulas.`
-              },
-              {
-                q: isAllDestinations
-                  ? `Can TheUnbound combine ${allDestinations.map(d => d.name).slice(0, 3).join(', ')} tours into a single multi-destination quote?`
-                  : `Can TheUnbound customize bespoke multi-city itineraries for VIP groups in ${destination?.name}?`,
-                a: `Yes. Our B2B Quotation Builder allows travel agents to bundle services across multiple countries into a single unified proposal with consolidated billing and itemized net rates.`
-              },
-              {
-                q: 'Are child rates and infant seats provided on chauffeur vehicles?',
-                a: `Certified child safety seats and booster chairs can be added directly via our dynamic pricing calculator as complimentary or low-cost add-on selections.`
-              }
-            ];
+            return null;
           }
 
           return (

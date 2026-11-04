@@ -23,6 +23,8 @@ interface CityHubsProps {
   cities?: DestinationCity[];
   selectedCity: string;
   onSelectCity: (cityIdOrName: string) => void;
+  selectedRegion?: string;
+  onSelectRegion?: (regionIdOrName: string) => void;
   destinationName?: string;
   parentRegionName?: string;
   totalProductsCount?: number;
@@ -30,39 +32,29 @@ interface CityHubsProps {
 
 export const CityHubs: React.FC<CityHubsProps> = ({
   hubs = [],
-  cities = [],
   selectedCity,
   onSelectCity,
+  selectedRegion: controlledRegion,
+  onSelectRegion,
   destinationName,
   parentRegionName,
   totalProductsCount
 }) => {
-  const [selectedSubRegion, setSelectedSubRegion] = useState<string>('all');
+  const [internalSubRegion, setInternalSubRegion] = useState<string>('all');
+  const selectedSubRegion = controlledRegion !== undefined ? (controlledRegion || 'all') : internalSubRegion;
+  const handleSubRegionChange = (regValue: string) => {
+    const nextVal = regValue === 'all' ? '' : regValue;
+    setInternalSubRegion(regValue);
+    if (onSelectRegion) {
+      onSelectRegion(nextVal);
+    }
+  };
   const [viewMode, setViewMode] = useState<'sequence' | 'grouped'>('sequence');
   const [inspectingHub, setInspectingHub] = useState<CityHub | null>(null);
 
-  // Normalize incoming data into rich CityHub array with synchronized live metrics
+  // Normalize incoming data into rich CityHub array with synchronized live metrics (no fabricated fallback cities)
   const normalizedHubs: CityHub[] = useMemo(() => {
-    const rawList: CityHub[] = (hubs && hubs.length > 0)
-      ? [...hubs]
-      : (cities || []).map((c, idx) => ({
-          id: c.id,
-          destinationId: destinationName?.toLowerCase() || 'dest',
-          destinationName: destinationName || 'Destination',
-          regionId: '',
-          regionName: '',
-          name: c.name,
-          tagline: c.tagline || 'Contracted DMC Gateway & Touring Center',
-          description: 'Major regional gateway with verified direct DMC contracts, hotel allocations, and local licensed guides.',
-          heroImage: c.image || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop',
-          images: [c.image || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1200&auto=format&fit=crop'],
-          productCount: c.productCount || 0,
-          hotelCount: 3,
-          displayOrder: idx + 1,
-          highlights: ['Local Sightseeing', 'Private Transit', 'Curated Excursions'],
-          isPublished: true,
-          status: 'ACTIVE'
-        }));
+    const rawList: CityHub[] = Array.isArray(hubs) ? [...hubs] : [];
 
     // Deduplicate by hub id / name
     const seenIds = new Set<string>();
@@ -83,34 +75,35 @@ export const CityHubs: React.FC<CityHubsProps> = ({
         };
       })
       .sort((a, b) => (a.displayOrder || 1) - (b.displayOrder || 1));
-  }, [hubs, cities, destinationName]);
+  }, [hubs, destinationName]);
 
-  // Extract unique sub-regions
+  // Extract unique regions from actual hubs
   const subRegions = useMemo(() => {
     const map = new Map<string, { id: string; name: string; count: number }>();
     normalizedHubs.forEach((h, idx) => {
       const regName = h.regionName || 'General Region';
       const regId = h.regionId || `subreg-${regName.toLowerCase().replace(/\s+/g, '-')}-${idx}`;
-      if (!map.has(regName)) {
-        map.set(regName, { id: regId, name: regName, count: 0 });
+      const key = h.regionId || regName;
+      if (!map.has(key)) {
+        map.set(key, { id: regId, name: regName, count: 0 });
       }
-      map.get(regName)!.count += 1;
+      map.get(key)!.count += 1;
     });
     return Array.from(map.values());
   }, [normalizedHubs]);
 
-  // Filtered hubs based on sub-region filter
+  // Filtered hubs based on region filter
   const displayedHubs = useMemo(() => {
-    if (selectedSubRegion === 'all') {
+    if (!selectedSubRegion || selectedSubRegion === 'all') {
       return normalizedHubs;
     }
     return normalizedHubs.filter(h => 
-      (h.regionName && h.regionName === selectedSubRegion) || 
-      (h.regionId && h.regionId === selectedSubRegion)
+      (h.regionId && h.regionId === selectedSubRegion) ||
+      (h.regionName && h.regionName === selectedSubRegion)
     );
   }, [normalizedHubs, selectedSubRegion]);
 
-  // Grouped hubs by sub-region
+  // Grouped hubs by region
   const groupedHubs = useMemo(() => {
     const groups: { regionName: string; regionId: string; hubs: CityHub[] }[] = [];
     normalizedHubs.forEach(hub => {
@@ -136,18 +129,18 @@ export const CityHubs: React.FC<CityHubsProps> = ({
         <div>
           {/* Hierarchy Breadcrumb Tag */}
           <div className="flex items-center flex-wrap gap-1 sm:gap-1.5 text-[11px] sm:text-xs font-bold text-slate-500 mb-1">
-            <span className="text-[#008972] bg-emerald-50 px-1.5 sm:px-2 py-0.5 rounded-md border border-emerald-100 flex items-center space-x-1">
+            <span className="text-slate-900 bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded-md font-extrabold flex items-center space-x-1">
               <Globe2 className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-[#00C6A6]" />
-              <span>{parentRegionName || 'DMC Network'}</span>
+              <span>{destinationName || 'Destination'}</span>
             </span>
             <ChevronRight className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400" />
-            <span className="text-slate-900 bg-slate-100 px-1.5 sm:px-2 py-0.5 rounded-md font-extrabold">
-              {destinationName || 'Destination'}
+            <span className="text-[#008972] bg-emerald-50 px-1.5 sm:px-2 py-0.5 rounded-md border border-emerald-100">
+              {subRegions.length} {subRegions.length === 1 ? 'Region' : 'Regions'}
             </span>
             <ChevronRight className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-slate-400" />
             <span className="text-[#00C6A6] font-semibold flex items-center space-x-1">
               <Layers className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-              <span>{normalizedHubs.length} Hubs Tagged</span>
+              <span>{normalizedHubs.length} Hubs</span>
             </span>
           </div>
 
@@ -156,15 +149,18 @@ export const CityHubs: React.FC<CityHubsProps> = ({
             <span>Touring Hubs & Regional Gateways in {destinationName || 'Destination'}</span>
           </h2>
           <p className="text-[11px] sm:text-xs text-slate-500 mt-0.5">
-            Organized in curated touring order. Click any hub card to filter local tours, private transfers, and contracted hotels.
+            Organized by Destination → Region → Hub. Click a Region or Hub to filter local tours, private transfers, and contracted hotels.
           </p>
         </div>
 
         {/* View Controls & Clear Selection */}
         <div className="flex items-center flex-wrap gap-1.5 sm:gap-2 shrink-0">
-          {selectedCity && (
+          {(selectedCity || (selectedSubRegion && selectedSubRegion !== 'all')) && (
             <button
-              onClick={() => onSelectCity('')}
+              onClick={() => {
+                onSelectCity('');
+                handleSubRegionChange('all');
+              }}
               className="inline-flex items-center space-x-1 text-[11px] sm:text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg font-bold border border-emerald-200 transition-colors cursor-pointer active:scale-95"
             >
               <X className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -203,7 +199,7 @@ export const CityHubs: React.FC<CityHubsProps> = ({
       </div>
 
       {/* 2. Sub-Region Filter Pills (if multiple sub-regions exist) */}
-      {subRegions.length > 1 && viewMode === 'sequence' && (
+      {subRegions.length > 0 && viewMode === 'sequence' && (
         <div className="flex items-center gap-1.5 overflow-x-auto py-2 sm:py-3 no-scrollbar border-b border-slate-100 mb-3 sm:mb-4">
           <span className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0 flex items-center space-x-1 mr-1">
             <SlidersHorizontal className="w-3 h-3" />
@@ -211,29 +207,32 @@ export const CityHubs: React.FC<CityHubsProps> = ({
           </span>
           <button
             type="button"
-            onClick={() => setSelectedSubRegion('all')}
+            onClick={() => handleSubRegionChange('all')}
             className={`px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-              selectedSubRegion === 'all'
+              selectedSubRegion === 'all' || !selectedSubRegion
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
             }`}
           >
-            All Hubs ({normalizedHubs.length})
+            All Regions ({normalizedHubs.length} Hubs)
           </button>
-          {subRegions.map((sr, srIdx) => (
-            <button
-              key={`subreg-btn-${sr.id || sr.name}-${srIdx}`}
-              type="button"
-              onClick={() => setSelectedSubRegion(sr.name)}
-              className={`px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
-                selectedSubRegion === sr.name
-                  ? 'bg-[#00C6A6] text-white shadow-xs'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {sr.name} ({sr.count})
-            </button>
-          ))}
+          {subRegions.map((sr, srIdx) => {
+            const isRegSelected = selectedSubRegion === sr.id || selectedSubRegion === sr.name;
+            return (
+              <button
+                key={`subreg-btn-${sr.id || sr.name}-${srIdx}`}
+                type="button"
+                onClick={() => handleSubRegionChange(isRegSelected ? 'all' : sr.id)}
+                className={`px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold whitespace-nowrap transition-all cursor-pointer ${
+                  isRegSelected
+                    ? 'bg-[#00C6A6] text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                {sr.name} ({sr.count} {sr.count === 1 ? 'Hub' : 'Hubs'})
+              </button>
+            );
+          })}
         </div>
       )}
 

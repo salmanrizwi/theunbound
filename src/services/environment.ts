@@ -75,19 +75,12 @@ export class EnvironmentService {
   /**
    * Authoritative Demo Data Gate:
    * Strictly enforces that NO demo, mock, seed, or placeholder records
-   * are ever permitted. Firebase / Firestore is the 100% authoritative single source of truth.
+   * are ever permitted in production or default runtime.
+   * Firebase / Firestore is the 100% authoritative single source of truth.
    */
   public allowDemoData(): boolean {
-    if (typeof process !== 'undefined' && process.env) {
-      if (
-        process.env.NODE_ENV === 'test' ||
-        process.env.ALLOW_DEMO_DATA === 'true' ||
-        process.env.npm_lifecycle_event === 'test' ||
-        process.env.npm_lifecycle_event === 'test:all' ||
-        (Array.isArray(process.argv) && process.argv.some(arg => arg.includes('/tests/') || arg.includes('Audit') || arg.includes('audit')))
-      ) {
-        return true;
-      }
+    if (typeof process !== 'undefined' && process.env && process.env.ALLOW_DEMO_DATA === 'true') {
+      return true;
     }
     return false;
   }

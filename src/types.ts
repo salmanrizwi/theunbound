@@ -198,9 +198,12 @@ export interface QuotationCurrencySnapshot {
     discountsTotal: number;
     surchargesTotal?: number;
     b2bSellingPriceTotal: number; // Manual Margin Adjustment Final Total (Stage 1)
+    theUnboundBaseSellingPrice?: number;
     additionalAgentMarginType: 'PERCENTAGE' | 'FIXED';
     additionalAgentMarginValue: number;
     additionalAgentMarginAmount: number;
+    productLevelAgentMarkupTotal?: number;
+    overallAgentMarkupAmount?: number;
     hotelAccommodationTotal: number;
     landPartTotal: number;
     finalCustomerSellingPrice: number; // Final Customer Selling Price (Stage 2)
@@ -210,7 +213,10 @@ export interface QuotationCurrencySnapshot {
   existingBaseMarginAmount: number;
   manualMarginAdjustmentAmount: number;
   manualMarginAdjustedTotal: number;
+  theUnboundBaseSellingPrice?: number;
   additionalAgentMarginAmount: number;
+  productLevelAgentMarkupTotal?: number;
+  overallAgentMarkupAmount?: number;
   taxAmount: number;
   hotelAccommodationTotal: number;
   landPartTotal: number;
@@ -1432,6 +1438,7 @@ export interface Product {
   taxBase?: 'margin' | 'total' | string;
   commissionPercent: number;
   serviceFeeFixed: number;
+  serviceFeePercent?: number;
   
   // Optional experience upgrades tagged to this product for upselling
   optionalUpgradeProductIds?: string[];
@@ -2220,6 +2227,7 @@ export interface PricingSnapshot {
   overallAgentMarkupAmount?: number;
   totalAgentAdditionalMarkupAmount?: number;
   finalCustomerSellingPrice: number;
+  totalSellingPrice?: number;
   hotelAccommodationTotal?: number;
   landPartTotal?: number;
   calculatedAt: string;
@@ -7119,6 +7127,8 @@ export interface B2BPackage {
   slug: string;
   regionId?: string;
   regionName?: string;
+  regionIds?: string[];
+  regionNames?: string[];
   destinationId: string;
   destinationName: string;
   hubIds?: string[];

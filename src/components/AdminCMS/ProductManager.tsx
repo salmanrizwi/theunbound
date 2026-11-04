@@ -599,16 +599,19 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     setIsModalOpen(false);
   };
 
-  // Filter and Sort Logic
-  const availableDestinationsForFilter = selectedMasterRegion === 'ALL'
-    ? destinations
-    : destinations.filter(d => d.regionId === selectedMasterRegion);
+  // Filter and Sort Logic (Destination -> Region -> City Hub)
+  const masterData = MasterDataService.getInstance();
+  const availableRegionsForFilter = selectedDestination === 'ALL'
+    ? regions
+    : regions.filter(r => r.destinationId === selectedDestination);
 
   const availableHubsForFilter = cityHubs.filter(h => {
-    const matchesReg = selectedMasterRegion === 'ALL' || h.regionId === selectedMasterRegion;
     const matchesDest = selectedDestination === 'ALL' || h.destinationId === selectedDestination;
-    return matchesReg && matchesDest;
+    const matchesReg = selectedMasterRegion === 'ALL' || h.regionId === selectedMasterRegion;
+    return matchesDest && matchesReg;
   });
+
+  const unmappedCount = products.filter(p => !masterData.auditProductHierarchy(p).valid).length;
 
   const filtered = products.filter(p => {
     const q = (searchQuery || '').toLowerCase().trim();
@@ -620,9 +623,15 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       (p.city || '').toLowerCase().includes(q) ||
       (p.regionName || '').toLowerCase().includes(q) ||
       (p.supplierName || '').toLowerCase().includes(q);
-    const matchesMasterReg = selectedMasterRegion === 'ALL' || p.regionId === selectedMasterRegion;
     const matchesDest = selectedDestination === 'ALL' || p.destinationId === selectedDestination;
-    const matchesHub = selectedCityHub === 'ALL' || p.hubId === selectedCityHub || (p.city || '').toLowerCase() === (selectedCityHub || '').toLowerCase();
+    const matchesReg =
+      selectedMasterRegion === 'ALL' ||
+      p.regionId === selectedMasterRegion ||
+      (Array.isArray(p.regionIds) && p.regionIds.includes(selectedMasterRegion));
+    const matchesHub =
+      selectedCityHub === 'ALL' ||
+      p.hubId === selectedCityHub ||
+      (Array.isArray(p.hubIds) && p.hubIds.includes(selectedCityHub));
     const matchesCat =
       selectedCategory === 'ALL' ||
       p.category === selectedCategory ||
@@ -630,8 +639,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       (selectedCategory === 'Ferry' && (p.category === 'Ferry' || p.category === 'Ferries')) ||
       (selectedCategory === 'Rail / Shinkansen' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen')) ||
       (selectedCategory === 'Rail' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen'));
-    const matchesStat = selectedStatus === 'ALL' || p.status === selectedStatus;
-    return matchesSearch && matchesMasterReg && matchesDest && matchesHub && matchesCat && matchesStat;
+    const matchesStat =
+      selectedStatus === 'ALL'
+        ? true
+        : selectedStatus === 'UNMAPPED'
+        ? !masterData.auditProductHierarchy(p).valid
+        : p.status === selectedStatus;
+    return matchesSearch && matchesDest && matchesReg && matchesHub && matchesCat && matchesStat;
   }).sort((a, b) => {
     if (sortBy === 'name') return a.name.localeCompare(b.name);
     if (sortBy === 'price-asc') return a.adultNetPrice - b.adultNetPrice;
@@ -643,14 +657,12 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // Form Cascading helpers
-  const modalAvailableDestinations = formData.regionId
-    ? destinations.filter(d => d.regionId === formData.regionId)
-    : destinations;
+  const modalAvailableDestinations = destinations;
 
   const modalAvailableHubs = cityHubs.filter(h => {
-    const matchesReg = !formData.regionId || h.regionId === formData.regionId;
     const matchesDest = !formData.destinationId || h.destinationId === formData.destinationId;
-    return matchesReg && matchesDest;
+    const matchesReg = !formData.regionId || h.regionId === formData.regionId;
+    return matchesDest && matchesReg;
   });
 
   if (isModalOpen) {
@@ -659,6 +671,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
         product={editingProduct}
         destinations={destinations}
         masterRegions={masterRegions}
+        regions={regions}
         cityHubs={cityHubs}
         suppliers={suppliers}
         onSave={async (savedProduct) => {
@@ -752,35 +765,17 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
         )}
       </div>
 
-      {/* Search & Filters */}
+      {/* Search & Filters (1. Destination -> 2. Region -> 3. City Hub) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-        <div className="relative sm:col-span-2 md:col-span-2">
+        <div className="relative sm:col-span-2 md:col-span-1">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
             value={searchQuery}
             onChange={e => { setSearchQuery(e.target.value); setCurrentPage(1); }}
-            placeholder="Search by title, SKU, region, city..."
+            placeholder="Search by title, SKU, city..."
             className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-[#00C6A6]"
           />
-        </div>
-
-        <div>
-          <select
-            value={selectedMasterRegion}
-            onChange={e => { 
-              setSelectedMasterRegion(e.target.value); 
-              setSelectedDestination('ALL');
-              setSelectedCityHub('ALL');
-              setCurrentPage(1); 
-            }}
-            className="w-full py-2 px-3 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-[#00C6A6] font-semibold"
-          >
-            <option value="ALL">1. All Regions ({masterRegions.length})</option>
-            {masterRegions.map(r => (
-              <option key={r.id} value={r.id}>{r.name} ({r.code})</option>
-            ))}
-          </select>
         </div>
 
         <div>
@@ -788,14 +783,32 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
             value={selectedDestination}
             onChange={e => { 
               setSelectedDestination(e.target.value); 
+              setSelectedMasterRegion('ALL');
               setSelectedCityHub('ALL');
               setCurrentPage(1); 
             }}
             className="w-full py-2 px-3 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-[#00C6A6] font-semibold"
           >
-            <option value="ALL">2. All Destinations ({availableDestinationsForFilter.length})</option>
-            {availableDestinationsForFilter.map(d => (
-              <option key={d.id} value={d.id}>{d.name} {d.regionName ? `(${d.regionName})` : ''}</option>
+            <option value="ALL">1. All Destinations ({destinations.length})</option>
+            {destinations.map(d => (
+              <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <select
+            value={selectedMasterRegion}
+            onChange={e => { 
+              setSelectedMasterRegion(e.target.value); 
+              setSelectedCityHub('ALL');
+              setCurrentPage(1); 
+            }}
+            className="w-full py-2 px-3 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-[#00C6A6] font-semibold"
+          >
+            <option value="ALL">2. All Regions ({availableRegionsForFilter.length})</option>
+            {availableRegionsForFilter.map(r => (
+              <option key={r.id} value={r.id}>{r.name} ({r.destinationName || r.destinationId})</option>
             ))}
           </select>
         </div>
@@ -808,7 +821,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
           >
             <option value="ALL">3. All City Hubs ({availableHubsForFilter.length})</option>
             {availableHubsForFilter.map(h => (
-              <option key={h.id} value={h.id}>{h.name} {h.destinationName ? `(${h.destinationName})` : ''}</option>
+              <option key={h.id} value={h.id}>{h.name} {h.regionName ? `(${h.regionName})` : ''}</option>
             ))}
           </select>
         </div>
@@ -823,6 +836,19 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
             {CATEGORIES.map(c => (
               <option key={c} value={c}>{c}</option>
             ))}
+          </select>
+        </div>
+
+        <div>
+          <select
+            value={selectedStatus}
+            onChange={e => { setSelectedStatus(e.target.value); setCurrentPage(1); }}
+            className="w-full py-2 px-3 bg-white border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-[#00C6A6]"
+          >
+            <option value="ALL">All Statuses ({products.length})</option>
+            <option value="ACTIVE">Active ({products.filter(p => p.status === 'ACTIVE').length})</option>
+            <option value="DRAFT">Draft ({products.filter(p => p.status === 'DRAFT').length})</option>
+            <option value="UNMAPPED">Unmapped / Relationship Issues ({unmappedCount})</option>
           </select>
         </div>
       </div>
@@ -843,7 +869,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {paginated.map(product => (
+              {paginated.map(product => {
+                const hierarchyAudit = masterData.auditProductHierarchy(product);
+                return (
                 <tr key={product.id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="py-3.5 px-4">
                     <div className="flex items-center space-x-3">
@@ -876,11 +904,20 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     <div className="space-y-1">
                       <div className="flex items-center space-x-1.5 flex-wrap gap-1">
                         <span className="inline-block text-[10px] bg-slate-900 text-white font-bold px-2 py-0.5 rounded">
-                          {product.destinationName}
+                          {product.destinationName || product.destinationId || 'Unmapped Destination'}
                         </span>
                         {product.regionName && (
                           <span className="inline-block text-[10px] bg-[#00C6A6]/20 text-[#008972] font-extrabold px-1.5 py-0.5 rounded border border-[#00C6A6]/40">
                             {product.regionName}
+                          </span>
+                        )}
+                        {!hierarchyAudit.valid && (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] bg-amber-100 text-amber-900 font-bold px-1.5 py-0.5 rounded border border-amber-300"
+                            title={hierarchyAudit.issues.join('; ')}
+                          >
+                            <AlertTriangle className="w-3 h-3 text-amber-600" />
+                            <span>Needs Review</span>
                           </span>
                         )}
                       </div>
@@ -990,7 +1027,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     </div>
                   </td>
                 </tr>
-              ))}
+              );
+              })}
 
               {filtered.length === 0 && (
                 <tr>
@@ -1124,14 +1162,14 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 {/* Live Hierarchy Breadcrumb Preview */}
                 <div className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center gap-2 text-xs flex-wrap">
                   <span className="font-bold text-slate-400 uppercase text-[10px]">Hierarchy:</span>
-                  <span className="font-bold text-[#008f77] flex items-center gap-1">
-                    <Globe2 className="w-3 h-3" />
-                    {formData.regionName || 'Select Region'}
-                  </span>
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   <span className="font-bold text-slate-800 flex items-center gap-1">
                     <MapPin className="w-3 h-3 text-[#00C6A6]" />
                     {formData.destinationName || 'Select Destination'}
+                  </span>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                  <span className="font-bold text-[#008f77] flex items-center gap-1">
+                    <Globe2 className="w-3 h-3" />
+                    {formData.regionName || 'Select Region'}
                   </span>
                   <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   <span className="font-bold text-slate-900 flex items-center gap-1">
@@ -1142,39 +1180,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">1. Master Region (Tier 1) *</label>
+                    <label className="text-xs font-semibold text-slate-700">1. Destination (Tier 1) *</label>
                     <select
                       required
-                      value={formData.regionId || ''}
-                      onChange={e => {
-                        const regId = e.target.value;
-                        const reg = masterRegions.find(r => r.id === regId);
-                        setFormData({
-                          ...formData,
-                          regionId: regId,
-                          regionName: reg?.name || '',
-                          destinationId: '',
-                          destinationName: '',
-                          country: '',
-                          hubId: '',
-                          city: '',
-                          location: ''
-                        });
-                      }}
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6]"
-                    >
-                      <option value="">-- Select Master Region --</option>
-                      {masterRegions.map(r => (
-                        <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">2. Destination (Tier 2) *</label>
-                    <select
-                      required
-                      disabled={!formData.regionId}
                       value={formData.destinationId || ''}
                       onChange={e => {
                         const destId = e.target.value;
@@ -1184,18 +1192,46 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           destinationId: destId,
                           destinationName: dest?.name || '',
                           country: dest?.country || dest?.name || '',
+                          regionId: '',
+                          regionName: '',
                           hubId: '',
                           city: '',
                           location: dest?.name || ''
                         });
                       }}
-                      className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.regionId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6]"
                     >
-                      <option value="">{formData.regionId ? '-- Select Destination --' : '-- Select Region First --'}</option>
-                      {destinations
-                        .filter(d => d.regionId === formData.regionId)
-                        .map(d => (
-                          <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                      <option value="">-- Select Destination --</option>
+                      {destinations.map(d => (
+                        <option key={d.id} value={d.id}>{d.name} ({d.id})</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700">2. Region (Tier 2) *</label>
+                    <select
+                      required
+                      disabled={!formData.destinationId}
+                      value={formData.regionId || ''}
+                      onChange={e => {
+                        const regId = e.target.value;
+                        const reg = regions.find(r => r.id === regId);
+                        setFormData({
+                          ...formData,
+                          regionId: regId,
+                          regionName: reg?.name || '',
+                          hubId: '',
+                          city: ''
+                        });
+                      }}
+                      className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                    >
+                      <option value="">{formData.destinationId ? '-- Select Region --' : '-- Select Destination First --'}</option>
+                      {regions
+                        .filter(r => r.destinationId === formData.destinationId)
+                        .map(r => (
+                          <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
                         ))}
                     </select>
                   </div>
@@ -1203,7 +1239,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   <div className="space-y-1">
                     {formData.category === 'Rail' ? (
                       <>
-                        <label className="text-xs font-semibold text-slate-700">Associated City Hubs (Multi-Hub Selection) *</label>
+                        <label className="text-xs font-semibold text-slate-700">3. Associated City Hubs (Multi-Hub Selection) *</label>
                         <div className={`p-2 bg-white border border-slate-200 rounded-xl space-y-1.5 max-h-32 overflow-y-auto ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}>
                           {!formData.destinationId ? (
                             <div className="text-slate-400 text-xs">-- Select Destination First --</div>
@@ -1226,17 +1262,20 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                                         } else {
                                           nextIds = currentIds.filter(id => id !== h.id);
                                         }
+                                        const primaryHub = cityHubs.find(ch => ch.id === nextIds[0]);
                                         setFormData({
                                           ...formData,
                                           hubIds: nextIds,
                                           hubId: nextIds[0] || '',
-                                          city: cityHubs.find(ch => ch.id === nextIds[0])?.name || '',
-                                          location: `${cityHubs.find(ch => ch.id === nextIds[0])?.name || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, '')
+                                          city: primaryHub?.name || '',
+                                          regionId: primaryHub?.regionId || formData.regionId || '',
+                                          regionName: primaryHub?.regionName || formData.regionName || '',
+                                          location: `${primaryHub?.name || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, '')
                                         });
                                       }}
                                       className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
                                     />
-                                    <span>{h.name} ({h.id})</span>
+                                    <span>{h.name} ({h.regionName || h.id})</span>
                                   </label>
                                 );
                               })
@@ -1257,6 +1296,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                                 ...formData,
                                 hubId: hId,
                                 city: hub?.name || formData.city || '',
+                                regionId: hub?.regionId || formData.regionId || '',
+                                regionName: hub?.regionName || formData.regionName || '',
                                 location: `${hub?.name || formData.city || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, ''),
                                 hubIds: hId ? [hId] : []
                               });
@@ -1265,9 +1306,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           >
                             <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
                             {cityHubs
-                              .filter(h => h.destinationId === formData.destinationId)
+                              .filter(h => h.destinationId === formData.destinationId && (!formData.regionId || h.regionId === formData.regionId))
                               .map(h => (
-                                <option key={h.id} value={h.id}>{h.name} ({h.id})</option>
+                                <option key={h.id} value={h.id}>{h.name} ({h.regionName || h.id})</option>
                               ))}
                           </select>
                         </div>

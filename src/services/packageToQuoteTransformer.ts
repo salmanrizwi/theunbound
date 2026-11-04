@@ -428,8 +428,11 @@ export function transformPackageToQuoteState(
   rawPackage: B2BPackage,
   options?: {
     user?: User | null;
+    userRole?: UserRole;
     currency?: CurrencyCode;
     startDate?: string;
+    travelStartDate?: string;
+    travelEndDate?: string;
     adultsCount?: number;
     childrenCount?: number;
     infantsCount?: number;
@@ -502,7 +505,7 @@ export function transformPackageToQuoteState(
       : (pkg.durationNights || Math.max(1, durationDays - 1))
   );
 
-  let startIso = options?.startDate || '';
+  let startIso = options?.travelStartDate || options?.startDate || '';
   if (!startIso || Number.isNaN(new Date(startIso).getTime())) {
     const d = new Date();
     d.setDate(d.getDate() + 14);
@@ -1399,6 +1402,9 @@ export function buildMasterPackageFromQuoteWorkspace(
   // 4. Map Route Hubs, Hotel References, Manual Hotels, and Hotels Summary
   const hubIds: string[] = [];
   const hubNames: string[] = [];
+  const resolvedRegionIds: string[] = [];
+  const resolvedRegionNames: string[] = [];
+  const allRegions = db.getRegions();
   const routeSummary: string[] = [];
   const hotelsSummary: B2BPackage['hotelsSummary'] = [];
   const hotelReferences: PackageHotelRef[] = [];
@@ -1422,6 +1428,12 @@ export function buildMasterPackageFromQuoteWorkspace(
     );
     const canonicalHubId = matchedCityHub?.id || rh.hubId || rh.id || `hub-${idx + 1}`;
     const canonicalHubName = matchedCityHub?.name || rh.hubName || dest.name;
+
+    if (matchedCityHub?.regionId && !resolvedRegionIds.includes(matchedCityHub.regionId)) {
+      resolvedRegionIds.push(matchedCityHub.regionId);
+      const matchedReg = allRegions.find(r => r.id === matchedCityHub.regionId);
+      resolvedRegionNames.push(matchedReg?.name || matchedCityHub.regionName || matchedCityHub.regionId);
+    }
 
     if (!hubIds.includes(canonicalHubId)) {
       hubIds.push(canonicalHubId);
@@ -1663,7 +1675,7 @@ export function buildMasterPackageFromQuoteWorkspace(
 
     serviceQuoteItems.forEach(it => {
       if (assignedQuoteItemIds.has(it.id)) return;
-      if (it.metadata?.dayNumber === dayNum) {
+      if ((it as any).dayNumber === dayNum || it.metadata?.dayNumber === dayNum) {
         addCandidateItem(it);
       } else if (calDay && it.travelDate === calDay.dateString) {
         addCandidateItem(it);
@@ -1906,8 +1918,9 @@ export function buildMasterPackageFromQuoteWorkspace(
     tagline: cleanTagline,
     description: cleanDescription,
     detailedDescription,
-    regionId: dest.regionId || (dest as any).region || existingPkg?.regionId || 'asia',
-    regionName: dest.regionName || (dest as any).region || existingPkg?.regionName || 'Asia',
+    regionId: resolvedRegionIds[0] || existingPkg?.regionId || dest.regionId || (dest as any).region || 'asia',
+    regionName: resolvedRegionNames[0] || existingPkg?.regionName || dest.regionName || (dest as any).region || 'Asia',
+    regionIds: resolvedRegionIds.length > 0 ? resolvedRegionIds : (existingPkg?.regionIds || []),
     destinationId: dest.id,
     destinationName: dest.name,
     hubIds,

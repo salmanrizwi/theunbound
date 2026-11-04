@@ -82,9 +82,9 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
   const [packages, setPackages] = useState<B2BPackage[]>(() => db.getPackages());
-  const [products] = useState<Product[]>(() => propProducts.length > 0 ? propProducts : db.getProducts());
-  const [hotels] = useState<Hotel[]>(() => db.getHotels());
-  const [cityHubs] = useState<CityHub[]>(() => db.getCityHubs());
+  const [products, setProducts] = useState<Product[]>(() => propProducts.length > 0 ? propProducts : db.getProducts());
+  const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
+  const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
 
   // Filters & State
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,17 +104,21 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [feedbackMsg, setFeedbackMsg] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  // Reload packages from db
+  // Reload packages and master inventory from db
   const refreshPackages = () => {
     setPackages(db.getPackages());
+    setProducts(propProducts.length > 0 ? propProducts : db.getProducts());
+    setHotels(db.getHotels());
+    setCityHubs(db.getCityHubs());
   };
 
   useEffect(() => {
+    refreshPackages();
     const unsub = db.subscribe(() => {
       refreshPackages();
     });
     return () => unsub();
-  }, [db]);
+  }, [db, propProducts]);
 
   const showNotification = (text: string, type: 'success' | 'info' | 'error' = 'success') => {
     setFeedbackMsg({ text, type });
@@ -586,6 +590,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
             <option value="PUBLISHED">Published Only</option>
             <option value="DRAFT">Drafts Only</option>
             <option value="REVIEW">In Review</option>
+            <option value="UNPUBLISHED">Unpublished</option>
             <option value="ARCHIVED">Archived</option>
           </select>
 

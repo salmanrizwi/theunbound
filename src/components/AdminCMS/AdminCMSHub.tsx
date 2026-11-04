@@ -641,10 +641,10 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           shortLabel: 'Destinations & Hubs',
           icon: Compass,
           badge: `${counts.destinations} Dests`,
-          description: 'Connected 4-Tier Hierarchy: 1. REGION (Macro) ↓ 2. DESTINATION (Country) ↓ 3. DESTINATION HUB / CITY ↓ 4. PRODUCT / HOTEL.',
+          description: 'Connected Geographical Hierarchy: 1. DESTINATION ↓ 2. REGION ↓ 3. CITY HUB ↓ 4. PRODUCTS & HOTELS.',
           subTabs: [
-            { id: 'REGIONS', label: `1. Master Regions (${counts.regions})`, icon: Globe2 },
-            { id: 'DESTINATIONS', label: `2. Destinations (${counts.destinations})`, icon: Compass },
+            { id: 'DESTINATIONS', label: `1. Destinations (${counts.destinations})`, icon: Compass },
+            { id: 'REGIONS', label: `2. Regions (${counts.regions})`, icon: Globe2 },
             { id: 'CITIES', label: `3. City Hubs (${counts.hubs})`, icon: Layers },
             { id: 'FAQS', label: 'Destination FAQs & Trade Notes', icon: Sparkles }
           ]
@@ -1179,7 +1179,14 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               destinations={destinations}
               products={products}
               onViewProduct={onViewProduct}
-              onCustomizePackage={onCustomizePackage}
+              onCustomizePackage={(pkg) => {
+                if (onCustomizePackage) {
+                  onCustomizePackage(pkg);
+                } else {
+                  handleOpenQuoteInBuilder('new', { mode: 'edit' });
+                }
+              }}
+              onOpenQuotationBuilder={() => handleOpenQuoteInBuilder('new', { mode: 'edit' })}
             />
           )}
 

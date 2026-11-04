@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Destination, DestinationRegion, CurrencyCode, MasterRegion, CityHub } from '../../types';
+import { Destination, DestinationRegion, CurrencyCode, MasterRegion, CityHub, DestinationRegionItem } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { countingEngine } from '../../services/countingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { 
@@ -23,7 +24,8 @@ import {
   Building2,
   Filter,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Package
 } from 'lucide-react';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { MasterDataDiagnosticBanner } from './MasterDataDiagnosticBanner';
@@ -44,11 +46,12 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
   const [destinations, setDestinations] = useState<Destination[]>(() => db.getDestinations());
+  const [regions, setRegions] = useState<DestinationRegionItem[]>(() => db.getRegions());
   const [masterRegions, setMasterRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>(initialRegionFilter);
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
   const [isSaving, setIsSaving] = useState(false);
@@ -83,6 +86,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
   const refresh = () => {
     setDestinations(db.getDestinations());
+    setRegions(db.getRegions());
     setMasterRegions(db.getMasterRegions());
     setCityHubs(db.getCityHubs());
   };
@@ -103,8 +107,8 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       name: '',
       slug: '',
       country: '',
-      regionId: '',
-      regionName: '',
+      regionId: masterRegions[0]?.id || 'REG-001',
+      regionName: masterRegions[0]?.name || 'East Asia',
       region: 'JAPAN',
       heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
       heroImageAlt: 'Destination Ground Operations',
@@ -156,26 +160,20 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       return;
     }
 
-    if (!formData.regionId?.trim()) {
-      setSaveError('Parent Master Region is required. Please select a Master Region.');
-      return;
-    }
-
     const matchedRegion = masterRegions.find(r => r.id === formData.regionId);
-    if (!matchedRegion) {
-      setSaveError('Selected Master Region was not found. Please select a valid Master Region.');
-      return;
-    }
-
     const slug = (formData.slug?.trim() || formData.name || 'destination').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const destId = editingDest ? editingDest.id : `dest-${slug}`;
+    const destRegions = regions.filter(r => r.destinationId === destId);
+
     const destToSave: Destination = {
-      id: editingDest ? editingDest.id : `dest-${slug}`,
+      id: destId,
       name: formData.name.trim(),
       slug,
       country: formData.country?.trim() || formData.name.trim(),
-      regionId: matchedRegion.id,
-      regionName: matchedRegion.name,
+      regionId: matchedRegion?.id || formData.regionId || 'REG-001',
+      regionName: matchedRegion?.name || formData.regionName || 'East Asia',
       region: (formData.region as DestinationRegion) || 'JAPAN',
+      regions: destRegions.length > 0 ? destRegions : (editingDest?.regions || []),
       heroImage: formData.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1600&auto=format&fit=crop',
       heroImageAlt: formData.heroImageAlt || `${formData.name || 'Destination'} Travel Ground Operations`,
       heroOverlayOpacity: formData.heroOverlayOpacity ?? 0.65,
@@ -270,9 +268,9 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
     const matchSearch = !q ||
                         (d.name || '').toLowerCase().includes(q) ||
                         (d.country || '').toLowerCase().includes(q) ||
-                        (d.regionName || '').toLowerCase().includes(q);
-    const matchRegion = selectedRegionFilter === 'ALL' || d.regionId === selectedRegionFilter;
-    return matchSearch && matchRegion;
+                        (d.id || '').toLowerCase().includes(q);
+    const matchStatus = selectedStatusFilter === 'ALL' || d.status === selectedStatusFilter;
+    return matchSearch && matchStatus;
   });
 
   return (
@@ -291,16 +289,16 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
         <div>
           <div className="flex items-center space-x-2 text-amber-600 text-xs font-bold uppercase tracking-wider mb-1">
             <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
-              Tier 2 Entity
+              Tier 1 Entity
             </span>
-            <span>Hierarchy: 1. REGION ↓ 2. DESTINATION</span>
+            <span>Hierarchy: 1. DESTINATION → 2. REGION → 3. CITY HUB → 4. PRODUCTS</span>
           </div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <MapPin className="w-5 h-5 text-amber-600" />
-            Destinations & Country Hubs Manager
+            Destinations Manager ({destinations.length})
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Every destination is linked to a Master Region (Tier 1) and acts as the parent container for City Hubs (Tier 3).
+            Every destination acts as the authoritative parent container for Regions (Tier 2), City Hubs (Tier 3), and Products (Tier 4).
           </p>
         </div>
 
@@ -311,7 +309,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               className="inline-flex items-center space-x-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-semibold px-3.5 py-2.5 rounded-xl text-xs transition-all cursor-pointer"
             >
               <Globe2 className="w-4 h-4 text-amber-600" />
-              <span>Manage Regions</span>
+              <span>Manage Regions ({regions.length})</span>
             </button>
           )}
           <button
@@ -333,7 +331,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
             type="text"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
-            placeholder="Search destination by name, country, region..."
+            placeholder="Search destination by name, country, ID..."
             className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-amber-500"
           />
         </div>
@@ -341,16 +339,14 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <Filter className="w-4 h-4 text-slate-400" />
           <select
-            value={selectedRegionFilter}
-            onChange={(e) => setSelectedRegionFilter(e.target.value)}
+            value={selectedStatusFilter}
+            onChange={(e) => setSelectedStatusFilter(e.target.value)}
             className="text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
           >
-            <option value="ALL">All Master Regions ({destinations.length})</option>
-            {masterRegions.map(reg => (
-              <option key={reg.id} value={reg.id}>
-                {reg.name} ({reg.code})
-              </option>
-            ))}
+            <option value="ALL">All Statuses ({destinations.length})</option>
+            <option value="ACTIVE">Active ({destinations.filter(d => d.status === 'ACTIVE').length})</option>
+            <option value="COMING_SOON">Coming Soon ({destinations.filter(d => d.status === 'COMING_SOON').length})</option>
+            <option value="INACTIVE">Inactive ({destinations.filter(d => d.status === 'INACTIVE').length})</option>
           </select>
 
           <button
@@ -366,8 +362,9 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       {/* Grid of Destination Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filtered.map(dest => {
+          const linkedRegions = regions.filter(r => r.destinationId === dest.id);
           const linkedHubs = cityHubs.filter(h => h.destinationId === dest.id);
-          const parentRegion = masterRegions.find(r => r.id === dest.regionId) || { name: dest.regionName || dest.region };
+          const metrics = countingEngine.getDestinationMetrics(dest.id);
 
           return (
             <div 
@@ -385,11 +382,11 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/20 to-transparent" />
                   
-                  {/* Master Region Badge */}
+                  {/* Destination ID Badge */}
                   <div className="absolute top-3 left-3">
-                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900/90 text-amber-300 text-[10px] font-bold uppercase tracking-wider backdrop-blur-sm border border-amber-500/30">
-                      <Globe2 className="w-3 h-3 text-amber-400" />
-                      {parentRegion.name}
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900/90 text-amber-300 text-[10px] font-bold font-mono uppercase tracking-wider backdrop-blur-sm border border-amber-500/30">
+                      <MapPin className="w-3 h-3 text-amber-400" />
+                      {dest.id}
                     </span>
                   </div>
 
@@ -436,22 +433,41 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
                   <div className="space-y-1.5 pt-2 border-t border-slate-100 text-[11px]">
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Parent Region (Tier 1):</span>
-                      <span className="font-semibold text-amber-700">{parentRegion.name}</span>
+                      <span className="text-slate-400">Regions (Tier 2):</span>
+                      <span className="font-bold text-amber-700">{linkedRegions.length} Regions</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">City Hubs (Tier 3):</span>
+                      <span className="font-bold text-sky-700">{linkedHubs.length} Hubs</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">Active Products (Tier 4):</span>
+                      <span className="font-bold text-emerald-700">{metrics.productsCount} Products</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-slate-400">Best Season:</span>
                       <span className="font-semibold text-slate-800">{dest.bestTimeToVisit}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">Duration:</span>
-                      <span className="font-semibold text-slate-800">{dest.idealTripDuration}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-400">City Hubs (Tier 3):</span>
-                      <span className="font-bold text-sky-700">{linkedHubs.length} Managed Hubs</span>
-                    </div>
                   </div>
+
+                  {/* Associated Regions Pills */}
+                  {linkedRegions.length > 0 && (
+                    <div className="pt-2 border-t border-slate-100">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                        Associated Regions:
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {linkedRegions.map(reg => (
+                          <span
+                            key={reg.id}
+                            className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-semibold"
+                          >
+                            {reg.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -498,14 +514,14 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900">
-                    Tier 2: Destination
+                    Tier 1: Destination
                   </span>
-                  <span className="text-[11px] text-slate-400">Child of Master Region</span>
+                  <span className="text-[11px] text-slate-400">Parent of Regions & City Hubs</span>
                 </div>
                 <h3 className="text-base sm:text-lg font-bold text-slate-900">
                   {editingDest ? `Edit Destination: ${editingDest.name}` : 'Add New Destination'}
                 </h3>
-                <p className="text-xs text-slate-500">Configure Master Region parent linkage, country details, hero imagery, and selling points.</p>
+                <p className="text-xs text-slate-500">Configure country details, hero imagery, and commercial selling points.</p>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -559,46 +575,25 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                 />
               ) : (
                 <>
-                  {/* Hierarchy Selection - Parent Master Region */}
-              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-bold text-amber-900 uppercase tracking-wider">
-                    1. Parent Master Region (Tier 1) *
-                  </label>
-                  {masterRegions.length === 0 && onNavigateToRegions && (
+              {editingDest && (
+                <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-bold text-amber-900">Connected Regions & Hubs:</span>{' '}
+                    <span className="text-amber-800">
+                      {regions.filter(r => r.destinationId === editingDest.id).length} Regions • {cityHubs.filter(h => h.destinationId === editingDest.id).length} City Hubs
+                    </span>
+                  </div>
+                  {onNavigateToRegions && (
                     <button
                       type="button"
                       onClick={() => { setIsModalOpen(false); onNavigateToRegions(); }}
-                      className="text-[11px] font-bold text-amber-800 underline hover:text-amber-950"
+                      className="text-[11px] font-bold text-amber-900 underline hover:text-amber-950 cursor-pointer"
                     >
-                      Create Master Region First →
+                      Manage Regions →
                     </button>
                   )}
                 </div>
-
-                {masterRegions.length === 0 ? (
-                  <div className="p-3 bg-amber-100/70 border border-amber-300 rounded-xl text-amber-900 text-xs font-medium">
-                    No Master Regions exist in Firestore. Destinations require a parent Master Region. Please create a Master Region first.
-                  </div>
-                ) : (
-                  <select
-                    required
-                    value={formData.regionId || ''}
-                    onChange={(e) => handleRegionSelect(e.target.value)}
-                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-                  >
-                    <option value="" disabled>Select Master Region...</option>
-                    {masterRegions.map(reg => (
-                      <option key={reg.id} value={reg.id}>
-                        {reg.name} ({reg.code}) — {reg.tagline || reg.description?.slice(0, 40)}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <div className="text-[11px] text-amber-800 mt-1">
-                  Selected Parent: <span className="font-bold">{formData.regionName || 'None'}</span>
-                </div>
-              </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">

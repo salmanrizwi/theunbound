@@ -985,52 +985,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         );
         if (dMatch) setCurrentDestination(dMatch);
       }
-    } else if (isNewQuoteMode) {
-      // In new quote mode, start clean in-memory workspace without creating records
-      setActiveQuoteId(`QTE-${Date.now().toString(36).toUpperCase()}`);
-      setQuoteNumber(`QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
-      setQuoteVersion(1);
-      setHasExplicitlySaved(false);
-      setLoadError(null);
-      setAutoSaveStatus('IDLE');
-      setBrandingMode('STANDARD');
-      setAgentMarginType('PERCENTAGE');
-      setAgentMarginValue(0);
-      setAgentMarkupPercent(0);
-      setOverallDiscountPercent(0);
-      setAdminManualMarginType('PERCENTAGE');
-      setAdminManualMarginValue(0);
-      setAdminMarginMode('ADD');
-
-      if (prefillLead) {
-        setClientName(prefillLead.contactName || prefillLead.clientName || '');
-        setClientEmail(prefillLead.email || '');
-        setClientPhone(prefillLead.phone || '');
-        setClientCompany(prefillLead.agencyName || '');
-        setSelectedLeadId(prefillLead.id || prefillLead.leadNumber || '');
-        if (prefillLead.paxAdults || prefillLead.passengersCount) {
-          setAdultsCount(prefillLead.paxAdults || prefillLead.passengersCount || 2);
-        }
-        if (prefillLead.paxChildren !== undefined) {
-          setChildrenCount(prefillLead.paxChildren);
-        }
-        if (prefillLead.destinationName) {
-          const pLeadDestLower = prefillLead.destinationName.toLowerCase();
-          const dMatch = destinations.find(d => 
-            (d.name || '').toLowerCase() === pLeadDestLower || 
-            (d.id || '').toLowerCase() === (prefillLead.destinationId || '').toLowerCase()
-          );
-          if (dMatch) setCurrentDestination(dMatch);
-        }
-        if (prefillLead.travelStartDate) setStartDate(prefillLead.travelStartDate);
-        if (prefillLead.travelEndDate) setEndDate(prefillLead.travelEndDate);
-        if (prefillLead.travelStartDate && prefillLead.travelEndDate) {
-          setContextQuotationDates(prefillLead.travelStartDate, prefillLead.travelEndDate);
-        }
-      } else {
-        setContextQuotationDates(startDate, endDate);
-        setSelectedLeadId('');
-      }
     } else if (!targetQuoteId && (quoteSource === 'PACKAGE' || sourcePackageId)) {
       // Package Customization Mode: initialize fresh quote identity while preserving all loaded package state
       setActiveQuoteId(`QTE-${Date.now().toString(36).toUpperCase()}`);
@@ -1099,8 +1053,54 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           dayThemes: contextDayThemes || {}
         }
       }));
+    } else if (isNewQuoteMode) {
+      // In new quote mode, start clean in-memory workspace without creating records
+      setActiveQuoteId(`QTE-${Date.now().toString(36).toUpperCase()}`);
+      setQuoteNumber(`QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+      setQuoteVersion(1);
+      setHasExplicitlySaved(false);
+      setLoadError(null);
+      setAutoSaveStatus('IDLE');
+      setBrandingMode('STANDARD');
+      setAgentMarginType('PERCENTAGE');
+      setAgentMarginValue(0);
+      setAgentMarkupPercent(0);
+      setOverallDiscountPercent(0);
+      setAdminManualMarginType('PERCENTAGE');
+      setAdminManualMarginValue(0);
+      setAdminMarginMode('ADD');
+
+      if (prefillLead) {
+        setClientName(prefillLead.contactName || prefillLead.clientName || '');
+        setClientEmail(prefillLead.email || '');
+        setClientPhone(prefillLead.phone || '');
+        setClientCompany(prefillLead.agencyName || '');
+        setSelectedLeadId(prefillLead.id || prefillLead.leadNumber || '');
+        if (prefillLead.paxAdults || prefillLead.passengersCount) {
+          setAdultsCount(prefillLead.paxAdults || prefillLead.passengersCount || 2);
+        }
+        if (prefillLead.paxChildren !== undefined) {
+          setChildrenCount(prefillLead.paxChildren);
+        }
+        if (prefillLead.destinationName) {
+          const pLeadDestLower = prefillLead.destinationName.toLowerCase();
+          const dMatch = destinations.find(d => 
+            (d.name || '').toLowerCase() === pLeadDestLower || 
+            (d.id || '').toLowerCase() === (prefillLead.destinationId || '').toLowerCase()
+          );
+          if (dMatch) setCurrentDestination(dMatch);
+        }
+        if (prefillLead.travelStartDate) setStartDate(prefillLead.travelStartDate);
+        if (prefillLead.travelEndDate) setEndDate(prefillLead.travelEndDate);
+        if (prefillLead.travelStartDate && prefillLead.travelEndDate) {
+          setContextQuotationDates(prefillLead.travelStartDate, prefillLead.travelEndDate);
+        }
+      } else {
+        setContextQuotationDates(startDate, endDate);
+        setSelectedLeadId('');
+      }
     }
-  }, [targetQuoteId, isNewQuoteMode, prefillLead, sourcePackageId]);
+  }, [targetQuoteId, isNewQuoteMode, prefillLead, sourcePackageId, quoteSource]);
 
   // Automatically execute live pricing calculation as soon as a Ready-Made Package is loaded
   useEffect(() => {
@@ -2197,6 +2197,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       user,
       companyId: user?.companyId,
       agencyName: user?.agencyName,
+      productLevelMarginEnabled: isProductLevelMarginActive,
+      customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
       scope: quotationScope,
       routeHubs,
       adminManualMarginType,
@@ -2210,6 +2212,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     agentMarginValue,
     overallDiscountPercent,
     user,
+    isProductLevelMarginActive,
+    agencyPricingSettings.agentLevelMarginPercent,
     quotationScope,
     routeHubs,
     adminManualMarginType,
@@ -2324,6 +2328,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         user,
         companyId: user?.companyId,
         agencyName: user?.agencyName,
+        productLevelMarginEnabled: isProductLevelMarginActive,
+        customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
         scope: optState.scope,
         routeHubs: optState.routeHubs,
         ...(isCurrentActiveOption
@@ -2375,7 +2381,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     activeOptionTab,
     canViewInternalCosts,
     currency,
-    user
+    user,
+    isProductLevelMarginActive,
+    agencyPricingSettings.agentLevelMarginPercent
   ]);
 
   // Sync / Auto-Save Quote to AppDatabase
@@ -2415,6 +2423,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             agentMarginValue,
             overallDiscountPercent,
             userRole: user?.role,
+            user,
+            companyId: user?.companyId,
+            agencyName: user?.agencyName,
+            productLevelMarginEnabled: isProductLevelMarginActive,
+            customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
             scope: quotationScope,
             routeHubs,
             adminManualMarginType,
@@ -2439,6 +2452,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           scope: quotationScope,
           routeHubs,
           userRole: user?.role,
+          user,
+          companyId: user?.companyId,
+          agencyName: user?.agencyName,
+          productLevelMarginEnabled: isProductLevelMarginActive,
+          customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
           adminManualMarginType,
           adminManualMarginValue,
           adminMarginMode,
@@ -2478,6 +2496,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         scope: quotationScope,
         routeHubs,
         userRole: user?.role,
+        user,
+        companyId: user?.companyId,
+        agencyName: user?.agencyName,
+        productLevelMarginEnabled: isProductLevelMarginActive,
+        customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
         adminManualMarginType,
         adminManualMarginValue,
         adminMarginMode,
@@ -2488,10 +2511,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
       const snapshotObject = {
         baseFinalSellingPrice,
+        theUnboundBaseSellingPrice: baseFinalSellingPrice,
         currency,
         agentMarginType,
         agentMarginValue,
         agentMarginAmount: additionalMarginAmount,
+        productLevelAgentMarkupTotal: liveQuoteBreakdown?.productLevelAgentMarkupTotal ?? 0,
+        overallAgentMarkupAmount: liveQuoteBreakdown?.overallAgentMarkupAmount ?? additionalMarginAmount,
+        totalAgentAdditionalMarkupAmount: additionalMarginAmount,
         finalCustomerSellingPrice,
         hotelAccommodationTotal: currencyConversionSnapshot.hotelAccommodationTotal,
         landPartTotal: currencyConversionSnapshot.landPartTotal,
@@ -2524,6 +2551,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         totalSellingPrice: finalCustomerSellingPrice,
         totalTaxes: canViewInternalCosts && activeBreakdown ? activeBreakdown.taxAmount : 0,
         totalMargin: canViewInternalCosts && activeBreakdown ? activeBreakdown.totalMargin : additionalMarginAmount,
+        theUnboundBaseSellingPrice: baseFinalSellingPrice,
         baseFinalSellingPrice,
         base_final_selling_price: baseFinalSellingPrice,
         baseFinalSellingPriceCurrency: currency,
@@ -2542,6 +2570,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         agent_margin_value: agentMarginValue,
         agentMarginAmount: additionalMarginAmount,
         agent_margin_amount: additionalMarginAmount,
+        productLevelAgentMarkupTotal: liveQuoteBreakdown?.productLevelAgentMarkupTotal ?? 0,
+        overallAgentMarkupAmount: liveQuoteBreakdown?.overallAgentMarkupAmount ?? additionalMarginAmount,
+        totalAgentAdditionalMarkupAmount: additionalMarginAmount,
         finalCustomerSellingPrice,
         final_customer_selling_price: finalCustomerSellingPrice,
         pricingCalculatedAt: currencyConversionSnapshot.capturedAt,
@@ -3446,7 +3477,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   ]);
 
   // Save Current Itinerary as a Master Ready-Made Package (with complete validation & synchronization)
-  const handleConfirmSavePackage = () => {
+  const handleConfirmSavePackage = async () => {
     if (!packageFormData.title.trim()) {
       setSavePackageError('Package Title is required.');
       return;
@@ -3490,12 +3521,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       return;
     }
 
+    try {
+      await db.savePackageAsync(result.pkg, user);
+    } catch (saveErr) {
+      console.warn('Async save warning:', saveErr);
+    }
+
     // Link quotation workspace to the saved Master Package ID to prevent duplicates on repeated saves
     setSourcePackageId(result.pkg.id);
     setSourcePackageName(result.pkg.title);
     setLastSavedMasterPackage(result.pkg);
     setLastPackageVerificationReport(result.verificationReport || null);
     setIsSavePackageModalOpen(false);
+
+    // If active quote is in savedQuotes, update its linked source package ID
+    const activeQ = db.getQuoteById(activeQuoteId);
+    if (activeQ) {
+      activeQ.sourcePackageId = result.pkg.id;
+      activeQ.sourcePackageName = result.pkg.title;
+      db.saveQuotation(activeQ, user);
+    }
 
     const actionWord = result.verificationReport?.isUpdate ? 'updated and synchronized in' : 'published and synchronized to';
     setPackageSavedNotice(`Master Package "${result.pkg.title}" (${result.pkg.id}) ${actionWord} Ready-Made Packages.`);
