@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Destination, HomepageConfig, CityHub, MasterRegion } from '../types';
 import { BuyerHeroSection } from '../components/BuyerPortal/BuyerHeroSection';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
+import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGallery';
 import { AssociatedPartnersCarousel } from '../components/public/AssociatedPartnersCarousel';
 import { FinalCTA } from '../components/FinalCTA';
 import { NewsletterSignup } from '../components/Newsletter/NewsletterSignup';
@@ -138,6 +139,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     'associatedPartners',
     'onboardingProcess',
     'testimonials',
+    'happyCustomerGallery',
     'homepageFaqs',
     'newsletter',
     'conversionCta'
@@ -154,6 +156,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     if (clean === 'associatedpartners' || clean === 'partners' || clean === 'partnercarousel' || clean === 'ourpartners' || clean === 'ourassociatedpartners') return 'associatedPartners';
     if (clean === 'onboardingprocess' || clean === 'b2bonboardingprocess') return 'onboardingProcess';
     if (clean === 'testimonials' || clean === 'b2btestimonials' || clean === 'reviews' || clean === 'googlereviews') return 'testimonials';
+    if (clean === 'happycustomergallery' || clean === 'customergallery' || clean === 'gallery' || clean === 'happycustomermoments') return 'happyCustomerGallery';
     if (clean === 'homepagefaqs' || clean === 'b2btradefaqs' || clean === 'faqs') return 'homepageFaqs';
     if (clean === 'newsletter' || clean === 'homepagenewsletter' || clean === 'newslettersubscription') return 'newsletter';
     if (clean === 'conversioncta' || clean === 'b2bfinalcta' || clean === 'cta') return 'conversionCta';
@@ -907,6 +910,13 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
         return config.showGoogleReviews !== false ? (
           <section key="module-testimonials" id="b2b-testimonials" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <PublicReviewsCarousel />
+          </section>
+        ) : null;
+
+      case 'happyCustomerGallery':
+        return config.showHappyCustomerGallery !== false ? (
+          <section key="module-happy-customer-gallery" id="b2b-happy-customer-gallery" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <PublicHappyCustomerGallery />
           </section>
         ) : null;
 

@@ -13,34 +13,50 @@ import { PublicPromotionsBanner } from './components/PublicPromotionsBanner';
 import { BuyerFooter } from './components/BuyerPortal/BuyerFooter';
 import { PortalAccessRestrictedView } from './components/PortalAccessRestrictedView';
 import { GlobalErrorBoundary } from './components/common/GlobalErrorBoundary';
+import { LoggedOutBuyerHomepage } from './pages/LoggedOutBuyerHomepage';
+import { DestinationPage } from './pages/DestinationPage';
 
-// Code-split pages and major portal applications for high performance
-const DestinationPage = React.lazy(() => import('./pages/DestinationPage').then(m => ({ default: m.DestinationPage })));
-const LoggedOutBuyerHomepage = React.lazy(() => import('./pages/LoggedOutBuyerHomepage').then(m => ({ default: m.LoggedOutBuyerHomepage })));
-const B2BQuotationBuilderPage = React.lazy(() => import('./pages/B2BQuotationBuilderPage').then(m => ({ default: m.B2BQuotationBuilderPage })));
-const ContactUsPage = React.lazy(() => import('./pages/ContactUsPage').then(m => ({ default: m.ContactUsPage })));
-const TermsOfPolicyPage = React.lazy(() => import('./pages/TermsOfPolicyPage').then(m => ({ default: m.TermsOfPolicyPage })));
-const PrivacyPolicyPage = React.lazy(() => import('./pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
-const RefundPolicyPage = React.lazy(() => import('./pages/RefundPolicyPage').then(m => ({ default: m.RefundPolicyPage })));
-const CookiePolicyPage = React.lazy(() => import('./pages/CookiePolicyPage').then(m => ({ default: m.CookiePolicyPage })));
-const AccountPage = React.lazy(() => import('./pages/AccountPage').then(m => ({ default: m.AccountPage })));
-const VisaPage = React.lazy(() => import('./pages/VisaPage').then(m => ({ default: m.VisaPage })));
-const CustomPageView = React.lazy(() => import('./pages/CustomPageView').then(m => ({ default: m.CustomPageView })));
-const AboutUsPage = React.lazy(() => import('./pages/AboutUsPage').then(m => ({ default: m.AboutUsPage })));
-const PublicBlogHub = React.lazy(() => import('./components/PublicBlogHub').then(m => ({ default: m.PublicBlogHub })));
+// Resilient lazy loader that recovers from transient network errors or deployment chunk updates
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>
+): React.LazyExoticComponent<T> {
+  return React.lazy(() =>
+    factory().catch((err) => {
+      console.warn('[LazyLoad] Retrying dynamic module import after error:', err);
+      return new Promise<{ default: T }>((resolve, reject) => {
+        setTimeout(() => {
+          factory().then(resolve).catch(reject);
+        }, 400);
+      });
+    })
+  );
+}
+
+// Code-split secondary pages and heavy portal applications for high performance
+const B2BQuotationBuilderPage = lazyWithRetry(() => import('./pages/B2BQuotationBuilderPage').then(m => ({ default: m.B2BQuotationBuilderPage })));
+const ContactUsPage = lazyWithRetry(() => import('./pages/ContactUsPage').then(m => ({ default: m.ContactUsPage })));
+const TermsOfPolicyPage = lazyWithRetry(() => import('./pages/TermsOfPolicyPage').then(m => ({ default: m.TermsOfPolicyPage })));
+const PrivacyPolicyPage = lazyWithRetry(() => import('./pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
+const RefundPolicyPage = lazyWithRetry(() => import('./pages/RefundPolicyPage').then(m => ({ default: m.RefundPolicyPage })));
+const CookiePolicyPage = lazyWithRetry(() => import('./pages/CookiePolicyPage').then(m => ({ default: m.CookiePolicyPage })));
+const AccountPage = lazyWithRetry(() => import('./pages/AccountPage').then(m => ({ default: m.AccountPage })));
+const VisaPage = lazyWithRetry(() => import('./pages/VisaPage').then(m => ({ default: m.VisaPage })));
+const CustomPageView = lazyWithRetry(() => import('./pages/CustomPageView').then(m => ({ default: m.CustomPageView })));
+const AboutUsPage = lazyWithRetry(() => import('./pages/AboutUsPage').then(m => ({ default: m.AboutUsPage })));
+const PublicBlogHub = lazyWithRetry(() => import('./components/PublicBlogHub').then(m => ({ default: m.PublicBlogHub })));
 
 // Heavy portal hubs & modals code-split on demand
-const AdminCMSHub = React.lazy(() => import('./components/AdminCMS/AdminCMSHub').then(m => ({ default: m.AdminCMSHub })));
-const B2BAgentPortal = React.lazy(() => import('./components/B2BAgentPortal/B2BAgentPortal').then(m => ({ default: m.B2BAgentPortal })));
-const ProductDetailModal = React.lazy(() => import('./components/ProductDetailModal').then(m => ({ default: m.ProductDetailModal })));
-const RailJourneyModal = React.lazy(() => import('./components/RailJourneyModal').then(m => ({ default: m.RailJourneyModal })));
-const PricingCalculatorModal = React.lazy(() => import('./components/PricingCalculatorModal').then(m => ({ default: m.PricingCalculatorModal })));
-const QuoteBuilderDrawer = React.lazy(() => import('./components/QuoteBuilderDrawer').then(m => ({ default: m.QuoteBuilderDrawer })));
-const SpecificationModal = React.lazy(() => import('./components/SpecificationModal').then(m => ({ default: m.SpecificationModal })));
-const BookingModal = React.lazy(() => import('./components/BookingModal').then(m => ({ default: m.BookingModal })));
-const BookingConfirmationModal = React.lazy(() => import('./components/BookingConfirmationModal').then(m => ({ default: m.BookingConfirmationModal })));
-const BookingsManagementModal = React.lazy(() => import('./components/BookingsManagementModal').then(m => ({ default: m.BookingsManagementModal })));
-const QuoteBuilderAuthRequiredModal = React.lazy(() => import('./components/QuoteBuilderAuthRequiredModal').then(m => ({ default: m.QuoteBuilderAuthRequiredModal })));
+const AdminCMSHub = lazyWithRetry(() => import('./components/AdminCMS/AdminCMSHub').then(m => ({ default: m.AdminCMSHub })));
+const B2BAgentPortal = lazyWithRetry(() => import('./components/B2BAgentPortal/B2BAgentPortal').then(m => ({ default: m.B2BAgentPortal })));
+const ProductDetailModal = lazyWithRetry(() => import('./components/ProductDetailModal').then(m => ({ default: m.ProductDetailModal })));
+const RailJourneyModal = lazyWithRetry(() => import('./components/RailJourneyModal').then(m => ({ default: m.RailJourneyModal })));
+const PricingCalculatorModal = lazyWithRetry(() => import('./components/PricingCalculatorModal').then(m => ({ default: m.PricingCalculatorModal })));
+const QuoteBuilderDrawer = lazyWithRetry(() => import('./components/QuoteBuilderDrawer').then(m => ({ default: m.QuoteBuilderDrawer })));
+const SpecificationModal = lazyWithRetry(() => import('./components/SpecificationModal').then(m => ({ default: m.SpecificationModal })));
+const BookingModal = lazyWithRetry(() => import('./components/BookingModal').then(m => ({ default: m.BookingModal })));
+const BookingConfirmationModal = lazyWithRetry(() => import('./components/BookingConfirmationModal').then(m => ({ default: m.BookingConfirmationModal })));
+const BookingsManagementModal = lazyWithRetry(() => import('./components/BookingsManagementModal').then(m => ({ default: m.BookingsManagementModal })));
+const QuoteBuilderAuthRequiredModal = lazyWithRetry(() => import('./components/QuoteBuilderAuthRequiredModal').then(m => ({ default: m.QuoteBuilderAuthRequiredModal })));
 import { 
   parseRoute, 
   getCurrentPath, 

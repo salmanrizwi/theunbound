@@ -184,6 +184,8 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
         email: editingCompany.email?.trim() || undefined,
         phone: editingCompany.phone?.trim() || undefined,
         address: editingCompany.address?.trim() || undefined,
+        registeredAddress: editingCompany.registeredAddress?.trim() || undefined,
+        currentAddress: editingCompany.currentAddress?.trim() || undefined,
         city: editingCompany.city?.trim() || undefined,
         state: editingCompany.state?.trim() || undefined,
         postalCode: editingCompany.postalCode?.trim() || undefined,
@@ -895,9 +897,39 @@ export const CompanyManagementView: React.FC<CompanyManagementViewProps> = ({ on
                   />
                 </div>
 
-                {/* Address */}
+                {/* Registered Address */}
                 <div className="space-y-1 sm:col-span-2">
-                  <label className="font-bold text-slate-700">Physical / Head Office Address</label>
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-700">Registered Address (Statutory)</label>
+                    <span className="text-[10px] text-slate-400">Official legal entity address</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={editingCompany.registeredAddress || ''}
+                    onChange={(e) => setEditingCompany({ ...editingCompany, registeredAddress: e.target.value })}
+                    placeholder="e.g. Registered legal address"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Current Address */}
+                <div className="space-y-1 sm:col-span-2">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-700">Current Address (Operational / Coworking)</label>
+                    <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-2 py-0.5 rounded-md">Active Office</span>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={editingCompany.currentAddress || ''}
+                    onChange={(e) => setEditingCompany({ ...editingCompany, currentAddress: e.target.value })}
+                    placeholder="e.g. alt.f coworking, 101, NH-19, CRRI, Ishwar Nagar, Okhla, New Delhi, Delhi 110020"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Address (General / Physical) */}
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="font-bold text-slate-700">General / Billing Address</label>
                   <input
                     type="text"
                     value={editingCompany.address || ''}

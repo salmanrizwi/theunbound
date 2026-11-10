@@ -656,6 +656,11 @@ service cloud.firestore {
       allow write: if canAccessCMSContent();
     }
 
+    match /company_profile/{document=**} {
+      allow read: if true;
+      allow write: if canAccessCMSContent() || isMasterAdmin();
+    }
+
     match /campaigns/{document=**} {
       allow read: if true;
       allow create, update: if canAccessCMSContent() || isValidAdminCMSData() || isAuthenticated();

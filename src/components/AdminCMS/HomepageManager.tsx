@@ -47,13 +47,17 @@ import {
   Upload,
   Loader2,
   FileImage,
-  Handshake
+  Handshake,
+  ChevronDown,
+  ChevronUp,
+  Camera
 } from 'lucide-react';
 import { UniversalHero } from '../UniversalHero';
 import { BuyerHeroSection } from '../BuyerPortal/BuyerHeroSection';
 import { UniversalHeroConfig, HeroTrustItem } from '../../types';
 import { NewsletterManager } from './NewsletterManager';
 import { AssociatedPartnersManager } from './AssociatedPartnersManager';
+import { HappyCustomerGalleryManager } from './HappyCustomerGalleryManager';
 import { 
   uploadAffiliationLogo, 
   uploadSectionBanner, 
@@ -79,6 +83,7 @@ export const CANONICAL_SECTION_DEFINITIONS: Array<{ key: string; label: string; 
   { key: 'associatedPartners', label: 'Our Associated Partners (Logo Carousel)', desc: 'Continuous horizontal showcase for suppliers, airlines, hotels & tourism boards', toggleKey: 'showAssociatedPartners' as any },
   { key: 'onboardingProcess', label: 'Partner Onboarding in 4 Simple Steps', desc: '4-step trade verification & account activation workflow', toggleKey: 'showOnboardingProcess' },
   { key: 'testimonials', label: 'Verified Trade Partner Testimonials', desc: 'Client reviews carousel with 5-star ratings', toggleKey: 'showGoogleReviews' },
+  { key: 'happyCustomerGallery', label: 'Happy Customer Gallery', desc: 'Real guest photo stories, verified experiences, and social proof with tags', toggleKey: 'showHappyCustomerGallery' as any },
   { key: 'homepageFaqs', label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section', toggleKey: 'showHomepageFAQs' },
   { key: 'newsletter', label: 'Newsletter Subscription (Sendy)', desc: 'Public email newsletter invitation synced with Sendy list', toggleKey: 'showNewsletterSection' },
   { key: 'conversionCta', label: 'Final B2B Trade Accreditation CTA', desc: 'Bottom call-to-action to register and contact trade desk', toggleKey: 'showConversionCTA' }
@@ -150,9 +155,11 @@ export function initSequenceDraft(currentConfig: HomepageConfig): SequenceModule
 
 interface HomepageManagerProps {
   destinations: Destination[];
+  defaultSubTab?: 'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'FAQS' | 'GALLERY';
+  defaultSectionKey?: string;
 }
 
-export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }) => {
+export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, defaultSubTab, defaultSectionKey }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
   const countingEngine = GlobalCountingEngine.getInstance();
@@ -160,7 +167,8 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   const [regions, setRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'FAQS'>('LAYOUT');
+  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'FAQS' | 'GALLERY'>(defaultSubTab || 'LAYOUT');
+  const [expandedSectionKey, setExpandedSectionKey] = useState<string | null>(defaultSectionKey || null);
 
   // Sequence & Ordering Draft State
   const [sequenceDraftModules, setSequenceDraftModules] = useState<SequenceModuleItem[]>(() => initSequenceDraft(db.getHomepageConfig()));
@@ -759,6 +767,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
           { id: 'SECTIONS', label: 'Homepage Content Sections', icon: Layers },
           { id: 'AFFILIATIONS', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', icon: ShieldCheck },
           { id: 'PARTNERS', label: 'Associated Partners Carousel', icon: Handshake },
+          { id: 'GALLERY', label: 'Happy Customer Gallery', icon: Sparkles },
           { id: 'NEWSLETTER', label: 'Newsletter (Sendy)', icon: Mail },
           { id: 'FAQS', label: 'Homepage FAQs Manager', icon: HelpCircle }
         ].map(tab => {
@@ -902,6 +911,24 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                     </div>
 
                     <div className="flex items-center justify-between sm:justify-end space-x-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                      {/* Manage Gallery Action Button if happyCustomerGallery */}
+                      {item.key === 'happyCustomerGallery' && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedSectionKey(expandedSectionKey === item.key ? null : item.key)}
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                            expandedSectionKey === item.key
+                              ? 'border-[#008972] bg-teal-50 text-[#008972] shadow-2xs'
+                              : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                          }`}
+                          title="Manage gallery photos, tags, and captions inline"
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-[#008972]" />
+                          <span>{expandedSectionKey === item.key ? 'Collapse Gallery' : 'Manage Gallery'}</span>
+                          {expandedSectionKey === item.key ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                        </button>
+                      )}
+
                       {/* Activate / Deactivate Toggle Button */}
                       <button
                         type="button"
@@ -945,6 +972,26 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
                         </button>
                       </div>
                     </div>
+
+                    {/* Inline Content Workspace for Happy Customer Gallery */}
+                    {item.key === 'happyCustomerGallery' && expandedSectionKey === item.key && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 w-full">
+                        <div className="mb-4 bg-teal-50/70 border border-teal-200 rounded-xl p-3 flex items-center justify-between text-xs text-teal-950">
+                          <div className="flex items-center space-x-2">
+                            <Sparkles className="w-4 h-4 text-[#008972] shrink-0" />
+                            <span className="font-semibold">Integrated Homepage Section Management: Photos, tags, and sequence sync directly with Firebase Storage & Firestore.</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedSectionKey(null)}
+                            className="text-xs font-bold text-teal-800 hover:text-teal-950 underline cursor-pointer"
+                          >
+                            Collapse
+                          </button>
+                        </div>
+                        <HappyCustomerGalleryManager />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1005,6 +1052,36 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* SUB TAB: HAPPY CUSTOMER GALLERY CMS */}
+      {activeSubTab === 'GALLERY' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-bold">
+                <Sparkles className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">Happy Customer Moments Gallery</h3>
+                <p className="text-xs text-slate-500">
+                  Manage verified guest photo stories, tags, descriptions, and visual sequence synchronised with Firebase Storage & Firestore.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab('LAYOUT')}
+                className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5"
+              >
+                <Grid className="w-3.5 h-3.5" />
+                <span>Section Sequence & Ordering</span>
+              </button>
+            </div>
+          </div>
+          <HappyCustomerGalleryManager />
         </div>
       )}
 

@@ -12,7 +12,8 @@ import {
   ExternalLink,
   ShieldCheck,
   Cookie,
-  Sliders
+  Sliders,
+  Building2
 } from 'lucide-react';
 import { Destination } from '../../types';
 import { AppDatabase } from '../../services/db';
@@ -30,6 +31,7 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
   onSelectCustomPage
 }) => {
   const db = AppDatabase.getInstance();
+  const companyProfile = db.getCentralCompanyProfile();
   const footerConfig = db.getFooterConfig();
   const { visibleDestinations } = useInventoryVisibility();
 
@@ -301,15 +303,37 @@ export const BuyerFooter: React.FC<BuyerFooterProps> = ({
           {/* Ground Operations Contact Details */}
           <div className="md:col-span-3 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-              Official Head Office
+              Official Head Office & Locations
             </h4>
-            <div className="space-y-2 text-xs text-slate-400">
-              <p className="flex items-start space-x-2">
-                <MapPin className="w-4 h-4 text-[#00C6A6] shrink-0 mt-0.5" />
-                <span className="leading-snug">
-                  A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi
+            <div className="space-y-2.5 text-xs text-slate-400">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Registered Address
                 </span>
-              </p>
+                <p className="flex items-start space-x-2">
+                  <MapPin className="w-3.5 h-3.5 text-[#00C6A6] shrink-0 mt-0.5" />
+                  <span className="leading-snug text-slate-300">
+                    {companyProfile.registeredAddress}
+                  </span>
+                </p>
+              </div>
+
+              <div className="space-y-1 pt-1.5 border-t border-slate-800/80">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                    Current Address
+                  </span>
+                  <span className="text-[9px] bg-emerald-950 text-emerald-400 border border-emerald-850 font-semibold px-1.5 py-0.2 rounded">
+                    Active
+                  </span>
+                </div>
+                <p className="flex items-start space-x-2">
+                  <Building2 className="w-3.5 h-3.5 text-[#00C6A6] shrink-0 mt-0.5" />
+                  <span className="leading-snug text-slate-200 whitespace-pre-line font-medium">
+                    {companyProfile.currentAddress}
+                  </span>
+                </p>
+              </div>
               <p className="flex items-center space-x-2">
                 <Mail className="w-4 h-4 text-[#00C6A6] shrink-0" />
                 <a href="mailto:sales@theunbound.in" className="font-mono text-slate-300 hover:text-[#00C6A6] transition-colors">

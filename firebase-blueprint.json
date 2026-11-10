@@ -42,6 +42,8 @@
         "email": { "type": "string", "required": false },
         "phone": { "type": "string", "required": false },
         "address": { "type": "string", "required": false },
+        "registeredAddress": { "type": "string", "required": false },
+        "currentAddress": { "type": "string", "required": false },
         "city": { "type": "string", "required": false },
         "state": { "type": "string", "required": false },
         "postalCode": { "type": "string", "required": false },
@@ -58,6 +60,26 @@
         "linkedUserIds": { "type": "array", "required": false },
         "createdAt": { "type": "string", "required": true },
         "updatedAt": { "type": "string", "required": false }
+      }
+    },
+    "CentralCompanyProfile": {
+      "collection": "company_profile",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "companyName": { "type": "string", "required": true },
+        "legalName": { "type": "string", "required": true },
+        "registeredAddress": { "type": "string", "required": true },
+        "currentAddress": { "type": "string", "required": true },
+        "email": { "type": "string", "required": true },
+        "salesEmail": { "type": "string", "required": false },
+        "opsEmail": { "type": "string", "required": false },
+        "phone": { "type": "string", "required": false },
+        "whatsappNumber": { "type": "string", "required": false },
+        "emergencyContact": { "type": "string", "required": false },
+        "website": { "type": "string", "required": false },
+        "gstin": { "type": "string", "required": false },
+        "updatedAt": { "type": "string", "required": false },
+        "updatedBy": { "type": "string", "required": false }
       }
     },
     "Destination": {
@@ -823,6 +845,27 @@
         "isActive": { "type": "boolean", "required": true },
         "createdAt": { "type": "string", "required": true },
         "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "GalleryItem": {
+      "collection": "gallery_items",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "imageUrl": { "type": "string", "required": true },
+        "storagePath": { "type": "string", "required": false },
+        "title": { "type": "string", "required": false },
+        "caption": { "type": "string", "required": true },
+        "description": { "type": "string", "required": false },
+        "customerName": { "type": "string", "required": false },
+        "destination": { "type": "string", "required": false },
+        "displayOrder": { "type": "number", "required": true },
+        "isActive": { "type": "boolean", "required": false },
+        "isPublished": { "type": "boolean", "required": true },
+        "tags": { "type": "array", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": false },
+        "createdBy": { "type": "string", "required": false },
+        "updatedBy": { "type": "string", "required": false }
       }
     }
   }

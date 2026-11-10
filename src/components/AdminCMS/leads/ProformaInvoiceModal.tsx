@@ -13,6 +13,7 @@ import {
   AlertCircle,
   FileText
 } from 'lucide-react';
+import { AppDatabase } from '../../../services/db';
 
 interface ProformaInvoiceModalProps {
   invoice: BookingInvoice;
@@ -24,6 +25,7 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
   onClose
 }) => {
   const printRef = useRef<HTMLDivElement>(null);
+  const companyProfile = AppDatabase.getInstance().getCentralCompanyProfile();
 
   const handlePrint = () => {
     window.print();
@@ -77,11 +79,15 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
             <div>
               <div className="text-xl font-black tracking-tight text-slate-950 flex items-center gap-2">
                 <Building2 className="w-6 h-6 text-[#008f77]" />
-                <span>The Unbound Luxury Travel</span>
+                <span>Unbound Experiences India Pvt Ltd</span>
               </div>
-              <p className="text-xs text-slate-500 mt-1">Ground Handling & Destination Management Operations</p>
-              <p className="text-xs text-slate-500">Registration: TUB-DMC-882910 • GSTIN: 27AABCT1234F1Z5</p>
-              <p className="text-xs text-slate-500">Contact: accounts@theunbound.in • +91 22 4900 8800</p>
+              <p className="text-xs text-slate-600 font-semibold mt-1">TheUnbound DMC • Destination Management Operations</p>
+              <div className="text-xs text-slate-500 space-y-0.5 mt-1.5">
+                <p><strong>Registered Address:</strong> {invoice.companyRegisteredAddress || companyProfile.registeredAddress}</p>
+                <p><strong>Current Address:</strong> {invoice.companyCurrentAddress || companyProfile.currentAddress}</p>
+                <p>GSTIN: {companyProfile.gstin || '27AABCT1234F1Z5'} • CIN: {companyProfile.cin || 'U63040DL2026PTC390012'}</p>
+                <p>Contact: {companyProfile.salesEmail} • {companyProfile.phone}</p>
+              </div>
             </div>
 
             <div className="text-left sm:text-right space-y-1">

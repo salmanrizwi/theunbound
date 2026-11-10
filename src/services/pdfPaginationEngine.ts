@@ -1,4 +1,5 @@
 import { QuotePresentationModel, ServicePresentationItem, DayPresentationData } from './quotePresentationModel';
+import { THEUNBOUND_REGISTERED_ADDRESS, THEUNBOUND_CURRENT_ADDRESS } from './db';
 
 export interface PageBounds {
   pageNumber: number;
@@ -534,6 +535,16 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
             <span style="font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 4px; background: ${primaryBrandHex}; color: ${model.isWhiteLabel ? '#ffffff' : accentBrandHex};">${model.documentBadgeTitle}</span>
           </div>
           <p style="font-size: 10.5px; color: #64748b; margin: 4px 0 0 0;">${model.agentAgencySubtitle}</p>
+          ${!model.isWhiteLabel ? `
+            <div style="font-size: 9px; color: #64748b; margin-top: 4px; line-height: 1.35;">
+              <div><strong>Registered Address:</strong> ${model.agencyRegisteredAddress || THEUNBOUND_REGISTERED_ADDRESS}</div>
+              <div><strong>Current Address:</strong> ${model.agencyCurrentAddress || THEUNBOUND_CURRENT_ADDRESS.replace(/\n/g, ', ')}</div>
+            </div>
+          ` : (model.agencyAddress ? `
+            <div style="font-size: 9px; color: #64748b; margin-top: 4px;">
+              <strong>Agency Address:</strong> ${model.agencyAddress}
+            </div>
+          ` : '')}
         </div>
       </div>
       <div style="text-align: right; font-family: monospace; font-size: 10.5px;">
@@ -584,13 +595,18 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
         ${model.agentEmail ? `<div style="color: #64748b; font-family: monospace;">${model.agentEmail}</div>` : ''}
         ${model.agentPhone ? `<div style="color: #64748b; font-family: monospace;">${model.agentPhone}</div>` : ''}
         ${model.agencyWebsite ? `<div style="color: #64748b; font-size: 10px;">${model.agencyWebsite}</div>` : ''}
-        ${model.agencyAddress ? `<div style="color: #64748b; font-size: 9.5px;">${model.agencyAddress}</div>` : ''}
+        ${!model.isWhiteLabel ? `
+          <div style="color: #64748b; font-size: 9px; line-height: 1.35; margin-top: 3px;">
+            <div><strong>Registered Address:</strong> ${model.agencyRegisteredAddress || THEUNBOUND_REGISTERED_ADDRESS}</div>
+            <div style="margin-top: 2px;"><strong>Current Address:</strong> ${model.agencyCurrentAddress || THEUNBOUND_CURRENT_ADDRESS.replace(/\n/g, ', ')}</div>
+          </div>
+        ` : (model.agencyAddress ? `<div style="color: #64748b; font-size: 9.5px;">${model.agencyAddress}</div>` : '')}
         <div style="color: #0d9488; font-size: 10px; font-weight: 700; margin-top: 3px;">🛡️ 24/7 On-Ground Concierge Assistance</div>
       </div>
     </div>
   `;
 
-  const heroEstimatedHeight = 460 + (model.routeHubs.length > 3 ? 40 : 0);
+  const heroEstimatedHeight = 500 + (model.routeHubs.length > 3 ? 40 : 0);
 
   blocks.push({
     id: 'block-hero-dossier',

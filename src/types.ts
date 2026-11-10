@@ -464,10 +464,12 @@ export interface Company {
   email?: string;
   phone?: string;
   address?: string;
+  registeredAddress?: string;
+  currentAddress?: string;
   city?: string;
   state?: string;
-  postalCode?: string;
   country?: string;
+  postalCode?: string;
   taxOrGstNumber?: string;
   iataOrAbtaNumber?: string;
   verificationStatus: VerificationStatus;
@@ -500,6 +502,8 @@ export interface AgencyBrandingSnapshot {
   primaryColor?: string;
   accentColor?: string;
   address?: string;
+  registeredAddress?: string;
+  currentAddress?: string;
   phone?: string;
   email?: string;
   website?: string;
@@ -531,6 +535,8 @@ export interface User {
   postalCode?: string;
   address?: string;
   companyAddress?: string;
+  companyRegisteredAddress?: string;
+  companyCurrentAddress?: string;
   companyCity?: string;
   companyState?: string;
   companyPostalCode?: string;
@@ -5210,13 +5216,20 @@ export interface HomepageConfig {
 export interface GalleryImage {
   id: string;
   imageUrl: string;
-  caption: string;
+  storagePath?: string;
+  title?: string;
+  caption: string; // Experience story / description
+  description?: string; // Explicit description alias
   customerName?: string;
   destination?: string;
   displayOrder: number;
+  isActive?: boolean;
   isPublished: boolean;
   tags?: string[];
   createdAt: string;
+  updatedAt?: string;
+  createdBy?: string;
+  updatedBy?: string;
 }
 
 // ----------------------------------------------------
@@ -5861,6 +5874,8 @@ export interface BookingInvoice {
   paymentTransactionRef?: string;
   companyName: string;
   companyAddress: string;
+  companyRegisteredAddress?: string;
+  companyCurrentAddress?: string;
   companyTaxNumber: string;
   notes: string;
   terms: string;
@@ -6240,6 +6255,26 @@ export interface ItineraryDaySlot {
   itemIds: string[];
 }
 
+export interface CentralCompanyProfile {
+  id: string;
+  companyName: string;
+  legalName: string;
+  registeredAddress: string;
+  currentAddress: string;
+  email: string;
+  salesEmail: string;
+  opsEmail: string;
+  phone: string;
+  whatsappNumber: string;
+  emergencyContact: string;
+  website: string;
+  gstin?: string;
+  cin?: string;
+  pan?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 // ----------------------------------------------------
 // INSTITUTIONAL & LEGAL PAGES CONFIGURATION
 // ----------------------------------------------------
@@ -6247,7 +6282,9 @@ export interface SitePagesConfig {
   contactPage: {
     heroTitle: string;
     heroSubtitle: string;
-    officeAddress: string;
+    officeAddress: string; // Registered Address (preserved)
+    registeredAddress?: string; // Explicit alias for Registered Address
+    currentAddress?: string; // Current Address (alt.f coworking)
     salesEmail: string;
     opsEmail: string;
     phone: string;

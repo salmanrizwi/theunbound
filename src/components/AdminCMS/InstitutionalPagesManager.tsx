@@ -129,7 +129,13 @@ export const InstitutionalPagesManager: React.FC = () => {
               </div>
 
               <div className="space-y-1.5 sm:col-span-2">
-                <label className="text-xs font-bold text-slate-700">Registered Office Address</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-[#008972]" />
+                    <span>Registered Office Address</span>
+                  </label>
+                  <span className="text-[10px] text-slate-400 font-mono">Preserved Statutory Address</span>
+                </div>
                 <input
                   type="text"
                   value={config.contactPage.officeAddress}
@@ -137,8 +143,33 @@ export const InstitutionalPagesManager: React.FC = () => {
                     ...config,
                     contactPage: { ...config.contactPage, officeAddress: e.target.value }
                   })}
+                  placeholder="A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:ring-1 focus:ring-[#00C6A6]"
                 />
+                <p className="text-[10px] text-slate-400">Official registered corporate address for statutory and compliance filings.</p>
+              </div>
+
+              <div className="space-y-1.5 sm:col-span-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-[#008972]" />
+                    <span>Current Office Address</span>
+                  </label>
+                  <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-2 py-0.5 rounded-md">
+                    Active Operations
+                  </span>
+                </div>
+                <textarea
+                  rows={2}
+                  value={config.contactPage.currentAddress ?? 'alt.f coworking\n101, NH-19, CRRI, Ishwar Nagar, Okhla, New Delhi, Delhi 110020'}
+                  onChange={(e) => setConfig({
+                    ...config,
+                    contactPage: { ...config.contactPage, currentAddress: e.target.value }
+                  })}
+                  placeholder="alt.f coworking&#10;101, NH-19, CRRI, Ishwar Nagar, Okhla, New Delhi, Delhi 110020"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:bg-white focus:ring-1 focus:ring-[#00C6A6]"
+                />
+                <p className="text-[10px] text-slate-400">Current operational headquarters at alt.f coworking. Displayed alongside Registered Address across website, quotation documents, invoices, and vouchers.</p>
               </div>
 
               <div className="space-y-1.5">

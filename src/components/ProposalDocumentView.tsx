@@ -78,6 +78,8 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
       phone: agentUser?.companyPhone || agentUser?.phone || agentUser?.contactNumber,
       logoUrl: agentUser?.brandLogoUrl || agentUser?.logoUrl,
       address: addressParts.length > 0 ? Array.from(new Set(addressParts)).join(', ') : undefined,
+      registeredAddress: agentUser?.companyRegisteredAddress,
+      currentAddress: agentUser?.companyCurrentAddress,
       website: agentUser?.companyWebsite,
       primaryColor: agentUser?.brandPrimaryColor,
       accentColor: agentUser?.brandAccentColor,
@@ -444,6 +446,17 @@ export const ProposalDocumentView: React.FC<ProposalDocumentViewProps> = ({
             <p className="text-xs text-slate-500 mt-1.5">
               {model.agentAgencySubtitle}
             </p>
+            {!model.isWhiteLabel && (
+              <div className="text-[11px] text-slate-500 mt-1.5 space-y-0.5">
+                <p><strong>Registered Address:</strong> {model.agencyRegisteredAddress}</p>
+                <p><strong>Current Address:</strong> {model.agencyCurrentAddress}</p>
+              </div>
+            )}
+            {model.isWhiteLabel && model.agencyAddress && (
+              <div className="text-[11px] text-slate-500 mt-1.5 space-y-0.5">
+                <p><strong>Agency Address:</strong> {model.agencyAddress}</p>
+              </div>
+            )}
           </div>
         </div>
 

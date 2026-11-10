@@ -168,6 +168,30 @@ class AuthService {
   private constructor() {
     console.log('[AUTH] AuthService initialized. Setting up Firebase Auth listener...');
 
+    // Fail-safe timeout: if Firebase Auth persistence (e.g., IndexedDB in strict privacy browsers) takes > 3.5s,
+    // unblock application rendering immediately by restoring cached session or transitioning to UNAUTHENTICATED.
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        if (this.authState === 'AUTH_INITIALIZING') {
+          console.warn('[AUTH] Firebase Auth initialization exceeded 3.5s safety threshold; unblocking UI render.');
+          try {
+            const raw = window.localStorage?.getItem('theunbound_auth_user');
+            if (raw) {
+              const cached = JSON.parse(raw) as User;
+              if (cached && cached.id && cached.role !== 'BUYER') {
+                this.currentUserProfile = cached;
+                this.authState = 'AUTHENTICATED_READY';
+                this.notifyListeners();
+                return;
+              }
+            }
+          } catch {}
+          this.authState = 'UNAUTHENTICATED';
+          this.notifyListeners();
+        }
+      }, 3500);
+    }
+
     // Monitor Firebase Auth state changes
     onAuthStateChanged(auth, async (fbUser) => {
       console.log(`[AUTH] Firebase onAuthStateChanged event. FB User UID: ${fbUser?.uid || 'NONE'}`);

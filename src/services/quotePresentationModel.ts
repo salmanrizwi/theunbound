@@ -1,5 +1,6 @@
 import { Quotation, QuoteItem, TripRouteHub, QuoteBrandingMode, AgencyBrandingSnapshot, User } from '../types';
 import { formatCurrency, calculateQuoteTotal, convertCurrency, roundCurrencyAmount } from './pricingEngine';
+import { THEUNBOUND_REGISTERED_ADDRESS, THEUNBOUND_CURRENT_ADDRESS } from './db';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { isRailQuoteItem } from './rail/JapanRailJourneyDataService';
 import { 
@@ -200,6 +201,8 @@ export function buildAgencyBrandingSnapshotFromUser(
     primaryColor: user?.brandPrimaryColor || existingSnap?.primaryColor || '#0f172a',
     accentColor: user?.brandAccentColor || existingSnap?.accentColor || '#4f46e5',
     address: resolvedAddress || undefined,
+    registeredAddress: user?.companyRegisteredAddress || existingSnap?.registeredAddress || (mode === 'WHITE_LABEL' ? resolvedAddress : THEUNBOUND_REGISTERED_ADDRESS),
+    currentAddress: user?.companyCurrentAddress || existingSnap?.currentAddress || (mode === 'WHITE_LABEL' ? undefined : THEUNBOUND_CURRENT_ADDRESS),
     phone: cleanPhone || undefined,
     email: cleanEmail || undefined,
     website: cleanWebsite || undefined,
@@ -332,6 +335,8 @@ export interface QuotePresentationModel {
   agentPhone?: string;
   agentLogoUrl?: string;
   agencyAddress?: string;
+  agencyRegisteredAddress?: string;
+  agencyCurrentAddress?: string;
   agencyWebsite?: string;
   brandPrimaryColor?: string;
   brandAccentColor?: string;
@@ -628,6 +633,8 @@ export function buildQuotePresentationModel(
     phone?: string;
     logoUrl?: string;
     address?: string;
+    registeredAddress?: string;
+    currentAddress?: string;
     website?: string;
     primaryColor?: string;
     accentColor?: string;
@@ -778,6 +785,16 @@ export function buildQuotePresentationModel(
   const effectiveAgencyAddress = (isWhiteLabel && isTheUnboundBrandString(rawAddressCandidate))
     ? undefined
     : (rawAddressCandidate.trim() || undefined);
+
+  const rawRegisteredCandidate = agentOverride?.registeredAddress ?? snap?.registeredAddress ?? rawAddressCandidate;
+  const effectiveAgencyRegisteredAddress = isWhiteLabel
+    ? (isTheUnboundBrandString(rawRegisteredCandidate) ? undefined : (rawRegisteredCandidate.trim() || undefined))
+    : (rawRegisteredCandidate.trim() || THEUNBOUND_REGISTERED_ADDRESS);
+
+  const rawCurrentCandidate = agentOverride?.currentAddress ?? snap?.currentAddress ?? '';
+  const effectiveAgencyCurrentAddress = isWhiteLabel
+    ? (isTheUnboundBrandString(rawCurrentCandidate) ? undefined : (rawCurrentCandidate.trim() || undefined))
+    : (rawCurrentCandidate.trim() || THEUNBOUND_CURRENT_ADDRESS);
 
   const effectivePrimaryColor = agentOverride?.primaryColor || snap?.primaryColor || '#0f172a';
   const effectiveAccentColor = agentOverride?.accentColor || snap?.accentColor || '#4f46e5';
@@ -1339,7 +1356,7 @@ export function buildQuotePresentationModel(
             effectiveAgencyAddress,
             'Official Contracted Quotation Document'
           ].filter(Boolean).join(' • '))
-    : 'TheUnbound DMC Global Ground Logistics • sales@theunbound.in • Official Contracted Quotation Document';
+    : `TheUnbound DMC Global Ground Logistics • Reg: ${THEUNBOUND_REGISTERED_ADDRESS} • Current: ${THEUNBOUND_CURRENT_ADDRESS.replace(/\n/g, ', ')} • sales@theunbound.in • Official Contracted Quotation Document`;
 
   return {
     quoteId: quote.id || quote.quoteNumber || 'UBQ-2026',
@@ -1364,6 +1381,8 @@ export function buildQuotePresentationModel(
     agentPhone: effectiveAgentPhone,
     agentLogoUrl: effectiveAgentLogoUrl,
     agencyAddress: effectiveAgencyAddress,
+    agencyRegisteredAddress: effectiveAgencyRegisteredAddress,
+    agencyCurrentAddress: effectiveAgencyCurrentAddress,
     agencyWebsite: effectiveAgencyWebsite,
     brandPrimaryColor: effectivePrimaryColor,
     brandAccentColor: effectiveAccentColor,
@@ -2035,7 +2054,12 @@ export function renderQuoteWhatsAppFromPresentationModel(
       model.agentPhone ? `📞 WhatsApp / Direct: ${model.agentPhone}` : '',
       model.agentEmail ? `✉️ Email: ${model.agentEmail}` : '',
       model.agencyWebsite ? `🌐 Website: ${model.agencyWebsite}` : '',
-      model.agencyAddress ? `📍 Address: ${model.agencyAddress}` : '',
+      model.isWhiteLabel
+        ? (model.agencyAddress ? `📍 Address: ${model.agencyAddress}` : '')
+        : [
+            model.agencyRegisteredAddress ? `📍 Registered Address: ${model.agencyRegisteredAddress}` : '',
+            model.agencyCurrentAddress ? `🏢 Current Address: ${model.agencyCurrentAddress.replace(/\n/g, ', ')}` : ''
+          ].filter(Boolean).join('\n'),
       model.isWhiteLabel ? `📄 ${model.footerContactLine}` : ''
     );
   } else {
@@ -2051,7 +2075,12 @@ export function renderQuoteWhatsAppFromPresentationModel(
       model.agentPhone ? `WhatsApp / Tel: ${model.agentPhone}` : '',
       model.agentEmail ? `Email: ${model.agentEmail}` : '',
       model.agencyWebsite ? `Website: ${model.agencyWebsite}` : '',
-      model.agencyAddress ? `Address: ${model.agencyAddress}` : '',
+      model.isWhiteLabel
+        ? (model.agencyAddress ? `Address: ${model.agencyAddress}` : '')
+        : [
+            model.agencyRegisteredAddress ? `Registered Address: ${model.agencyRegisteredAddress}` : '',
+            model.agencyCurrentAddress ? `Current Address: ${model.agencyCurrentAddress.replace(/\n/g, ', ')}` : ''
+          ].filter(Boolean).join('\n'),
       model.isWhiteLabel ? model.footerContactLine : ''
     );
   }

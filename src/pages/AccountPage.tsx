@@ -123,6 +123,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
 
     // Address
     companyAddress: user?.companyAddress || user?.address || '',
+    companyRegisteredAddress: user?.companyRegisteredAddress || user?.companyAddress || '',
+    companyCurrentAddress: user?.companyCurrentAddress || '',
     companyCity: user?.companyCity || user?.city || '',
     companyState: user?.companyState || user?.state || '',
     companyPostalCode: user?.companyPostalCode || user?.postalCode || '',
@@ -160,6 +162,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
         iataOrAbtaNumber: user.iataOrAbtaNumber || '',
 
         companyAddress: user.companyAddress || user.address || '',
+        companyRegisteredAddress: user.companyRegisteredAddress || user.companyAddress || '',
+        companyCurrentAddress: user.companyCurrentAddress || '',
         companyCity: user.companyCity || user.city || '',
         companyState: user.companyState || user.state || '',
         companyPostalCode: user.companyPostalCode || user.postalCode || '',
@@ -239,6 +243,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
         iataOrAbtaNumber: formData.iataOrAbtaNumber.trim(),
 
         companyAddress: formData.companyAddress.trim(),
+        companyRegisteredAddress: (formData.companyRegisteredAddress || formData.companyAddress).trim(),
+        companyCurrentAddress: formData.companyCurrentAddress.trim() || undefined,
         companyCity: formData.companyCity.trim(),
         companyState: formData.companyState.trim(),
         companyPostalCode: formData.companyPostalCode.trim(),
@@ -289,6 +295,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
       iataOrAbtaNumber: user.iataOrAbtaNumber || '',
 
       companyAddress: user.companyAddress || user.address || '',
+      companyRegisteredAddress: user.companyRegisteredAddress || user.companyAddress || '',
+      companyCurrentAddress: user.companyCurrentAddress || '',
       companyCity: user.companyCity || user.city || '',
       companyState: user.companyState || user.state || '',
       companyPostalCode: user.companyPostalCode || user.postalCode || '',
@@ -928,13 +936,28 @@ export const AccountPage: React.FC<AccountPageProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="sm:col-span-2 space-y-1.5">
-                <label className="block text-xs font-bold text-slate-700">Street Address</label>
+                <label className="block text-xs font-bold text-slate-700">Registered Office Street Address</label>
                 <input
                   id="company-input-address"
                   type="text"
                   value={formData.companyAddress}
-                  onChange={(e) => handleInputChange('companyAddress', e.target.value)}
+                  onChange={(e) => {
+                    handleInputChange('companyAddress', e.target.value);
+                    handleInputChange('companyRegisteredAddress', e.target.value);
+                  }}
                   placeholder="e.g. 45 Berkeley Square, Mayfair"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#00C6A6]"
+                />
+              </div>
+
+              <div className="sm:col-span-2 space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">Current Office / Operating Address</label>
+                <input
+                  id="company-input-current-address"
+                  type="text"
+                  value={formData.companyCurrentAddress}
+                  onChange={(e) => handleInputChange('companyCurrentAddress', e.target.value)}
+                  placeholder="Current operational branch, hub, or co-working address"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#00C6A6]"
                 />
               </div>

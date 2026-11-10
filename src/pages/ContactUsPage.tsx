@@ -45,13 +45,16 @@ export const ContactUsPage: React.FC = () => {
     });
   }, []);
 
-  const contactData = siteConfig.contact || {
-    primaryEmail: 'sales@theunbound.in',
-    supportEmail: 'business@theunbound.in',
-    primaryPhone: '+91-9811654959',
-    emergencyPhone: '011-41185542',
-    officeAddress: 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India',
-    businessHours: 'Monday - Saturday: 09:00 - 20:00 IST / 24x7 On-Tour Emergency'
+  const centralCompany = db.getCentralCompanyProfile();
+  const contactData = {
+    primaryEmail: siteConfig.contactPage?.salesEmail || centralCompany.salesEmail,
+    supportEmail: siteConfig.contactPage?.opsEmail || centralCompany.opsEmail,
+    primaryPhone: siteConfig.contactPage?.phone || centralCompany.phone,
+    emergencyPhone: siteConfig.contactPage?.emergencyHotline || centralCompany.emergencyContact,
+    officeAddress: siteConfig.contactPage?.officeAddress || centralCompany.registeredAddress,
+    registeredAddress: siteConfig.contactPage?.officeAddress || centralCompany.registeredAddress,
+    currentAddress: siteConfig.contactPage?.currentAddress || centralCompany.currentAddress,
+    businessHours: siteConfig.contactPage?.supportHours || 'Monday - Saturday: 09:00 - 20:00 IST / 24x7 On-Tour Emergency'
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -168,7 +171,7 @@ export const ContactUsPage: React.FC = () => {
             </h2>
 
             <div className="space-y-4">
-              {/* Address */}
+              {/* Registered Address */}
               <div className="flex items-start space-x-3.5 p-4 rounded-2xl bg-slate-50 border border-slate-100">
                 <div className="w-9 h-9 rounded-xl bg-emerald-100/60 flex items-center justify-center text-[#008972] shrink-0 mt-0.5">
                   <MapPin className="w-5 h-5" />
@@ -178,7 +181,27 @@ export const ContactUsPage: React.FC = () => {
                     Registered Address
                   </span>
                   <p className="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed">
-                    {contactData.officeAddress}
+                    {contactData.registeredAddress}
+                  </p>
+                </div>
+              </div>
+
+              {/* Current Address */}
+              <div className="flex items-start space-x-3.5 p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                <div className="w-9 h-9 rounded-xl bg-emerald-100/60 flex items-center justify-center text-[#008972] shrink-0 mt-0.5">
+                  <Building2 className="w-5 h-5" />
+                </div>
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Current Address
+                    </span>
+                    <span className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-1.5 py-0.2 rounded">
+                      Active Operations
+                    </span>
+                  </div>
+                  <p className="text-xs sm:text-sm font-semibold text-slate-900 leading-relaxed whitespace-pre-line">
+                    {contactData.currentAddress}
                   </p>
                 </div>
               </div>

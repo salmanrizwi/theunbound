@@ -62,6 +62,7 @@ import {
   WishlistFolder,
   WishlistItem,
   SitePagesConfig,
+  CentralCompanyProfile,
   MenuItemConfig,
   MenuLocation,
   CustomPage,
@@ -293,11 +294,35 @@ export function cleanForFirestore(data: any): any {
 
 const STORAGE_KEY_PREFIX = 'theunbound_db_';
 
+export const THEUNBOUND_REGISTERED_ADDRESS = 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India';
+export const THEUNBOUND_CURRENT_ADDRESS = `alt.f coworking\n101, NH-19, CRRI, Ishwar Nagar, Okhla, New Delhi, Delhi 110020`;
+
+export const INITIAL_CENTRAL_COMPANY_PROFILE: CentralCompanyProfile = {
+  id: 'theunbound-master',
+  companyName: 'TheUnbound',
+  legalName: 'Unbound Experiences India Pvt Ltd',
+  registeredAddress: THEUNBOUND_REGISTERED_ADDRESS,
+  currentAddress: THEUNBOUND_CURRENT_ADDRESS,
+  email: 'business@theunbound.in',
+  salesEmail: 'sales@theunbound.in',
+  opsEmail: 'operations@theunbound.in',
+  phone: '+91-9811654959',
+  whatsappNumber: '+91-9811654959',
+  emergencyContact: '+91 9811654959',
+  website: 'https://theunbound.in',
+  gstin: '27AABCT1234F1Z5',
+  cin: 'U63040DL2026PTC390012',
+  pan: 'AABCT1234F',
+  updatedAt: '2026-01-15T00:00:00.000Z'
+};
+
 export const INITIAL_SITE_PAGES_CONFIG: SitePagesConfig = {
   contactPage: {
     heroTitle: 'Get in Touch with Our Ground Operations',
     heroSubtitle: 'Connect directly with TheUnbound Destination Management Company for bespoke travel quotations, wholesale contracted tariffs, guide allocations, and operational support across Japan, United Kingdom, and Europe.',
-    officeAddress: 'A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India',
+    officeAddress: THEUNBOUND_REGISTERED_ADDRESS,
+    registeredAddress: THEUNBOUND_REGISTERED_ADDRESS,
+    currentAddress: THEUNBOUND_CURRENT_ADDRESS,
     salesEmail: 'sales@theunbound.in',
     opsEmail: 'business@theunbound.in',
     phone: '+91-9811654959',
@@ -892,13 +917,17 @@ export class AppDatabase {
 
   private getItem<T>(key: string, fallback: T): T {
     if (this.memoryCache.has(key)) {
-      return this.memoryCache.get(key) as T;
+      const cached = this.memoryCache.get(key);
+      return (Array.isArray(cached) ? [...cached] : cached) as T;
     }
     try {
       const data = safeStorage.getItem(STORAGE_KEY_PREFIX + key);
-      const parsed = data ? JSON.parse(data) : fallback;
-      this.memoryCache.set(key, parsed);
-      return parsed;
+      if (data !== null) {
+        const parsed = JSON.parse(data);
+        this.memoryCache.set(key, parsed);
+        return (Array.isArray(parsed) ? [...parsed] : parsed) as T;
+      }
+      return fallback;
     } catch (e) {
       console.error(`Error reading ${key} from storage:`, e);
       return fallback;
@@ -907,8 +936,9 @@ export class AppDatabase {
 
   private setItem<T>(key: string, value: T, shouldNotify: boolean = true): void {
     try {
-      this.memoryCache.set(key, value);
-      safeStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
+      const storedValue = Array.isArray(value) ? [...value] : value;
+      this.memoryCache.set(key, storedValue);
+      safeStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(storedValue));
       if (shouldNotify) {
         this.notify();
       }
@@ -13767,9 +13797,11 @@ export class AppDatabase {
       currency: b.currency || 'USD',
       paymentStatus,
       paymentMethod: 'BANK_WIRE_TRANSFER',
-      companyName: 'TheUnbound DMC Global Pte. Ltd.',
-      companyAddress: '100 Marina Boulevard, Marina Bay Financial Centre, Singapore 018983',
-      companyTaxNumber: 'SG-GST-2026-9811654',
+      companyName: 'Unbound Experiences India Pvt Ltd',
+      companyAddress: this.getCentralCompanyProfile().registeredAddress,
+      companyRegisteredAddress: this.getCentralCompanyProfile().registeredAddress,
+      companyCurrentAddress: this.getCentralCompanyProfile().currentAddress,
+      companyTaxNumber: this.getCentralCompanyProfile().gstin || '27AABCT1234F1Z5',
       notes: `Proforma invoice issued for Booking Reference ${b.bookingReference}. Please quote the booking reference during wire transfer.`,
       terms: 'Payment due within 7 days of invoice issuance or 14 days prior to travel departure, whichever is earlier. Wire transfer fees to be borne by remitter.',
       createdAt: now,
@@ -14875,31 +14907,120 @@ export class AppDatabase {
   // HAPPY CUSTOMER GALLERY MANAGEMENT
   // ==========================================
   public getGalleryImages(): GalleryImage[] {
-    return this.getItem<GalleryImage[]>('gallery', envService.allowDemoData() ? INITIAL_GALLERY : []);
+    const raw = this.getItem<GalleryImage[]>('gallery', envService.allowDemoData() ? INITIAL_GALLERY : []);
+    return (raw || []).map(img => {
+      const active = img.isActive !== false && img.isPublished !== false;
+      const desc = img.description || img.caption || '';
+      return {
+        ...img,
+        caption: desc,
+        description: desc,
+        isActive: active,
+        isPublished: active,
+        displayOrder: Number(img.displayOrder || 1),
+        tags: Array.isArray(img.tags) ? img.tags : []
+      };
+    }).sort((a, b) => (a.displayOrder || 1) - (b.displayOrder || 1));
   }
 
   public saveGalleryImage(image: GalleryImage, user: User | null): void {
     const gallery = this.getGalleryImages();
     const index = gallery.findIndex(g => g.id === image.id);
+    const now = new Date().toISOString();
+    const active = image.isActive !== false && image.isPublished !== false;
+    const desc = image.description || image.caption || '';
+    
+    const normalizedImage: GalleryImage = {
+      ...image,
+      caption: desc,
+      description: desc,
+      isActive: active,
+      isPublished: active,
+      displayOrder: Number(image.displayOrder || (index >= 0 ? gallery[index].displayOrder : gallery.length + 1)),
+      tags: Array.isArray(image.tags) ? image.tags.filter(Boolean) : [],
+      updatedAt: now,
+      updatedBy: user?.name || user?.email || 'Administrator'
+    };
+
     if (index >= 0) {
-      gallery[index] = image;
-      this.logAudit(user, 'SETTINGS_UPDATED', 'GalleryImage', image.id, `Updated gallery image: ${image.caption}`);
+      gallery[index] = normalizedImage;
+      this.logAudit(user, 'GALLERY_UPDATED', 'GalleryImage', image.id, `Updated gallery image: ${desc || image.id}`);
     } else {
-      gallery.unshift(image);
-      this.logAudit(user, 'SETTINGS_UPDATED', 'GalleryImage', image.id, `Added gallery photo for ${image.customerName} (${image.destination})`);
+      normalizedImage.createdAt = normalizedImage.createdAt || now;
+      normalizedImage.createdBy = user?.name || user?.email || 'Administrator';
+      gallery.push(normalizedImage);
+      this.logAudit(user, 'GALLERY_CREATED', 'GalleryImage', image.id, `Added gallery photo for ${image.customerName || 'Guest'} (${image.destination || 'Global'})`);
     }
-    this.syncFirestoreDoc('gallery_items', image.id, image);
+
+    // Re-sort by displayOrder
+    gallery.sort((a, b) => a.displayOrder - b.displayOrder);
+
     this.setItem('gallery', gallery);
+    this.syncFirestoreDoc('gallery_items', normalizedImage.id, normalizedImage);
+    this.notify();
+  }
+
+  public reorderGalleryImages(orderedImages: GalleryImage[], user: User | null): void {
+    const now = new Date().toISOString();
+    const updatedGallery = orderedImages.map((img, idx) => {
+      const updated: GalleryImage = {
+        ...img,
+        displayOrder: idx + 1,
+        updatedAt: now,
+        updatedBy: user?.name || user?.email || 'Administrator'
+      };
+      this.syncFirestoreDoc('gallery_items', updated.id, updated);
+      return updated;
+    });
+
+    this.setItem('gallery', updatedGallery);
+    this.logAudit(user, 'GALLERY_UPDATED', 'GalleryImage', 'bulk-reorder', `Reordered ${updatedGallery.length} gallery images`);
+    this.notify();
+  }
+
+  public toggleGalleryImageActive(imageId: string, user: User | null): GalleryImage | null {
+    const gallery = this.getGalleryImages();
+    const index = gallery.findIndex(g => g.id === imageId);
+    if (index < 0) return null;
+
+    const current = gallery[index];
+    const newActiveState = !(current.isActive !== false && current.isPublished !== false);
+    const now = new Date().toISOString();
+
+    const updated: GalleryImage = {
+      ...current,
+      isActive: newActiveState,
+      isPublished: newActiveState,
+      updatedAt: now,
+      updatedBy: user?.name || user?.email || 'Administrator'
+    };
+
+    gallery[index] = updated;
+    this.setItem('gallery', gallery);
+    this.syncFirestoreDoc('gallery_items', imageId, updated);
+    this.logAudit(user, 'GALLERY_UPDATED', 'GalleryImage', imageId, `${newActiveState ? 'Activated' : 'Deactivated'} gallery image: ${updated.caption || imageId}`);
+    this.notify();
+    return updated;
   }
 
   public deleteGalleryImage(imageId: string, user: User | null): void {
     const gallery = this.getGalleryImages();
     const target = gallery.find(g => g.id === imageId);
-    this.setItem('gallery', gallery.filter(g => g.id !== imageId));
+    const updated = gallery.filter(g => g.id !== imageId);
+    this.setItem('gallery', updated);
     this.deleteFirestoreDoc('gallery_items', imageId);
     if (target) {
-      this.logAudit(user, 'SETTINGS_UPDATED', 'GalleryImage', imageId, `Removed gallery image: ${target.caption}`);
+      this.logAudit(user, 'GALLERY_DELETED', 'GalleryImage', imageId, `Removed gallery image: ${target.caption || target.id}`);
+      if (target.storagePath) {
+        const isPathShared = updated.some(g => g.storagePath === target.storagePath);
+        if (!isPathShared) {
+          import('./galleryStorageService').then(({ deleteGalleryStorageFile }) => {
+            deleteGalleryStorageFile(target.storagePath).catch(() => {});
+          }).catch(() => {});
+        }
+      }
     }
+    this.notify();
   }
 
   // ==========================================
@@ -15150,13 +15271,104 @@ export class AppDatabase {
   // INSTITUTIONAL & LEGAL PAGES CONFIGURATION
   // ==========================================
   public getSitePagesConfig(): SitePagesConfig {
-    return this.getItem<SitePagesConfig>('site_pages_config', INITIAL_SITE_PAGES_CONFIG);
+    const raw = this.getItem<SitePagesConfig>('site_pages_config', INITIAL_SITE_PAGES_CONFIG);
+    if (!raw.contactPage) {
+      raw.contactPage = { ...INITIAL_SITE_PAGES_CONFIG.contactPage };
+    }
+    if (!raw.contactPage.officeAddress) {
+      raw.contactPage.officeAddress = THEUNBOUND_REGISTERED_ADDRESS;
+    }
+    if (!raw.contactPage.currentAddress) {
+      raw.contactPage.currentAddress = THEUNBOUND_CURRENT_ADDRESS;
+    }
+    raw.contactPage.registeredAddress = raw.contactPage.officeAddress;
+    return raw;
   }
 
   public updateSitePagesConfig(config: SitePagesConfig, user: User | null): void {
+    if (!config.contactPage.officeAddress) {
+      config.contactPage.officeAddress = THEUNBOUND_REGISTERED_ADDRESS;
+    }
+    if (!config.contactPage.currentAddress) {
+      config.contactPage.currentAddress = THEUNBOUND_CURRENT_ADDRESS;
+    }
+    config.contactPage.registeredAddress = config.contactPage.officeAddress;
+
     this.setItem('site_pages_config', config);
     this.syncFirestoreDoc('site_pages_config', 'main', config);
-    this.logAudit(user, 'SETTINGS_UPDATED', 'SitePagesConfig', 'main', `Updated Institutional and Legal Pages content`);
+
+    // Keep central company profile in sync
+    const currentProfile = this.getCentralCompanyProfile();
+    const updatedProfile: CentralCompanyProfile = {
+      ...currentProfile,
+      registeredAddress: config.contactPage.officeAddress,
+      currentAddress: config.contactPage.currentAddress,
+      salesEmail: config.contactPage.salesEmail || currentProfile.salesEmail,
+      opsEmail: config.contactPage.opsEmail || currentProfile.opsEmail,
+      phone: config.contactPage.phone || currentProfile.phone,
+      whatsappNumber: config.contactPage.whatsappNumber || currentProfile.whatsappNumber,
+      emergencyContact: config.contactPage.emergencyHotline || currentProfile.emergencyContact,
+      updatedAt: new Date().toISOString(),
+      updatedBy: user?.name || user?.email || 'Administrator'
+    };
+    this.setItem('central_company_profile', updatedProfile);
+    this.syncFirestoreDoc('company_profile', 'theunbound-master', updatedProfile);
+
+    this.logAudit(user, 'SETTINGS_UPDATED', 'SitePagesConfig', 'main', `Updated Institutional and Legal Pages content & Central Company Profile`);
+    this.notify();
+  }
+
+  // ==========================================
+  // CENTRAL COMPANY PROFILE (SINGLE SOURCE OF TRUTH)
+  // ==========================================
+  public getCentralCompanyProfile(): CentralCompanyProfile {
+    const raw = this.getItem<CentralCompanyProfile>('central_company_profile', INITIAL_CENTRAL_COMPANY_PROFILE);
+    const siteConfig = this.getSitePagesConfig();
+    const registeredAddress = raw?.registeredAddress || siteConfig.contactPage?.officeAddress || THEUNBOUND_REGISTERED_ADDRESS;
+    const currentAddress = raw?.currentAddress || siteConfig.contactPage?.currentAddress || THEUNBOUND_CURRENT_ADDRESS;
+
+    return {
+      ...INITIAL_CENTRAL_COMPANY_PROFILE,
+      ...raw,
+      registeredAddress,
+      currentAddress,
+      salesEmail: raw?.salesEmail || siteConfig.contactPage?.salesEmail || INITIAL_CENTRAL_COMPANY_PROFILE.salesEmail,
+      opsEmail: raw?.opsEmail || siteConfig.contactPage?.opsEmail || INITIAL_CENTRAL_COMPANY_PROFILE.opsEmail,
+      phone: raw?.phone || siteConfig.contactPage?.phone || INITIAL_CENTRAL_COMPANY_PROFILE.phone,
+      whatsappNumber: raw?.whatsappNumber || siteConfig.contactPage?.whatsappNumber || INITIAL_CENTRAL_COMPANY_PROFILE.whatsappNumber,
+      emergencyContact: raw?.emergencyContact || siteConfig.contactPage?.emergencyHotline || INITIAL_CENTRAL_COMPANY_PROFILE.emergencyContact,
+    };
+  }
+
+  public updateCentralCompanyProfile(profile: Partial<CentralCompanyProfile>, user: User | null): void {
+    const current = this.getCentralCompanyProfile();
+    const updated: CentralCompanyProfile = {
+      ...current,
+      ...profile,
+      id: 'theunbound-master',
+      updatedAt: new Date().toISOString(),
+      updatedBy: user?.name || user?.email || 'Administrator'
+    };
+
+    this.setItem('central_company_profile', updated);
+    this.syncFirestoreDoc('company_profile', 'theunbound-master', updated);
+
+    // Synchronize into site_pages_config as well so all dependent consumers stay unified
+    const siteConfig = this.getSitePagesConfig();
+    siteConfig.contactPage.officeAddress = updated.registeredAddress;
+    siteConfig.contactPage.registeredAddress = updated.registeredAddress;
+    siteConfig.contactPage.currentAddress = updated.currentAddress;
+    if (updated.salesEmail) siteConfig.contactPage.salesEmail = updated.salesEmail;
+    if (updated.opsEmail) siteConfig.contactPage.opsEmail = updated.opsEmail;
+    if (updated.phone) siteConfig.contactPage.phone = updated.phone;
+    if (updated.whatsappNumber) siteConfig.contactPage.whatsappNumber = updated.whatsappNumber;
+    if (updated.emergencyContact) siteConfig.contactPage.emergencyHotline = updated.emergencyContact;
+
+    this.setItem('site_pages_config', siteConfig);
+    this.syncFirestoreDoc('site_pages_config', 'main', siteConfig);
+
+    this.logAudit(user, 'SETTINGS_UPDATED', 'CentralCompanyProfile', 'theunbound-master', 'Updated central company profile (registered & current address)');
+    this.notify();
   }
 
   // ==========================================

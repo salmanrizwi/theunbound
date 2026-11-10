@@ -17,6 +17,7 @@
  */
 
 import { QuotePresentationModel, ServicePresentationItem } from './quotePresentationModel';
+import { THEUNBOUND_REGISTERED_ADDRESS, THEUNBOUND_CURRENT_ADDRESS } from './db';
 
 /**
  * Safely decodes common HTML entities
@@ -566,6 +567,16 @@ export function renderProposalViewHtmlEmail(
                           <span style="font-size: 9px; text-transform: uppercase; font-weight: 800; letter-spacing: 0.06em; padding: 3px 8px; border-radius: 4px; background: ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'}; color: ${model.isWhiteLabel ? '#ffffff' : '#00E5C0'}; display: inline-block; vertical-align: middle; margin-left: 8px;">${cleanInlineFormattedText(model.documentBadgeTitle)}</span>
                         </div>
                         <p style="font-size: 10.5px; color: #64748b; margin: 4px 0 0 0;">${cleanInlineFormattedText(model.agentAgencySubtitle)}</p>
+                        ${!model.isWhiteLabel ? `
+                          <div style="font-size: 9px; color: #64748b; margin-top: 4px; line-height: 1.35;">
+                            <div><strong>Registered Address:</strong> ${cleanInlineFormattedText(model.agencyRegisteredAddress || THEUNBOUND_REGISTERED_ADDRESS)}</div>
+                            <div><strong>Current Address:</strong> ${cleanInlineFormattedText(model.agencyCurrentAddress || THEUNBOUND_CURRENT_ADDRESS.replace(/\n/g, ', '))}</div>
+                          </div>
+                        ` : (model.agencyAddress ? `
+                          <div style="font-size: 9px; color: #64748b; margin-top: 4px;">
+                            <strong>Agency Address:</strong> ${cleanInlineFormattedText(model.agencyAddress)}
+                          </div>
+                        ` : '')}
                       </td>
                       <td style="vertical-align: top; text-align: right; font-family: monospace; font-size: 10.5px; width: 200px;">
                         <div style="font-size: 14px; font-weight: 900; color: ${model.isWhiteLabel && model.brandPrimaryColor ? model.brandPrimaryColor : '#020617'};">${cleanInlineFormattedText(model.quoteNumber)} (v${model.version})</div>
@@ -621,7 +632,12 @@ export function renderProposalViewHtmlEmail(
                         ${model.agentEmail ? `<div style="color: #64748b; font-family: monospace;">${cleanInlineFormattedText(model.agentEmail)}</div>` : ''}
                         ${model.agentPhone ? `<div style="color: #64748b; font-family: monospace;">${cleanInlineFormattedText(model.agentPhone)}</div>` : ''}
                         ${model.agencyWebsite ? `<div style="color: #64748b; font-size: 10px;">${cleanInlineFormattedText(model.agencyWebsite)}</div>` : ''}
-                        ${model.agencyAddress ? `<div style="color: #64748b; font-size: 9.5px;">${cleanInlineFormattedText(model.agencyAddress)}</div>` : ''}
+                        ${!model.isWhiteLabel ? `
+                          <div style="color: #64748b; font-size: 9px; line-height: 1.35; margin-top: 3px;">
+                            <div><strong>Registered Address:</strong> ${cleanInlineFormattedText(model.agencyRegisteredAddress || THEUNBOUND_REGISTERED_ADDRESS)}</div>
+                            <div style="margin-top: 2px;"><strong>Current Address:</strong> ${cleanInlineFormattedText(model.agencyCurrentAddress || THEUNBOUND_CURRENT_ADDRESS.replace(/\n/g, ', '))}</div>
+                          </div>
+                        ` : (model.agencyAddress ? `<div style="color: #64748b; font-size: 9.5px;">${cleanInlineFormattedText(model.agencyAddress)}</div>` : '')}
                         <div style="color: #0d9488; font-size: 10px; font-weight: 700; margin-top: 3px;">🛡️ 24/7 On-Ground Concierge Assistance</div>
                       </td>
                     </tr>
@@ -1332,7 +1348,12 @@ export function renderSimpleSemanticQuotationEmailFromModel(
   if (model.agentEmail) lines.push(`Contact Email: ${model.agentEmail}`);
   if (model.agentPhone) lines.push(`Contact Phone: ${model.agentPhone}`);
   if (model.agencyWebsite) lines.push(`Website: ${model.agencyWebsite}`);
-  if (model.agencyAddress) lines.push(`Address: ${model.agencyAddress}`);
+  if (!model.isWhiteLabel) {
+    lines.push(`Registered Address: ${model.agencyRegisteredAddress || THEUNBOUND_REGISTERED_ADDRESS}`);
+    lines.push(`Current Address: ${model.agencyCurrentAddress || THEUNBOUND_CURRENT_ADDRESS.replace(/\n/g, ', ')}`);
+  } else if (model.agencyAddress) {
+    lines.push(`Address: ${model.agencyAddress}`);
+  }
   lines.push('');
 
   if (customNote && customNote.trim()) {

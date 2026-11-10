@@ -46,6 +46,7 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
   onNavigateToContact
 }) => {
   const db = AppDatabase.getInstance();
+  const centralProfile = db.getCentralCompanyProfile();
   const { visibleDestinations } = useInventoryVisibility();
   const [activeWorkflowStep, setActiveWorkflowStep] = useState<number>(1);
   const [quickMessageSent, setQuickMessageSent] = useState(false);
@@ -564,7 +565,22 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
                 <div>
                   <span className="text-[10px] text-slate-400 uppercase font-bold block">Registered Address</span>
                   <span className="font-bold text-slate-900">
-                    A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India
+                    {centralProfile.registeredAddress}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-start space-x-3 p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                <Building2 className="w-5 h-5 text-teal-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-slate-400 uppercase font-bold block">Current Address</span>
+                    <span className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-1.5 py-0.2 rounded">
+                      Active Office
+                    </span>
+                  </div>
+                  <span className="font-bold text-slate-900 whitespace-pre-line">
+                    {centralProfile.currentAddress}
                   </span>
                 </div>
               </div>

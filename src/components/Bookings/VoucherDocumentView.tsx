@@ -16,6 +16,7 @@ import {
   Share2,
   X
 } from 'lucide-react';
+import { AppDatabase } from '../../services/db';
 
 interface VoucherDocumentViewProps {
   voucher: BookingVoucher;
@@ -31,6 +32,7 @@ export const VoucherDocumentView: React.FC<VoucherDocumentViewProps> = ({
   isOutdated = false
 }) => {
   const printRef = useRef<HTMLDivElement>(null);
+  const companyProfile = AppDatabase.getInstance().getCentralCompanyProfile();
 
   const handlePrint = () => {
     window.print();
@@ -130,9 +132,13 @@ export const VoucherDocumentView: React.FC<VoucherDocumentViewProps> = ({
                 DMC & Ground Logistics
               </span>
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-700 font-semibold">
               Unbound Experiences India Pvt Ltd • Authorized Destination Management Network
             </p>
+            <div className="text-[11px] text-slate-500 space-y-0.5">
+              <p><strong>Registered Office:</strong> {companyProfile.registeredAddress}</p>
+              <p><strong>Current Office:</strong> {companyProfile.currentAddress}</p>
+            </div>
             <p className="text-[11px] text-slate-400">
               Emergency Dispatch 24/7: +91 9811654959 • operations@theunbound.in
             </p>

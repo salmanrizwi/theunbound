@@ -93,6 +93,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
   const [companyEmail, setCompanyEmail] = useState<string>(user?.companyEmail || user?.email || '');
   const [companyPhone, setCompanyPhone] = useState<string>(user?.companyPhone || '');
   const [companyAddress, setCompanyAddress] = useState<string>(user?.companyAddress || user?.address || '');
+  const [companyCurrentAddress, setCompanyCurrentAddress] = useState<string>(user?.companyCurrentAddress || '');
   const [companyCity, setCompanyCity] = useState<string>(user?.companyCity || user?.city || '');
   const [companyState, setCompanyState] = useState<string>(user?.companyState || user?.state || '');
   const [companyCountry, setCompanyCountry] = useState<string>(user?.companyCountry || user?.country || 'United Kingdom');
@@ -172,6 +173,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       setCompanyEmail(user.companyEmail || user.email || '');
       setCompanyPhone(user.companyPhone || '');
       setCompanyAddress(user.companyAddress || user.address || '');
+      setCompanyCurrentAddress(user.companyCurrentAddress || '');
       setCompanyCity(user.companyCity || user.city || '');
       setCompanyState(user.companyState || user.state || '');
       setCompanyCountry(user.companyCountry || user.country || 'United Kingdom');
@@ -337,6 +339,8 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       companyEmail: companyEmail.trim() || undefined,
       companyPhone: companyPhone.trim() || undefined,
       companyAddress: companyAddress.trim() || undefined,
+      companyRegisteredAddress: companyAddress.trim() || undefined,
+      companyCurrentAddress: companyCurrentAddress.trim() || undefined,
       companyCity: companyCity.trim() || undefined,
       companyState: companyState.trim() || undefined,
       companyCountry: companyCountry.trim() || undefined,
@@ -781,7 +785,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                   />
                 </div>
 
-                {/* Address */}
+                {/* Registered Address */}
                 <div className="space-y-1 sm:col-span-2">
                   <label className="font-bold text-slate-700">Registered Office Address</label>
                   <input
@@ -789,6 +793,18 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                     value={companyAddress}
                     onChange={e => setCompanyAddress(e.target.value)}
                     placeholder="14 Berkeley Square, Mayfair"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
+                  />
+                </div>
+
+                {/* Current Operating Address */}
+                <div className="space-y-1 sm:col-span-2">
+                  <label className="font-bold text-slate-700">Current Office / Operating Address</label>
+                  <input
+                    type="text"
+                    value={companyCurrentAddress}
+                    onChange={e => setCompanyCurrentAddress(e.target.value)}
+                    placeholder="Operational branch or co-working space"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:ring-1 focus:ring-[#00C6A6] outline-none"
                   />
                 </div>

@@ -46,10 +46,11 @@ export const PrivacyPolicyPage: React.FC = () => {
             This Privacy Policy sets out how <strong className="text-slate-900">Unbound Experiences India Pvt Ltd</strong> ("TheUnbound", "we", "our", or "us"), operating as a specialized Destination Management Company (DMC), collects, processes, protects, and retains personal data when you use our web portal, API endpoints, quotation tools, and ground tour services across Japan, the United Kingdom, and Europe.
           </p>
           <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1">
-            <p><strong className="text-slate-900">Registered Office:</strong> A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India</p>
+            <p><strong className="text-slate-900">Registered Office:</strong> A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India</p>
+            <p><strong className="text-slate-900">Current Office:</strong> alt.f coworking, 101, NH-19, CRRI, Ishwar Nagar, Okhla, New Delhi, Delhi 110020</p>
             <p><strong className="text-slate-900">Corporate Email:</strong> <a href="mailto:business@theunbound.in" className="text-[#008972] font-semibold underline">business@theunbound.in</a></p>
             <p><strong className="text-slate-900">Operations & Booking Inquiries:</strong> <a href="mailto:sales@theunbound.in" className="text-[#008972] font-semibold underline">sales@theunbound.in</a></p>
-            <p className="text-[11px] text-slate-500 font-mono pt-1">Corporate Registration: [CORPORATE_IDENTIFICATION_NUMBER_CIN] • Tax ID: [GSTIN]</p>
+            <p className="text-[11px] text-slate-500 font-mono pt-1">Corporate Registration: U63040DL2026PTC390012 • Tax ID / GSTIN: 27AABCT1234F1Z5</p>
           </div>
         </section>
 
@@ -203,7 +204,8 @@ export const PrivacyPolicyPage: React.FC = () => {
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
             <p><strong className="text-slate-800">Designation:</strong> Data Protection & Grievance Redressal Officer</p>
             <p><strong className="text-slate-800">Legal Entity:</strong> Unbound Experiences India Pvt Ltd</p>
-            <p><strong className="text-slate-800">Official Address:</strong> A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India</p>
+            <p><strong className="text-slate-800">Registered Address:</strong> A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India</p>
+            <p><strong className="text-slate-800">Current Address:</strong> alt.f coworking, 101, NH-19, CRRI, Ishwar Nagar, Okhla, New Delhi, Delhi 110020</p>
             <p><strong className="text-slate-800">Email:</strong> <a href="mailto:business@theunbound.in" className="text-[#008972] font-semibold underline">business@theunbound.in</a> • CC: <a href="mailto:sales@theunbound.in" className="text-[#008972] font-semibold underline">sales@theunbound.in</a></p>
             <p><strong className="text-slate-800">Landline:</strong> 011-41185542 • <strong className="text-slate-800">Mobile:</strong> +91-9811654959, +91-9718894959</p>
             <p className="text-[11px] text-slate-400 font-mono pt-0.5">[GRIEVANCE_OFFICER_NAME: Specify name of designated officer prior to formal regulatory filing]</p>

@@ -193,6 +193,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     'associatedPartners',
     'onboardingProcess',
     'testimonials',
+    'happyCustomerGallery',
     'homepageFaqs',
     'newsletter',
     'conversionCta'

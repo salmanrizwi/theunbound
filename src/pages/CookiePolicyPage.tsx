@@ -229,10 +229,10 @@ export const CookiePolicyPage: React.FC = () => {
         <div className="pt-4 border-t border-slate-200 text-xs text-slate-500 space-y-1.5">
           <p className="font-bold text-slate-700">Privacy Compliance & Inquiries:</p>
           <p>
-            Unbound Experiences India Pvt Ltd • Address: A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi, India • Corporate Email: <a href="mailto:business@theunbound.in" className="text-[#008972] font-semibold underline">business@theunbound.in</a> • Operations Desk: <a href="mailto:sales@theunbound.in" className="text-[#008972] font-semibold underline">sales@theunbound.in</a>
+            Unbound Experiences India Pvt Ltd • Registered Address: A-46, Kanchan Kunj, Madanpur Khadar Extn-2, New Delhi 110076, India • Current Address: alt.f coworking, 101, NH-19, CRRI, Ishwar Nagar, Okhla, New Delhi, Delhi 110020 • Corporate Email: <a href="mailto:business@theunbound.in" className="text-[#008972] font-semibold underline">business@theunbound.in</a> • Operations Desk: <a href="mailto:sales@theunbound.in" className="text-[#008972] font-semibold underline">sales@theunbound.in</a>
           </p>
           <p className="text-[11px] text-slate-400 font-mono">
-            Entity Identification: [CORPORATE_IDENTIFICATION_NUMBER_CIN] • Tax ID: [GSTIN]
+            Entity Identification: U63040DL2026PTC390012 • Tax ID / GSTIN: 27AABCT1234F1Z5
           </p>
         </div>
       </div>

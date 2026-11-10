@@ -19,7 +19,7 @@ import { INITIAL_AFFILIATIONS, INITIAL_HOMEPAGE_CONFIG } from '../data/initialHo
 export interface HomepageSectionRegistryItem {
   sectionId: string;
   sectionName: string;
-  sectionType: 'HERO' | 'BRAND' | 'HUBS' | 'DESTINATIONS' | 'BENEFITS' | 'AFFILIATIONS' | 'ONBOARDING' | 'TESTIMONIALS' | 'FAQS' | 'CTA';
+  sectionType: 'HERO' | 'BRAND' | 'HUBS' | 'DESTINATIONS' | 'BENEFITS' | 'AFFILIATIONS' | 'ONBOARDING' | 'TESTIMONIALS' | 'FAQS' | 'CTA' | 'GALLERY' | 'PARTNERS' | 'NEWSLETTER';
   displayOrder: number;
   isActive: boolean;
   dataSource: string;
@@ -71,6 +71,7 @@ export class HomepageService {
       'affiliations',
       'onboardingProcess',
       'testimonials',
+      'happyCustomerGallery',
       'homepageFaqs',
       'conversionCta'
     ];
@@ -162,6 +163,17 @@ export class HomepageService {
         countSource: 'Verified review count',
         visibilityRule: 'config.showGoogleReviews !== false'
       },
+      happyCustomerGallery: {
+        sectionId: 'happyCustomerGallery',
+        sectionName: 'Happy Customer Moments Gallery',
+        sectionType: 'GALLERY',
+        dataSource: 'PublicHappyCustomerGallery -> gallery_items collection & Firebase Storage',
+        cmsControl: 'HomepageManager -> Sequence & Ordering -> Happy Customer Gallery',
+        firestoreSource: 'gallery_items collection + Firebase Storage gallery/photos/',
+        query: 'db.getGalleryImages().filter(g => g.isActive !== false && g.isPublished !== false)',
+        countSource: 'Published gallery count',
+        visibilityRule: 'config.showHappyCustomerGallery !== false && galleryImages.length > 0'
+      },
       homepageFaqs: {
         sectionId: 'homepageFaqs',
         sectionName: 'B2B Trade & Ground Operations FAQs',
@@ -196,6 +208,7 @@ export class HomepageService {
       else if (cleanId === 'affiliations' || cleanId === 'regulatoryaffiliations') matchKey = 'affiliations';
       else if (cleanId === 'onboardingprocess' || cleanId === 'b2bonboardingprocess') matchKey = 'onboardingProcess';
       else if (cleanId === 'testimonials' || cleanId === 'reviews') matchKey = 'testimonials';
+      else if (cleanId === 'happycustomergallery' || cleanId === 'customergallery' || cleanId === 'gallery') matchKey = 'happyCustomerGallery';
       else if (cleanId === 'homepagefaqs' || cleanId === 'faqs') matchKey = 'homepageFaqs';
       else if (cleanId === 'conversioncta' || cleanId === 'cta') matchKey = 'conversionCta';
 
@@ -219,6 +232,7 @@ export class HomepageService {
       else if (matchKey === 'affiliations') isActive = config.showAffiliationsSection !== false;
       else if (matchKey === 'onboardingProcess') isActive = config.showOnboardingProcess !== false;
       else if (matchKey === 'testimonials') isActive = config.showGoogleReviews !== false;
+      else if (matchKey === 'happyCustomerGallery') isActive = config.showHappyCustomerGallery !== false;
       else if (matchKey === 'homepageFaqs') isActive = config.showHomepageFAQs !== false;
       else if (matchKey === 'conversionCta') isActive = config.showConversionCTA !== false;
 

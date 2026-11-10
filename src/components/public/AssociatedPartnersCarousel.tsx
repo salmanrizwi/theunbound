@@ -45,15 +45,21 @@ export const AssociatedPartnersCarousel: React.FC<AssociatedPartnersCarouselProp
 
   // Reduced motion detection
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    setPrefersReducedMotion(mediaQuery.matches);
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    try {
+      const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+      setPrefersReducedMotion(Boolean(mediaQuery.matches));
 
-    const listener = (e: MediaQueryListEvent) => {
-      setPrefersReducedMotion(e.matches);
-    };
-    mediaQuery.addEventListener('change', listener);
-    return () => mediaQuery.removeEventListener('change', listener);
+      const listener = (e: MediaQueryListEvent) => {
+        setPrefersReducedMotion(Boolean(e.matches));
+      };
+      if (typeof mediaQuery.addEventListener === 'function') {
+        mediaQuery.addEventListener('change', listener);
+        return () => mediaQuery.removeEventListener('change', listener);
+      }
+    } catch {
+      // Ignore matchMedia errors in restricted browsers
+    }
   }, []);
 
   const activePartners = useMemo(() => {
