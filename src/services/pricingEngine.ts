@@ -49,12 +49,14 @@ export function resolveInventoryValidity(entity: any): InventoryValidity {
     entity.validity?.validFrom ||
     entity.validityFrom ||
     entity.effectiveFrom ||
+    entity.validFrom ||
     ''
   ).trim();
   const validTo = (
     entity.validity?.validTo ||
     entity.validityTo ||
     entity.effectiveTo ||
+    entity.validTo ||
     ''
   ).trim();
   return { validFrom, validTo };
@@ -993,6 +995,14 @@ export function calculateB2BAgentPrice(input: B2BPriceInput): B2BPriceResult {
   };
 }
 
+// In-Memory High-Performance Memoization Cache for calculateDeliveredPriceForUser
+const deliveredPriceCache = new Map<string, { result: DeliveredPriceInfo; timestamp: number }>();
+const MAX_DELIVERED_CACHE_SIZE = 1500;
+
+export function clearPricingEngineCache(): void {
+  deliveredPriceCache.clear();
+}
+
 /**
  * Calculates the exact Delivered Selling Price for a product based on:
  * Single commercial customer price: B2B Agent Price
@@ -1002,12 +1012,37 @@ export function calculateDeliveredPriceForUser(
   user: User | null,
   targetCurrency: CurrencyCode = 'USD'
 ): DeliveredPriceInfo {
+  if (!product || !product.id) {
+    return {
+      deliveredPrice: 0,
+      totalSellingPrice: 0,
+      rawPriceInBaseCurrency: 0,
+      baseAdultNet: 0,
+      baseChildNet: 0,
+      baseInfantNet: 0,
+      appliedMarkupPercent: 0,
+      userTier: 'B2B_AGENT',
+      isCustomMargin: false,
+      currency: targetCurrency,
+      isCapacityBased: false,
+      isPriceAvailable: false,
+      priceUnavailableReason: 'Invalid product record'
+    };
+  }
+
+  // Fast cache lookup
+  const cacheKey = `${product.id}_${(product as any).updatedAt || (product as any).lastUpdated || ''}_${user?.id || 'anon'}_${user?.role || 'B2B_AGENT'}_${user?.companyId || ''}_${targetCurrency}`;
+  const cachedEntry = deliveredPriceCache.get(cacheKey);
+  if (cachedEntry) {
+    return cachedEntry.result;
+  }
+
   const role: UserRole = user?.role || 'B2B_AGENT';
   const isAdmin =
     role === 'ADMIN' ||
     role === 'SUPER_ADMIN' ||
     ((role === 'TEAM_MEMBER' || role === 'DMC_STAFF') &&
-      Boolean(user?.permissions?.cmsFinance?.financialSummary || user?.permissions?.canManagePricing));
+      Boolean((user?.permissions as any)?.cmsFinance?.financialSummary || (user?.permissions as any)?.canManagePricing));
   const userTier: 'BUYER' | 'B2B_AGENT' | 'ADMIN' = isAdmin ? 'ADMIN' : 'B2B_AGENT';
 
   const isRail =
@@ -1105,9 +1140,20 @@ export function calculateDeliveredPriceForUser(
   const isCustomMargin = !isProductLevelEnabled;
 
   const isCapacity = isCapacityBasedProduct(product);
-  const baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? 0;
-  const baseChildNet = product.childNetPrice ?? product.childNettCost ?? (baseAdultNet * 0.5);
-  const baseInfantNet = product.infantNetPrice ?? product.infantNettCost ?? 0;
+  let baseAdultNet = product.adultNetPrice ?? product.adultNettCost ?? 0;
+  const productRates = (product as any).rates;
+  if (!baseAdultNet && productRates && productRates.length > 0) {
+    const firstRate = productRates[0];
+    baseAdultNet = firstRate.netPrice ?? (firstRate as any).adultNetPrice ?? 0;
+  }
+  let baseChildNet = product.childNetPrice ?? product.childNettCost ?? 0;
+  if (!baseChildNet && productRates && productRates.length > 0) {
+    const firstRate = productRates[0];
+    baseChildNet = (firstRate as any).childNetPrice ?? (baseAdultNet * 0.5);
+  } else if (!baseChildNet) {
+    baseChildNet = baseAdultNet * 0.5;
+  }
+  let baseInfantNet = product.infantNetPrice ?? product.infantNettCost ?? 0;
 
   if (isCapacity) {
     // If product has configured capacity tiers, use the first tier as starting point
@@ -1179,7 +1225,7 @@ export function calculateDeliveredPriceForUser(
 
   const deliveredPrice = convertCurrency(rawSellingInBase, product.currency, targetCurrency);
 
-  return {
+  const result: DeliveredPriceInfo = {
     deliveredPrice,
     totalSellingPrice: deliveredPrice,
     rawPriceInBaseCurrency: rawSellingInBase,
@@ -1192,6 +1238,14 @@ export function calculateDeliveredPriceForUser(
     currency: targetCurrency,
     isCapacityBased: false
   };
+
+  if (deliveredPriceCache.size >= MAX_DELIVERED_CACHE_SIZE) {
+    const firstKey = deliveredPriceCache.keys().next().value;
+    if (firstKey) deliveredPriceCache.delete(firstKey);
+  }
+  deliveredPriceCache.set(cacheKey, { result, timestamp: Date.now() });
+
+  return result;
 }
 
 export function calculateProductPrice(
@@ -3812,12 +3866,12 @@ export function calculateQuoteInternalBreakdown(
           ? manualHotelToProduct(item.manualHotelDetails)
           : ({
               ...item.product,
-              ...(item.hotelId ? { hotelId: item.hotelId } : {}),
-              ...(item.roomTypeId ? { roomTypeId: item.roomTypeId } : {}),
-              ...(item.nights ? { nights: item.nights } : {}),
-              ...(item.roomsCount ? { roomsCount: item.roomsCount } : {}),
-              ...(item.manualHotelDetails ? { manualHotelDetails: item.manualHotelDetails } : {}),
-              ...(item.master_product_id ? { master_product_id: item.master_product_id } : {})
+              ...((item as any).hotelId ? { hotelId: (item as any).hotelId } : {}),
+              ...((item as any).roomTypeId ? { roomTypeId: (item as any).roomTypeId } : {}),
+              ...((item as any).nights ? { nights: (item as any).nights } : {}),
+              ...((item as any).roomsCount ? { roomsCount: (item as any).roomsCount } : {}),
+              ...((item as any).manualHotelDetails ? { manualHotelDetails: (item as any).manualHotelDetails } : {}),
+              ...((item as any).master_product_id ? { master_product_id: (item as any).master_product_id } : {})
             } as Product);
 
       const calc = hasValidExistingCalc
@@ -4000,8 +4054,13 @@ export function calculateQuoteInternalBreakdown(
         : roundCurrencyAmount(existingMarginAmount + adminManualMarginAmount, targetCurrency))
     : existingMarginAmount;
 
+  const surchargesTotal = roundCurrencyAmount(accumulatedSurcharges, targetCurrency);
+
+  // Core Surcharge Calculation Rule:
+  // Surcharges are applied over and above the selling price after the applicable internal margin has been calculated.
+  // When Admin Manual Margin is present, revisedSellingPrice encompasses Nett + Effective Margin + Surcharges + Service Fee.
   const revisedSellingPrice = roundCurrencyAmount(
-    totalNettCost + effectiveUnderlyingMargin + serviceFeeAmount,
+    totalNettCost + effectiveUnderlyingMargin + surchargesTotal + serviceFeeAmount,
     targetCurrency
   );
 
@@ -4020,7 +4079,7 @@ export function calculateQuoteInternalBreakdown(
 
   // STAGE 2: Agent-Controlled Additional Markup ("Your Additional Markup")
   // Commercial Rules:
-  // 1. Stage 1 (adminFinalTotal) is TheUnbound Base Selling Price (already incorporating Product-Level Margin when ON or Internal Agent-Level Margin when OFF).
+  // 1. Stage 1 (adminFinalTotal) is TheUnbound Base Selling Price (already incorporating Product-Level Margin when ON or Internal Agent-Level Margin when OFF, plus applicable surcharges).
   // 2. Stage 2 is the B2B Agent's own additional markup ("Your Additional Markup"), which works whether Product-Level Margin is ON or OFF.
   // 3. Increase-Only Rule: Markup must be >= 0. Negative markups are rejected/clamped to 0 so Final Customer Selling Price >= TheUnbound Base Selling Price.
   // 4. Deterministic No-Double-Application Rule:
@@ -4189,8 +4248,6 @@ export function calculateQuoteInternalBreakdown(
   const hotelAccommodationTotal = Math.max(0, roundCurrencyAmount(stage1HotelAfterDiscount + hotelPartnerMargin, targetCurrency));
   const landPartTotal = Math.max(0, roundCurrencyAmount(finalPackagePrice - hotelAccommodationTotal, targetCurrency));
 
-  const surchargesTotal = roundCurrencyAmount(accumulatedSurcharges, targetCurrency);
-
   return {
     isComplete,
     activeMarginMode,
@@ -4219,7 +4276,7 @@ export function calculateQuoteInternalBreakdown(
     itemizedBreakdown,
     adminManualMarginAmount,
     existingMarginAmount,
-    revisedSellingPrice: roundCurrencyAmount(revisedSellingPrice + surchargesTotal, targetCurrency),
+    revisedSellingPrice,
     adminFinalTotal
   };
 }

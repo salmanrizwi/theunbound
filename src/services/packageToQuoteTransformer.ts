@@ -13,7 +13,8 @@ import {
   QuotationScope,
   QuoteItem,
   TripRouteHub,
-  User
+  User,
+  UserRole
 } from '../types';
 import { db } from './db';
 import {
@@ -803,7 +804,7 @@ export function transformPackageToQuoteState(
             (candidateRoomTypeName && (r.roomName || '').toLowerCase() === candidateRoomTypeName.toLowerCase())
         ) || matchedMasterHotel.roomTypes?.[0];
       const selectedRate = selectedRoom?.rates?.[0];
-      const safeRooms = Math.max(1, Number(pkgRouteHub?.roomsCount || hotelRef?.roomsCount) || Math.ceil(adults / 2));
+      const safeRooms = Math.max(1, Number(pkgRouteHub?.roomsCount || (hotelRef as any)?.roomsCount) || Math.ceil(adults / 2));
 
       const hotelProd = hotelToProduct(
         matchedMasterHotel,
@@ -1348,7 +1349,7 @@ export function buildMasterPackageFromQuoteWorkspace(
         adultNetPrice:
           Number(item.product.adultNetPrice) > 0
             ? Number(item.product.adultNetPrice)
-            : Number(item.calculation?.totalNetCost || item.product.basePrice || 65),
+            : Number((item.calculation as any)?.totalNetCost || item.product.basePrice || 65),
         currency: item.product.currency || targetCurrency,
         status: 'ACTIVE'
       };
@@ -1485,7 +1486,7 @@ export function buildMasterPackageFromQuoteWorkspace(
           : Math.max(
               100,
               Math.round(
-                Number(matchingHotelItem?.product?.adultNetPrice || matchingHotelItem?.calculation?.totalNetCost || 250) /
+                Number(matchingHotelItem?.product?.adultNetPrice || (matchingHotelItem?.calculation as any)?.totalNetCost || 250) /
                   Math.max(1, nights * safeRooms)
               )
             );

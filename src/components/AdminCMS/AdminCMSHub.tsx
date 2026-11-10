@@ -15,6 +15,7 @@ import { HotelManager } from './HotelManager';
 import { BookingsManager } from './BookingsManager';
 import { QuoteMasterManager } from './QuoteMasterManager';
 import { HomepageManager } from './HomepageManager';
+import { AssociatedPartnersManager } from './AssociatedPartnersManager';
 import { InstitutionalPagesManager } from './InstitutionalPagesManager';
 import { MenuAndPagesManager } from './MenuAndPagesManager';
 import { PageSEOManager } from './PageSEOManager';
@@ -113,6 +114,7 @@ import {
   DollarSign,
   Calendar,
   Percent,
+  Handshake,
   LucideIcon
 } from 'lucide-react';
 
@@ -246,6 +248,9 @@ function resolveSubTabFromRoute(tab?: string, subTab?: string): string {
   }
   if (clean === 'VISASERVICES' || clean === 'VISASERVICE' || clean === 'VISAS' || clean === 'VISA' || clean === 'VISASANCILLARY' || clean === 'ANCILLARY' || clean === 'ANCILLARIES') {
     return 'VISA_SERVICES';
+  }
+  if (clean === 'PARTNERS' || clean === 'ASSOCIATEDPARTNERS' || clean === 'PARTNER' || clean === 'OURPARTNERS') {
+    return 'PARTNERS';
   }
 
   if (subTab) {
@@ -658,6 +663,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           description: 'Institutional contact/policies, homepage hero controls, menu builder, legal compliance pages, and footer builder.',
           subTabs: [
             { id: 'HOMEPAGE', label: 'Homepage & Hero Control', icon: LayoutTemplate },
+            { id: 'PARTNERS', label: 'Associated Partners Carousel', icon: Handshake },
             { id: 'NAVIGATION_MENU', label: 'Menu & Custom Pages', icon: Layers },
             { id: 'PAGE_SEO', label: 'Page SEO Management', icon: Globe2 },
             { id: 'PAGES_LEGAL', label: 'Site Pages & Legal Policies', icon: ShieldCheck },
@@ -1311,6 +1317,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {currentModuleConfig.id === 'PAGE_MANAGEMENT' && (
             <>
               {activeSubTab === 'HOMEPAGE' && <HomepageManager destinations={destinations} />}
+              {(activeSubTab === 'PARTNERS' || activeSubTab === 'ASSOCIATED_PARTNERS') && <AssociatedPartnersManager />}
               {(!activeSubTab || activeSubTab === 'NAVIGATION_MENU' || activeSubTab === 'MENU' || activeSubTab === 'CUSTOM_PAGES' || activeSubTab === 'PAGES') && (
                 <MenuAndPagesManager 
                   defaultTab={activeSubTab === 'CUSTOM_PAGES' || activeSubTab === 'PAGES' ? 'CUSTOM_PAGES' : 'MENU'} 

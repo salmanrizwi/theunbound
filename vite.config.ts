@@ -32,35 +32,8 @@ export default defineConfig(() => {
       emptyOutDir: true,
       sourcemap: false,
       reportCompressedSize: false,
-      minify: 'esbuild',
-      chunkSizeWarningLimit: 3000,
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (id.includes('node_modules')) {
-              if (id.includes('xlsx')) {
-                return 'vendor-xlsx';
-              }
-              if (id.includes('jspdf') || id.includes('html2canvas') || id.includes('dompurify') || id.includes('canvg') || id.includes('fflate')) {
-                return 'vendor-pdf';
-              }
-              if (id.includes('firebase')) {
-                return 'vendor-firebase';
-              }
-              if (id.includes('lucide-react')) {
-                return 'vendor-lucide';
-              }
-              if (id.includes('motion') || id.includes('framer-motion')) {
-                return 'vendor-motion';
-              }
-              if (id.includes('react') || id.includes('react-dom') || id.includes('scheduler')) {
-                return 'vendor-react';
-              }
-              return 'vendor-misc';
-            }
-          },
-        },
-      },
+      minify: 'esbuild' as const,
+      chunkSizeWarningLimit: 4000,
     },
   };
 });

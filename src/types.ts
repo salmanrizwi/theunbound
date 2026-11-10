@@ -5055,6 +5055,22 @@ export interface HomepageAffiliation {
   isActive: boolean;
 }
 
+export interface AssociatedPartner {
+  id: string;
+  name: string;
+  logoUrl: string;
+  storagePath?: string;
+  websiteUrl?: string;
+  description?: string;
+  category?: string; // e.g., 'Airline', 'Hotel Group', 'Tourism Board', 'Ground Service', 'Technology', 'Industry Partner'
+  displayOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+  updatedBy?: string;
+}
+
 export interface HomepageNewsletterConfig {
   enabled: boolean;
   eyebrow?: string;
@@ -5146,6 +5162,11 @@ export interface HomepageConfig {
   affiliationsSectionImageStoragePath?: string;
   affiliationsSectionImageAlt?: string;
   affiliations?: HomepageAffiliation[];
+  showAssociatedPartners?: boolean;
+  associatedPartnersBadge?: string;
+  associatedPartnersTitle?: string;
+  associatedPartnersSubtitle?: string;
+  associatedPartners?: AssociatedPartner[];
   showGoogleReviews: boolean;
   showHomepageFAQs: boolean;
   showConversionCTA: boolean;

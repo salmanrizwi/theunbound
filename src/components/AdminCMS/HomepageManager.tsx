@@ -46,12 +46,14 @@ import {
   Mail,
   Upload,
   Loader2,
-  FileImage
+  FileImage,
+  Handshake
 } from 'lucide-react';
 import { UniversalHero } from '../UniversalHero';
 import { BuyerHeroSection } from '../BuyerPortal/BuyerHeroSection';
 import { UniversalHeroConfig, HeroTrustItem } from '../../types';
 import { NewsletterManager } from './NewsletterManager';
+import { AssociatedPartnersManager } from './AssociatedPartnersManager';
 import { 
   uploadAffiliationLogo, 
   uploadSectionBanner, 
@@ -74,6 +76,7 @@ export const CANONICAL_SECTION_DEFINITIONS: Array<{ key: string; label: string; 
   { key: 'destinationFilter', label: 'Destination Expertise Across Global Corridors', desc: 'Editorial global corridors and active ground desks', toggleKey: 'showDestinationFilter' },
   { key: 'partnershipBenefits', label: 'Why Travel Agents Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch', toggleKey: 'showPartnershipBenefits' },
   { key: 'affiliations', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', desc: 'Official government, tourism & association regulatory accreditations', toggleKey: 'showAffiliationsSection' },
+  { key: 'associatedPartners', label: 'Our Associated Partners (Logo Carousel)', desc: 'Continuous horizontal showcase for suppliers, airlines, hotels & tourism boards', toggleKey: 'showAssociatedPartners' as any },
   { key: 'onboardingProcess', label: 'Partner Onboarding in 4 Simple Steps', desc: '4-step trade verification & account activation workflow', toggleKey: 'showOnboardingProcess' },
   { key: 'testimonials', label: 'Verified Trade Partner Testimonials', desc: 'Client reviews carousel with 5-star ratings', toggleKey: 'showGoogleReviews' },
   { key: 'homepageFaqs', label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section', toggleKey: 'showHomepageFAQs' },
@@ -157,7 +160,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   const [regions, setRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'NEWSLETTER' | 'FAQS'>('LAYOUT');
+  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'FAQS'>('LAYOUT');
 
   // Sequence & Ordering Draft State
   const [sequenceDraftModules, setSequenceDraftModules] = useState<SequenceModuleItem[]>(() => initSequenceDraft(db.getHomepageConfig()));
@@ -755,6 +758,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
           { id: 'DESTINATIONS', label: 'Destinations & Ordering', icon: LayoutTemplate },
           { id: 'SECTIONS', label: 'Homepage Content Sections', icon: Layers },
           { id: 'AFFILIATIONS', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', icon: ShieldCheck },
+          { id: 'PARTNERS', label: 'Associated Partners Carousel', icon: Handshake },
           { id: 'NEWSLETTER', label: 'Newsletter (Sendy)', icon: Mail },
           { id: 'FAQS', label: 'Homepage FAQs Manager', icon: HelpCircle }
         ].map(tab => {
@@ -3381,6 +3385,10 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations }
             </div>
           </div>
         </div>
+      )}
+
+      {activeSubTab === 'PARTNERS' && (
+        <AssociatedPartnersManager />
       )}
 
       {activeSubTab === 'NEWSLETTER' && (

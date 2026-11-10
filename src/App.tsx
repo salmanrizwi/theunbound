@@ -5,39 +5,42 @@ import { RosterProvider } from './context/RosterContext';
 import { AppDatabase } from './services/db';
 import { Product, Destination, Quotation, Booking, Hotel, FooterConfig } from './types';
 import { Navbar, MainNavTab } from './components/Navbar';
-import { DestinationPage } from './pages/DestinationPage';
-import { LoggedOutBuyerHomepage } from './pages/LoggedOutBuyerHomepage';
-import { B2BQuotationBuilderPage } from './pages/B2BQuotationBuilderPage';
-import { ContactUsPage } from './pages/ContactUsPage';
-import { TermsOfPolicyPage } from './pages/TermsOfPolicyPage';
-import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
-import { RefundPolicyPage } from './pages/RefundPolicyPage';
-import { CookiePolicyPage } from './pages/CookiePolicyPage';
 import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { GlobalToastContainer } from './components/common/GlobalToastContainer';
-import { AccountPage } from './pages/AccountPage';
-import { VisaPage } from './pages/VisaPage';
-import { CustomPageView } from './pages/CustomPageView';
-import { AboutUsPage } from './pages/AboutUsPage';
-import { ProductDetailModal } from './components/ProductDetailModal';
-import { RailJourneyModal } from './components/RailJourneyModal';
-import { PricingCalculatorModal } from './components/PricingCalculatorModal';
 import { isRailProduct } from './services/rail/JapanRailJourneyDataService';
-import { QuoteBuilderDrawer } from './components/QuoteBuilderDrawer';
 import { AuthModal } from './components/AuthModal';
-import { AdminDashboard } from './components/AdminDashboard';
-import { AdminCMSHub } from './components/AdminCMS/AdminCMSHub';
 import { PublicPromotionsBanner } from './components/PublicPromotionsBanner';
-import { PublicBlogHub } from './components/PublicBlogHub';
-import { PublicReviewsCarousel } from './components/PublicReviewsCarousel';
-import { SpecificationModal } from './components/SpecificationModal';
-import { BookingModal } from './components/BookingModal';
-import { BookingConfirmationModal } from './components/BookingConfirmationModal';
-import { BookingsManagementModal } from './components/BookingsManagementModal';
-import { B2BAgentPortal } from './components/B2BAgentPortal/B2BAgentPortal';
 import { BuyerFooter } from './components/BuyerPortal/BuyerFooter';
-import { QuoteBuilderAuthRequiredModal } from './components/QuoteBuilderAuthRequiredModal';
 import { PortalAccessRestrictedView } from './components/PortalAccessRestrictedView';
+import { GlobalErrorBoundary } from './components/common/GlobalErrorBoundary';
+
+// Code-split pages and major portal applications for high performance
+const DestinationPage = React.lazy(() => import('./pages/DestinationPage').then(m => ({ default: m.DestinationPage })));
+const LoggedOutBuyerHomepage = React.lazy(() => import('./pages/LoggedOutBuyerHomepage').then(m => ({ default: m.LoggedOutBuyerHomepage })));
+const B2BQuotationBuilderPage = React.lazy(() => import('./pages/B2BQuotationBuilderPage').then(m => ({ default: m.B2BQuotationBuilderPage })));
+const ContactUsPage = React.lazy(() => import('./pages/ContactUsPage').then(m => ({ default: m.ContactUsPage })));
+const TermsOfPolicyPage = React.lazy(() => import('./pages/TermsOfPolicyPage').then(m => ({ default: m.TermsOfPolicyPage })));
+const PrivacyPolicyPage = React.lazy(() => import('./pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
+const RefundPolicyPage = React.lazy(() => import('./pages/RefundPolicyPage').then(m => ({ default: m.RefundPolicyPage })));
+const CookiePolicyPage = React.lazy(() => import('./pages/CookiePolicyPage').then(m => ({ default: m.CookiePolicyPage })));
+const AccountPage = React.lazy(() => import('./pages/AccountPage').then(m => ({ default: m.AccountPage })));
+const VisaPage = React.lazy(() => import('./pages/VisaPage').then(m => ({ default: m.VisaPage })));
+const CustomPageView = React.lazy(() => import('./pages/CustomPageView').then(m => ({ default: m.CustomPageView })));
+const AboutUsPage = React.lazy(() => import('./pages/AboutUsPage').then(m => ({ default: m.AboutUsPage })));
+const PublicBlogHub = React.lazy(() => import('./components/PublicBlogHub').then(m => ({ default: m.PublicBlogHub })));
+
+// Heavy portal hubs & modals code-split on demand
+const AdminCMSHub = React.lazy(() => import('./components/AdminCMS/AdminCMSHub').then(m => ({ default: m.AdminCMSHub })));
+const B2BAgentPortal = React.lazy(() => import('./components/B2BAgentPortal/B2BAgentPortal').then(m => ({ default: m.B2BAgentPortal })));
+const ProductDetailModal = React.lazy(() => import('./components/ProductDetailModal').then(m => ({ default: m.ProductDetailModal })));
+const RailJourneyModal = React.lazy(() => import('./components/RailJourneyModal').then(m => ({ default: m.RailJourneyModal })));
+const PricingCalculatorModal = React.lazy(() => import('./components/PricingCalculatorModal').then(m => ({ default: m.PricingCalculatorModal })));
+const QuoteBuilderDrawer = React.lazy(() => import('./components/QuoteBuilderDrawer').then(m => ({ default: m.QuoteBuilderDrawer })));
+const SpecificationModal = React.lazy(() => import('./components/SpecificationModal').then(m => ({ default: m.SpecificationModal })));
+const BookingModal = React.lazy(() => import('./components/BookingModal').then(m => ({ default: m.BookingModal })));
+const BookingConfirmationModal = React.lazy(() => import('./components/BookingConfirmationModal').then(m => ({ default: m.BookingConfirmationModal })));
+const BookingsManagementModal = React.lazy(() => import('./components/BookingsManagementModal').then(m => ({ default: m.BookingsManagementModal })));
+const QuoteBuilderAuthRequiredModal = React.lazy(() => import('./components/QuoteBuilderAuthRequiredModal').then(m => ({ default: m.QuoteBuilderAuthRequiredModal })));
 import { 
   parseRoute, 
   getCurrentPath, 
@@ -71,6 +74,13 @@ import {
   ExternalLink,
   Loader2
 } from 'lucide-react';
+
+const ModuleLoadingFallback: React.FC<{ label?: string }> = ({ label = 'Loading...' }) => (
+  <div className="w-full min-h-[350px] flex flex-col items-center justify-center p-8 text-slate-400 space-y-3">
+    <Loader2 className="w-8 h-8 text-[#00C6A6] animate-spin" />
+    <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{label}</span>
+  </div>
+);
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated, role, user, isInitializing, openAuthModal } = useAuth();
@@ -326,20 +336,24 @@ const MainAppContent: React.FC = () => {
     }
 
     return (
-      <AdminCMSHub
-        initialTab={currentRoute.subTab}
-        initialSubTab={currentRoute.param}
-        destinations={destinations}
-        products={products}
-        onViewProduct={(p) => {
-          setInspectingProductHidePrice(false);
-          setInspectingProduct(p);
-        }}
-        onLoadQuote={(q) => {
-          loadSavedQuote(q);
-        }}
-        onCustomizePackage={handleCustomizePackage}
-      />
+      <GlobalErrorBoundary fallbackTitle="Admin CMS Encountered an Issue">
+        <React.Suspense fallback={<ModuleLoadingFallback label="Loading Operations Admin CMS..." />}>
+          <AdminCMSHub
+            initialTab={currentRoute.subTab}
+            initialSubTab={currentRoute.param}
+            destinations={destinations}
+            products={products}
+            onViewProduct={(p) => {
+              setInspectingProductHidePrice(false);
+              setInspectingProduct(p);
+            }}
+            onLoadQuote={(q) => {
+              loadSavedQuote(q);
+            }}
+            onCustomizePackage={handleCustomizePackage}
+          />
+        </React.Suspense>
+      </GlobalErrorBoundary>
     );
   }
 
@@ -373,23 +387,27 @@ const MainAppContent: React.FC = () => {
       }
 
       return (
-        <B2BAgentPortal
-          destinations={activeDestinations}
-          hotels={hotels}
-          products={products}
-          onOpenBookingModal={handleOpenQuotationBooking}
-          initialTab={b2bTab}
-          onTabChange={(tab) => {
-            const path = tab === 'create-quote' 
-              ? '/b2b/quote-builder' 
-              : tab === 'home' 
-                ? '/b2b' 
-                : (tab === 'crm' || tab === 'leads' || tab === 'customers') 
-                  ? '/b2b/crm' 
-                  : `/b2b/${tab}`;
-            navigateTo(path);
-          }}
-        />
+        <GlobalErrorBoundary fallbackTitle="B2B Agent Portal Encountered an Issue">
+          <React.Suspense fallback={<ModuleLoadingFallback label="Loading Wholesale B2B Portal..." />}>
+            <B2BAgentPortal
+              destinations={activeDestinations}
+              hotels={hotels}
+              products={products}
+              onOpenBookingModal={handleOpenQuotationBooking}
+              initialTab={b2bTab}
+              onTabChange={(tab) => {
+                const path = tab === 'create-quote' 
+                  ? '/b2b/quote-builder' 
+                  : tab === 'home' 
+                    ? '/b2b' 
+                    : (tab === 'crm' || tab === 'leads' || tab === 'customers') 
+                      ? '/b2b/crm' 
+                      : `/b2b/${tab}`;
+                navigateTo(path);
+              }}
+            />
+          </React.Suspense>
+        </GlobalErrorBoundary>
       );
     }
   }
@@ -471,9 +489,10 @@ const MainAppContent: React.FC = () => {
         onOpenBookings={() => setIsBookingsHistoryOpen(true)}
       />
 
-      {/* Main Viewport Content Area */}
       <main className="flex-1 w-full min-w-0 max-w-full bg-[#F8FAFC]">
-        {activeTab === 'DESTINATIONS' && (
+        <GlobalErrorBoundary fallbackTitle="Page Content Encountered an Issue">
+          <React.Suspense fallback={<ModuleLoadingFallback label="Loading content..." />}>
+          {activeTab === 'DESTINATIONS' && (
           isAllDestinations ? (
             /* Authoritative Canonical Home Page — Used for ALL visitors (unauthenticated, B2B Agent, and Admin) */
             <LoggedOutBuyerHomepage
@@ -632,6 +651,8 @@ const MainAppContent: React.FC = () => {
         {activeTab === 'PRIVACY' && <PrivacyPolicyPage />}
         {activeTab === 'REFUND' && <RefundPolicyPage />}
         {activeTab === 'COOKIES' && <CookiePolicyPage />}
+          </React.Suspense>
+        </GlobalErrorBoundary>
       </main>
 
       {/* Buyer Experience Footer */}
@@ -659,109 +680,107 @@ const MainAppContent: React.FC = () => {
         onSelectCustomPage={handleSelectCustomPage}
       />
 
-      {/* Dynamic Japan Rail Journey Selection Interface */}
-      {inspectingProduct && isRailProduct(inspectingProduct) && (
-        <RailJourneyModal
-          product={inspectingProduct}
-          portalOrigin="BUYER"
-          onClose={() => setInspectingProduct(null)}
-          onAddToQuote={() => {
-            setInspectingProduct(null);
-            setIsQuoteDrawerOpen(true);
-          }}
-          onInstantBook={(p) => {
-            setInspectingProduct(null);
-            if (isB2BAuthorized) {
-              handleOpenProductBooking(p);
-            } else {
+      {/* Global Overlays & Modals - Lazy-loaded on demand */}
+      <React.Suspense fallback={null}>
+        {inspectingProduct && isRailProduct(inspectingProduct) && (
+          <RailJourneyModal
+            product={inspectingProduct}
+            portalOrigin="BUYER"
+            onClose={() => setInspectingProduct(null)}
+            onAddToQuote={() => {
+              setInspectingProduct(null);
               setIsQuoteDrawerOpen(true);
+            }}
+            onInstantBook={(p) => {
+              setInspectingProduct(null);
+              if (isB2BAuthorized) {
+                handleOpenProductBooking(p);
+              } else {
+                setIsQuoteDrawerOpen(true);
+              }
+            }}
+          />
+        )}
+
+        {inspectingProduct && isB2BAuthorized && !isRailProduct(inspectingProduct) && (
+          <ProductDetailModal
+            product={inspectingProduct}
+            hidePrice={inspectingProductHidePrice}
+            onClose={() => setInspectingProduct(null)}
+            onOpenCalculator={(p) => {
+              setInspectingProduct(null);
+              setCalculatorProduct(p);
+            }}
+            onBookProduct={(p) => handleOpenProductBooking(p)}
+          />
+        )}
+
+        {calculatorProduct && isB2BAuthorized && (
+          <PricingCalculatorModal
+            product={calculatorProduct}
+            onClose={() => setCalculatorProduct(null)}
+            onAddedToQuote={() => {
+              setIsQuoteDrawerOpen(true);
+            }}
+          />
+        )}
+
+        {(bookingProduct || bookingQuotation) && isB2BAuthorized && (
+          <BookingModal
+            product={bookingProduct || undefined}
+            quotation={bookingQuotation || undefined}
+            onClose={() => {
+              setBookingProduct(null);
+              setBookingQuotation(null);
+            }}
+            onBookingComplete={handleBookingCompleted}
+          />
+        )}
+
+        {confirmedBooking && (
+          <BookingConfirmationModal
+            booking={confirmedBooking}
+            onClose={() => setConfirmedBooking(null)}
+            onViewAllBookings={() => {
+              setConfirmedBooking(null);
+              setIsBookingsHistoryOpen(true);
+            }}
+          />
+        )}
+
+        <BookingsManagementModal
+          isOpen={isBookingsHistoryOpen}
+          onClose={() => setIsBookingsHistoryOpen(false)}
+        />
+
+        <QuoteBuilderDrawer onBookQuote={(booking: Booking) => setConfirmedBooking(booking)} />
+
+        <QuoteBuilderAuthRequiredModal
+          isOpen={isQuoteAuthModalOpen}
+          onClose={() => {
+            setIsQuoteAuthModalOpen(false);
+            if (currentRoute.pathname.startsWith('/b2b')) {
+              navigateTo('/');
             }
           }}
-        />
-      )}
-
-      {/* Global Overlays & Modals - Standard Product Details */}
-      {inspectingProduct && isB2BAuthorized && !isRailProduct(inspectingProduct) && (
-        <ProductDetailModal
-          product={inspectingProduct}
-          hidePrice={inspectingProductHidePrice}
-          onClose={() => setInspectingProduct(null)}
-          onOpenCalculator={(p) => {
-            setInspectingProduct(null);
-            setCalculatorProduct(p);
+          onOpenLogin={() => {
+            setIsQuoteAuthModalOpen(false);
+            setIntendedPath('/b2b/quote-builder');
+            openAuthModal('Please log in to access the B2B Wholesale Quotation Builder.');
           }}
-          onBookProduct={(p) => handleOpenProductBooking(p)}
-        />
-      )}
-
-      {calculatorProduct && isB2BAuthorized && (
-        <PricingCalculatorModal
-          product={calculatorProduct}
-          onClose={() => setCalculatorProduct(null)}
-          onAddedToQuote={() => {
-            setIsQuoteDrawerOpen(true);
+          onOpenRegister={() => {
+            setIsQuoteAuthModalOpen(false);
+            setIntendedPath('/b2b/quote-builder');
+            openAuthModal('Create an account to apply for B2B Wholesale Quotation Builder access.');
           }}
         />
-      )}
 
-      {/* Booking Submission Modal */}
-      {(bookingProduct || bookingQuotation) && isB2BAuthorized && (
-        <BookingModal
-          product={bookingProduct || undefined}
-          quotation={bookingQuotation || undefined}
-          onClose={() => {
-            setBookingProduct(null);
-            setBookingQuotation(null);
-          }}
-          onBookingComplete={handleBookingCompleted}
-        />
-      )}
+        {isSpecsModalOpen && (
+          <SpecificationModal onClose={() => setIsSpecsModalOpen(false)} />
+        )}
+      </React.Suspense>
 
-      {/* Booking Confirmation & Email Dispatch Modal */}
-      {confirmedBooking && (
-        <BookingConfirmationModal
-          booking={confirmedBooking}
-          onClose={() => setConfirmedBooking(null)}
-          onViewAllBookings={() => {
-            setConfirmedBooking(null);
-            setIsBookingsHistoryOpen(true);
-          }}
-        />
-      )}
-
-      {/* Central Bookings Management & History Modal */}
-      <BookingsManagementModal
-        isOpen={isBookingsHistoryOpen}
-        onClose={() => setIsBookingsHistoryOpen(false)}
-      />
-
-      <QuoteBuilderDrawer onBookQuote={(booking: Booking) => setConfirmedBooking(booking)} />
       <AuthModal />
-
-      {/* Quote Builder Authentication Required Modal */}
-      <QuoteBuilderAuthRequiredModal
-        isOpen={isQuoteAuthModalOpen}
-        onClose={() => {
-          setIsQuoteAuthModalOpen(false);
-          if (currentRoute.pathname.startsWith('/b2b')) {
-            navigateTo('/');
-          }
-        }}
-        onOpenLogin={() => {
-          setIsQuoteAuthModalOpen(false);
-          setIntendedPath('/b2b/quote-builder');
-          openAuthModal('Please log in to access the B2B Wholesale Quotation Builder.');
-        }}
-        onOpenRegister={() => {
-          setIsQuoteAuthModalOpen(false);
-          setIntendedPath('/b2b/quote-builder');
-          openAuthModal('Create an account to apply for B2B Wholesale Quotation Builder access.');
-        }}
-      />
-
-      {isSpecsModalOpen && (
-        <SpecificationModal onClose={() => setIsSpecsModalOpen(false)} />
-      )}
 
       {/* Global GDPR & DPDP Cookie Consent Banner */}
       <CookieConsentBanner

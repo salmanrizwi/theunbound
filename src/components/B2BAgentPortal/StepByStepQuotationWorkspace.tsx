@@ -929,9 +929,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     ? roundCurrencyAmount(adminTotalNettCost * ((effectiveAdminMarginValue || 0) / 100), currency)
     : roundCurrencyAmount(effectiveAdminMarginValue || 0, currency);
 
-  const adminRevisedSellingPrice = effectiveAdminMarginMode === 'REPLACE'
-    ? roundCurrencyAmount(adminTotalNettCost + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0), currency)
-    : roundCurrencyAmount(adminTotalNettCost + existingCalculatedMargin + adminManualMarginAmount + (step7BreakdownPricing?.serviceFee || 0), currency);
+  const adminSurchargesTotal = roundCurrencyAmount(step7BreakdownPricing?.surchargesTotal || 0, currency);
+  const adminRevisedSellingPrice = step7BreakdownPricing?.revisedSellingPrice !== undefined && step7BreakdownPricing.revisedSellingPrice > 0
+    ? step7BreakdownPricing.revisedSellingPrice
+    : (effectiveAdminMarginMode === 'REPLACE'
+        ? roundCurrencyAmount(adminTotalNettCost + adminManualMarginAmount + adminSurchargesTotal + (step7BreakdownPricing?.serviceFee || 0), currency)
+        : roundCurrencyAmount(adminTotalNettCost + existingCalculatedMargin + adminManualMarginAmount + adminSurchargesTotal + (step7BreakdownPricing?.serviceFee || 0), currency));
 
   const stage1TaxAmount = roundCurrencyAmount(step7BreakdownPricing?.taxAmount || 0, currency);
   const stage1PreDiscountTotal = roundCurrencyAmount(adminRevisedSellingPrice + stage1TaxAmount, currency);
@@ -5854,12 +5857,102 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       </div>
                     </div>
 
+                    {/* Applicable Surcharges in Manual Margin Adjustment Area */}
+                    <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-200 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                          <h4 className="text-xs font-black uppercase tracking-wider text-amber-900">
+                            Applicable Surcharges Breakdown ({step7BreakdownPricing?.appliedSurcharges?.length || 0} Applied)
+                          </h4>
+                        </div>
+                        <span className="text-xs font-black font-mono text-amber-900">
+                          Total Surcharges: {formatCurrency(step7BreakdownPricing?.surchargesTotal || 0, currency)}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-amber-800">
+                        Surcharges are calculated and applied <strong>over and above the selling price after the applicable margin has been calculated</strong>. Manual Margin Adjustments do not overwrite or bypass active surcharges.
+                      </p>
+
+                      {step7BreakdownPricing && step7BreakdownPricing.appliedSurcharges && step7BreakdownPricing.appliedSurcharges.length > 0 ? (
+                        <div className="overflow-x-auto rounded-xl border border-amber-200 bg-white">
+                          <table className="w-full text-left text-xs">
+                            <thead className="bg-amber-100/60 text-amber-900 uppercase text-[10px] font-bold border-b border-amber-200">
+                              <tr>
+                                <th className="px-3 py-2">Product / Service</th>
+                                <th className="px-3 py-2">Service Date</th>
+                                <th className="px-3 py-2">Surcharge Name</th>
+                                <th className="px-3 py-2">Period Window</th>
+                                <th className="px-3 py-2 text-center">Type</th>
+                                <th className="px-3 py-2 text-right">Rate</th>
+                                <th className="px-3 py-2 text-right">Calculated Surcharge</th>
+                                <th className="px-3 py-2 text-right">Price After Surcharge</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-amber-100 font-mono text-[11px]">
+                              {step7BreakdownPricing.appliedSurcharges.map((sur, sIdx) => {
+                                const matchedItem = items.find(it => it.id === sur.itemId);
+                                const itemRow = step7BreakdownPricing.itemizedBreakdown.find(ib => ib.itemId === sur.itemId);
+                                const serviceDateStr = sur.serviceDate || matchedItem?.travelDate || 'Journey Period';
+                                const windowStr = `${sur.periodStartDate || sur.periodSnapshot?.travelStartDate || ''} → ${sur.periodEndDate || sur.periodSnapshot?.travelEndDate || ''}`.trim() || 'Active Period';
+                                const rateLabel = sur.calculationType === 'PERCENTAGE'
+                                  ? `${sur.rateValue || sur.percentageSnapshot || 0}%`
+                                  : `${formatCurrency(sur.rateValue || sur.amountSnapshot || 0, sur.currency || currency)}`;
+                                const calculatedAmt = sur.appliedAmountConverted !== undefined
+                                  ? sur.appliedAmountConverted
+                                  : sur.appliedAmountNative;
+                                const postSurchargeItemPrice = itemRow?.theUnboundBaseSellingPrice !== undefined
+                                  ? itemRow.theUnboundBaseSellingPrice
+                                  : itemRow?.finalSellingPrice;
+
+                                return (
+                                  <tr key={`${sur.surchargeId}-${sur.itemId}-${sIdx}`} className="hover:bg-amber-50/30 transition-colors">
+                                    <td className="px-3 py-2 font-sans font-bold text-slate-800">
+                                      {sur.productName || matchedItem?.product?.name || 'Inventory Service'}
+                                    </td>
+                                    <td className="px-3 py-2 font-sans text-slate-600">
+                                      {serviceDateStr}
+                                    </td>
+                                    <td className="px-3 py-2 font-sans text-amber-900 font-medium">
+                                      {sur.surchargeName}
+                                    </td>
+                                    <td className="px-3 py-2 text-[10px] text-slate-500">
+                                      {windowStr}
+                                    </td>
+                                    <td className="px-3 py-2 text-center font-sans">
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                        {sur.calculationType}
+                                      </span>
+                                    </td>
+                                    <td className="px-3 py-2 text-right text-slate-700">
+                                      {rateLabel}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-bold text-amber-900">
+                                      +{formatCurrency(calculatedAmt, currency)}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-bold text-emerald-700">
+                                      {postSurchargeItemPrice !== undefined ? formatCurrency(postSurchargeItemPrice, currency) : '—'}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="p-3 rounded-xl bg-white border border-amber-200 text-xs text-amber-800 flex items-center justify-between">
+                          <span>No active calendar surcharges currently applicable to selected products and service dates.</span>
+                          <span className="text-[10px] font-mono text-amber-600">Base Selling Price unaffected</span>
+                        </div>
+                      )}
+                    </div>
+
                     {/* Central Pricing Engine Preservation Note */}
                     <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs text-slate-600">
                       <div className="flex items-center space-x-2">
                         <CheckCircle2 className="w-4 h-4 text-indigo-600 shrink-0" />
                         <span>
-                          Calculation Base: <strong>Total Nett Cost ({formatCurrency(adminTotalNettCost, currency)})</strong>. Preserves configured taxes ({formatCurrency(step7BreakdownPricing?.taxAmount || 0, currency)}), service fees ({formatCurrency(step7BreakdownPricing?.serviceFee || 0, currency)}), and discounts ({formatCurrency(step7BreakdownPricing?.discountAmount || 0, currency)}).
+                          Calculation Base: <strong>Total Nett Cost ({formatCurrency(adminTotalNettCost, currency)})</strong>. Preserves configured taxes ({formatCurrency(step7BreakdownPricing?.taxAmount || 0, currency)}), service fees ({formatCurrency(step7BreakdownPricing?.serviceFee || 0, currency)}), surcharges ({formatCurrency(step7BreakdownPricing?.surchargesTotal || 0, currency)}), and discounts ({formatCurrency(step7BreakdownPricing?.discountAmount || 0, currency)}).
                         </span>
                       </div>
                       <span className="text-[10px] font-mono font-bold text-slate-400 shrink-0 ml-2">

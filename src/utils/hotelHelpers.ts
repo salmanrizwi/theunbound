@@ -97,10 +97,27 @@ export interface HotelStayCalculationResult {
   pricePerPersonSelling: number;
 }
 
+const hotelStayPriceCache = new Map<string, HotelStayCalculationResult>();
+const MAX_HOTEL_CACHE_SIZE = 1000;
+
+export function clearHotelStayPriceCache(): void {
+  hotelStayPriceCache.clear();
+}
+
 /**
  * Calculates the exact stay price for a hotel room configuration
  */
 export function calculateHotelStayPrice(params: HotelStayCalculationParams): HotelStayCalculationResult {
+  if (!params || !params.hotel) {
+    throw new Error('Hotel parameter is required for stay calculation.');
+  }
+
+  const cacheKey = `${params.hotel.id}_${params.roomType?.id || 'r0'}_${params.rate?.id || 'rt0'}_${params.checkInDate || ''}_${params.checkOutDate || ''}_${params.nights}_${params.roomsCount}_${params.adults}_${params.children}_${params.extraBeds}_${params.targetCurrency}_${params.agentClientMarkupPercent || 12}_${params.customDiscountPercent || 0}`;
+  const cached = hotelStayPriceCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
   const {
     hotel,
     roomType: rawRoomType,
@@ -241,7 +258,7 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
   const agentClientMarkupRate = (agentClientMarkupPercent || 0) / 100;
   const agentProfitAmount = 0;
 
-  return {
+  const result: HotelStayCalculationResult = {
     hotelId: hotel.id,
     hotelName: hotel.name,
     roomTypeId: roomType.id,
@@ -288,6 +305,14 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     pricePerNightSelling,
     pricePerPersonSelling
   };
+
+  if (hotelStayPriceCache.size >= MAX_HOTEL_CACHE_SIZE) {
+    const firstKey = hotelStayPriceCache.keys().next().value;
+    if (firstKey) hotelStayPriceCache.delete(firstKey);
+  }
+  hotelStayPriceCache.set(cacheKey, result);
+
+  return result;
 }
 
 export function getMealPlanLabel(code: MealPlanCode): string {

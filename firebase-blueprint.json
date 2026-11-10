@@ -809,6 +809,21 @@
         "createdAt": { "type": "string", "required": true },
         "updatedAt": { "type": "string", "required": true }
       }
+    },
+    "AssociatedPartner": {
+      "collection": "associated_partners",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "logoUrl": { "type": "string", "required": true },
+        "websiteUrl": { "type": "string", "required": false },
+        "description": { "type": "string", "required": false },
+        "category": { "type": "string", "required": false },
+        "displayOrder": { "type": "number", "required": true },
+        "isActive": { "type": "boolean", "required": true },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
     }
   }
 }

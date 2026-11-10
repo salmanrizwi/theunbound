@@ -38,6 +38,7 @@ import {
   ShieldCheck,
   Sparkles,
   Mail,
+  Handshake,
   LucideIcon
 } from 'lucide-react';
 import { CMSSection } from '../AdminCMSHub';
@@ -112,7 +113,8 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
 
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({
     visa: true,
-    promotions: true
+    promotions: true,
+    pages: true
   });
 
   const toggleGroup = (groupId: string) => {
@@ -304,7 +306,37 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
           label: 'Pages',
           section: 'PAGE_MANAGEMENT',
           subTab: 'HOMEPAGE',
-          icon: LayoutTemplate
+          icon: LayoutTemplate,
+          children: [
+            {
+              id: 'homepage_control',
+              label: 'Homepage & Hero Control',
+              section: 'PAGE_MANAGEMENT',
+              subTab: 'HOMEPAGE',
+              icon: LayoutTemplate
+            },
+            {
+              id: 'associated_partners',
+              label: 'Associated Partners Carousel',
+              section: 'PAGE_MANAGEMENT',
+              subTab: 'PARTNERS',
+              icon: Handshake
+            },
+            {
+              id: 'menu_pages',
+              label: 'Menu & Custom Pages',
+              section: 'PAGE_MANAGEMENT',
+              subTab: 'NAVIGATION_MENU',
+              icon: Layers
+            },
+            {
+              id: 'legal_pages',
+              label: 'Site Pages & Legal Policies',
+              section: 'PAGE_MANAGEMENT',
+              subTab: 'PAGES_LEGAL',
+              icon: ShieldCheck
+            }
+          ]
         },
         {
           id: 'promotions',

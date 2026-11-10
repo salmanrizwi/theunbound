@@ -4,6 +4,7 @@ import {
   Destination, 
   DestinationRegionItem,
   MasterRegion,
+  AssociatedPartner,
   Promotion, 
   CampaignEvent,
   CampaignStatus,
@@ -726,6 +727,7 @@ export class AppDatabase {
   private leadSaveListeners: ((lead: TravelLead, user: User | null, isNew: boolean) => void)[] = [];
   private isFirestoreInitialized: boolean = false;
   private notifyTimer: any = null;
+  private memoryCache: Map<string, any> = new Map();
   private actionCenterHooks?: {
     onBookingStatusChanged?: (bookingId: string, bookingRef: string, status: string, user: User | null) => void;
     onPaymentVerified?: (bookingId: string, bookingRef: string, paymentId: string, user: User | null) => void;
@@ -749,6 +751,8 @@ export class AppDatabase {
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.startsWith(STORAGE_KEY_PREFIX)) {
+          const stripped = e.key.substring(STORAGE_KEY_PREFIX.length);
+          this.memoryCache.delete(stripped);
           this.notify();
         }
       });
@@ -887,9 +891,14 @@ export class AppDatabase {
   }
 
   private getItem<T>(key: string, fallback: T): T {
+    if (this.memoryCache.has(key)) {
+      return this.memoryCache.get(key) as T;
+    }
     try {
       const data = safeStorage.getItem(STORAGE_KEY_PREFIX + key);
-      return data ? JSON.parse(data) : fallback;
+      const parsed = data ? JSON.parse(data) : fallback;
+      this.memoryCache.set(key, parsed);
+      return parsed;
     } catch (e) {
       console.error(`Error reading ${key} from storage:`, e);
       return fallback;
@@ -898,12 +907,21 @@ export class AppDatabase {
 
   private setItem<T>(key: string, value: T, shouldNotify: boolean = true): void {
     try {
+      this.memoryCache.set(key, value);
       safeStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
       if (shouldNotify) {
         this.notify();
       }
     } catch (e) {
       console.error(`Error saving ${key} to storage:`, e);
+    }
+  }
+
+  public invalidateMemoryCache(key?: string): void {
+    if (key) {
+      this.memoryCache.delete(key);
+    } else {
+      this.memoryCache.clear();
     }
   }
 
@@ -14949,6 +14967,21 @@ export class AppDatabase {
     if (!config.affiliationsSectionSubtitle) {
       config.affiliationsSectionSubtitle = INITIAL_HOMEPAGE_CONFIG.affiliationsSectionSubtitle;
     }
+    if (config.showAssociatedPartners === undefined) {
+      config.showAssociatedPartners = INITIAL_HOMEPAGE_CONFIG.showAssociatedPartners !== false;
+    }
+    if (!config.associatedPartnersBadge) {
+      config.associatedPartnersBadge = INITIAL_HOMEPAGE_CONFIG.associatedPartnersBadge || 'STRATEGIC COLLABORATION';
+    }
+    if (!config.associatedPartnersTitle) {
+      config.associatedPartnersTitle = INITIAL_HOMEPAGE_CONFIG.associatedPartnersTitle || 'Our Associated Partners';
+    }
+    if (!config.associatedPartnersSubtitle) {
+      config.associatedPartnersSubtitle = INITIAL_HOMEPAGE_CONFIG.associatedPartnersSubtitle || 'Working together with trusted partners to create seamless travel experiences.';
+    }
+    if (!config.associatedPartners) {
+      config.associatedPartners = [];
+    }
     if (config.showNewsletterSection === undefined) {
       config.showNewsletterSection = INITIAL_HOMEPAGE_CONFIG.showNewsletterSection !== false;
     }
@@ -14988,6 +15021,129 @@ export class AppDatabase {
     this.setItem('homepage_config', config);
     this.syncFirestoreDoc('homepage_config', 'main', config);
     this.logAudit(user, 'SETTINGS_UPDATED', 'HomepageConfig', 'main', `Updated Homepage Control settings (Hero & Featured ordering)`);
+  }
+
+  // ==========================================
+  // ASSOCIATED PARTNERS MANAGEMENT
+  // ==========================================
+  public getAssociatedPartners(onlyActive: boolean = false): AssociatedPartner[] {
+    let partners = this.getItem<AssociatedPartner[]>('associated_partners', []);
+    if (!partners || partners.length === 0) {
+      const config = this.getHomepageConfig();
+      partners = config.associatedPartners || [];
+    }
+    const sorted = [...partners].sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+    if (onlyActive) {
+      return sorted.filter(p => p.isActive !== false);
+    }
+    return sorted;
+  }
+
+  public saveAssociatedPartner(partner: AssociatedPartner, user: User | null): void {
+    const list = this.getItem<AssociatedPartner[]>('associated_partners', []);
+    const existingIndex = list.findIndex(p => p.id === partner.id);
+    const now = new Date().toISOString();
+    
+    const enriched: AssociatedPartner = {
+      ...partner,
+      updatedAt: now,
+      updatedBy: user?.email || user?.name || 'Administrator',
+      createdAt: partner.createdAt || now,
+      createdBy: partner.createdBy || (user?.email || user?.name || 'Administrator')
+    };
+
+    if (existingIndex >= 0) {
+      list[existingIndex] = enriched;
+    } else {
+      list.push(enriched);
+    }
+
+    list.sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
+
+    this.setItem('associated_partners', list);
+    this.syncFirestoreDoc('associated_partners', enriched.id, enriched);
+
+    // Also sync to homepage_config for unified reads
+    const hpConfig = this.getHomepageConfig();
+    hpConfig.associatedPartners = list;
+    this.setItem('homepage_config', hpConfig);
+    this.syncFirestoreDoc('homepage_config', 'main', hpConfig);
+
+    this.logAudit(
+      user,
+      'SETTINGS_UPDATED',
+      'AssociatedPartner' as any,
+      enriched.id,
+      `${existingIndex >= 0 ? 'Updated' : 'Created'} associated partner: ${enriched.name}`
+    );
+  }
+
+  public deleteAssociatedPartner(partnerId: string, user: User | null): void {
+    const list = this.getItem<AssociatedPartner[]>('associated_partners', []);
+    const target = list.find(p => p.id === partnerId);
+    const updated = list.filter(p => p.id !== partnerId);
+
+    this.setItem('associated_partners', updated);
+    this.deleteFirestoreDoc('associated_partners', partnerId);
+
+    // Also update homepage_config
+    const hpConfig = this.getHomepageConfig();
+    hpConfig.associatedPartners = updated;
+    this.setItem('homepage_config', hpConfig);
+    this.syncFirestoreDoc('homepage_config', 'main', hpConfig);
+
+    if (target) {
+      this.logAudit(
+        user,
+        'SETTINGS_UPDATED',
+        'AssociatedPartner' as any,
+        partnerId,
+        `Deleted associated partner: ${target.name}`
+      );
+    }
+  }
+
+  public reorderAssociatedPartners(orderedIds: string[], user: User | null): void {
+    const list = this.getItem<AssociatedPartner[]>('associated_partners', []);
+    const reordered: AssociatedPartner[] = [];
+
+    orderedIds.forEach((id, idx) => {
+      const item = list.find(p => p.id === id);
+      if (item) {
+        reordered.push({
+          ...item,
+          displayOrder: idx + 1,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    list.forEach(item => {
+      if (!orderedIds.includes(item.id)) {
+        reordered.push({
+          ...item,
+          displayOrder: reordered.length + 1
+        });
+      }
+    });
+
+    this.setItem('associated_partners', reordered);
+    reordered.forEach(p => {
+      this.syncFirestoreDoc('associated_partners', p.id, p);
+    });
+
+    const hpConfig = this.getHomepageConfig();
+    hpConfig.associatedPartners = reordered;
+    this.setItem('homepage_config', hpConfig);
+    this.syncFirestoreDoc('homepage_config', 'main', hpConfig);
+
+    this.logAudit(
+      user,
+      'SETTINGS_UPDATED',
+      'AssociatedPartner' as any,
+      'order',
+      `Reordered ${reordered.length} associated partners`
+    );
   }
 
   // ==========================================

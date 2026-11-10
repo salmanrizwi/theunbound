@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Destination, HomepageConfig, CityHub, MasterRegion } from '../types';
 import { BuyerHeroSection } from '../components/BuyerPortal/BuyerHeroSection';
 import { PublicReviewsCarousel } from '../components/PublicReviewsCarousel';
+import { AssociatedPartnersCarousel } from '../components/public/AssociatedPartnersCarousel';
 import { FinalCTA } from '../components/FinalCTA';
 import { NewsletterSignup } from '../components/Newsletter/NewsletterSignup';
 import { AppDatabase } from '../services/db';
@@ -134,6 +135,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     'destinationFilter',
     'partnershipBenefits',
     'affiliations',
+    'associatedPartners',
     'onboardingProcess',
     'testimonials',
     'homepageFaqs',
@@ -149,6 +151,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     if (clean === 'destinationfilter' || clean === 'b2bdestinationexpertise' || clean === 'destinations' || clean === 'destinationexpertise') return 'destinationFilter';
     if (clean === 'partnershipbenefits' || clean === 'b2bpartnershipbenefits') return 'partnershipBenefits';
     if (clean === 'affiliations' || clean === 'regulatoryaffiliations' || clean === 'b2bregulatoryaffiliations') return 'affiliations';
+    if (clean === 'associatedpartners' || clean === 'partners' || clean === 'partnercarousel' || clean === 'ourpartners' || clean === 'ourassociatedpartners') return 'associatedPartners';
     if (clean === 'onboardingprocess' || clean === 'b2bonboardingprocess') return 'onboardingProcess';
     if (clean === 'testimonials' || clean === 'b2btestimonials' || clean === 'reviews' || clean === 'googlereviews') return 'testimonials';
     if (clean === 'homepagefaqs' || clean === 'b2btradefaqs' || clean === 'faqs') return 'homepageFaqs';
@@ -817,6 +820,14 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
               </div>
             </div>
           </section>
+        ) : null;
+
+      case 'associatedPartners':
+        return config.showAssociatedPartners !== false ? (
+          <AssociatedPartnersCarousel
+            key="module-associated-partners"
+            homepageConfig={config}
+          />
         ) : null;
 
       case 'onboardingProcess':

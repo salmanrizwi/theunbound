@@ -645,6 +645,12 @@ service cloud.firestore {
       allow write: if canAccessCMSContent();
     }
 
+    match /associated_partners/{document=**} {
+      allow read: if true;
+      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
+    }
+
     match /site_pages_config/{document=**} {
       allow read: if true;
       allow write: if canAccessCMSContent();

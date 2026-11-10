@@ -2243,8 +2243,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         const adminMarginAmount = adminManualMarginType === 'PERCENTAGE'
           ? roundCurrencyAmount(totalNetCost * ((adminManualMarginValue || 0) / 100), currency)
           : roundCurrencyAmount(adminManualMarginValue || 0, currency);
+        const adminSurchargesTotal = roundCurrencyAmount(step7InternalBreakdown?.surchargesTotal || 0, currency);
         const stage1PreDiscount = adminMarginMode === 'REPLACE'
-          ? roundCurrencyAmount(totalNetCost + adminMarginAmount, currency)
+          ? roundCurrencyAmount(totalNetCost + adminMarginAmount + adminSurchargesTotal, currency)
           : roundCurrencyAmount(rawSellingPrice + adminMarginAmount, currency);
         const stage1Discount = (overallDiscountPercent || 0) > 0
           ? roundCurrencyAmount(stage1PreDiscount * ((overallDiscountPercent || 0) / 100), currency)
