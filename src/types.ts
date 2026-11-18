@@ -181,6 +181,9 @@ export interface QuotationCurrencySnapshot {
   roundingMode: 'ZERO_DECIMAL_INTEGER' | 'TWO_DECIMAL_STANDARD';
   fxSource: string;
   capturedAt: string;
+  activeMarginMode?: ActiveMarginMode;
+  productLevelMarginEnabled?: boolean;
+  agentLevelMarginPercent?: number;
   lineItems: CurrencyConversionLineRecord[];
   appliedSurcharges?: AppliedSurchargeDetail[];
   surchargesTotal?: number;
@@ -280,6 +283,7 @@ export interface CMSFinancePermissions {
   surchargeManagement?: boolean;
   canOverrideQuoteSurcharges?: boolean;
   marginManagement?: boolean;
+  cashbackManagement?: boolean;
   commercialConfiguration?: boolean;
   userAccounts?: boolean;
   agencyAccounts?: boolean;
@@ -411,6 +415,8 @@ export interface ManualHotelDetails {
   hotelName: string;
   city: string;
   hubId?: string;
+  itineraryHubOccurrenceId?: string;
+  accommodationStayId?: string;
   hubName?: string;
   starRating?: string; // e.g. '5-Star Luxury', '4-Star Superior', '3-Star Standard', 'Ryokan', 'Boutique'
   starCategory?: string;
@@ -525,6 +531,7 @@ export interface User {
   category?: UserCategory;
   department?: string;
   companyId?: string;
+  agencyId?: string;
   agencyName?: string;
   companyName?: string;
   businessType?: string;
@@ -1122,6 +1129,7 @@ export interface SurchargeMaster {
   surchargeCode: string; // e.g. 'SUR-2026-001'
   code?: string; // Canonical alias for surchargeCode
   name: string;
+  description?: string;
   internalDescription?: string;
   isActive?: boolean;
   surchargeCategory: string; // e.g. 'Peak Season Surcharge', 'Holiday Supplement', 'Event Surcharge', 'Fuel / Operational Surcharge', 'Weekend Supplement', 'Late Booking Surcharge'
@@ -1146,15 +1154,19 @@ export interface SurchargeMaster {
   periods?: SurchargePeriodWindow[]; // Multiple separate surcharge periods
   recurringDaysOfWeek?: string[]; // Optional day-of-week filter
   blackoutDates?: string[]; // Excluded dates within period
-  timezone: string; // e.g. 'Asia/Tokyo', 'Europe/London', 'Asia/Kolkata'
+  timezone?: string; // e.g. 'Asia/Tokyo', 'Europe/London', 'Asia/Kolkata'
   allowStacking?: boolean; // Explicit stacking rule when overlapping with another surcharge (default false)
   priority?: number; // Deterministic precedence order when allowStacking is false (higher wins)
 
   // C. Product Selection and Mapping
   linkedProductIds: string[]; // Authoritative references to Product.id
   applicableCategories?: string[];
+  applicableCategoryIds?: string[];
   applicableSubcategories?: string[];
   applicableDestinations?: string[];
+  applicableDestinationIds?: string[];
+  applyToAllCategoryProducts?: boolean;
+  applyAcrossAllSelectedProducts?: boolean;
 
   // D. Surcharge Pricing Configuration & Reused Product Operational Fields
   calculationType: 'FIXED' | 'PERCENTAGE';
@@ -1195,7 +1207,7 @@ export interface SurchargeMaster {
   internalPricingNotes?: string;
 
   // Versioning, Audit & Migration Metadata
-  version: number;
+  version?: number;
   migratedFromProductId?: string;
   migratedFromLegacySurchargeId?: string;
   createdAt: string;
@@ -1303,7 +1315,8 @@ export interface QuotationSurchargeOverride {
 }
 
 export interface InventorySurcharge {
-  surchargeId: string;
+  id?: string;
+  surchargeId?: string;
   name: string;
   validFrom: string;
   validTo: string;
@@ -1317,18 +1330,37 @@ export interface InventorySurcharge {
 }
 
 export interface AppliedSurchargeDetail {
+  quoteId?: string;
+  quoteVersion?: number;
+  itemId?: string;
+  productId?: string;
+  productName?: string;
+  serviceDate?: string;
+  serviceEndDate?: string;
   surchargeId: string;
   surchargeCode?: string;
   name: string;
+  surchargeName?: string;
   surchargeCategory?: string;
   validFrom: string;
   validTo: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  periodLabel?: string;
+  periodSnapshot?: Partial<SurchargePeriodWindow>;
   bookingValidFrom?: string;
   bookingValidTo?: string;
   affectedProductId?: string;
   affectedProductName?: string;
   type: 'FIXED' | 'PERCENTAGE';
+  calculationType?: 'FIXED' | 'PERCENTAGE';
   value: number;
+  rateValue?: number;
+  adultRate?: number;
+  childRate?: number;
+  infantRate?: number;
+  percentageSnapshot?: number;
+  amountSnapshot?: number;
   currency: CurrencyCode; // Original surcharge currency
   targetCurrency?: CurrencyCode; // Quotation target currency
   exchangeRate?: number;
@@ -1340,6 +1372,8 @@ export interface AppliedSurchargeDetail {
   appliedAmountConverted: number; // Selling surcharge amount in quotation currency
   supplierNettNative?: number; // Internal only: supplier nett surcharge in original currency
   supplierNettConverted?: number; // Internal only: supplier nett surcharge in quotation currency
+  baseSellingPriceInTargetCurrency?: number; // Selling price before applying this surcharge step (in quotation currency)
+  priceAfterSurcharge?: number; // Selling price after applying this surcharge step (in quotation currency)
   eligibleDaysCount?: number;
   isCentralized?: boolean;
   isOverridden?: boolean;
@@ -1347,6 +1381,7 @@ export interface AppliedSurchargeDetail {
   overrideReason?: string;
   overriddenBy?: string;
   conflictWarning?: string;
+  applicationStatus?: 'APPLIED' | 'OVERRIDDEN' | 'MISSING_CONFIG';
 }
 
 export interface SurchargeOverlapWarning {
@@ -1534,6 +1569,81 @@ export interface Product {
   seo?: EntitySEO;
   metadata?: Record<string, any>;
   configuration?: MasterProductConfiguration;
+
+  // Authoritative Margin & Commission Governance metadata
+  marginType?: 'PERCENTAGE' | 'FIXED';
+  marginFixed?: number;
+  marginStatus?: 'ACTIVE' | 'INACTIVE';
+  marginConfigVersion?: number;
+  marginUpdatedAt?: string;
+  marginUpdatedBy?: string;
+  marginUpdatedByName?: string;
+  marginUpdatedByEmail?: string;
+  marginLastChangeReason?: string;
+}
+
+export type MarginConfigurationStatus = 'CONFIGURED' | 'NOT_CONFIGURED' | 'INACTIVE';
+
+export interface ProductMarginConfigRecord {
+  id: string; // Equals productId
+  productId: string;
+  sku: string;
+  productName: string;
+  category: string;
+  destinationId: string;
+  destinationName: string;
+  regionId?: string;
+  regionName?: string;
+  hubId?: string;
+  city?: string;
+  supplierId?: string;
+  supplierName?: string;
+  currency: CurrencyCode | string;
+  marginType: 'PERCENTAGE' | 'FIXED';
+  marginValue: number;
+  b2bAgentMarkupPercent: number;
+  defaultMarkupPercent: number;
+  marginFixed: number;
+  commissionPercent: number;
+  isActive: boolean;
+  status: 'ACTIVE' | 'INACTIVE';
+  applicableScope: 'ALL_B2B' | 'CATEGORY' | 'PRODUCT';
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  updatedByUid: string;
+  updatedByEmail: string;
+  updatedByName: string;
+  updatedByRole: string;
+  changeReason?: string;
+  changeSource: 'MARGIN_GOVERNANCE' | 'PRODUCT_MANAGEMENT' | 'BULK_GOVERNANCE';
+  schemaVersion: number;
+}
+
+export interface ProductMarginAuditRecord {
+  id: string;
+  productId: string;
+  sku: string;
+  productName: string;
+  action: 'MARGIN_CREATED' | 'MARGIN_UPDATED' | 'MARGIN_BULK_UPDATED' | 'COMMISSION_UPDATED' | 'MARGIN_STATUS_CHANGED';
+  previousMarginType: 'PERCENTAGE' | 'FIXED';
+  newMarginType: 'PERCENTAGE' | 'FIXED';
+  previousMarginValue: number | null;
+  newMarginValue: number;
+  previousCommissionPercent: number | null;
+  newCommissionPercent: number;
+  previousStatus: 'ACTIVE' | 'INACTIVE' | 'NOT_CONFIGURED';
+  newStatus: 'ACTIVE' | 'INACTIVE';
+  previousVersion: number;
+  newVersion: number;
+  reason?: string;
+  changeSource: 'MARGIN_GOVERNANCE' | 'PRODUCT_MANAGEMENT' | 'BULK_GOVERNANCE';
+  batchId?: string;
+  actorUid: string;
+  actorEmail: string;
+  actorName: string;
+  actorRole: string;
+  timestamp: string;
 }
 
 export interface TicketTierPrice {
@@ -1850,7 +1960,15 @@ export interface PricingCalculationRequest {
   fleetId?: string;
   assetId?: string;
   bookingDate?: string;
+  serviceEndDate?: string;
+  nights?: number;
+  roomsCount?: number;
+  coverageDays?: number;
   itemId?: string;
+  productName?: string;
+  quoteId?: string;
+  quoteVersion?: number;
+  baseSellingPriceInTargetCurrency?: number;
   surchargeOverrides?: QuotationSurchargeOverride[];
   frozenAppliedSurcharges?: AppliedSurchargeDetail[];
 }
@@ -2101,6 +2219,8 @@ export interface QuoteItem {
   selected_options?: Record<string, any>; // Compact configuration options selected by agent (Section 31)
   calculation: PricingCalculationResult | AgentPricingResponse;
   hubId?: string;
+  itineraryHubOccurrenceId?: string;
+  accommodationStayId?: string;
   hotelId?: string;
   roomTypeId?: string;
   mealPlanCode?: MealPlanCode;
@@ -2167,15 +2287,104 @@ export type QuoteStatus =
   | 'BOOKING_SUBMITTED' 
   | 'ARCHIVED';
 
+export type QuotationVersionManifestStatus = 'PREPARING' | 'COMMITTED' | 'FAILED';
+
+export type QuotationMigrationState =
+  | 'PENDING'
+  | 'IN_PROGRESS'
+  | 'VERIFICATION_FAILED'
+  | 'VERIFIED'
+  | 'COMMITTED';
+
+export type QuotationVersionStorageFormat = 'SINGLE_DOC_V1' | 'SPLIT_SECTIONS_V2';
+
+export type QuotationVersionSectionId =
+  | 'trip_overview'
+  | 'itinerary'
+  | 'accommodation'
+  | 'products_and_services'
+  | 'pricing'
+  | 'commercial_terms'
+  | 'destination_policies'
+  | 'passenger_details'
+  | 'branding_and_output_settings';
+
+export interface QuotationVersionSectionRef {
+  sectionId: string;
+  logicalSection: QuotationVersionSectionId;
+  chunkIndex: number;
+  totalChunks: number;
+  estimatedBytes: number;
+  contentHash: string;
+}
+
+export interface QuotationVersionSectionDocument {
+  id: string;
+  sectionId: string;
+  quoteId: string;
+  versionId: string;
+  versionNumber: number;
+  logicalSection: QuotationVersionSectionId;
+  chunkIndex: number;
+  totalChunks: number;
+  estimatedBytes: number;
+  contentHash: string;
+  agentId?: string;
+  userId?: string;
+  createdAt: string;
+  data: Record<string, any>;
+}
+
+export interface QuotationVersionSummary {
+  id: string;
+  version: number;
+  versionNumber: number;
+  previousVersionId?: string;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string;
+  savedByUserId?: string;
+  savedByName?: string;
+  savedByRole?: string;
+  status?: QuoteVersionRecord['status'];
+  proposalStatus?: QuoteVersionRecord['proposalStatus'];
+  currency?: CurrencyCode;
+  totalSellingPrice: number;
+  theUnboundBaseSellingPrice?: number;
+  agentMarginAmount?: number;
+  totalNetCost?: number;
+  marginAmount?: number;
+  totalItems?: number;
+  totalHubs?: number;
+  changesSummary: string;
+  snapshotHash?: string;
+  clientSaveRequestId?: string;
+  restoredFromVersion?: number;
+  storageFormat?: QuotationVersionStorageFormat;
+  schemaVersion?: number;
+  manifestStatus?: QuotationVersionManifestStatus;
+  sectionCount?: number;
+  chunkCount?: number;
+  committedAt?: string;
+  isLatest?: boolean;
+  isImmutable?: boolean;
+}
+
 export interface QuoteVersionRecord {
   id?: string;
   version: number;
   versionNumber?: number;
   quoteId?: string;
+  quoteNumber?: string;
   leadId?: string;
   previousVersionId?: string;
   updatedAt: string;
   updatedBy: string;
+  savedByUserId?: string;
+  savedByName?: string;
+  savedByRole?: string;
+  agentId?: string;
+  userId?: string;
   createdByName?: string;
   createdAt?: string;
   status?: 'draft' | 'saved' | 'shared' | 'downloaded' | 'accepted' | 'converted' | 'expired' | 'cancelled' | QuoteStatus;
@@ -2183,20 +2392,61 @@ export interface QuoteVersionRecord {
   changesSummary: string;
   title?: string;
   destination?: string;
+  clientName?: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  clientCompany?: string;
+  nationality?: string;
+  travelStyle?: string;
+  mealPlanPreference?: string;
   travelStartDate?: string;
   travelEndDate?: string;
   totalPax?: number;
   adultsCount?: number;
   childrenCount?: number;
   infantsCount?: number;
+  childAges?: number[];
   currency?: CurrencyCode;
   totalNetCost?: number;
   totalSellingPrice: number;
+  finalCustomerSellingPrice?: number;
+  theUnboundBaseSellingPrice?: number;
+  agentMarginType?: AgentMarginType;
+  agentMarginValue?: number;
+  agentMarginAmount?: number;
+  overallDiscountPercent?: number;
   marginPercent?: number;
   marginAmount?: number;
+  adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
+  adminManualMarginValue?: number;
+  adminManualMarginAmount?: number;
+  adminMarginMode?: 'REPLACE' | 'ADD';
+  revisedSellingPrice?: number;
+  productLevelMarginEnabled?: boolean;
+  activeMarginMode?: ActiveMarginMode;
+  agentLevelMarginPercent?: number;
+  companyId?: string;
+  agentAgency?: string;
+  totalItems?: number;
+  totalHubs?: number;
   items?: QuoteItem[];
+  routeHubs?: TripRouteHub[];
+  dayThemes?: Record<number, string>;
+  dayDescriptions?: Record<number, string>;
+  dayOverviews?: Record<number, string>;
+  dayNotes?: Record<number, string>;
+  itineraryOverview?: string;
+  inclusions?: string[];
+  exclusions?: string[];
+  importantInformation?: string;
+  cancellationPolicy?: string;
+  options?: QuotationOption[];
+  activeOptionId?: string;
+  quotationScope?: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
   pricingSnapshot?: PricingSnapshot;
   currencyConversionSnapshot?: QuotationCurrencySnapshot;
+  commercialTermsSnapshot?: QuotationCommercialTermsSnapshot;
+  authoritativeSnapshot?: AuthoritativeQuotationSnapshot;
   passengerBreakdown?: any;
   roomingConfig?: any;
   agentNotes?: string;
@@ -2205,6 +2455,29 @@ export interface QuoteVersionRecord {
   brandingSnapshot?: AgencyBrandingSnapshot;
   bookingId?: string;
   bookingReference?: string;
+  snapshotHash?: string;
+  clientSaveRequestId?: string;
+  restoredFromVersion?: number;
+  isLatest?: boolean;
+  isImmutable?: boolean;
+  // Split-Document Version Architecture (v2)
+  storageFormat?: QuotationVersionStorageFormat;
+  schemaVersion?: number;
+  manifestStatus?: QuotationVersionManifestStatus;
+  sections?: QuotationVersionSectionRef[];
+  sectionIds?: string[];
+  sectionCount?: number;
+  chunkCount?: number;
+  sectionsIntegrityHash?: string;
+  totalReconstructedBytes?: number;
+  committedAt?: string;
+  failureReason?: string;
+  hasHydratedSections?: boolean;
+  migrationStatus?: 'MIGRATED_FROM_V1' | 'NATIVE_V2';
+  migrationState?: QuotationMigrationState;
+  migratedAt?: string;
+  verifiedAt?: string;
+  failingFieldPaths?: string[];
   sharedHistory?: {
     type: 'WHATSAPP' | 'EMAIL' | 'DOWNLOAD';
     recipient?: string;
@@ -2252,10 +2525,161 @@ export interface PricingSnapshot {
   adminManualMarginAmount?: number;
   adminMarginMode?: 'REPLACE' | 'ADD';
   revisedSellingPrice?: number;
+  productLevelMarginEnabled?: boolean;
+  activeMarginMode?: ActiveMarginMode;
+  agentLevelMarginPercent?: number;
+  taxesTotal?: number;
+  serviceFeesTotal?: number;
+  discountsTotal?: number;
   surchargesTotal?: number;
   appliedSurcharges?: AppliedSurchargeDetail[];
   surchargeOverrides?: QuotationSurchargeOverride[];
   currencyConversionSnapshot?: QuotationCurrencySnapshot;
+  activeOptionId?: string;
+  snapshotHash?: string;
+}
+
+export type QuotationOutputOptionKey =
+  | 'SAVE_DRAFT'
+  | 'PREVIEW_PROPOSAL'
+  | 'DOWNLOAD_PDF'
+  | 'SEND_EMAIL'
+  | 'SHARE_WHATSAPP'
+  | 'SAVE_MASTER_PACKAGE'
+  | 'CONVERT_BOOKING';
+
+export type QuotationGenerationHistoryStatus = 'SUCCEEDED' | 'BLOCKED_CONSISTENCY' | 'FAILED';
+
+export interface QuotationGenerationRecord {
+  id: string;
+  quoteId: string;
+  quoteNumber: string;
+  versionNumber: number;
+  snapshotHash: string;
+  outputOption: QuotationOutputOptionKey;
+  outputLabel: string;
+  brandingMode: QuoteBrandingMode;
+  selectedOptionId?: string;
+  currency: CurrencyCode;
+  finalCustomerSellingPrice: number;
+  status: QuotationGenerationHistoryStatus;
+  recipient?: string;
+  targetEntityId?: string;
+  targetReference?: string;
+  errorMessage?: string;
+  mismatchDetails?: string[];
+  generatedAt: string;
+  generatedById?: string;
+  generatedByName: string;
+}
+
+export interface AuthoritativeQuotationSnapshot {
+  snapshotId: string;
+  quoteId: string;
+  quoteNumber: string;
+  versionNumber: number;
+  commercialContentHash: string;
+  snapshotHash: string;
+  createdAt: string;
+  updatedAt: string;
+  calculatedAt: string;
+  status: QuoteStatus;
+  isLocked: boolean;
+  selectedOptionId?: string;
+  selectedOptionTitle?: string;
+  quotationScope: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
+  sourcePackageId?: string;
+  sourcePackageName?: string;
+  client: {
+    clientUserId?: string;
+    name: string;
+    email?: string;
+    phone?: string;
+    company?: string;
+  };
+  agency: {
+    agentId: string;
+    agentName: string;
+    agentEmail?: string;
+    agentAgency?: string;
+    agentPhone?: string;
+    agentLogoUrl?: string;
+  };
+  branding: {
+    mode: QuoteBrandingMode;
+    snapshot: AgencyBrandingSnapshot;
+  };
+  trip: {
+    title: string;
+    destination: string;
+    travelStartDate?: string;
+    travelEndDate?: string;
+    totalPax: number;
+    adultsCount: number;
+    childrenCount: number;
+    infantsCount: number;
+    childAges?: number[];
+    passengerBreakdown?: Quotation['passengerBreakdown'];
+    roomingConfig?: Quotation['roomingConfig'];
+    nationality?: string;
+    travelStyle?: string;
+    mealPlanPreference?: string;
+    visaAssistanceChoice?: Quotation['visaAssistanceChoice'];
+    routeHubs: TripRouteHub[];
+  };
+  itinerary: {
+    itineraryOverview?: string;
+    dayThemes?: Record<number, string>;
+    dayDescriptions?: Record<number, string>;
+    dayOverviews?: Record<number, string>;
+    dayNotes?: Record<number, string>;
+    inclusions: string[];
+    exclusions: string[];
+    importantInformation?: string;
+    cancellationPolicy?: string;
+    agentNotes?: string;
+    operationalRemarks?: string[];
+    customOperationalRemarks?: string;
+    itemsCount: number;
+  };
+  pricing: {
+    currency: CurrencyCode;
+    theUnboundBaseSellingPrice: number;
+    baseFinalSellingPrice: number;
+    agentMarginType: AgentMarginType;
+    agentMarginValue: number;
+    agentMarginAmount: number;
+    productLevelAgentMarkupTotal: number;
+    overallAgentMarkupAmount: number;
+    totalAgentAdditionalMarkupAmount: number;
+    adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
+    adminManualMarginValue?: number;
+    adminManualMarginAmount?: number;
+    adminMarginMode?: 'REPLACE' | 'ADD';
+    revisedSellingPrice?: number;
+    productLevelMarginEnabled?: boolean;
+    activeMarginMode?: ActiveMarginMode;
+    agentLevelMarginPercent?: number;
+    overallDiscountPercent: number;
+    discountsTotal: number;
+    taxesTotal: number;
+    serviceFeesTotal: number;
+    surchargesTotal: number;
+    appliedSurcharges: AppliedSurchargeDetail[];
+    surchargeOverrides: QuotationSurchargeOverride[];
+    hotelAccommodationTotal: number;
+    landPartTotal: number;
+    finalCustomerSellingPrice: number;
+    pricePerPerson: number;
+    totalGroundLogisticsSnapshot?: number;
+    currencyConversionSnapshot?: QuotationCurrencySnapshot;
+  };
+  commercialTerms: {
+    termsStatus?: QuotationTermsStatus;
+    snapshot?: QuotationCommercialTermsSnapshot;
+    plainText: string;
+    termsExceptionApproval?: QuotationTermsExceptionApproval;
+  };
 }
 
 export interface QuoteActivityRecord {
@@ -2344,10 +2768,14 @@ export interface Quotation {
   agentEmail?: string;
   agentAgency?: string;
   agentCompany?: string;
+  companyId?: string;
   agentLogoUrl?: string;
   agentPhone?: string;
   brandingMode?: QuoteBrandingMode;
   brandingSnapshot?: AgencyBrandingSnapshot;
+  productLevelMarginEnabled?: boolean;
+  activeMarginMode?: ActiveMarginMode;
+  agentLevelMarginPercent?: number;
 
   // Target Client / User Details
   clientUserId?: string; // Links to registered User account (e.g. usr-buyer-01)
@@ -2494,6 +2922,16 @@ export interface Quotation {
   appliedSurcharges?: AppliedSurchargeDetail[];
   surchargeOverrides?: QuotationSurchargeOverride[];
 
+  // Destination-Wise Commercial Quotation Terms Snapshot & Readiness State
+  termsStatus?: QuotationTermsStatus;
+  commercialTermsSnapshot?: QuotationCommercialTermsSnapshot;
+  missingTermsDestinations?: Array<{
+    targetId: string;
+    targetName: string;
+    targetType: DestinationTermsTargetType;
+  }>;
+  termsExceptionApproval?: QuotationTermsExceptionApproval;
+
   // Protected Internal Commercial Fields (CMS/Admin Only)
   internalNettCost?: number;
   internalMarkup?: number;
@@ -2502,6 +2940,154 @@ export interface Quotation {
   supplierCost?: number;
   rateSnapshot?: any;
   commercialNotes?: string;
+
+  // Authoritative Synchronised Snapshot & Output Generation History (Safe for B2B & Client Outputs)
+  snapshotVersion?: number;
+  snapshotHash?: string;
+  authoritativeSnapshot?: AuthoritativeQuotationSnapshot;
+  generationHistory?: QuotationGenerationRecord[];
+
+  // Canonical Explicit-Save Version Metadata
+  latestVersion?: number;
+  latestVersionId?: string;
+  latestSavedAt?: string;
+  latestSavedBy?: string;
+  versionCount?: number;
+  restoredFromVersion?: number;
+  versionSummaries?: QuotationVersionSummary[];
+  masterHydratedFromVersionId?: string;
+  userId?: string;
+  migrationStatus?: 'MIGRATED_FROM_V1' | 'NATIVE_V2';
+  migrationState?: QuotationMigrationState;
+  migratedAt?: string;
+  verifiedAt?: string;
+  versionMigrationStates?: Record<
+    string,
+    {
+      state: QuotationMigrationState;
+      updatedAt: string;
+      error?: string;
+      failingFieldPaths?: string[];
+    }
+  >;
+}
+
+export interface GroupedLeadQuotationVersions {
+  quoteId: string;
+  quoteNumber: string;
+  quotation: Quotation;
+  latestVersionNumber: number;
+  totalVersions: number;
+  versions: QuoteVersionRecord[];
+}
+
+export type DestinationTermsTargetType = 'DESTINATION' | 'REGION' | 'HUB';
+export type DestinationTermsPublicationStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+export type QuotationTermsStatus =
+  | 'DRAFT_UNCHECKED'
+  | 'TERMS_MISSING'
+  | 'TERMS_CONFIGURED'
+  | 'TERMS_APPROVED'
+  | 'QUOTATION_FINALISED';
+
+export interface DestinationTermsSection {
+  sectionId: string;
+  heading: string;
+  description?: string;
+  htmlContent: string;
+  displayOrder: number;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface DestinationCommercialTermsConfig {
+  id: string;
+  targetId: string;
+  targetType: DestinationTermsTargetType;
+  targetName: string;
+  parentDestinationId?: string;
+  parentDestinationName?: string;
+  version: number;
+  status: DestinationTermsPublicationStatus;
+  isActive: boolean;
+  allowParentInheritance: boolean;
+  sections: DestinationTermsSection[];
+  draftSections?: DestinationTermsSection[];
+  hasUnpublishedDraft?: boolean;
+  sourceTemplateType?: 'TEMPLATE_16' | 'COPIED' | 'SCRATCH';
+  copiedFromTargetId?: string;
+  copiedFromTargetName?: string;
+  contentHash?: string;
+  createdAt: string;
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
+  updatedByRole?: string;
+  updatedByEmail?: string;
+  publishedAt?: string;
+  publishedBy?: string;
+}
+
+export interface DestinationTermsVersionRecord {
+  id: string;
+  termsConfigId: string;
+  targetId: string;
+  targetName: string;
+  targetType?: DestinationTermsTargetType;
+  version: number;
+  status: DestinationTermsPublicationStatus;
+  allowParentInheritance: boolean;
+  sections: DestinationTermsSection[];
+  changeSummary: string;
+  createdAt: string;
+  createdBy: string;
+  createdByEmail?: string;
+}
+
+export interface QuotationDestinationTermsEntry {
+  targetId: string;
+  targetType: DestinationTermsTargetType;
+  targetName: string;
+  configId: string;
+  version: number;
+  inheritedFromParentId?: string;
+  inheritedFromParentName?: string;
+  consolidatedTargetIds?: string[];
+  consolidatedTargetNames?: string[];
+  contentHash: string;
+  sections: DestinationTermsSection[];
+  htmlText: string;
+  plainText: string;
+  whatsAppText: string;
+}
+
+export interface QuotationTermsExceptionApproval {
+  approved: boolean;
+  approvedBy: string;
+  approvedByEmail?: string;
+  approvedAt: string;
+  reason: string;
+  missingDestinationIds: string[];
+  missingDestinationNames?: string[];
+}
+
+export interface QuotationCommercialTermsSnapshot {
+  snapshotId: string;
+  capturedAt: string;
+  capturedBy: string;
+  quoteVersion: number;
+  destinationIds: string[];
+  destinationNames: string[];
+  entries: QuotationDestinationTermsEntry[];
+  missingDestinationIds: string[];
+  missingDestinationNames: string[];
+  termsStatus: QuotationTermsStatus;
+  termsExceptionApproval?: QuotationTermsExceptionApproval;
+  combinedHeading: string;
+  combinedHtml: string;
+  combinedPlainText: string;
+  combinedWhatsAppText: string;
 }
 
 /**
@@ -2966,6 +3552,11 @@ export interface BookingItem {
   reconfirmationReason?: string;
 
   accommodationType?: AccommodationType;
+  productType?: string;
+  service_type?: string;
+  itemType?: string;
+  hotelId?: string;
+  isHotel?: boolean;
   isManualHotel?: boolean;
   manualHotelDetails?: ManualHotelDetails;
   
@@ -3036,6 +3627,10 @@ export interface BookingItem {
     duration?: string;
     voucherCode?: string;
   };
+  inclusions?: string[];
+  exclusions?: string[];
+  visaSnapshot?: QuoteVisaSnapshot;
+  contentSnapshot?: QuoteItemContentSnapshot;
 }
 
 export interface SentEmailRecord {
@@ -3279,6 +3874,8 @@ export interface Booking {
   quoteNumber?: string;
   sourceQuoteId?: string;
   sourceQuoteVersionId?: string;
+  sourceSnapshotVersion?: number;
+  sourceSnapshotHash?: string;
   bookingVersionNumber?: number;
   voucherIds?: string[];
   completeVoucherId?: string;
@@ -3370,6 +3967,14 @@ export interface Booking {
   final_customer_selling_price?: number;
   pricingSnapshot?: PricingSnapshot;
   pricing_snapshot?: PricingSnapshot;
+  hotelAccommodationTotal?: number;
+  landPartTotal?: number;
+  surchargesTotal?: number;
+  appliedSurcharges?: AppliedSurchargeDetail[];
+  brandingMode?: QuoteBrandingMode;
+  brandingSnapshot?: AgencyBrandingSnapshot;
+  commercialTermsSnapshot?: QuotationCommercialTermsSnapshot;
+  termsAndConditions?: string;
 }
 
 /**
@@ -3934,7 +4539,25 @@ export type AuditAction =
   | 'SURCHARGE_CREATED'
   | 'SURCHARGE_UPDATED'
   | 'SURCHARGE_ARCHIVED'
-  | 'SURCHARGE_DELETED';
+  | 'SURCHARGE_DELETED'
+  // Cashback & Rewards Wallet Actions
+  | 'CASHBACK_CONFIG_UPDATED'
+  | 'CASHBACK_ELIGIBILITY_CHANGED'
+  | 'CASHBACK_BOOKING_SNAPSHOT_CREATED'
+  | 'CASHBACK_CREDITED'
+  | 'CASHBACK_REVERSED'
+  | 'CASHBACK_ADJUSTED'
+  | 'CASHBACK_ON_HOLD'
+  | 'WITHDRAWAL_SUBMITTED'
+  | 'WITHDRAWAL_STATUS_UPDATED'
+  | 'WITHDRAWAL_APPROVED'
+  | 'WITHDRAWAL_REJECTED'
+  | 'WITHDRAWAL_PAID'
+  | 'WITHDRAWAL_CANCELLED'
+  | 'BANK_ACCOUNT_ADDED'
+  | 'BANK_ACCOUNT_UPDATED'
+  | 'BANK_ACCOUNT_DELETED'
+  | 'CASHBACK_POLICY_UPDATED';
 
 export type CMSDeletableEntityType =
   | 'Product'
@@ -4201,6 +4824,7 @@ export type AdminActivityType =
   | 'PAYMENT_PROOF_VERIFIED'
   | 'PAYMENT_PROOF_REJECTED'
   | 'PAYMENT_OVERDUE'
+  | 'CASHBACK_WITHDRAWAL_SUBMITTED'
   // Operations Activities
   | 'OPERATIONS_JOB_CREATED'
   | 'OPERATIONS_JOB_UPDATED'
@@ -6605,6 +7229,16 @@ export interface ConnectivityPlan {
   updatedAt?: string;
 }
 
+export interface VisaInclusionExclusionEntry {
+  id: string;
+  title: string;
+  description?: string;
+  displayOrder: number;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface QuoteVisaSnapshot {
   visaId: string;
   visaName: string;
@@ -6612,6 +7246,10 @@ export interface QuoteVisaSnapshot {
   visaType: string;
   applicantNationality: string;
   applicantProfile?: string;
+  inclusions?: VisaInclusionExclusionEntry[];
+  exclusions?: VisaInclusionExclusionEntry[];
+  configVersion?: number;
+  masterUpdatedAt?: string;
   selectedAssistanceServices?: VisaAssistanceService[];
   applicableChecklist: StructuredVisaRequirement[];
   pricing: {
@@ -6673,6 +7311,9 @@ export interface VisaProduct {
   description: string;
   documentsChecklist: string[];
   structuredRequirements?: StructuredVisaRequirement[];
+  inclusions?: VisaInclusionExclusionEntry[];
+  exclusions?: VisaInclusionExclusionEntry[];
+  inclusionsExclusionsVersion?: number;
   assistanceServices?: VisaAssistanceService[];
   requirementVersion?: number;
   detailedRequirements?: VisaDocumentRequirement[];
@@ -7050,8 +7691,21 @@ export interface SavedHubAccommodationSnapshot {
   savedHotelItem?: any;
 }
 
+export interface HubRoomConfiguration {
+  roomTypeId?: string;
+  roomTypeName?: string;
+  roomsCount: number;
+  mealPlanCode?: MealPlanCode | string;
+  mealPlanName?: string;
+  adults?: number;
+  children?: number;
+  infants?: number;
+}
+
 export interface TripRouteHub {
   id: string;
+  itineraryHubOccurrenceId?: string;
+  accommodationStayId?: string;
   hubId: string;
   hubName: string;
   destinationId?: string;
@@ -7064,14 +7718,18 @@ export interface TripRouteHub {
   mealPlanId?: string;
   mealPlanCode?: MealPlanCode;
   roomsCount?: number;
+  roomConfiguration?: HubRoomConfiguration;
   accommodationType?: AccommodationType;
   isManualHotel?: boolean;
   manualHotel?: ManualHotelDetails;
   landOnlyOverride?: boolean;
+  overriddenByLandOnly?: boolean;
   previousAccommodationConfig?: SavedHubAccommodationSnapshot;
   savedAccommodationSnapshot?: SavedHubAccommodationSnapshot;
   savedAccommodationConfig?: SavedHubAccommodationSnapshot;
   notes?: string;
+  checkInDate?: string;
+  checkOutDate?: string;
   source?: QuoteItemSource;
   aiSuggested?: boolean;
 }
@@ -7236,6 +7894,9 @@ export interface B2BPackage {
   seo?: PackageSEO | EntitySEO;
   isFeatured?: boolean;
   isPublished: boolean;
+  sourceQuoteId?: string;
+  sourceSnapshotVersion?: number;
+  sourceSnapshotHash?: string;
   createdBy?: string;
   updatedBy?: string;
   createdAt: string;
@@ -7294,6 +7955,7 @@ export type B2BTabType =
   | 'bookings' 
   | 'customers' 
   | 'tasks' 
+  | 'my-cashback'
   | 'account';
 
 export type B2BNavTab = B2BTabType;
@@ -7301,7 +7963,7 @@ export type B2BNavTab = B2BTabType;
 export interface AgentAssignmentNotification {
   id: string;
   deduplicationKey: string;
-  entityType: 'LEAD' | 'BOOKING';
+  entityType: 'LEAD' | 'BOOKING' | 'CASHBACK' | 'WITHDRAWAL';
   entityId: string;
   entityReference: string;
   agentUserId: string;
@@ -7313,7 +7975,8 @@ export interface AgentAssignmentNotification {
   message: string;
   isRead: boolean;
   createdAt: string;
-  deepLinkTab: 'leads' | 'bookings';
+  deepLinkTab: 'leads' | 'bookings' | 'my-cashback' | 'account';
+  metadata?: Record<string, any>;
 }
 
 // ----------------------------------------------------
@@ -7772,6 +8435,399 @@ export interface ImageMetadata {
   updatedAt: string;
   lastSyncedAt?: string;
 }
+
+// ====================================================
+// THEUNBOUND CASHBACK & REWARDS WALLET TYPES
+// ====================================================
+
+export type CashbackEligibilityStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+
+export type CashbackPresetType = '1%' | '2%' | '5%' | 'CUSTOM';
+
+export interface UserCashbackConfiguration {
+  id?: string;
+  userId: string; // Firebase Auth UID / authoritative user.id
+  agencyId?: string;
+  userName?: string;
+  userEmail?: string;
+  isEligible: boolean;
+  cashbackPercent: number;
+  presetType: CashbackPresetType;
+  status: CashbackEligibilityStatus;
+  effectiveFrom: string; // YYYY-MM-DD
+  effectiveTo?: string | null; // optional expiry YYYY-MM-DD
+  showInformationalNoticeWhenIneligible?: boolean;
+  notes?: string;
+  configVersion: number;
+  createdAt: string;
+  createdByUid: string;
+  updatedAt: string;
+  updatedByUid: string;
+  updatedByName: string;
+}
+
+export interface UserCashbackConfigHistoryRecord {
+  id: string;
+  userId: string;
+  previousPercent: number | null;
+  newPercent: number;
+  previousEligible: boolean;
+  newEligible: boolean;
+  previousStatus: CashbackEligibilityStatus | 'NONE';
+  newStatus: CashbackEligibilityStatus;
+  reason: string;
+  changedAt: string;
+  changedByUid: string;
+  changedByName: string;
+  changedByEmail?: string;
+}
+
+export interface CashbackCurrencyBucket {
+  currency: string;
+  availableBalance: number;
+  pendingBalance: number;
+  heldInWithdrawals: number;
+  totalCredited: number;
+  totalWithdrawn: number;
+  totalReversed: number;
+}
+
+export interface CashbackWalletSummary {
+  id?: string;
+  userId: string;
+  primaryCurrency: string;
+  availableBalance: number;
+  pendingCashback: number;
+  heldCashback: number;
+  withdrawalPendingBalance: number;
+  totalCredited: number;
+  totalWithdrawn: number;
+  totalReversed: number;
+  balancesByCurrency: Record<string, CashbackCurrencyBucket>;
+  lastReconciledAt: string;
+  updatedAt: string;
+}
+
+export type CashbackLedgerTransactionType =
+  | 'CASHBACK_CREDIT'
+  | 'WITHDRAWAL_HOLD'
+  | 'WITHDRAWAL_RELEASE'
+  | 'WITHDRAWAL_DEBIT'
+  | 'ADMIN_CREDIT_ADJUSTMENT'
+  | 'ADMIN_DEBIT_ADJUSTMENT'
+  | 'CASHBACK_REVERSAL';
+
+export interface CashbackLedgerTransaction {
+  id: string;
+  userId: string;
+  agencyId?: string;
+  type: CashbackLedgerTransactionType;
+  direction: 'CREDIT' | 'DEBIT' | 'HOLD' | 'RELEASE' | 'REVERSAL';
+  amount: number;
+  currency: string;
+  balanceAfterAvailable: number;
+  bookingId?: string;
+  bookingReference?: string;
+  bookingCashbackRecordId?: string;
+  withdrawalRequestId?: string;
+  idempotencyKey: string;
+  description: string;
+  reason?: string;
+  createdAt: string;
+  createdByUid: string;
+  createdByName: string;
+}
+
+export type BookingCashbackStatus =
+  | 'PENDING'
+  | 'HELD'
+  | 'CREDITED'
+  | 'PARTIALLY_REVERSED'
+  | 'REVERSED'
+  | 'CANCELLED'
+  | 'NOT_ELIGIBLE';
+
+export interface BookingCashbackAmendmentEntry {
+  amendedAt: string;
+  amendedByUid: string;
+  amendedByName: string;
+  reason: string;
+  previousTravelEndDate?: string;
+  newTravelEndDate?: string;
+  previousHotelTotal?: number;
+  newHotelTotal?: number;
+  previousLandPartTotal?: number;
+  newLandPartTotal?: number;
+  previousEligibleAmount?: number;
+  newEligibleAmount?: number;
+  previousCashbackAmount?: number;
+  newCashbackAmount?: number;
+}
+
+export interface BookingCashbackLineItemSnapshot {
+  itemId: string;
+  productId?: string;
+  productName: string;
+  category: string;
+  productType?: string;
+  amount: number;
+  included: boolean;
+  exclusionReason?: string;
+}
+
+export interface BookingCashbackComponentBreakdown {
+  baseSellAmount: number;
+  hotelAccommodationTotal: number;
+  landPartTotal: number;
+  taxExcludedAmount: number;
+  feeExcludedAmount: number;
+  surchargeAmount: number;
+  discountDeductedAmount: number;
+  landPartLineItems?: BookingCashbackLineItemSnapshot[];
+  excludedAccommodationItems?: BookingCashbackLineItemSnapshot[];
+}
+
+export interface BookingCashbackRecord {
+  id: string; // deterministic: cb-{bookingId}
+  bookingId: string;
+  bookingReference: string;
+  userId: string; // permanent owning user UID (immutable across agency moves)
+  agencyId?: string;
+  agencyName?: string;
+  userName?: string;
+  userEmail?: string;
+  customerName?: string;
+  destinationName?: string;
+  destinationTimezone: string;
+  travelStartDate?: string;
+  travelEndDate: string; // authoritative completion date YYYY-MM-DD
+  scheduledCreditDate: string; // YYYY-MM-DD (travelEndDate + delay days)
+  scheduledCreditAtUtc: string; // destination midnight UTC ISO timestamp
+  bookingCreatedDate: string;
+  bookingTotalSnapshot: number;
+  hotelAccommodationTotal: number;
+  landPartTotal: number;
+  eligibleAmount: number; // Strictly equal to eligible Land Part Total
+  cashbackPercent: number;
+  cashbackAmount: number;
+  remainingCashbackAmount: number;
+  reversedAmount?: number;
+  currency: string;
+  configVersionSnapshot: number;
+  policyVersionSnapshot?: number;
+  pricingSnapshotVersion?: number | string;
+  verificationStatus?: 'VERIFIED' | 'UNVERIFIED_HOLD';
+  calculatedAt?: string;
+  componentBreakdown: BookingCashbackComponentBreakdown;
+  status: BookingCashbackStatus;
+  isDisputed?: boolean;
+  holdReason?: string;
+  creditedAt?: string;
+  creditLedgerTransactionId?: string;
+  cancelledAt?: string;
+  amendmentHistory?: BookingCashbackAmendmentEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BankAccountType = 'SAVINGS' | 'CURRENT';
+
+export interface UserBankAccount {
+  id: string;
+  userId: string;
+  accountHolderName: string;
+  bankName: string;
+  branchName?: string;
+  accountNumberMasked: string; // e.g. XXXXXX1234
+  accountNumberLast4: string;
+  // Never exposed in B2B UI, notifications, logs, or quote/PDF outputs; retrieved only via audited Finance payout access
+  accountNumberStored?: string;
+  accountType: BankAccountType;
+  ifscCode?: string;
+  swiftCode?: string;
+  iban?: string;
+  country: string;
+  currency: string;
+  isDefault: boolean;
+  isVerified?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MaskedBankDetailsSnapshot {
+  id: string;
+  accountHolderName: string;
+  bankName: string;
+  branchName?: string;
+  accountNumberMasked: string;
+  accountNumberLast4: string;
+  accountType?: BankAccountType;
+  ifscCode?: string;
+  swiftCode?: string;
+  iban?: string;
+  country?: string;
+  currency?: string;
+}
+
+export type WithdrawalStatus =
+  | 'SUBMITTED'
+  | 'UNDER_REVIEW'
+  | 'APPROVED'
+  | 'PROCESSING'
+  | 'PAID'
+  | 'REJECTED'
+  | 'CANCELLED';
+
+export type CashbackWithdrawalStatus = WithdrawalStatus;
+
+export interface WithdrawalStatusHistoryEntry {
+  status: WithdrawalStatus;
+  changedAt: string;
+  changedByUid: string;
+  changedByName: string;
+  note?: string;
+}
+
+export interface CashbackWithdrawalRequest {
+  id: string;
+  requestNumber: string;
+  userId: string;
+  userName?: string;
+  userEmail?: string;
+  agencyId?: string;
+  agencyName?: string;
+  requestedAmount: number;
+  currency: string;
+  bankAccountId: string;
+  bankSnapshotMasked: MaskedBankDetailsSnapshot;
+  status: WithdrawalStatus;
+  holdLedgerTransactionId: string;
+  debitLedgerTransactionId?: string;
+  releaseLedgerTransactionId?: string;
+  userNotes?: string;
+  internalNotes?: string;
+  rejectionReason?: string;
+  paymentReference?: string;
+  paymentMethod?: string;
+  paymentDate?: string;
+  approvedAt?: string;
+  approvedByUid?: string;
+  approvedByName?: string;
+  paidAt?: string;
+  paidByUid?: string;
+  paidByName?: string;
+  rejectedAt?: string;
+  rejectedByUid?: string;
+  rejectedByName?: string;
+  statusHistory: WithdrawalStatusHistoryEntry[];
+  idempotencyKey: string;
+  submittedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CashbackEligibleComponentsPolicy {
+  baseProductSellPrice: boolean;
+  hotels: boolean;
+  transfers: boolean;
+  activities: boolean;
+  tours: boolean;
+  visas: boolean;
+  packages: boolean;
+  includeTaxes: boolean;
+  includeServiceFees: boolean;
+  includeSurcharges: boolean;
+  deductDiscounts: boolean;
+}
+
+export interface CashbackPolicyConfig {
+  id: 'cashback_policy';
+  creditDelayDays: number; // default: 3
+  defaultCurrency: string;
+  minWithdrawalAmount: number; // e.g. 500
+  maxWithdrawalAmount: number; // e.g. 500000
+  requireFullPaymentBeforeCredit: boolean;
+  requireConfirmedBookingStatus: boolean;
+  allowWithdrawalOnlyWhenActive: boolean;
+  showCashbackTabToIneligibleUsers: boolean;
+  holdOnDispute: boolean;
+  maxCashbackPercentCeiling: number;
+  eligibleComponents: CashbackEligibleComponentsPolicy;
+  updatedAt: string;
+  updatedByUid: string;
+  updatedByName: string;
+  version: number;
+}
+
+export interface CashbackAdminMetrics {
+  totalCashbackUsers: number;
+  eligibleUsersCount: number;
+  totalPendingCashback: number;
+  totalCreditedCashback: number;
+  totalAvailableForWithdrawal: number;
+  totalWithdrawalRequests: number;
+  pendingWithdrawalRequests: number;
+  approvedWithdrawalsCount: number;
+  paidWithdrawalsCount: number;
+  rejectedWithdrawalsCount: number;
+  totalPaidOut: number;
+}
+
+export interface CashbackAuditLogRecord {
+  id: string;
+  action: AuditAction | string;
+  actorUid: string;
+  actorName: string;
+  actorRole: string;
+  targetUserId?: string;
+  entityType:
+    | 'USER_CONFIG'
+    | 'BOOKING_CASHBACK'
+    | 'LEDGER_TX'
+    | 'WITHDRAWAL_REQUEST'
+    | 'BANK_ACCOUNT'
+    | 'POLICY'
+    | 'SCHEDULER_RUN';
+  entityId: string;
+  bookingId?: string;
+  bookingReference?: string;
+  withdrawalRequestId?: string;
+  previousValue?: string;
+  newValue?: string;
+  amount?: number;
+  currency?: string;
+  reason?: string;
+  summary: string;
+  timestamp: string;
+}
+
+export interface CashbackNotificationEvent {
+  id: string;
+  userId: string;
+  type:
+    | 'CONFIG_CHANGED'
+    | 'CASHBACK_PENDING_CREATED'
+    | 'CASHBACK_CREDITED'
+    | 'CASHBACK_REVERSED'
+    | 'CASHBACK_HELD'
+    | 'WITHDRAWAL_SUBMITTED'
+    | 'WITHDRAWAL_APPROVED'
+    | 'WITHDRAWAL_PAID'
+    | 'WITHDRAWAL_REJECTED'
+    | 'WITHDRAWAL_CANCELLED';
+  title: string;
+  message: string;
+  bookingId?: string;
+  bookingReference?: string;
+  withdrawalRequestId?: string;
+  amount?: number;
+  currency?: string;
+  deduplicationKey: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+
 
 
 

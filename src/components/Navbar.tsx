@@ -70,7 +70,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['menu_items'], () => {
       setCmsMenuItems(db.getMenuItems());
     });
   }, [db]);
@@ -324,6 +324,8 @@ export const Navbar: React.FC<NavbarProps> = ({
               <img 
                 src="/White Icon.jpg?v=3" 
                 alt="TheUnbound" 
+                loading="eager"
+                decoding="async"
                 onError={(e) => {
                   (e.currentTarget as HTMLImageElement).src = '/white-icon.jpg?v=3';
                 }}
@@ -457,6 +459,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <img
                     src={user.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop'}
                     alt={user.name}
+                    loading="eager"
+                    decoding="async"
                     className="w-7 h-7 rounded-full object-cover ring-1 ring-[#00C6A6]"
                   />
                   <div className="text-left hidden md:block">

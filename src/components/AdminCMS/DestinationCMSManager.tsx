@@ -25,23 +25,29 @@ import {
   Filter,
   RefreshCw,
   AlertCircle,
-  Package
+  Package,
+  FileText
 } from 'lucide-react';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { MasterDataDiagnosticBanner } from './MasterDataDiagnosticBanner';
+import { DestinationTermsManagerPanel } from './DestinationTermsManagerPanel';
+import { destinationTermsService } from '../../services/destinationTermsService';
+import { DestinationCommercialTermsConfig } from '../../types';
 
 interface DestinationCMSManagerProps {
   onSelectDestination?: (slug: string) => void;
   onNavigateToHubs?: (destinationId?: string) => void;
   onNavigateToRegions?: () => void;
   initialRegionFilter?: string;
+  initialTermsTargetId?: string;
 }
 
 export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({ 
   onSelectDestination,
   onNavigateToHubs,
   onNavigateToRegions,
-  initialRegionFilter = 'ALL'
+  initialRegionFilter = 'ALL',
+  initialTermsTargetId
 }) => {
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
@@ -53,7 +59,11 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatusFilter, setSelectedStatusFilter] = useState<string>('ALL');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalTab, setModalTab] = useState<'CONTENT' | 'SEO'>('CONTENT');
+  const [modalTab, setModalTab] = useState<'CONTENT' | 'COMMERCIAL_TERMS' | 'SEO'>('CONTENT');
+  const [activeTermsTargetId, setActiveTermsTargetId] = useState<string | undefined>(initialTermsTargetId);
+  const [termsConfigs, setTermsConfigs] = useState<DestinationCommercialTermsConfig[]>(() =>
+    destinationTermsService.getAllCachedConfigs()
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
@@ -93,11 +103,36 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
 
   useEffect(() => {
     refresh();
+    destinationTermsService.getAllConfigsForAdminAsync().then(setTermsConfigs);
     const unsub = db.subscribe(() => {
       refresh();
     });
-    return () => unsub();
+    const unsubTerms = destinationTermsService.subscribe(() => {
+      setTermsConfigs(destinationTermsService.getAllCachedConfigs());
+    });
+    return () => {
+      unsub();
+      unsubTerms();
+    };
   }, [db]);
+
+  useEffect(() => {
+    if (!initialTermsTargetId) return;
+    const resolved = destinationTermsService.resolveCanonicalTarget({ targetId: initialTermsTargetId });
+    const parentId = resolved.parentDestinationId || resolved.targetId;
+    const matchingDest = destinations.find(
+      (d) =>
+        d.id === parentId ||
+        destinationTermsService.resolveCanonicalTarget({ targetId: d.id, targetType: 'DESTINATION' }).targetId === parentId
+    );
+    if (matchingDest) {
+      setEditingDest(matchingDest);
+      setFormData({ ...matchingDest });
+      setActiveTermsTargetId(resolved.targetId);
+      setModalTab('COMMERCIAL_TERMS');
+      setIsModalOpen(true);
+    }
+  }, [initialTermsTargetId, destinations]);
 
   const handleOpenCreate = () => {
     setSaveError(null);
@@ -134,10 +169,11 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleOpenEdit = (dest: Destination) => {
+  const handleOpenEdit = (dest: Destination, initialTab: 'CONTENT' | 'COMMERCIAL_TERMS' | 'SEO' = 'CONTENT') => {
     setSaveError(null);
     setEditingDest(dest);
-    setModalTab('CONTENT');
+    setActiveTermsTargetId(undefined);
+    setModalTab(initialTab);
     setFormData({ ...dest });
     setIsModalOpen(true);
   };
@@ -471,10 +507,33 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                 </div>
               </div>
 
-              <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
-                <span className="text-[11px] font-mono text-slate-400">slug: /{dest.slug}</span>
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-mono text-slate-400 truncate">slug: /{dest.slug}</span>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1.5 shrink-0">
+                  {(() => {
+                    const destCanonical = destinationTermsService.resolveCanonicalTarget({
+                      targetId: dest.id,
+                      targetName: dest.name,
+                      targetType: 'DESTINATION'
+                    });
+                    const destTermsCfg = termsConfigs.find((c) => c.targetId === destCanonical.targetId);
+                    const hasPublished = destTermsCfg?.status === 'PUBLISHED' && destTermsCfg?.isActive;
+                    return (
+                      <button
+                        onClick={() => handleOpenEdit(dest, 'COMMERCIAL_TERMS')}
+                        className={`px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1 cursor-pointer border transition-colors ${
+                          hasPublished
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                            : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+                        }`}
+                        title="Manage Destination Commercial Quotation Terms"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        <span>{hasPublished ? `Terms v${destTermsCfg!.version}` : 'Terms'}</span>
+                      </button>
+                    );
+                  })()}
                   {onNavigateToHubs && (
                     <button
                       onClick={() => onNavigateToHubs(dest.id)}
@@ -509,7 +568,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
       {/* Modal Dialog */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/70 backdrop-blur-xs animate-in fade-in">
-          <div className="bg-white rounded-2xl sm:rounded-3xl max-w-3xl w-full max-h-[94dvh] sm:max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200">
+          <div className={`bg-white rounded-2xl sm:rounded-3xl ${modalTab === 'COMMERCIAL_TERMS' ? 'max-w-5xl' : 'max-w-3xl'} w-full max-h-[94dvh] sm:max-h-[92vh] flex flex-col overflow-hidden shadow-2xl border border-slate-200 transition-all`}>
             <div className="flex items-center justify-between border-b border-slate-100 p-4 sm:p-6 pb-4 shrink-0 bg-white">
               <div>
                 <div className="flex items-center gap-2 mb-1">
@@ -521,7 +580,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                 <h3 className="text-base sm:text-lg font-bold text-slate-900">
                   {editingDest ? `Edit Destination: ${editingDest.name}` : 'Add New Destination'}
                 </h3>
-                <p className="text-xs text-slate-500">Configure country details, hero imagery, and commercial selling points.</p>
+                <p className="text-xs text-slate-500">Configure country details, commercial quotation terms, hero imagery, and selling points.</p>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -542,6 +601,18 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               >
                 Content & Highlights
               </button>
+              {editingDest && (
+                <button
+                  type="button"
+                  onClick={() => setModalTab('COMMERCIAL_TERMS')}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                    modalTab === 'COMMERCIAL_TERMS' ? 'bg-slate-900 text-[#00E5C0] shadow-xs' : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-200'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Commercial Quotation Terms</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setModalTab('SEO')}
@@ -554,6 +625,18 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
               </button>
             </div>
 
+            {modalTab === 'COMMERCIAL_TERMS' && editingDest ? (
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 modal-body-scroll">
+                <DestinationTermsManagerPanel
+                  destination={editingDest}
+                  regions={regions}
+                  cityHubs={cityHubs}
+                  allDestinations={destinations}
+                  user={user}
+                  initialTargetId={activeTermsTargetId}
+                />
+              </div>
+            ) : (
             <form onSubmit={handleSave} className="flex-1 flex flex-col overflow-hidden text-xs">
               <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 modal-body-scroll">
               {saveError && (
@@ -942,6 +1025,7 @@ export const DestinationCMSManager: React.FC<DestinationCMSManagerProps> = ({
                 </div>
               </div>
             </form>
+            )}
           </div>
         </div>
       )}

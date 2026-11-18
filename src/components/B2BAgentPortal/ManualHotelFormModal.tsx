@@ -26,7 +26,7 @@ interface ManualHotelFormModalProps {
   initialData?: Partial<ManualHotelDetails> | null;
   routeHubs: TripRouteHub[];
   defaultHubId?: string;
-  getHubDates: (order: number, nights: number) => { checkInIso: string; checkOutIso: string };
+  getHubDates: (hubIdOrOrder: string | number, nights?: number) => { checkInIso: string; checkOutIso: string };
   quoteCurrency: CurrencyCode;
   agentMarkupPercent?: number;
   adultsCount?: number;
@@ -67,19 +67,24 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
   childrenCount = 0,
   infantsCount = 0
 }) => {
-  // Target Hub state
+  // Target Hub state (strictly match unique occurrence ID first)
   const selectedHub = useMemo(() => {
-    if (initialData?.hubId) {
-      return routeHubs.find(h => h.id === initialData.hubId || h.hubName.toLowerCase() === initialData.city?.toLowerCase());
+    const targetId = initialData?.itineraryHubOccurrenceId || initialData?.hubId || defaultHubId;
+    if (targetId) {
+      const byId = routeHubs.find(h => h.id === targetId || h.itineraryHubOccurrenceId === targetId);
+      if (byId) return byId;
     }
-    if (defaultHubId) {
-      return routeHubs.find(h => h.id === defaultHubId);
+    if (initialData?.city && !initialData?.hubId && !initialData?.itineraryHubOccurrenceId) {
+      return routeHubs.find(h => h.hubName.toLowerCase() === initialData.city?.toLowerCase());
     }
     return routeHubs[0];
-  }, [routeHubs, defaultHubId, initialData?.hubId, initialData?.city]);
+  }, [routeHubs, defaultHubId, initialData?.hubId, initialData?.itineraryHubOccurrenceId, initialData?.city]);
 
   const [hubId, setHubId] = useState<string>(selectedHub?.id || routeHubs[0]?.id || '');
-  const currentHub = useMemo(() => routeHubs.find(h => h.id === hubId) || routeHubs[0], [routeHubs, hubId]);
+  const currentHub = useMemo(
+    () => routeHubs.find(h => h.id === hubId || h.itineraryHubOccurrenceId === hubId) || routeHubs[0],
+    [routeHubs, hubId]
+  );
 
   // Form Fields
   const [hotelName, setHotelName] = useState<string>('');
@@ -113,16 +118,18 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
     if (!isOpen) return;
 
     if (initialData) {
+      const explicitHubId = initialData.itineraryHubOccurrenceId || initialData.hubId || defaultHubId || selectedHub?.id;
+      if (explicitHubId) setHubId(explicitHubId);
+      const matchedHubForInit = routeHubs.find(h => h.id === explicitHubId || h.itineraryHubOccurrenceId === explicitHubId) || currentHub;
       setHotelName(initialData.hotelName || '');
-      setCity(initialData.city || currentHub?.hubName || 'Tokyo');
-      if (initialData.hubId) setHubId(initialData.hubId);
+      setCity(initialData.city || matchedHubForInit?.hubName || 'Tokyo');
       setStarRating(initialData.starRating || '5-Star Luxury Hotel');
       setAddress(initialData.address || '');
       setRoomType(initialData.roomType || 'Deluxe Room');
       setNumberOfRooms(initialData.numberOfRooms ?? initialData.rooms ?? 1);
-      setNumberOfNights(initialData.numberOfNights ?? initialData.nights ?? currentHub?.nights ?? 2);
-      setCheckInDate(initialData.checkInDate || '');
-      setCheckOutDate(initialData.checkOutDate || '');
+      setNumberOfNights(initialData.numberOfNights ?? initialData.nights ?? matchedHubForInit?.nights ?? 2);
+      setCheckInDate(initialData.checkInDate || matchedHubForInit?.checkInDate || '');
+      setCheckOutDate(initialData.checkOutDate || matchedHubForInit?.checkOutDate || '');
       setMealPlan((initialData.mealPlan as MealPlanCode) || 'BB');
       setMealPlanName(initialData.mealPlanName || '');
       const initRate = initialData.ratePerNight !== undefined
@@ -136,11 +143,10 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
       setInternalNotes(initialData.internalNotes || '');
       setSupplierContact(initialData.supplierContact || '');
     } else {
-      // Default clean initialization
-      const targetHub = currentHub || routeHubs[0];
-      const targetHubOrder = targetHub?.order || 1;
+      // Default clean initialization for the targeted hub occurrence
+      const targetHub = selectedHub || currentHub || routeHubs[0];
       const targetHubNights = targetHub?.nights || 3;
-      const { checkInIso, checkOutIso } = getHubDates(targetHubOrder, targetHubNights);
+      const { checkInIso, checkOutIso } = getHubDates(targetHub?.id || targetHub?.order || 1, targetHubNights);
 
       setHotelName('');
       setCity(targetHub?.hubName || 'Tokyo');
@@ -150,8 +156,8 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
       setRoomType('Deluxe Room');
       setNumberOfRooms(targetHub?.roomsCount || 1);
       setNumberOfNights(targetHubNights);
-      setCheckInDate(checkInIso);
-      setCheckOutDate(checkOutIso);
+      setCheckInDate(targetHub?.checkInDate || checkInIso);
+      setCheckOutDate(targetHub?.checkOutDate || checkOutIso);
       setMealPlan('BB');
       setMealPlanName('');
       setRateCurrency(quoteCurrency || 'JPY');
@@ -163,18 +169,18 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
       setSupplierContact('');
     }
     setErrors({});
-  }, [isOpen, initialData, currentHub, defaultHubId, quoteCurrency]);
+  }, [isOpen, initialData, selectedHub, defaultHubId, quoteCurrency]);
 
-  // When Hub changes, auto-sync city and default dates if not customized
+  // When Hub changes, auto-sync city and default dates for that occurrence
   const handleHubChange = (newHubId: string) => {
     setHubId(newHubId);
-    const foundHub = routeHubs.find(h => h.id === newHubId);
+    const foundHub = routeHubs.find(h => h.id === newHubId || h.itineraryHubOccurrenceId === newHubId);
     if (foundHub) {
       setCity(foundHub.hubName);
       setNumberOfNights(foundHub.nights || 2);
-      const { checkInIso, checkOutIso } = getHubDates(foundHub.order, foundHub.nights || 2);
-      setCheckInDate(checkInIso);
-      setCheckOutDate(checkOutIso);
+      const { checkInIso, checkOutIso } = getHubDates(foundHub.id || foundHub.order, foundHub.nights || 2);
+      setCheckInDate(foundHub.checkInDate || checkInIso);
+      setCheckOutDate(foundHub.checkOutDate || checkOutIso);
     }
   };
 
@@ -290,11 +296,14 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
     const safeNightsVal = Math.max(1, numberOfNights || 1);
     const numericRate = typeof ratePerNight === 'number' ? ratePerNight : 0;
 
+    const resolvedHubId = currentHub?.id || hubId;
     const payload: ManualHotelDetails = {
       id: initialData?.id || `manual-hotel-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       hotelName: hotelName.trim(),
       city: city.trim(),
-      hubId: currentHub?.id || hubId,
+      hubId: resolvedHubId,
+      itineraryHubOccurrenceId: currentHub?.itineraryHubOccurrenceId || resolvedHubId,
+      accommodationStayId: initialData?.accommodationStayId || currentHub?.accommodationStayId,
       hubName: currentHub?.hubName || city.trim(),
       starRating,
       address: address.trim() || undefined,
@@ -416,11 +425,14 @@ export const ManualHotelFormModal: React.FC<ManualHotelFormModalProps> = ({
                   onChange={(e) => handleHubChange(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-medium text-slate-900 outline-none cursor-pointer focus:bg-white focus:border-[#00C6A6]"
                 >
-                  {routeHubs.map((hub, idx) => (
-                    <option key={hub.id} value={hub.id}>
-                      Hub #{idx + 1}: {hub.hubName} ({hub.nights} Nights)
-                    </option>
-                  ))}
+                  {routeHubs.map((hub, idx) => {
+                    const dates = getHubDates(hub.id || hub.order, hub.nights || 1);
+                    return (
+                      <option key={hub.id} value={hub.id}>
+                        Stay #{idx + 1}: {hub.hubName} ({hub.nights} Nights • {dates.checkInIso} → {dates.checkOutIso})
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 

@@ -17,10 +17,10 @@ import { Quotation, User, TravelLead, QuoteBrandingMode } from '../../types';
 import { AppDatabase } from '../../services/db';
 import {
   generateWhatsAppQuoteMessage,
-  generateWhatsAppShareUrl,
+  buildSafeWhatsAppSharePayload,
   getWhatsAppPresentationModel,
   validateInternationalPhone,
-  recordWhatsAppQuoteShare,
+  recordWhatsAppQuoteShareAsync,
   WhatsAppSenderBranding
 } from '../../services/quoteWhatsAppService';
 import {
@@ -28,6 +28,7 @@ import {
   validateWhiteLabelReadiness
 } from '../../services/quotePresentationModel';
 import { formatCurrency } from '../../services/pricingEngine';
+import { quotationOperationsService } from '../../services/quotationOperationsService';
 
 interface ShareWhatsAppModalProps {
   quote: Quotation;
@@ -35,6 +36,7 @@ interface ShareWhatsAppModalProps {
   selectedOptionIndex?: number;
   onClose: () => void;
   onSuccess?: (updatedQuote: Quotation, linkedLead?: TravelLead) => void;
+  onBrandingModeChange?: (mode: QuoteBrandingMode) => void;
 }
 
 export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
@@ -42,7 +44,8 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
   user,
   selectedOptionIndex = 0,
   onClose,
-  onSuccess
+  onSuccess,
+  onBrandingModeChange
 }) => {
   const db = AppDatabase.getInstance();
 
@@ -67,6 +70,7 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [shareSuccessNotice, setShareSuccessNotice] = useState<string | null>(null);
+  const [shareErrorNotice, setShareErrorNotice] = useState<string | null>(null);
 
   const agencySnapshot = useMemo(() => {
     return buildAgencyBrandingSnapshotFromUser(user, quote, brandingMode);
@@ -136,9 +140,10 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
     return validateInternationalPhone(phoneNumber);
   }, [phoneNumber]);
 
-  const waShareUrl = useMemo(() => {
-    return generateWhatsAppShareUrl(phoneValidation.normalized, generatedMessage);
+  const waSharePayload = useMemo(() => {
+    return buildSafeWhatsAppSharePayload(phoneValidation.normalized, generatedMessage);
   }, [phoneValidation.normalized, generatedMessage]);
+  const waShareUrl = waSharePayload.url;
 
   // Handle Copying message to clipboard
   const handleCopyMessage = async () => {
@@ -172,27 +177,55 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
     }
   };
 
-  // Handle WhatsApp Link Dispatch
+  // Handle WhatsApp Link Dispatch cleanly with durable recording & safe launch
   const handleLaunchWhatsApp = async () => {
-    if (!phoneValidation.isValid) {
+    if (!phoneValidation.isValid || isSubmitting) {
       return;
     }
 
     setIsSubmitting(true);
+    setShareErrorNotice(null);
+
+    const op = quotationOperationsService.startOperation({
+      operationType: 'WHATSAPP_SHARE',
+      quoteId: quote.id,
+      versionId: `v${quote.version || 1}`,
+      uid: user?.id,
+      idempotencyKey: `wa:${quote.id}:v${quote.version || 1}:${phoneValidation.normalized || 'picker'}`
+    });
 
     try {
-      // Also copy full message to clipboard as automatic backup
+      // 1. Copy full message to clipboard first so complete itinerary is preserved even if URL is compacted
+      let clipboardOk = false;
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(generatedMessage);
+          clipboardOk = true;
           setCopied(true);
         }
       } catch {
-        // Ignore clipboard permission errors
+        clipboardOk = false;
       }
 
-      // 1. Audit and record activity in Quotation + Lead Management
-      const shareResult = recordWhatsAppQuoteShare(db, effectiveQuoteForShare, {
+      // 2. Open WhatsApp URL inside click gesture via safe noopener anchor/window fallback
+      let launchedWindow = false;
+      try {
+        if (typeof document !== 'undefined') {
+          const link = document.createElement('a');
+          link.href = waShareUrl;
+          link.target = '_blank';
+          link.rel = 'noopener noreferrer';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          launchedWindow = true;
+        }
+      } catch {
+        launchedWindow = false;
+      }
+
+      // 3. Persist activity durably in Quotation & Lead CRM
+      const shareResult = await recordWhatsAppQuoteShareAsync(db, effectiveQuoteForShare, {
         quote: effectiveQuoteForShare,
         recipientPhone: phoneValidation.normalized,
         user,
@@ -205,23 +238,29 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
         : 'WhatsApp Contact Picker';
 
       setShareSuccessNotice(
-        `Complete quotation launched in WhatsApp (${recipientDisplay}) and copied to clipboard. Activity recorded in Quotation history and Lead timeline.`
+        `${launchedWindow ? `WhatsApp launched (${recipientDisplay})` : `WhatsApp share prepared (${recipientDisplay})`}${clipboardOk ? ' and full itinerary copied to clipboard' : ''}. Activity saved in Quotation history and Lead timeline.`
       );
+      quotationOperationsService.markSucceeded(op.operationId, {
+        versionId: `v${quote.version || 1}`,
+        resultRef: recipientDisplay
+      });
 
       if (onSuccess) {
         onSuccess(shareResult.updatedQuote, shareResult.lead);
       }
-
-      setIsSubmitting(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to record WhatsApp quote share:', error);
+      const errMsg = error?.message || 'Failed to record WhatsApp share in Firestore.';
+      quotationOperationsService.markFailed(op.operationId, error);
+      setShareErrorNotice(
+        `Unable to save WhatsApp share status: ${errMsg}. You can use "Copy WhatsApp Message" above and retry.`
+      );
+    } finally {
       setIsSubmitting(false);
     }
   };
 
-  const finalSellingPrice = currentOption?.totalSellingPrice !== undefined
-    ? currentOption.totalSellingPrice
-    : (quote.totalSellingPrice || 0);
+  const finalSellingPrice = presentationModel.finalCustomerSellingPriceNumeric;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
@@ -257,7 +296,7 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
         {/* MODAL BODY */}
         <div className="p-6 space-y-5 overflow-y-auto grow">
 
-          {/* SUCCESS NOTIFICATION */}
+          {/* SUCCESS / ERROR NOTIFICATIONS */}
           {shareSuccessNotice && (
             <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-start space-x-2.5 animate-in fade-in">
               <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
@@ -265,6 +304,23 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                 <span className="font-bold block">Quotation Share Initiated!</span>
                 <span>{shareSuccessNotice}</span>
               </div>
+            </div>
+          )}
+          {shareErrorNotice && (
+            <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start space-x-2.5">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block">WhatsApp Share Sync Failed</span>
+                <span>{shareErrorNotice}</span>
+              </div>
+            </div>
+          )}
+          {waSharePayload.wasCompactedForUrl && (
+            <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-[11px] flex items-start space-x-2">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                Long multi-day itinerary detected ({generatedMessage.length} chars). WhatsApp Web link uses a URL-safe compact summary to prevent browser URL errors, while your full day-by-day itinerary is automatically copied to clipboard for instant pasting.
+              </span>
             </div>
           )}
 
@@ -312,6 +368,12 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                     {presentationModel.landPartTotalFormatted}
                   </span>
                 </div>
+                {presentationModel.hasHotelAccommodation && finalSellingPrice > 0 && (
+                  <div className="text-[11px] font-extrabold text-slate-800">
+                    <span>Final Selling Price: </span>
+                    <span className="font-mono text-emerald-800">{presentationModel.finalCustomerSellingPriceFormatted}</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -324,7 +386,10 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
               <div className="inline-flex rounded-xl bg-white p-0.5 border border-slate-200 shadow-2xs">
                 <button
                   type="button"
-                  onClick={() => setBrandingMode('STANDARD')}
+                  onClick={() => {
+                    setBrandingMode('STANDARD');
+                    onBrandingModeChange?.('STANDARD');
+                  }}
                   className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                     brandingMode === 'STANDARD'
                       ? 'bg-slate-900 text-white shadow-2xs'
@@ -335,7 +400,10 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setBrandingMode('WHITE_LABEL')}
+                  onClick={() => {
+                    setBrandingMode('WHITE_LABEL');
+                    onBrandingModeChange?.('WHITE_LABEL');
+                  }}
                   className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                     brandingMode === 'WHITE_LABEL'
                       ? 'bg-indigo-600 text-white shadow-2xs'
@@ -595,17 +663,22 @@ export const ShareWhatsAppModal: React.FC<ShareWhatsAppModalProps> = ({
             </button>
 
             {phoneValidation.isValid ? (
-              <a
-                href={waShareUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
+                disabled={isSubmitting}
                 onClick={handleLaunchWhatsApp}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black transition-all flex items-center space-x-2 shadow-md shadow-emerald-700/20 cursor-pointer no-underline"
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-black transition-all flex items-center space-x-2 shadow-md shadow-emerald-700/20 cursor-pointer"
               >
                 <MessageCircle className="w-4 h-4 text-white" />
-                <span>{phoneValidation.normalized ? 'Send via WhatsApp' : 'Open WhatsApp & Choose Contact'}</span>
+                <span>
+                  {isSubmitting
+                    ? 'Preparing WhatsApp...'
+                    : phoneValidation.normalized
+                      ? 'Send via WhatsApp'
+                      : 'Open WhatsApp & Choose Contact'}
+                </span>
                 <ExternalLink className="w-3.5 h-3.5 text-emerald-200" />
-              </a>
+              </button>
             ) : (
               <button
                 type="button"

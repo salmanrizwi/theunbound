@@ -1,60 +1,63 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Product, Destination, Quotation, BlogArticle, User, ActionTarget } from '../../types';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
+import { Product, Destination, Quotation, BlogArticle, User, ActionTarget, CalendarTask, TravelLead } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { countingEngine } from '../../services/countingEngine';
 import { useAuth } from '../../context/AuthContext';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
 
-// Import Sub-Module Managers
-import { CMSDashboardHome } from './CMSDashboardHome';
-import { CMSGlobalSearch } from './CMSGlobalSearch';
-import { CMSNotificationsDropdown } from './CMSNotificationsDropdown';
-import { AdminActivityCenter } from './AdminActivityCenter';
-import { CMSCalendarTasksManager } from './CMSCalendarTasksManager';
-import { ProductManager } from './ProductManager';
-import { HotelManager } from './HotelManager';
-import { BookingsManager } from './BookingsManager';
-import { QuoteMasterManager } from './QuoteMasterManager';
-import { HomepageManager } from './HomepageManager';
-import { AssociatedPartnersManager } from './AssociatedPartnersManager';
-import { InstitutionalPagesManager } from './InstitutionalPagesManager';
-import { MenuAndPagesManager } from './MenuAndPagesManager';
-import { PageSEOManager } from './PageSEOManager';
-import { FooterNavigationBuilder } from './FooterNavigationBuilder';
-import { BlogCMSManager } from './BlogCMSManager';
-import { GalleryManager } from './GalleryManager';
-import { ReviewManager } from './ReviewManager';
-import { RegionCMSManager } from './RegionCMSManager';
-import { DestinationCMSManager } from './DestinationCMSManager';
-import { CityHubsManager } from './CityHubsManager';
-import { DestinationFAQManager } from './DestinationFAQManager';
-import { LeadManager } from './LeadManager';
-import { UserApprovalAccessManager } from './UserApprovalAccessManager';
-import { FinancialsManager } from './FinancialsManager';
-import { CurrencyManagementPanel } from './CurrencyManagement/CurrencyManagementPanel';
-import { SurchargeManagementModule } from './SurchargeManagementModule';
-import { PromotionManager } from './PromotionManager';
-import { EmailCampaignsManager } from './EmailCampaignsManager';
-import { NewsletterManager } from './NewsletterManager';
-import { AuditTrailViewer } from './AuditTrailViewer';
-import { FirestoreDiagnosticsViewer } from './FirestoreDiagnosticsViewer';
-import { VisaCMSManager } from './VisaCMSManager';
-import { PackageManager } from './PackageManager';
-import { RosterAdminManager } from '../RosterAdminManager';
-import { IntegrationsManager } from './IntegrationsManager';
-import { DataSyncAuditViewer } from './DataSyncAuditViewer';
-import { SystemAnalysis } from './SystemAnalysis';
-import { SEOManager } from './SEOManager';
-import { SupplierManager } from './SupplierManager';
-import { RailManager } from './RailManager';
-import { OperationalAssetsManager } from './OperationalAssetsManager';
+// Always-needed lightweight layout shell
 import { AdminSidebar } from './layout/AdminSidebar';
 import { AdminHeader } from './layout/AdminHeader';
 import { GlobalRemindersBar } from '../GlobalRemindersBar';
-import { ActionCenterDrawer } from '../ActionCenter/ActionCenterDrawer';
-import { CalendarTask, TravelLead } from '../../types';
-import { UnifiedB2BQuotationBuilder } from '../B2BAgentPortal/UnifiedB2BQuotationBuilder';
-import { QuoteBuilderDrawer } from '../QuoteBuilderDrawer';
 import { resolveAndValidateQuoteForBuilder } from '../../services/quotationRouting';
+
+// Code-split Sub-Module Managers (loaded on-demand when admin visits module)
+const CMSDashboardHome = lazyWithRetry(() => import('./CMSDashboardHome').then(m => ({ default: m.CMSDashboardHome })));
+const CMSGlobalSearch = lazyWithRetry(() => import('./CMSGlobalSearch').then(m => ({ default: m.CMSGlobalSearch })));
+const AdminActivityCenter = lazyWithRetry(() => import('./AdminActivityCenter').then(m => ({ default: m.AdminActivityCenter })));
+const CMSCalendarTasksManager = lazyWithRetry(() => import('./CMSCalendarTasksManager').then(m => ({ default: m.CMSCalendarTasksManager })));
+const ProductManager = lazyWithRetry(() => import('./ProductManager').then(m => ({ default: m.ProductManager })));
+const HotelManager = lazyWithRetry(() => import('./HotelManager').then(m => ({ default: m.HotelManager })));
+const BookingsManager = lazyWithRetry(() => import('./BookingsManager').then(m => ({ default: m.BookingsManager })));
+const QuoteMasterManager = lazyWithRetry(() => import('./QuoteMasterManager').then(m => ({ default: m.QuoteMasterManager })));
+const HomepageManager = lazyWithRetry(() => import('./HomepageManager').then(m => ({ default: m.HomepageManager })));
+const AssociatedPartnersManager = lazyWithRetry(() => import('./AssociatedPartnersManager').then(m => ({ default: m.AssociatedPartnersManager })));
+const InstitutionalPagesManager = lazyWithRetry(() => import('./InstitutionalPagesManager').then(m => ({ default: m.InstitutionalPagesManager })));
+const MenuAndPagesManager = lazyWithRetry(() => import('./MenuAndPagesManager').then(m => ({ default: m.MenuAndPagesManager })));
+const PageSEOManager = lazyWithRetry(() => import('./PageSEOManager').then(m => ({ default: m.PageSEOManager })));
+const FooterNavigationBuilder = lazyWithRetry(() => import('./FooterNavigationBuilder').then(m => ({ default: m.FooterNavigationBuilder })));
+const BlogCMSManager = lazyWithRetry(() => import('./BlogCMSManager').then(m => ({ default: m.BlogCMSManager })));
+const GalleryManager = lazyWithRetry(() => import('./GalleryManager').then(m => ({ default: m.GalleryManager })));
+const ReviewManager = lazyWithRetry(() => import('./ReviewManager').then(m => ({ default: m.ReviewManager })));
+const RegionCMSManager = lazyWithRetry(() => import('./RegionCMSManager').then(m => ({ default: m.RegionCMSManager })));
+const DestinationCMSManager = lazyWithRetry(() => import('./DestinationCMSManager').then(m => ({ default: m.DestinationCMSManager })));
+const CityHubsManager = lazyWithRetry(() => import('./CityHubsManager').then(m => ({ default: m.CityHubsManager })));
+const DestinationFAQManager = lazyWithRetry(() => import('./DestinationFAQManager').then(m => ({ default: m.DestinationFAQManager })));
+const LeadManager = lazyWithRetry(() => import('./LeadManager').then(m => ({ default: m.LeadManager })));
+const UserApprovalAccessManager = lazyWithRetry(() => import('./UserApprovalAccessManager').then(m => ({ default: m.UserApprovalAccessManager })));
+const FinancialsManager = lazyWithRetry(() => import('./FinancialsManager').then(m => ({ default: m.FinancialsManager })));
+const CurrencyManagementPanel = lazyWithRetry(() => import('./CurrencyManagement/CurrencyManagementPanel').then(m => ({ default: m.CurrencyManagementPanel })));
+const PricingManager = lazyWithRetry(() => import('./PricingManager').then(m => ({ default: m.PricingManager })));
+const SurchargeManagementModule = lazyWithRetry(() => import('./SurchargeManagementModule').then(m => ({ default: m.SurchargeManagementModule })));
+const CashbackManagementView = lazyWithRetry(() => import('./CashbackManagementView').then(m => ({ default: m.CashbackManagementView })));
+const PromotionManager = lazyWithRetry(() => import('./PromotionManager').then(m => ({ default: m.PromotionManager })));
+const EmailCampaignsManager = lazyWithRetry(() => import('./EmailCampaignsManager').then(m => ({ default: m.EmailCampaignsManager })));
+const NewsletterManager = lazyWithRetry(() => import('./NewsletterManager').then(m => ({ default: m.NewsletterManager })));
+const AuditTrailViewer = lazyWithRetry(() => import('./AuditTrailViewer').then(m => ({ default: m.AuditTrailViewer })));
+const FirestoreDiagnosticsViewer = lazyWithRetry(() => import('./FirestoreDiagnosticsViewer').then(m => ({ default: m.FirestoreDiagnosticsViewer })));
+const VisaCMSManager = lazyWithRetry(() => import('./VisaCMSManager').then(m => ({ default: m.VisaCMSManager })));
+const PackageManager = lazyWithRetry(() => import('./PackageManager').then(m => ({ default: m.PackageManager })));
+const RosterAdminManager = lazyWithRetry(() => import('../RosterAdminManager').then(m => ({ default: m.RosterAdminManager })));
+const IntegrationsManager = lazyWithRetry(() => import('./IntegrationsManager').then(m => ({ default: m.IntegrationsManager })));
+const DataSyncAuditViewer = lazyWithRetry(() => import('./DataSyncAuditViewer').then(m => ({ default: m.DataSyncAuditViewer })));
+const SystemAnalysis = lazyWithRetry(() => import('./SystemAnalysis').then(m => ({ default: m.SystemAnalysis })));
+const SEOManager = lazyWithRetry(() => import('./SEOManager').then(m => ({ default: m.SEOManager })));
+const SupplierManager = lazyWithRetry(() => import('./SupplierManager').then(m => ({ default: m.SupplierManager })));
+const RailManager = lazyWithRetry(() => import('./RailManager').then(m => ({ default: m.RailManager })));
+const OperationalAssetsManager = lazyWithRetry(() => import('./OperationalAssetsManager').then(m => ({ default: m.OperationalAssetsManager })));
+const ActionCenterDrawer = lazyWithRetry(() => import('../ActionCenter/ActionCenterDrawer').then(m => ({ default: m.ActionCenterDrawer })));
+const UnifiedB2BQuotationBuilder = lazyWithRetry(() => import('../B2BAgentPortal/UnifiedB2BQuotationBuilder').then(m => ({ default: m.UnifiedB2BQuotationBuilder })));
+const QuoteBuilderDrawer = lazyWithRetry(() => import('../QuoteBuilderDrawer').then(m => ({ default: m.QuoteBuilderDrawer })));
 import { 
   canUserAccessCMS, 
   canUserAccessTopSection, 
@@ -115,6 +118,7 @@ import {
   Calendar,
   Percent,
   Handshake,
+  Wallet,
   LucideIcon
 } from 'lucide-react';
 
@@ -143,7 +147,9 @@ export type CMSSection =
   | 'ACCOUNT_MANAGEMENT'
   | 'ANALYTICS_MANAGEMENT'
   | 'CURRENCY_MANAGEMENT'
+  | 'PRICING_MANAGEMENT'
   | 'SURCHARGE_MANAGEMENT'
+  | 'CASHBACK_MANAGEMENT'
   | 'NOTIFICATIONS_MANAGEMENT'
   | 'CALENDAR_SLAS'
   | 'DATABASE_MANAGEMENT'
@@ -200,7 +206,9 @@ const SECTION_SLUG_MAP: Record<CMSSection, string> = {
   ACCOUNT_MANAGEMENT: 'accounts',
   ANALYTICS_MANAGEMENT: 'analytics',
   CURRENCY_MANAGEMENT: 'currency',
+  PRICING_MANAGEMENT: 'pricing',
   SURCHARGE_MANAGEMENT: 'surcharges',
+  CASHBACK_MANAGEMENT: 'cashback',
   NOTIFICATIONS_MANAGEMENT: 'tasks',
   CALENDAR_SLAS: 'tasks',
   DATABASE_MANAGEMENT: 'database',
@@ -224,7 +232,9 @@ function resolveSectionFromSlug(slug?: string): CMSSection {
   if (clean === 'ACCOUNTS' || clean === 'ACCOUNT' || clean === 'ACCOUNTMANAGEMENT' || clean === 'USERS' || clean === 'USER' || clean === 'SUPPLIERS') return 'ACCOUNT_MANAGEMENT';
   if (clean === 'ANALYTICS' || clean === 'ANALYTICSMANAGEMENT' || clean === 'FINANCIALS') return 'ANALYTICS_MANAGEMENT';
   if (clean === 'CURRENCY' || clean === 'CURRENCYMANAGEMENT' || clean === 'FX') return 'CURRENCY_MANAGEMENT';
+  if (clean === 'PRICING' || clean === 'PRICINGMANAGEMENT' || clean === 'MARGINS' || clean === 'MARGINMANAGEMENT' || clean === 'TAXFEES') return 'PRICING_MANAGEMENT';
   if (clean === 'SURCHARGES' || clean === 'SURCHARGE' || clean === 'SURCHARGEMANAGEMENT') return 'SURCHARGE_MANAGEMENT';
+  if (clean === 'CASHBACK' || clean === 'CASHBACKMANAGEMENT' || clean === 'REWARDS' || clean === 'WALLET') return 'CASHBACK_MANAGEMENT';
   if (clean === 'TASKS' || clean === 'TASK' || clean === 'SLAS' || clean === 'SLA' || clean === 'NOTIFICATIONS' || clean === 'NOTIFICATIONSMANAGEMENT' || clean === 'CALENDARSLAS') return 'NOTIFICATIONS_MANAGEMENT';
   if (clean === 'INTEGRATIONS' || clean === 'INTEGRATIONSDB') return 'INTEGRATIONS_DB';
   if (clean === 'DATABASE' || clean === 'DATABASEMANAGEMENT') return 'DATABASE_MANAGEMENT';
@@ -351,6 +361,11 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [leadForNewQuote, setLeadForNewQuote] = useState<TravelLead | null>(null);
   const [surchargeFilterProductId, setSurchargeFilterProductId] = useState<string>('');
+  const [surchargeDeepLink, setSurchargeDeepLink] = useState<{
+    surchargeId?: string;
+    action?: 'view' | 'edit';
+    nonce?: number;
+  } | null>(null);
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -410,18 +425,16 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       setDbTick(t => t + 1);
     };
 
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['system_users', 'companies'], () => {
       updateStats();
     });
 
     window.addEventListener('storage', updateStats);
     window.addEventListener('focus', updateStats);
-    const interval = setInterval(updateStats, 4000);
     return () => {
       unsub();
       window.removeEventListener('storage', updateStats);
       window.removeEventListener('focus', updateStats);
-      clearInterval(interval);
     };
   }, [db]);
 
@@ -459,10 +472,26 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
   // Listen to cross-module CMS navigation events (e.g. from Product Management -> Centralized Surcharges)
   useEffect(() => {
     const handleCmsNavigate = (e: Event) => {
-      const customEvent = e as CustomEvent<{ section: string; subTab?: string; filterProductId?: string; filterProductName?: string }>;
+      const customEvent = e as CustomEvent<{
+        section: string;
+        subTab?: string;
+        filterProductId?: string;
+        filterProductName?: string;
+        selectedSurchargeId?: string;
+        action?: 'view' | 'edit';
+      }>;
       if (customEvent.detail) {
-        if (customEvent.detail.filterProductId) {
+        if (customEvent.detail.filterProductId !== undefined) {
           setSurchargeFilterProductId(customEvent.detail.filterProductId);
+        }
+        if (customEvent.detail.selectedSurchargeId || customEvent.detail.action) {
+          setSurchargeDeepLink({
+            surchargeId: customEvent.detail.selectedSurchargeId,
+            action: customEvent.detail.action,
+            nonce: Date.now()
+          });
+        } else if (customEvent.detail.section === 'SURCHARGE_MANAGEMENT') {
+          setSurchargeDeepLink(null);
         }
         handleNavigate(customEvent.detail.section, customEvent.detail.subTab);
       }
@@ -753,6 +782,19 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           ]
         },
         {
+          id: 'PRICING_MANAGEMENT',
+          label: 'Pricing, Margins & Taxes',
+          shortLabel: 'Pricing & Margins',
+          icon: DollarSign,
+          badge: 'Tariffs',
+          description: 'Commercial tariff master, agency margin configuration, and statutory tax & fee administration.',
+          subTabs: [
+            { id: 'PRICING', label: 'Pricing Management', icon: DollarSign },
+            { id: 'MARGINS', label: 'Margin Management', icon: SlidersHorizontal },
+            { id: 'TAX_FEES', label: 'Tax & Fees', icon: Receipt }
+          ]
+        },
+        {
           id: 'SURCHARGE_MANAGEMENT',
           label: 'Surcharge Management',
           shortLabel: 'Surcharges',
@@ -761,6 +803,21 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           description: 'Centralized peak season, holiday, and weekend surcharge governance. Manage date windows, product links, and commercial policies.',
           subTabs: [
             { id: 'SURCHARGES', label: 'Centralized Surcharges', icon: Percent }
+          ]
+        },
+        {
+          id: 'CASHBACK_MANAGEMENT',
+          label: 'Cashback Management',
+          shortLabel: 'Cashback',
+          icon: Wallet,
+          badge: 'Wallet',
+          description: 'Per-user cashback percentages, 3-day post-travel crediting monitor, withdrawal payout approvals, and ledger reconciliation.',
+          subTabs: [
+            { id: 'OVERVIEW_USERS', label: 'User Eligibility & Wallets', icon: Wallet },
+            { id: 'WITHDRAWALS', label: 'Withdrawal Approvals', icon: Receipt },
+            { id: 'BOOKINGS_LEDGER', label: 'Bookings & Ledger', icon: Calculator },
+            { id: 'POLICY', label: 'Policy Rules', icon: SlidersHorizontal },
+            { id: 'RECONCILIATION', label: 'Reconciliation & Audit', icon: ShieldCheck }
           ]
         }
       ]
@@ -838,7 +895,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     leadId?: string | null;
     quoteId?: string | null;
     quoteVersion?: number | null;
-    quoteMode?: 'inspect' | 'edit' | 'readonly' | null;
+    quoteMode?: 'inspect' | 'edit' | 'readonly' | 'restore' | null;
   }>({});
 
   const handleOpenActionCenter = (task?: CalendarTask) => {
@@ -848,7 +905,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
 
   const handleOpenQuoteInBuilder = (
     quoteId: string, 
-    options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }
+    options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly' | 'restore'; leadId?: string }
   ) => {
     if (quoteId === 'new') {
       setInitialRecordIds(prev => ({
@@ -979,12 +1036,16 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     <div id="theunbound-admin-cms-root" className="flex h-screen w-full max-w-full overflow-hidden bg-[#F8FAFB] text-slate-900 font-sans selection:bg-[#00C6A6] selection:text-slate-950">
       
       {/* Global Command Palette / Search Modal */}
-      <CMSGlobalSearch
-        isOpen={isSearchOpen}
-        onClose={() => setIsSearchOpen(false)}
-        onNavigate={handleNavigate}
-        currentUser={currentUser}
-      />
+      {isSearchOpen && (
+        <Suspense fallback={null}>
+          <CMSGlobalSearch
+            isOpen={isSearchOpen}
+            onClose={() => setIsSearchOpen(false)}
+            onNavigate={handleNavigate}
+            currentUser={currentUser}
+          />
+        </Suspense>
+      )}
 
       {/* Standard Admin Sidebar (Fixed to Viewport, Independent Navigation Scroll) */}
       <AdminSidebar
@@ -995,6 +1056,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
         onToggleCollapse={handleToggleSidebarCollapse}
         isMobileOpen={isMobileMenuOpen}
         onCloseMobile={() => setIsMobileMenuOpen(false)}
+        currentUser={currentUser}
         counts={{
           products: counts.totalProducts,
           hotels: counts.hotels,
@@ -1097,7 +1159,14 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           </div>
         ) : (
         <div className="animate-in fade-in duration-200">
-          
+          <Suspense
+            fallback={
+              <div className="w-full min-h-[360px] flex flex-col items-center justify-center p-10 text-slate-400 gap-3">
+                <div className="w-8 h-8 rounded-full border-2 border-[#00C6A6] border-t-transparent animate-spin" />
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Loading CMS module...</span>
+              </div>
+            }
+          >
           {/* SECTION 1: OVERVIEW -> COMMAND DASHBOARD */}
           {(currentModuleConfig.id === 'DASHBOARD') && (
             <CMSDashboardHome 
@@ -1286,6 +1355,19 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                     onBackToDashboard={() => handleNavigate('DASHBOARD', 'OVERVIEW')}
                     onViewMyQuotes={() => setActiveSubTab('QUOTES')}
                     onNavigateToPackages={() => handleNavigate('PACKAGE_MANAGEMENT', 'PACKAGES')}
+                    onQuoteSaved={(savedQuote) => {
+                      setInitialRecordIds(prev => ({
+                        ...prev,
+                        quoteId: savedQuote.id,
+                        quoteVersion: savedQuote.latestVersion || savedQuote.version || 1,
+                        quoteMode: 'edit',
+                        leadId: savedQuote.leadId || prev.leadId || null
+                      }));
+                    }}
+                    onConfigureDestinationTerms={(targetId: string) => {
+                      setInitialRecordIds((prev: any) => ({ ...prev, termsTargetId: targetId }));
+                      handleNavigate('DESTINATION_MANAGEMENT', 'DESTINATIONS');
+                    }}
                   />
                 </div>
               )}
@@ -1306,6 +1388,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                 <DestinationCMSManager 
                   onNavigateToHubs={() => setActiveSubTab('CITIES')}
                   onNavigateToRegions={() => setActiveSubTab('REGIONS')}
+                  initialTermsTargetId={(initialRecordIds as any)?.termsTargetId}
                 />
               )}
               {activeSubTab === 'CITIES' && <CityHubsManager destinations={destinations} />}
@@ -1381,12 +1464,34 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <CurrencyManagementPanel currentUser={currentUser} />
           )}
 
+          {/* 4.3B PRICING, MARGINS & TAX/FEES */}
+          {currentModuleConfig.id === 'PRICING_MANAGEMENT' && (
+            <PricingManager
+              destinations={destinations}
+              activeMode={
+                activeSubTab === 'MARGINS'
+                  ? 'MARGINS'
+                  : activeSubTab === 'TAX_FEES'
+                    ? 'TAX_FEES'
+                    : 'PRICING'
+              }
+            />
+          )}
+
           {/* 4.4 CENTRALIZED SURCHARGE MANAGEMENT */}
           {currentModuleConfig.id === 'SURCHARGE_MANAGEMENT' && (
             <SurchargeManagementModule
               user={currentUser}
               initialFilterProductId={surchargeFilterProductId}
+              initialSelectedSurchargeId={surchargeDeepLink?.surchargeId}
+              initialAction={surchargeDeepLink?.action}
+              deepLinkNonce={surchargeDeepLink?.nonce}
             />
+          )}
+
+          {/* 4.5 CASHBACK & REWARDS MANAGEMENT */}
+          {currentModuleConfig.id === 'CASHBACK_MANAGEMENT' && (
+            <CashbackManagementView initialSubTab={activeSubTab} />
           )}
 
           {/* SECTION 5: SYSTEM & OPERATIONS */}
@@ -1414,11 +1519,13 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
               {activeSubTab === 'AUDIT_TRAIL' && <AuditTrailViewer />}
             </>
           )}
+          </Suspense>
         </div>
         )}
       </main>
       </div>
 
+      <Suspense fallback={null}>
       {/* Global Action Center Drawer */}
       <ActionCenterDrawer
         isOpen={isActionCenterDrawerOpen}
@@ -1451,6 +1558,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
 
       {/* Global B2B Cart Drawer (Controlled Manual Access in Quote Builder) */}
       <QuoteBuilderDrawer />
+      </Suspense>
     </div>
   );
 };

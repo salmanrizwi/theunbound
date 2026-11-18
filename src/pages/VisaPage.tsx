@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppDatabase } from '../services/db';
+import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
 import { VisaProduct } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { 
@@ -152,7 +153,7 @@ export const VisaPage: React.FC = () => {
       </div>
     );
   }
-  const [visas, setVisas] = useState<VisaProduct[]>(() => db.getVisas());
+  const [visas, setVisas] = useState<VisaProduct[]>(() => inventoryVisibilityService.getB2BActiveVisas());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCountry, setSelectedCountry] = useState<string>('all');
   const [selectedVisa, setSelectedVisa] = useState<VisaProduct | null>(null);
@@ -168,8 +169,13 @@ export const VisaPage: React.FC = () => {
   const [inquirySubmitted, setInquirySubmitted] = useState(false);
 
   useEffect(() => {
-    return db.subscribe(() => {
-      setVisas(db.getVisas());
+    return db.subscribeToCollections([
+      'visas',
+      'visa_rates',
+      'destinations',
+      'inventory_tombstones'
+    ], () => {
+      setVisas(inventoryVisibilityService.getB2BActiveVisas());
     });
   }, [db]);
 
@@ -184,7 +190,7 @@ export const VisaPage: React.FC = () => {
 
     const matchesCountry = selectedCountry === 'all' || vCountry === selCountry;
     const matchesSearch = vCountry.includes(searchQ) || vType.includes(searchQ) || vDesc.includes(searchQ);
-    return matchesCountry && matchesSearch && v.status === 'ACTIVE';
+    return matchesCountry && matchesSearch && inventoryVisibilityService.isEntityAccessibleInB2B('VISA', v);
   });
 
   const handleDownloadChecklist = (visa: VisaProduct) => {
@@ -364,6 +370,8 @@ Support Desk: business@theunbound.in | Operations Team
                   <img
                     src={visa.heroImage}
                     alt={visa.country}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />

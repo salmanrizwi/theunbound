@@ -13,6 +13,7 @@ import {
   canRevokeAdminPermissions 
 } from '../../services/permissionEngine';
 import { AppDatabase } from '../../services/db';
+import { UserCashbackConfigPanel } from './UserCashbackConfigPanel';
 import { 
   X, 
   Shield, 
@@ -43,7 +44,8 @@ import {
   MapPin,
   Globe,
   Clock,
-  ExternalLink
+  ExternalLink,
+  Wallet
 } from 'lucide-react';
 
 interface UserPermissionModalProps {
@@ -117,7 +119,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
   const [auditReason, setAuditReason] = useState<string>('');
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'PROFILE' | 'COMPANY' | 'ACCOUNT' | 'PERMISSIONS' | 'COMMERCIAL'>('PROFILE');
+  const [activeTab, setActiveTab] = useState<'PROFILE' | 'COMPANY' | 'ACCOUNT' | 'PERMISSIONS' | 'COMMERCIAL' | 'CASHBACK'>('PROFILE');
 
   // Permissions state initialized with existing or default
   const [perms, setPerms] = useState<UserPermissionAccess>(() => {
@@ -529,6 +531,19 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
             >
               <Percent className="w-3.5 h-3.5" />
               <span>Commercial Margins</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('CASHBACK')}
+              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === 'CASHBACK'
+                  ? 'border-[#00C6A6] text-[#008f77]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5" />
+              <span>Cashback Wallet</span>
             </button>
           </div>
 
@@ -1378,6 +1393,11 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* TAB 2B: PER-USER CASHBACK CONFIGURATION */}
+          {activeTab === 'CASHBACK' && (
+            <UserCashbackConfigPanel targetUser={user} currentUser={currentUser} />
           )}
 
           {/* TAB 3: ROLE & CLASSIFICATION */}

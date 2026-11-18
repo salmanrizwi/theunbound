@@ -32,6 +32,11 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   private handleReset = () => {
     this.setState({ hasError: false, error: null, errorInfo: null });
     if (typeof window !== 'undefined') {
+      try {
+        window.sessionStorage?.removeItem('theunbound_chunk_reload_at');
+      } catch {
+        // Ignore storage errors
+      }
       window.location.reload();
     }
   };
@@ -39,6 +44,11 @@ export class GlobalErrorBoundary extends Component<Props, State> {
   private handleGoHome = () => {
     this.setState({ hasError: false, error: null, errorInfo: null });
     if (typeof window !== 'undefined') {
+      try {
+        window.sessionStorage?.removeItem('theunbound_chunk_reload_at');
+      } catch {
+        // Ignore storage errors
+      }
       window.location.href = '/';
     }
   };

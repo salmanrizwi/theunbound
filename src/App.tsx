@@ -8,29 +8,16 @@ import { Navbar, MainNavTab } from './components/Navbar';
 import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { GlobalToastContainer } from './components/common/GlobalToastContainer';
 import { isRailProduct } from './services/rail/JapanRailJourneyDataService';
-import { AuthModal } from './components/AuthModal';
 import { PublicPromotionsBanner } from './components/PublicPromotionsBanner';
 import { BuyerFooter } from './components/BuyerPortal/BuyerFooter';
-import { PortalAccessRestrictedView } from './components/PortalAccessRestrictedView';
 import { GlobalErrorBoundary } from './components/common/GlobalErrorBoundary';
-import { LoggedOutBuyerHomepage } from './pages/LoggedOutBuyerHomepage';
-import { DestinationPage } from './pages/DestinationPage';
+import { lazyWithRetry } from './utils/lazyWithRetry';
 
-// Resilient lazy loader that recovers from transient network errors or deployment chunk updates
-function lazyWithRetry<T extends React.ComponentType<any>>(
-  factory: () => Promise<{ default: T }>
-): React.LazyExoticComponent<T> {
-  return React.lazy(() =>
-    factory().catch((err) => {
-      console.warn('[LazyLoad] Retrying dynamic module import after error:', err);
-      return new Promise<{ default: T }>((resolve, reject) => {
-        setTimeout(() => {
-          factory().then(resolve).catch(reject);
-        }, 400);
-      });
-    })
-  );
-}
+// Code-split landing, destination, restricted & auth views so portal routes don't pay landing bundle cost and vice versa
+const LoggedOutBuyerHomepage = lazyWithRetry(() => import('./pages/LoggedOutBuyerHomepage').then(m => ({ default: m.LoggedOutBuyerHomepage })));
+const DestinationPage = lazyWithRetry(() => import('./pages/DestinationPage').then(m => ({ default: m.DestinationPage })));
+const PortalAccessRestrictedView = lazyWithRetry(() => import('./components/PortalAccessRestrictedView').then(m => ({ default: m.PortalAccessRestrictedView })));
+const AuthModal = lazyWithRetry(() => import('./components/AuthModal').then(m => ({ default: m.AuthModal })));
 
 // Code-split secondary pages and heavy portal applications for high performance
 const B2BQuotationBuilderPage = lazyWithRetry(() => import('./pages/B2BQuotationBuilderPage').then(m => ({ default: m.B2BQuotationBuilderPage })));
@@ -68,12 +55,6 @@ import {
 import { canUserAccessCMS, canUserAccessQuoteBuilder, canUserAccessB2BInventory } from './services/permissionEngine';
 import { authDiagnostic } from './services/authDiagnostic';
 import { inventoryVisibilityService } from './services/inventoryVisibilityService';
-import { automaticTaskEngine } from './services/automaticTaskEngine';
-import { marketingAutomationScheduler } from './services/marketingAutomationScheduler';
-
-// Ensure global marketing automation & operational task engines are initialized on startup
-void automaticTaskEngine;
-void marketingAutomationScheduler;
 import { 
   Globe2, 
   ShieldCheck, 
@@ -247,13 +228,45 @@ const MainAppContent: React.FC = () => {
   };
 
   useEffect(() => {
-    return db.subscribe(() => {
+    // Defer non-essential automation schedulers until after initial paint & hydration
+    const timer = setTimeout(() => {
+      import('./services/automaticTaskEngine').catch(() => {});
+      import('./services/marketingAutomationScheduler').catch(() => {});
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const unsubDest = db.subscribeToCollections(['destinations', 'city_hubs', 'inventory_tombstones'], () => {
       setDestinations(db.getDestinations());
+    });
+    const unsubProd = db.subscribeToCollections(['products', 'destinations', 'city_hubs', 'inventory_tombstones', 'japan_rail_commercial_products'], () => {
       setProducts(db.getProducts());
+    });
+    const unsubHotels = db.subscribeToCollections(['hotels', 'destinations', 'city_hubs', 'inventory_tombstones'], () => {
       setHotels(db.getHotels());
+    });
+    const unsubFooter = db.subscribeToCollections(['footer_config'], () => {
       setFooterConfig(db.getFooterConfig());
     });
+    return () => {
+      unsubDest();
+      unsubProd();
+      unsubHotels();
+      unsubFooter();
+    };
   }, [db]);
+
+  const handleB2BTabChange = React.useCallback((tab: string) => {
+    const path = tab === 'create-quote'
+      ? '/b2b/quote-builder'
+      : tab === 'home'
+        ? '/b2b'
+        : (tab === 'crm' || tab === 'leads' || tab === 'customers')
+          ? '/b2b/crm'
+          : `/b2b/${tab}`;
+    navigateTo(path);
+  }, []);
 
   // Active Modals State
   const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
@@ -279,12 +292,25 @@ const MainAppContent: React.FC = () => {
 
   const currentDestination = isDestinationVisible ? foundDestination : null;
 
-  // Filter only active/visible destinations for customer-facing views (Header, Footer, B2B Agent Portal, etc.)
+  // Filter only active/visible destinations for customer-facing views (Header, Footer, etc.)
   const activeDestinations = useMemo(() => {
     return destinations.filter(d => 
       inventoryVisibilityService.isDestinationEligible(d, role)
     );
   }, [destinations, role]);
+
+  // Strict B2B Portal Active Destination Rule: status === 'ACTIVE' ONLY (excludes COMING_SOON, INACTIVE, DRAFT, ARCHIVED, DISABLED)
+  const b2bActiveDestinations = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveDestinations();
+  }, [destinations]);
+
+  const b2bActiveHotels = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveHotels();
+  }, [destinations, hotels]);
+
+  const b2bActiveProducts = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveProducts();
+  }, [destinations, products]);
 
   const handleSelectDestination = (slug: string) => {
     setSelectedDestinationSlug(slug);
@@ -342,12 +368,14 @@ const MainAppContent: React.FC = () => {
   if (currentRoute.namespace === 'ADMIN') {
     if (!hasCMSAccess) {
       return (
-        <PortalAccessRestrictedView
-          targetNamespace="ADMIN"
-          reason={!isAuthenticated ? 'AUTH_REQUIRED' : 'ACCESS_RESTRICTED'}
-          message="Administrative access is restricted to verified TheUnbound DMC operations personnel."
-          onRedirect={() => navigateTo(isB2BAuthorized ? '/b2b' : '/')}
-        />
+        <React.Suspense fallback={<ModuleLoadingFallback label="Checking access..." />}>
+          <PortalAccessRestrictedView
+            targetNamespace="ADMIN"
+            reason={!isAuthenticated ? 'AUTH_REQUIRED' : 'ACCESS_RESTRICTED'}
+            message="Administrative access is restricted to verified TheUnbound DMC operations personnel."
+            onRedirect={() => navigateTo(isB2BAuthorized ? '/b2b' : '/')}
+          />
+        </React.Suspense>
       );
     }
 
@@ -380,12 +408,14 @@ const MainAppContent: React.FC = () => {
         // Allow QuoteBuilderAuthRequiredModal on Buyer background
       } else {
         return (
-          <PortalAccessRestrictedView
-            targetNamespace="B2B"
-            reason={!isAuthenticated ? 'AUTH_REQUIRED' : 'ACCESS_RESTRICTED'}
-            message="Wholesale B2B Agent portal access is restricted to verified travel agency partners."
-            onRedirect={() => navigateTo('/')}
-          />
+          <React.Suspense fallback={<ModuleLoadingFallback label="Checking access..." />}>
+            <PortalAccessRestrictedView
+              targetNamespace="B2B"
+              reason={!isAuthenticated ? 'AUTH_REQUIRED' : 'ACCESS_RESTRICTED'}
+              message="Wholesale B2B Agent portal access is restricted to verified travel agency partners."
+              onRedirect={() => navigateTo('/')}
+            />
+          </React.Suspense>
         );
       }
     } else {
@@ -406,21 +436,12 @@ const MainAppContent: React.FC = () => {
         <GlobalErrorBoundary fallbackTitle="B2B Agent Portal Encountered an Issue">
           <React.Suspense fallback={<ModuleLoadingFallback label="Loading Wholesale B2B Portal..." />}>
             <B2BAgentPortal
-              destinations={activeDestinations}
-              hotels={hotels}
-              products={products}
+              destinations={b2bActiveDestinations}
+              hotels={b2bActiveHotels}
+              products={b2bActiveProducts}
               onOpenBookingModal={handleOpenQuotationBooking}
               initialTab={b2bTab}
-              onTabChange={(tab) => {
-                const path = tab === 'create-quote' 
-                  ? '/b2b/quote-builder' 
-                  : tab === 'home' 
-                    ? '/b2b' 
-                    : (tab === 'crm' || tab === 'leads' || tab === 'customers') 
-                      ? '/b2b/crm' 
-                      : `/b2b/${tab}`;
-                navigateTo(path);
-              }}
+              onTabChange={handleB2BTabChange}
             />
           </React.Suspense>
         </GlobalErrorBoundary>
@@ -431,12 +452,14 @@ const MainAppContent: React.FC = () => {
   // 3. Fallback check for any other unpermitted route
   if (!accessCheck.allowed && currentRoute.namespace !== 'PUBLIC' && currentRoute.namespace !== 'BUYER') {
     return (
-      <PortalAccessRestrictedView
-        targetNamespace={currentRoute.namespace}
-        reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
-        message={accessCheck.message}
-        onRedirect={() => navigateTo('/')}
-      />
+      <React.Suspense fallback={<ModuleLoadingFallback label="Checking access..." />}>
+        <PortalAccessRestrictedView
+          targetNamespace={currentRoute.namespace}
+          reason={accessCheck.reason || 'ACCESS_RESTRICTED'}
+          message={accessCheck.message}
+          onRedirect={() => navigateTo('/')}
+        />
+      </React.Suspense>
     );
   }
 
@@ -561,8 +584,8 @@ const MainAppContent: React.FC = () => {
         {activeTab === 'B2B_BUILDER' && (
           canAccessB2B ? (
             <B2BQuotationBuilderPage
-              destinations={activeDestinations}
-              products={products}
+              destinations={b2bActiveDestinations}
+              products={b2bActiveProducts}
               onViewProductDetails={(p) => {
                 setInspectingProductHidePrice(true);
                 setInspectingProduct(p);
@@ -796,7 +819,9 @@ const MainAppContent: React.FC = () => {
         )}
       </React.Suspense>
 
-      <AuthModal />
+      <React.Suspense fallback={null}>
+        <AuthModal />
+      </React.Suspense>
 
       {/* Global GDPR & DPDP Cookie Consent Banner */}
       <CookieConsentBanner

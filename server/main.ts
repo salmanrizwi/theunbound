@@ -5,7 +5,10 @@ import { handleSitemapXml, handleRobotsTxt, injectSEOIntoHtml } from "./seoHandl
 import { createIntegrationsRouter } from "./integrationsService";
 import { createFXRouter } from "./fxService";
 import { createAdminUserRouter } from "./adminUserService";
+import { createMarginGovernanceRouter } from "./marginGovernanceService";
+import { createCashbackRouter, createAdminCashbackRouter, startCashbackScheduler } from "./cashbackService";
 import { createNewsletterRouter } from "./newsletterService";
+import { createB2BVisibilityRouter } from "./b2bVisibilityService";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -33,11 +36,22 @@ export async function startServer() {
         res.json({ status: "ok", service: "theunbound-dmc-portal" });
       });
 
+      // Strict B2B Portal Destination Visibility API
+      app.use("/api/b2b", createB2BVisibilityRouter());
+
       // Secure Server-Side Integrations Router (Gmail, Google Sheets, Token Refresh)
       app.use("/api/integrations", createIntegrationsRouter());
 
       // Secure Server-Side Admin User Management Router (Deletion, Deactivation)
       app.use("/api/admin/users", createAdminUserRouter());
+
+      // Secure Server-Side Margin & Commission Governance Router (Transactional Firestore Updates)
+      app.use("/api/admin/margins", createMarginGovernanceRouter());
+
+      // Secure Server-Side Cashback & Rewards Wallet Routers + Background Scheduler
+      app.use("/api/cashback", createCashbackRouter());
+      app.use("/api/admin/cashback", createAdminCashbackRouter());
+      startCashbackScheduler();
 
       // Centralized Live XE.com FX Currency Engine Router
       app.use("/api/fx", createFXRouter());
@@ -90,10 +104,15 @@ export async function startServer() {
           }
         });
       } else {
-        const distPath = path.resolve(process.cwd(), "dist");
-        const indexPath = path.join(distPath, "index.html");
+        const bundledDir = typeof __dirname !== "undefined" && fs.existsSync(path.join(__dirname, "index.html"))
+          ? __dirname
+          : distPath;
+        const prodDistPath = fs.existsSync(path.join(bundledDir, "index.html"))
+          ? bundledDir
+          : path.resolve(process.cwd(), "dist");
+        const prodIndexPath = path.join(prodDistPath, "index.html");
 
-        app.use(express.static(distPath, { 
+        app.use(express.static(prodDistPath, { 
           index: false,
           setHeaders: (res, filePath) => {
             if (filePath.endsWith('.html')) {
@@ -120,14 +139,14 @@ export async function startServer() {
           res.setHeader('Expires', '0');
 
           try {
-            if (fs.existsSync(indexPath)) {
-              const rawHtml = fs.readFileSync(indexPath, "utf-8");
+            if (fs.existsSync(prodIndexPath)) {
+              const rawHtml = fs.readFileSync(prodIndexPath, "utf-8");
               const htmlWithSEO = injectSEOIntoHtml(rawHtml, req.originalUrl, req.get("host") || "theunbound.luxury");
               return res.status(200).set({ "Content-Type": "text/html" }).send(htmlWithSEO);
             }
-            return res.sendFile(indexPath);
+            return res.sendFile(prodIndexPath);
           } catch (err) {
-            return res.sendFile(indexPath);
+            return res.sendFile(prodIndexPath);
           }
         });
       }

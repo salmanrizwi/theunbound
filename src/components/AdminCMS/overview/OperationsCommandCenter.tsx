@@ -62,9 +62,18 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [systemHealth, setSystemHealth] = useState<SystemHealthReport | null>(null);
 
-  // Subscribe to DB updates
+  // Subscribe strictly to operational command center metrics collections
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections([
+      'bookings',
+      'leads',
+      'saved_quotes',
+      'products',
+      'system_users',
+      'suppliers',
+      'calendar_tasks',
+      'audit_logs'
+    ], () => {
       setDbTick(t => t + 1);
       setLastUpdated(new Date());
     });

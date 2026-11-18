@@ -17,7 +17,7 @@ import {
   resolveRailSeasonForDate,
   detectSeasonOverlaps,
   SeasonOverlapConflict
-} from '../../../data/initialRailSeasons';
+} from '../../../utils/railSeasonHelper';
 import { railPricingEngine } from '../../../services/railPricingEngine';
 import { formatCurrency } from '../../../services/currencyEngine';
 import { AppDatabase } from '../../../services/db';

@@ -58,7 +58,7 @@ export const WishlistButton: React.FC<WishlistButtonProps> = ({
 
   useEffect(() => {
     loadWishlistData();
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['wishlist_folders', 'wishlist_items'], () => {
       loadWishlistData();
     });
     return () => unsub();

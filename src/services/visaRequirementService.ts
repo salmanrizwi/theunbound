@@ -3,9 +3,51 @@ import {
   VisaProduct, 
   BookingVisaChecklistItem,
   RequirementCategory,
-  VisaAssistanceService,
+  VisaInclusionExclusionEntry,
   QuoteVisaSnapshot
 } from '../types';
+
+export function getActiveOrderedVisaEntries(
+  entries?: VisaInclusionExclusionEntry[] | null
+): VisaInclusionExclusionEntry[] {
+  if (!Array.isArray(entries) || entries.length === 0) return [];
+  return entries
+    .filter((entry) => Boolean(entry) && entry.isActive !== false && String(entry.title || '').trim().length > 0)
+    .map((entry, idx) => ({
+      id: String(entry.id || `entry-${idx + 1}`),
+      title: String(entry.title || '').trim(),
+      description: entry.description ? String(entry.description).trim() : '',
+      displayOrder: typeof entry.displayOrder === 'number' ? entry.displayOrder : idx + 1,
+      isActive: entry.isActive !== false,
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt
+    }))
+    .sort((a, b) => a.displayOrder - b.displayOrder);
+}
+
+export function formatVisaEntryText(entry: VisaInclusionExclusionEntry | string): string {
+  if (typeof entry === 'string') return entry.trim();
+  const title = String(entry?.title || '').trim();
+  const desc = String(entry?.description || '').trim();
+  if (!title) return desc;
+  return desc ? `${title}: ${desc}` : title;
+}
+
+export function getAuthoritativeVisaUnitSellingPrice(visa: any): number {
+  if (!visa) return 0;
+  if (typeof visa.pricing?.finalPrice === 'number' && !Number.isNaN(visa.pricing.finalPrice) && visa.pricing.finalPrice >= 0) {
+    return visa.pricing.finalPrice;
+  }
+  if (typeof visa.sellingPrice === 'number' && !Number.isNaN(visa.sellingPrice) && visa.sellingPrice >= 0) {
+    return visa.sellingPrice;
+  }
+  if (typeof visa.suggestedSellingUSD === 'number' && !Number.isNaN(visa.suggestedSellingUSD) && visa.suggestedSellingUSD >= 0) {
+    return visa.suggestedSellingUSD;
+  }
+  const embassy = typeof visa.embassyFee === 'number' ? visa.embassyFee : (typeof visa.embassyFeeUSD === 'number' ? visa.embassyFeeUSD : 0);
+  const service = typeof visa.serviceFee === 'number' ? visa.serviceFee : (typeof visa.wholesaleNetUSD === 'number' ? visa.wholesaleNetUSD : 0);
+  return embassy + service;
+}
 
 /**
  * Filter applicable structured requirements based on applicant nationality,
@@ -213,7 +255,6 @@ export function createQuoteVisaSnapshot(
   options: {
     applicantNationality: string;
     applicantProfile?: string;
-    selectedAssistanceIds?: string[];
   }
 ): QuoteVisaSnapshot {
   const applicableReqs = filterApplicableRequirements(
@@ -221,14 +262,11 @@ export function createQuoteVisaSnapshot(
     { nationality: options.applicantNationality, travellerType: options.applicantProfile }
   );
 
-  const selectedAssistance = (visa.assistanceServices || []).filter(
-    asst => options.selectedAssistanceIds?.includes(asst.id)
-  );
-
-  const assistanceFee = selectedAssistance.reduce((sum, a) => sum + (a.sellingPrice || 0), 0);
+  const activeInclusions = getActiveOrderedVisaEntries(visa.inclusions);
+  const activeExclusions = getActiveOrderedVisaEntries(visa.exclusions);
   const embassyFee = visa.embassyFee || 0;
   const serviceFee = visa.serviceFee || 0;
-  const totalSellingPrice = embassyFee + serviceFee + assistanceFee;
+  const totalSellingPrice = getAuthoritativeVisaUnitSellingPrice(visa);
 
   return {
     visaId: visa.id,
@@ -237,12 +275,15 @@ export function createQuoteVisaSnapshot(
     visaType: visa.visaType,
     applicantNationality: options.applicantNationality,
     applicantProfile: options.applicantProfile || 'Standard Adult',
-    selectedAssistanceServices: selectedAssistance,
+    inclusions: activeInclusions,
+    exclusions: activeExclusions,
+    configVersion: visa.inclusionsExclusionsVersion || 1,
+    masterUpdatedAt: visa.updatedAt || visa.createdAt,
     applicableChecklist: applicableReqs,
     pricing: {
       embassyFee,
       serviceFee,
-      assistanceFee,
+      assistanceFee: 0,
       totalSellingPrice
     },
     currency: visa.currency || 'USD',
@@ -426,69 +467,4 @@ export function createDefaultRequirementsForVisa(
   }
 
   return base;
-}
-
-/**
- * Creates default application assistance options for a visa product.
- * (Constitution Section 19)
- */
-export function createDefaultAssistanceServices(visaId: string): VisaAssistanceService[] {
-  return [
-    {
-      id: `ASST-${visaId}-VET`,
-      visaId,
-      name: 'Dossier Verification & Pre-submission Audit',
-      serviceType: 'DOCUMENT_VETTING',
-      description: 'Comprehensive line-by-line scrutiny of financial proofs, photos, and passport credentials to ensure 0% rejection rate.',
-      netCost: 10,
-      serviceFee: 15,
-      sellingPrice: 25,
-      currency: 'USD',
-      includedInBaseFee: true,
-      status: 'ACTIVE',
-      displayOrder: 1
-    },
-    {
-      id: `ASST-${visaId}-FORM`,
-      visaId,
-      name: 'Official Consular Form Filing Assistance',
-      serviceType: 'FORM_FILLING',
-      description: 'Complete digital filing on official government portals with multi-lingual assistance.',
-      netCost: 8,
-      serviceFee: 12,
-      sellingPrice: 20,
-      currency: 'USD',
-      includedInBaseFee: false,
-      status: 'ACTIVE',
-      displayOrder: 2
-    },
-    {
-      id: `ASST-${visaId}-APPT`,
-      visaId,
-      name: 'Priority Embassy / VFS Appointment Slot Booking',
-      serviceType: 'APPOINTMENT_BOOKING',
-      description: 'Automated monitoring and fast-track appointment scheduling at nearest biometric center.',
-      netCost: 15,
-      serviceFee: 20,
-      sellingPrice: 35,
-      currency: 'USD',
-      includedInBaseFee: false,
-      status: 'ACTIVE',
-      displayOrder: 3
-    },
-    {
-      id: `ASST-${visaId}-BIO`,
-      visaId,
-      name: 'VIP Biometric Center Concierge Escort',
-      serviceType: 'BIOMETRIC_CONCIERGE',
-      description: 'Dedicated airport/consular representative at the center to assist with document queueing.',
-      netCost: 20,
-      serviceFee: 25,
-      sellingPrice: 45,
-      currency: 'USD',
-      includedInBaseFee: false,
-      status: 'ACTIVE',
-      displayOrder: 4
-    }
-  ];
 }

@@ -13,6 +13,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, evaluateInventoryValidity } from '../../services/pricingEngine';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 import { 
   X, 
   CheckCircle2, 
@@ -66,7 +67,8 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
     clientCompany,
     travelStartDate,
     travelEndDate,
-    destination
+    destination,
+    draftDestinationReview
   } = useQuotation();
 
   const db = AppDatabase.getInstance();
@@ -261,8 +263,22 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
       return false;
     }
 
+    if (draftDestinationReview?.requiresReview) {
+      setErrorMessage(
+        `One or more cart items belong to a non-active destination (${draftDestinationReview.affectedDestinations.join(', ') || 'Unavailable Destination'}). Please return to your cart and remove unavailable items before submitting.`
+      );
+      setCurrentStep(1);
+      return false;
+    }
+
     // Authoritative Revalidation of Inventory Validity at Booking Submission
     for (const item of items) {
+      const isManual = Boolean(item.isManualHotel || (item.product as any)?.accommodationType === 'manual');
+      if (!isManual && !inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', item.product)) {
+        setErrorMessage(`"${item.product.name}" belongs to a non-active destination and cannot be booked.`);
+        setCurrentStep(1);
+        return false;
+      }
       const itemAny = item as any;
       const serviceDate = item.travelDate || itemAny.hotelDetails?.checkInDate || earliestDate;
       const validityEval = evaluateInventoryValidity(item.product, serviceDate);

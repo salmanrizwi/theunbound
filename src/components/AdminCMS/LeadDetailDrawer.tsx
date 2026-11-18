@@ -15,6 +15,7 @@ import {
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency } from '../../services/pricingEngine';
+import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
 import { ProformaInvoiceModal } from './leads/ProformaInvoiceModal';
 import { validateProformaInvoicePreflight, ProformaPreflightError } from '../../services/proformaInvoicePreflight';
@@ -72,7 +73,7 @@ interface LeadDetailDrawerProps {
   onUpdateLead: (updatedLead: TravelLead) => void;
   onNavigateToTasks?: () => void;
   onOpenBooking?: (bookingId: string) => void;
-  onOpenQuote?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }) => void;
+  onOpenQuote?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly' | 'restore'; leadId?: string }) => void;
   onOpenEdit?: (lead: TravelLead) => void;
   onCreateQuoteForLead?: (lead: TravelLead) => void;
 }
@@ -131,6 +132,11 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
     return db.getUsers().filter(u => u.role === 'B2B_AGENT' && u.approvalStatus === 'APPROVED');
   }, [db]);
 
+  const canViewInternalCosts = React.useMemo(
+    () => canUserViewInternalCostBreakdown(user),
+    [user]
+  );
+
   const linkedQuotes = React.useMemo(() => {
     if (!lead) return [];
     return db.getQuotesForLead(lead.id, user);
@@ -138,8 +144,13 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
 
   const linkedQuoteVersions = React.useMemo(() => {
     if (!lead) return [];
-    return db.getQuoteVersionsForLead(lead.id);
-  }, [db, lead]);
+    return db.getQuoteVersionsForLead(lead.id, user);
+  }, [db, lead, user]);
+
+  const groupedQuoteVersions = React.useMemo(() => {
+    if (!lead) return [];
+    return db.getQuoteVersionsGroupedByQuoteForLead(lead.id, user);
+  }, [db, lead, user]);
 
   const linkedBookings = React.useMemo(() => {
     if (!lead) return [];
@@ -1104,9 +1115,9 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                           <th className="pb-2">Category</th>
                           <th className="pb-2">Destination</th>
                           <th className="pb-2">Travel Date</th>
-                          <th className="pb-2 text-right">Net Cost</th>
+                          {canViewInternalCosts && <th className="pb-2 text-right">Net Cost</th>}
                           <th className="pb-2 text-right">Selling Price</th>
-                          <th className="pb-2 text-right">Margin %</th>
+                          {canViewInternalCosts && <th className="pb-2 text-right">Margin %</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -1127,15 +1138,19 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                             </td>
                             <td className="py-2.5 text-slate-600">{prod.city || prod.destinationName}</td>
                             <td className="py-2.5 text-slate-600">{prod.travelDate || 'Flexible'}</td>
-                            <td className="py-2.5 text-right font-mono text-slate-600">
-                              {prod.currency} {(prod.totalNetCost || 0).toLocaleString()}
-                            </td>
+                            {canViewInternalCosts && (
+                              <td className="py-2.5 text-right font-mono text-slate-600">
+                                {prod.currency} {(prod.totalNetCost || 0).toLocaleString()}
+                              </td>
+                            )}
                             <td className="py-2.5 text-right font-mono font-bold text-slate-900">
                               {prod.currency} {(prod.totalSellingPrice || 0).toLocaleString()}
                             </td>
-                            <td className="py-2.5 text-right font-bold text-[#008f77]">
-                              {prod.marginPercent ? `${prod.marginPercent}%` : '-'}
-                            </td>
+                            {canViewInternalCosts && (
+                              <td className="py-2.5 text-right font-bold text-[#008f77]">
+                                {prod.marginPercent ? `${prod.marginPercent}%` : '-'}
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -1152,6 +1167,8 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
               lead={lead}
               linkedQuotes={linkedQuotes}
               linkedQuoteVersions={linkedQuoteVersions}
+              groupedQuoteVersions={groupedQuoteVersions}
+              currentUser={user}
               onOpenQuote={onOpenQuote}
               onConvertToBooking={handleConvertToBooking}
               isConverting={isConverting}

@@ -10,6 +10,7 @@ import {
   QuoteItemContentSnapshot
 } from '../types';
 import { resolveAuthoritativeCategory } from '../services/configuratorRegistry';
+import { getActiveOrderedVisaEntries, formatVisaEntryText } from '../services/visaRequirementService';
 
 /**
  * Passenger Classification according to B2B Travel Industry Standards:
@@ -496,12 +497,16 @@ export function resolveQuoteItemCategory(itemOrProduct: QuoteItem | Product | an
 export function resolveQuoteItemInclusions(item: QuoteItem | any): string[] {
   if (!item) return [];
 
+  if (item.visaSnapshot && Array.isArray(item.visaSnapshot.inclusions)) {
+    return getActiveOrderedVisaEntries(item.visaSnapshot.inclusions).map(formatVisaEntryText).filter(Boolean);
+  }
+
   const productInclusions = Array.isArray(item.product?.inclusions)
-    ? item.product.inclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    ? item.product.inclusions.map((s: any) => (typeof s === 'string' ? s.trim() : formatVisaEntryText(s))).filter(Boolean)
     : [];
 
   const rawSnapshotInclusions = Array.isArray(item.contentSnapshot?.inclusions)
-    ? item.contentSnapshot.inclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    ? item.contentSnapshot.inclusions.map((s: any) => (typeof s === 'string' ? s.trim() : formatVisaEntryText(s))).filter(Boolean)
     : [];
 
   // Detect whether the snapshot only contains legacy generic strings
@@ -560,12 +565,16 @@ export function resolveQuoteItemInclusions(item: QuoteItem | any): string[] {
 export function resolveQuoteItemExclusions(item: QuoteItem | any): string[] {
   if (!item) return [];
 
+  if (item.visaSnapshot && Array.isArray(item.visaSnapshot.exclusions)) {
+    return getActiveOrderedVisaEntries(item.visaSnapshot.exclusions).map(formatVisaEntryText).filter(Boolean);
+  }
+
   const productExclusions = Array.isArray(item.product?.exclusions)
-    ? item.product.exclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    ? item.product.exclusions.map((s: any) => (typeof s === 'string' ? s.trim() : formatVisaEntryText(s))).filter(Boolean)
     : [];
 
   const rawSnapshotExclusions = Array.isArray(item.contentSnapshot?.exclusions)
-    ? item.contentSnapshot.exclusions.map((s: any) => String(s).trim()).filter(Boolean)
+    ? item.contentSnapshot.exclusions.map((s: any) => (typeof s === 'string' ? s.trim() : formatVisaEntryText(s))).filter(Boolean)
     : [];
 
   // Detect whether the snapshot only contains legacy generic strings
@@ -661,19 +670,26 @@ export function createQuoteItemContentSnapshot(
   // Compile Overview Specifications, Inclusions, and Exclusions
   if (isVisa) {
     overviewSpecifications = product?.longDescription || product?.description || product?.shortDescription || '';
-    if (!overviewSpecifications) {
-      overviewSpecifications = `Comprehensive visa services assistance and facilitation support for ${product?.destinationName || product?.country || 'Japan'}.`;
+    overviewSpecifications += `${overviewSpecifications ? '\n\n' : ''}**Visa Service Details:**\n`;
+    overviewSpecifications += `• **Service Name:** ${product?.name || item?.visaSnapshot?.visaName || 'Visa Service'}\n`;
+    overviewSpecifications += `• **Destination:** ${product?.destinationName || product?.country || item?.visaSnapshot?.destination || ''}\n`;
+    if ((product as any)?.visaType || item?.visaSnapshot?.visaType) {
+      overviewSpecifications += `• **Visa Type:** ${(product as any)?.visaType || item?.visaSnapshot?.visaType}\n`;
     }
-    overviewSpecifications += `\n\n**Visa Service Details:**\n`;
-    overviewSpecifications += `• **Service Name:** ${product?.name || 'Official E-Visa Assistance'}\n`;
-    overviewSpecifications += `• **Destination:** ${product?.destinationName || product?.country || 'Japan'}\n`;
-    if ((product as any)?.visaType) overviewSpecifications += `• **Visa Type:** ${(product as any)?.visaType}\n`;
     if (item?.visaSnapshot?.applicantNationality) {
       overviewSpecifications += `• **Nationality:** ${item.visaSnapshot.applicantNationality}\n`;
     }
-    
-    inclusions = Array.isArray(product?.inclusions) ? product.inclusions.filter(Boolean) : [];
-    exclusions = Array.isArray(product?.exclusions) ? product.exclusions.filter(Boolean) : [];
+
+    inclusions = item?.visaSnapshot && Array.isArray(item.visaSnapshot.inclusions)
+      ? getActiveOrderedVisaEntries(item.visaSnapshot.inclusions).map(formatVisaEntryText).filter(Boolean)
+      : (Array.isArray(product?.inclusions)
+          ? product.inclusions.map((s: any) => (typeof s === 'string' ? s.trim() : formatVisaEntryText(s))).filter(Boolean)
+          : []);
+    exclusions = item?.visaSnapshot && Array.isArray(item.visaSnapshot.exclusions)
+      ? getActiveOrderedVisaEntries(item.visaSnapshot.exclusions).map(formatVisaEntryText).filter(Boolean)
+      : (Array.isArray(product?.exclusions)
+          ? product.exclusions.map((s: any) => (typeof s === 'string' ? s.trim() : formatVisaEntryText(s))).filter(Boolean)
+          : []);
 
   } else if (isHotel) {
     if (item?.isManualHotel && item?.manualHotelDetails) {

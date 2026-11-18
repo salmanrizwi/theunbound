@@ -27,6 +27,7 @@ import {
 } from './pricingEngine';
 import { canUserViewInternalCostBreakdown } from './permissionEngine';
 import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
+import { buildDestinationVisibilityIndex, isPackageActiveForB2B } from './destinationVisibility';
 import {
   hotelToProduct,
   manualHotelToProduct
@@ -253,20 +254,6 @@ export function normalizePackageRecord(raw: any): B2BPackage {
  */
 export function isPackageVisibleToB2BAgent(pkg: B2BPackage | null | undefined): boolean {
   if (!pkg) return false;
-  if ((pkg as any).isDeleted === true) return false;
-  const statusUpper = String(pkg.status || '').toUpperCase();
-  if (
-    statusUpper === 'ARCHIVED' ||
-    statusUpper === 'DRAFT' ||
-    statusUpper === 'UNPUBLISHED' ||
-    statusUpper === 'INACTIVE' ||
-    statusUpper === 'DELETED'
-  ) {
-    return false;
-  }
-  if (pkg.isPublished === false && statusUpper !== 'PUBLISHED' && statusUpper !== 'ACTIVE') {
-    return false;
-  }
   if (
     pkg.visibility &&
     pkg.visibility.search === false &&
@@ -275,7 +262,9 @@ export function isPackageVisibleToB2BAgent(pkg: B2BPackage | null | undefined): 
   ) {
     return false;
   }
-  return true;
+  const deletedSet = db.getDeletedEntityIds();
+  const visIndex = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
+  return isPackageActiveForB2B(pkg, visIndex, deletedSet);
 }
 
 /**
@@ -464,22 +453,23 @@ export function transformPackageToQuoteState(
   const children = Math.max(0, options?.childrenCount ?? 0);
   const infants = Math.max(0, options?.infantsCount ?? 0);
 
-  // 1. Resolve Destination
+  // 1. Resolve Destination strictly from authoritative destinations without fabricating active fallback
   const allDestinations = db.getDestinations();
   const matchedDestination: Destination =
     allDestinations.find(
       d =>
         d.id === pkg.destinationId ||
-        (d.name || '').toLowerCase() === (pkg.destinationName || '').toLowerCase()
+        (pkg.destinationName && (d.name || '').toLowerCase() === pkg.destinationName.toLowerCase()) ||
+        (pkg.destinationName && (d.country || '').toLowerCase() === pkg.destinationName.toLowerCase())
     ) ||
-    allDestinations[0] || ({
-      id: pkg.destinationId || 'dest-japan',
-      name: pkg.destinationName || 'Japan',
-      slug: 'japan',
-      country: pkg.destinationName || 'Japan',
+    ({
+      id: pkg.destinationId || 'dest-unknown',
+      name: pkg.destinationName || 'Unavailable Destination',
+      slug: (pkg.destinationName || 'unavailable').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+      country: pkg.destinationName || '',
       region: 'JAPAN',
-      currency: 'JPY',
-      tagline: 'Land of the Rising Sun',
+      currency: targetCurrency,
+      tagline: '',
       description: pkg.description || '',
       heroImage: pkg.heroImage || '',
       highlights: [],
@@ -489,7 +479,7 @@ export function transformPackageToQuoteState(
       idealTripDuration: '7-14 Days',
       travelStyle: 'Cultural & Modern',
       featuredProductIds: [],
-      status: 'ACTIVE'
+      status: 'INACTIVE'
     } as Destination);
 
   // 2. Compute Travel Duration & Dates
@@ -538,14 +528,23 @@ export function transformPackageToQuoteState(
   const allProducts: Product[] = db.getProducts();
   const quoteItems: QuoteItem[] = [];
 
-  const calculatePriceForItem = (prod: Product, travelDate: string) => {
+  const calculatePriceForItem = (
+    prod: Product,
+    travelDate: string,
+    extra?: { itemId?: string; serviceEndDate?: string; nights?: number; roomsCount?: number }
+  ) => {
     const params = {
       productId: prod.id,
+      productName: prod.name,
+      itemId: extra?.itemId,
       pricingTier: pricingTier as any,
       adults,
       children,
       infants,
       travelDate,
+      serviceEndDate: extra?.serviceEndDate,
+      nights: extra?.nights,
+      roomsCount: extra?.roomsCount,
       targetCurrency,
       selectedAddonIds: [],
       userRole: user?.role || 'B2B_AGENT',
@@ -598,11 +597,17 @@ export function transformPackageToQuoteState(
       dayNumber?: number;
     }
   ): QuoteItem => {
-    const calculation = calculatePriceForItem(product, itemOptions.travelDate);
+    const itemId = `item-pkg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const calculation = calculatePriceForItem(product, itemOptions.travelDate, {
+      itemId,
+      serviceEndDate: itemOptions.checkOutDate || itemOptions.manualHotelDetails?.checkOutDate,
+      nights: itemOptions.nights || itemOptions.manualHotelDetails?.numberOfNights || (product as any).nights,
+      roomsCount: itemOptions.roomsCount || itemOptions.manualHotelDetails?.numberOfRooms || (product as any).roomsCount
+    });
     const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
 
     const item: QuoteItem = {
-      id: `item-pkg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: itemId,
       product: effectiveProduct,
       pax: { adults, children, infants },
       travelDate: itemOptions.travelDate,
@@ -1158,6 +1163,9 @@ export interface QuoteWorkspaceToPackageInput {
   importantInformation?: string;
   cancellationPolicy?: string;
   termsAndConditions?: string;
+  sourceQuoteId?: string;
+  sourceSnapshotVersion?: number;
+  sourceSnapshotHash?: string;
   currency: CurrencyCode;
   adultsCount?: number;
   childrenCount?: number;
@@ -1978,6 +1986,9 @@ export function buildMasterPackageFromQuoteWorkspace(
     status,
     isPublished,
     isFeatured,
+    sourceQuoteId: input.sourceQuoteId || existingPkg?.sourceQuoteId,
+    sourceSnapshotVersion: input.sourceSnapshotVersion ?? existingPkg?.sourceSnapshotVersion,
+    sourceSnapshotHash: input.sourceSnapshotHash || existingPkg?.sourceSnapshotHash,
     currency: targetCurrency,
     baseNetCostUSD: 0,
     suggestedSellingPriceUSD: 0,

@@ -51,6 +51,7 @@ import {
   Shield,
   Smartphone,
   ShoppingCart,
+  History,
   X
 } from 'lucide-react';
 import { useQuotation } from '../../context/QuotationContext';
@@ -76,19 +77,43 @@ import {
   QuoteBrandingMode,
   AdminBasePriceUpdatedNotification
 } from '../../types';
-import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown, roundCurrencyAmount, validateAgentAdditionalMarkup } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, resolveCapacityPricingTier, calculateQuoteInternalBreakdown, resolveQuoteAgencyPricingContext, QuoteInternalBreakdownResult, roundCurrencyAmount, validateAgentAdditionalMarkup, validateAdminManualMargin } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
-import { TransferSuggestion } from '../../utils/b2bQuotationHelpers';
+import { 
+  TransferSuggestion, 
+  resolveQuoteItemInclusions, 
+  resolveQuoteItemExclusions 
+} from '../../utils/b2bQuotationHelpers';
 import { validateRoomOccupancy, hotelToProduct, manualHotelToProduct, isManualHotelPricingComplete } from '../../utils/hotelHelpers';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { AppDatabase, db } from '../../services/db';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 import { TransferConfigurator } from '../Configurators/TransferConfigurator';
 import { RichTextEditor } from '../common/RichTextEditor';
 import { RichTextRenderer } from '../common/RichTextRenderer';
 import { validateWhiteLabelReadiness, buildAgencyBrandingSnapshotFromUser } from '../../services/quotePresentationModel';
 import { COMMERCIAL_QUOTATION_TERMS_HEADING, COMMERCIAL_QUOTATION_TERMS_ITEMS } from '../../constants/commercialQuotationTerms';
+import { DestinationTermsReadinessResult } from '../../services/destinationTermsService';
+import {
+  doesHotelItemBelongToHubOccurrence,
+  shouldExcludeHotelItemByNoAccommodation,
+  getHubOccurrenceId,
+  getHubCityOccurrenceIndex,
+  validateHubStayDates,
+  generateAccommodationStayId
+} from '../../utils/hubStayMatching';
+import {
+  Step4AccordionState,
+  getStep4DayId,
+  createInitialStep4AccordionState,
+  toggleStep4Day,
+  expandAllStep4Days,
+  collapseAllStep4Days,
+  toggleStep4Recommended,
+  reconcileStep4AccordionDays
+} from '../../utils/step4AccordionState';
 
 // Helper to check if a product matches a target city/hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -101,6 +126,51 @@ export const isProductMatchingCity = (product: Product, targetCityName?: string,
   if (prodDesc && target && prodDesc.includes(target)) return true;
   return false;
 };
+
+const SURCHARGE_MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function formatSurchargeIsoDate(isoDate?: string): string {
+  if (!isoDate || typeof isoDate !== 'string') return '';
+  const clean = isoDate.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return isoDate.trim();
+  const [y, m, d] = clean.split('-').map(Number);
+  if (!y || !m || !d || m < 1 || m > 12) return clean;
+  return `${String(d).padStart(2, '0')} ${SURCHARGE_MONTH_NAMES[m - 1]} ${y}`;
+}
+
+function formatSurchargeDateRange(startIso?: string, endIso?: string): string {
+  const startClean = (startIso || '').trim().slice(0, 10);
+  const endClean = (endIso || '').trim().slice(0, 10);
+  const startFmt = formatSurchargeIsoDate(startClean);
+  const endFmt = formatSurchargeIsoDate(endClean);
+  if (startFmt && endFmt && startClean !== endClean) {
+    return `${startFmt} – ${endFmt}`;
+  }
+  return startFmt || endFmt || '';
+}
+
+function formatSurchargeBasisLabel(basis?: string): string {
+  const norm = (basis || '').trim().toUpperCase();
+  switch (norm) {
+    case 'PER_PERSON': return 'Per Person';
+    case 'PER_ADULT': return 'Per Adult';
+    case 'PER_CHILD': return 'Per Child';
+    case 'PER_INFANT': return 'Per Infant';
+    case 'PER_ROOM': return 'Per Room';
+    case 'PER_ROOM_NIGHT': return 'Per Room / Night';
+    case 'PER_NIGHT': return 'Per Night';
+    case 'PER_VEHICLE': return 'Per Vehicle';
+    case 'PER_UNIT': return 'Per Unit';
+    case 'PER_HOUR': return 'Per Hour';
+    case 'PER_DAY': return 'Per Day';
+    case 'PER_DEVICE': return 'Per Device';
+    case 'PER_SERVICE': return 'Per Service';
+    case 'PER_BOOKING': return 'Per Booking';
+    case 'FIXED_AMOUNT': return 'Fixed / Booking';
+    case 'PERCENTAGE': return 'On Base Price';
+    default: return norm ? norm.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) : '';
+  }
+}
 
 export interface StepByStepQuotationWorkspaceProps {
   // Current Active Step (1 to 9)
@@ -166,7 +236,7 @@ export interface StepByStepQuotationWorkspaceProps {
   routeHubs: TripRouteHub[];
   setRouteHubs: React.Dispatch<React.SetStateAction<TripRouteHub[]>>;
   routeTotalNights: number;
-  getHubDates: (order: number, nights: number) => { checkInFormatted: string; checkOutFormatted: string };
+  getHubDates: (hubIdOrOrder: string | number, nights?: number) => { checkInIso?: string; checkOutIso?: string; checkInFormatted: string; checkOutFormatted: string };
   calendarDays: Array<{ dayNumber: number; dateString: string; dayOfWeek: string; formattedDate: string }>;
 
   // Quote Items & Calculations
@@ -182,11 +252,13 @@ export interface StepByStepQuotationWorkspaceProps {
   onDismissAdminBasePriceNotification?: () => void;
 
   // Hotel Actions
-  onSelectHotelForHub?: (hubOrder: number, hotel: Hotel, roomTypeId?: string, roomsCount?: number) => void;
+  onSelectHotelForHub?: (hubIdOrOrder: string | number, hotel: Hotel, roomTypeId?: string, roomsCount?: number) => void;
   onSelectNoAccommodationForHub?: (hubId: string) => void;
   onRemoveHotelForHub?: (hubId: string) => void;
   onOpenEditManualHotel?: (hubId: string) => void;
   onRemoveManualHotel?: (hubId: string) => void;
+  onSyncHubStayToHotelItems?: (updatedHub: TripRouteHub, nextHubsList: TripRouteHub[]) => void;
+  onDeleteHubOccurrenceItems?: (deletedHub: TripRouteHub, currentHubsSnapshot?: TripRouteHub[]) => void;
 
   // Item & Day Customization
   onOpenEditItem?: (item: QuoteItem) => void;
@@ -201,6 +273,11 @@ export interface StepByStepQuotationWorkspaceProps {
   setQuoteTitle?: (title: string) => void;
 
   // Pricing & Margins
+  quoteCompanyId?: string;
+  quoteAgentId?: string;
+  quoteAgentAgency?: string;
+  productLevelMarginEnabled?: boolean;
+  agentLevelMarginPercent?: number;
   baseFinalSellingPrice?: number;
   adminManualMarginType?: 'PERCENTAGE' | 'FIXED';
   setAdminManualMarginType?: (type: 'PERCENTAGE' | 'FIXED') => void;
@@ -208,6 +285,7 @@ export interface StepByStepQuotationWorkspaceProps {
   setAdminManualMarginValue?: (val: number) => void;
   adminMarginMode?: 'REPLACE' | 'ADD';
   setAdminMarginMode?: (mode: 'REPLACE' | 'ADD') => void;
+  onCommitAdminManualMarginAudit?: (prevValue: number, nextValue: number) => void;
   agentMarginType?: AgentMarginType;
   setAgentMarginType?: (type: AgentMarginType) => void;
   agentMarginValue?: number;
@@ -255,8 +333,10 @@ export interface StepByStepQuotationWorkspaceProps {
   onNavigateToPackagesModule?: () => void;
   canSaveAsPackage?: boolean;
   canAddManualHotel?: boolean;
-  autoSaveStatus: 'SAVED' | 'SAVING' | 'IDLE';
+  autoSaveStatus: 'SAVED' | 'SAVING' | 'IDLE' | 'FAILED';
   lastSavedTimestamp: string;
+  precomputedQuoteBreakdown?: QuoteInternalBreakdownResult;
+  onRetryAutoSave?: () => void;
   quoteNumber?: string;
   quoteVersion?: number;
   packagePricingStatus?: 'IDLE' | 'CALCULATING' | 'SUCCESS' | 'ERROR';
@@ -265,9 +345,662 @@ export interface StepByStepQuotationWorkspaceProps {
   brandingMode?: QuoteBrandingMode;
   setBrandingMode?: (mode: QuoteBrandingMode) => void;
   onOpenCartDrawer?: () => void;
+  termsReadiness?: DestinationTermsReadinessResult;
+  isFinalisedTermsLocked?: boolean;
+  termsSyncLoading?: boolean;
+  canManageDestinationTerms?: boolean;
+  isAdminTermsApprover?: boolean;
+  hasDraftTermsUpdateAvailable?: boolean;
+  adminMissingTermsNotified?: boolean;
+  onRefreshDraftTerms?: () => void;
+  onNotifyAdminMissingTerms?: () => void;
+  onConfigureDestinationTerms?: (targetId: string) => void;
+  onApproveTermsException?: (reason: string) => void;
+  outputSyncError?: string | null;
+  outputBusyOption?: string | null;
+  hasUnsavedChanges?: boolean;
+  isSavingExplicitly?: boolean;
+  latestSavedVersion?: number;
+  restoredFromVersion?: number | null;
+  isReadOnlyHistoricalMode?: boolean;
+  onOpenVersionHistory?: () => void;
 }
 
-export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspaceProps> = ({
+/**
+ * Local-buffered text input so typing in heavy multi-day itinerary grids updates
+ * immediately (<16ms) and flushes parent React state after 180ms idle or on blur.
+ */
+const DebouncedTextInput: React.FC<{
+  value: string;
+  onCommit: (val: string) => void;
+  placeholder?: string;
+  className?: string;
+  debounceMs?: number;
+}> = React.memo(({ value, onCommit, placeholder, className, debounceMs = 180 }) => {
+  const [localVal, setLocalVal] = useState(value);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCommitRef = useRef(onCommit);
+  onCommitRef.current = onCommit;
+  const pendingRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (pendingRef.current === null && value !== localVal) {
+      setLocalVal(value);
+    }
+  }, [value]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        if (pendingRef.current !== null) {
+          onCommitRef.current(pendingRef.current);
+          pendingRef.current = null;
+        }
+      }
+    };
+  }, []);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value;
+    setLocalVal(next);
+    pendingRef.current = next;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      const committed = pendingRef.current;
+      pendingRef.current = null;
+      if (committed !== null) onCommitRef.current(committed);
+    }, debounceMs);
+  };
+
+  const handleBlur = () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (pendingRef.current !== null) {
+      const committed = pendingRef.current;
+      pendingRef.current = null;
+      onCommitRef.current(committed);
+    }
+  };
+
+  return (
+    <input
+      type="text"
+      value={localVal}
+      onChange={handleChange}
+      onBlur={handleBlur}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+});
+
+interface Step4DaySlot {
+  dayNumber: number;
+  dateString: string;
+  dayOfWeek: string;
+  formattedDate: string;
+  hub: TripRouteHub | null;
+  isTransitionDay: boolean;
+  prevHub: TripRouteHub | null;
+  hotelItems: QuoteItem[];
+  productItems: QuoteItem[];
+  dayNetCost: number;
+  daySellingPrice: number;
+}
+
+interface Step4DayCardProps {
+  dayId: string;
+  slot: Step4DaySlot;
+  currency: CurrencyCode;
+  destinationName: string;
+  quotationScope: QuotationScope;
+  dayTheme: string;
+  dayDescription: string;
+  hubRecommendations: Product[];
+  isDayExpanded: boolean;
+  isRecommendedExpanded: boolean;
+  onToggleDay: (dayId: string) => void;
+  onToggleRecommended: (dayId: string) => void;
+  onCommitDayTheme: (dayNumber: number, value: string) => void;
+  onChangeDayDescription: (dayNumber: number, value: string) => void;
+  onOpenQuickAddProductModal: (slot: { dayNumber: number; dateString: string; hub?: TripRouteHub | null }) => void;
+  onOpenProductDetails: (product: Product) => void;
+  onOpenEditItem?: (item: QuoteItem) => void;
+  removeProductFromQuote: (itemId: string) => void;
+  onGoToStep2: () => void;
+  onConfigureAndAddRec: (product: Product, dateString: string) => void;
+}
+
+const Step4DayCard: React.FC<Step4DayCardProps> = React.memo(({
+  dayId,
+  slot,
+  currency,
+  destinationName,
+  quotationScope,
+  dayTheme,
+  dayDescription,
+  hubRecommendations,
+  isDayExpanded,
+  isRecommendedExpanded,
+  onToggleDay,
+  onToggleRecommended,
+  onCommitDayTheme,
+  onChangeDayDescription,
+  onOpenQuickAddProductModal,
+  onOpenProductDetails,
+  onOpenEditItem,
+  removeProductFromQuote,
+  onGoToStep2,
+  onConfigureAndAddRec
+}) => {
+  const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
+  const [hasOpenedDay, setHasOpenedDay] = useState<boolean>(isDayExpanded);
+  useEffect(() => {
+    if (isDayExpanded && !hasOpenedDay) {
+      setHasOpenedDay(true);
+    }
+  }, [isDayExpanded, hasOpenedDay]);
+  const resolvedHubRef = slot.hub?.hubId || slot.hub?.hubName;
+  const activitiesCount = slot.productItems.length;
+
+  const handleDayDescriptionChange = useCallback(
+    (val: string) => onChangeDayDescription(slot.dayNumber, val),
+    [onChangeDayDescription, slot.dayNumber]
+  );
+
+  const handleDayThemeCommit = useCallback(
+    (val: string) => onCommitDayTheme(slot.dayNumber, val),
+    [onCommitDayTheme, slot.dayNumber]
+  );
+
+  const handleToggleThisDay = useCallback(() => {
+    onToggleDay(dayId);
+  }, [onToggleDay, dayId]);
+
+  const handleToggleThisRecommended = useCallback(() => {
+    onToggleRecommended(dayId);
+  }, [onToggleRecommended, dayId]);
+
+  return (
+    <div
+      data-step4-day-id={dayId}
+      className={`bg-white rounded-2xl border overflow-hidden transition-colors duration-150 builder-day-card-cv ${
+        isDayExpanded
+          ? 'border-[#00C6A6]/70 ring-1 ring-[#00C6A6]/20 shadow-sm'
+          : 'border-slate-200 shadow-xs hover:border-slate-300'
+      }`}
+    >
+      {/* Clickable Day Header */}
+      <div
+        className={`px-4 py-3 flex flex-wrap items-center justify-between gap-3 transition-colors duration-150 ${
+          isDayExpanded
+            ? 'bg-teal-50/35 border-b border-slate-200'
+            : 'bg-white hover:bg-slate-50/80'
+        }`}
+      >
+        <div className="flex-1 min-w-0 flex items-start space-x-3">
+          <button
+            type="button"
+            onClick={handleToggleThisDay}
+            aria-expanded={isDayExpanded}
+            className={`w-10 h-10 rounded-2xl border flex flex-col items-center justify-center font-bold shrink-0 cursor-pointer transition-colors ${
+              isDayExpanded
+                ? 'bg-[#00C6A6] border-[#00A88F] text-white'
+                : 'bg-teal-50 border-teal-200 text-[#00A88F]'
+            }`}
+            title={isDayExpanded ? `Collapse Day ${slot.dayNumber}` : `Expand Day ${slot.dayNumber}`}
+          >
+            <span className={`text-[9px] uppercase tracking-wider font-mono ${isDayExpanded ? 'text-teal-50' : 'text-slate-500'}`}>
+              Day
+            </span>
+            <span className="text-sm font-black leading-none tabular-nums">{slot.dayNumber}</span>
+          </button>
+
+          <div className="flex-1 min-w-0">
+            <button
+              type="button"
+              onClick={handleToggleThisDay}
+              aria-expanded={isDayExpanded}
+              className="w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C6A6] rounded-lg"
+            >
+              <div className="flex items-center flex-wrap gap-x-2 gap-y-1">
+                <h3 className="text-xs sm:text-sm font-bold text-slate-900">
+                  {slot.dayOfWeek}, {slot.formattedDate}
+                </h3>
+                <span className="text-xs font-semibold text-teal-800">
+                  · {slot.hub?.hubName || destinationName}
+                </span>
+                <span className="text-[11px] font-medium text-slate-500 tabular-nums">
+                  · {activitiesCount} {activitiesCount === 1 ? 'Activity' : 'Activities'}
+                </span>
+                {slot.isTransitionDay && (
+                  <span className="text-[11px] font-semibold text-amber-700">
+                    · Transit from {slot.prevHub?.hubName}
+                  </span>
+                )}
+              </div>
+
+              {!isDayExpanded && (
+                <p className="text-xs text-slate-500 truncate mt-0.5">
+                  {dayTheme?.trim()
+                    ? dayTheme
+                    : slot.hotelItems[0]?.product?.name
+                      ? `Stay: ${slot.hotelItems[0].product.name}`
+                      : 'Click to expand day itinerary & activities'}
+                </p>
+              )}
+            </button>
+
+            {/* Editable Day Theme shown when expanded (kept outside button to preserve input focus & keyboard typing) */}
+            {isDayExpanded && (
+              <DebouncedTextInput
+                placeholder="Add day theme (e.g. Arrival in Tokyo, Imperial Palace & Shinjuku Night Tour)..."
+                value={dayTheme}
+                onCommit={handleDayThemeCommit}
+                className="text-xs text-slate-800 placeholder:text-slate-400 bg-transparent border-b border-slate-200 hover:border-slate-300 focus:border-[#00C6A6] outline-none w-full max-w-md py-0.5 mt-1"
+              />
+            )}
+          </div>
+        </div>
+
+        {/* Header Actions */}
+        <div className="flex items-center space-x-2 shrink-0">
+          <span className="text-xs font-bold text-slate-900 font-mono tabular-nums bg-white px-2.5 py-1 rounded-xl border border-slate-200 shadow-2xs">
+            {formatCurrency(slot.daySellingPrice, currency)}
+          </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenQuickAddProductModal({ dayNumber: slot.dayNumber, dateString: slot.dateString, hub: slot.hub });
+            }}
+            className="flex items-center px-3 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-white text-xs font-bold transition-colors cursor-pointer shadow-xs whitespace-nowrap shrink-0"
+          >
+            <span>Add Product</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleToggleThisDay}
+            aria-expanded={isDayExpanded}
+            aria-label={isDayExpanded ? `Collapse Day ${slot.dayNumber}` : `Expand Day ${slot.dayNumber}`}
+            className={`w-8 h-8 rounded-xl border flex items-center justify-center transition-colors cursor-pointer shrink-0 ${
+              isDayExpanded
+                ? 'bg-teal-50 border-teal-200 text-[#00A88F] hover:bg-teal-100'
+                : 'bg-white border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-50'
+            }`}
+          >
+            {isDayExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Day Body Content — stays mounted once opened via grid accordion so unsaved edits & UI state are preserved; unopened collapsed days defer RichTextEditor mount */}
+      <div
+        className={`grid transition-[grid-template-rows,opacity] duration-150 ease-out motion-reduce:transition-none ${
+          isDayExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+        }`}
+        aria-hidden={!isDayExpanded}
+        {...(!isDayExpanded ? { inert: true as any } : {})}
+      >
+        <div className="overflow-hidden min-h-0">
+          {hasOpenedDay && (
+          <div className="p-4 sm:p-5 space-y-4">
+        {/* Day Narrative / Overview Editor (Pre-populated from Ready-Made Packages or custom) */}
+        <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80 space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              Day {slot.dayNumber} Narrative &amp; Overview
+            </span>
+            {dayDescription && (
+              <span className="text-[10px] text-teal-700 font-semibold">Included in Client Proposal</span>
+            )}
+          </div>
+          <RichTextEditor
+            value={dayDescription}
+            onChange={handleDayDescriptionChange}
+            placeholder={`Describe the flow and highlights for Day ${slot.dayNumber} in ${slot.hub?.hubName || destinationName}...`}
+            minHeight="110px"
+            compact={true}
+          />
+        </div>
+
+        {/* Night Accommodation Badge for this Day */}
+        {quotationScope !== 'LAND_ONLY' && (
+          <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex items-center justify-between">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
+                <BedDouble className="w-3.5 h-3.5" />
+              </div>
+              <div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Night {slot.dayNumber} Stay • {slot.hub?.hubName}
+                </span>
+                {slot.hotelItems.length > 0 ? (
+                  <span className="text-xs font-bold text-slate-900">
+                    {slot.hotelItems[0].product.name}
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-400 italic">
+                    No hotel specified for this night (Self-arranged or covered by multi-night stay)
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Scheduled Day Experiences & Products */}
+        {slot.productItems.length === 0 ? (
+          <div className="bg-slate-50/60 rounded-xl p-5 border border-dashed border-slate-300 text-center space-y-2">
+            <Compass className="w-5 h-5 text-slate-400 mx-auto" />
+            <p className="text-xs text-slate-500 font-medium">
+              No activities or transfers scheduled for Day {slot.dayNumber} ({slot.hub?.hubName || destinationName}) yet.
+            </p>
+            <button
+              type="button"
+              onClick={() => onOpenQuickAddProductModal({ dayNumber: slot.dayNumber, dateString: slot.dateString, hub: slot.hub })}
+              className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-300 transition-colors inline-flex items-center cursor-pointer shadow-2xs"
+            >
+              <span>Browse Experiences for {slot.hub?.hubName || 'this day'}</span>
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {slot.productItems.map((item) => {
+              const isExpanded = Boolean(expandedItems[item.id]);
+              return (
+                <div
+                  key={item.id}
+                  className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 hover:border-slate-300 hover:bg-white transition-colors shadow-2xs space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center space-x-3 min-w-0 flex-1">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                        isRailQuoteItem(item)
+                          ? 'bg-indigo-50 border border-indigo-200 text-indigo-700'
+                          : 'bg-teal-50 border border-teal-200 text-[#00A88F]'
+                      }`}>
+                        {isRailQuoteItem(item) ? (
+                          <Train className="w-4 h-4" />
+                        ) : item.product.category === 'Transfer' || item.product.category === 'Transport' ? (
+                          <Car className="w-3.5 h-3.5" />
+                        ) : (
+                          <Compass className="w-3.5 h-3.5" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
+                            {item.serviceTime || '09:30 AM'}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            isRailQuoteItem(item)
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : 'bg-white text-slate-600 border border-slate-200'
+                          }`}>
+                            {isRailQuoteItem(item) ? '🚄 Shinkansen Rail' : (item.product?.category || item.category || 'Service')}
+                          </span>
+                          {item.product.city && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                              📍 {item.product.city}
+                            </span>
+                          )}
+                          <h4 className="text-xs sm:text-sm font-bold text-slate-900 truncate">
+                            {item.customTitle || item.title || item.product.name}
+                          </h4>
+                        </div>
+
+                        {/* Shinkansen Route & Seat Specifications */}
+                        {isRailQuoteItem(item) && item.railJourneyDetails && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700 bg-indigo-50/70 border border-indigo-100 px-2 py-1 rounded-lg">
+                            <span className="font-extrabold text-indigo-900">
+                              {item.railJourneyDetails.originStationName} → {item.railJourneyDetails.destinationStationName}
+                            </span>
+                            <span>•</span>
+                            <span className="font-semibold text-slate-700">
+                              {item.railJourneyDetails.carType} Class ({item.railJourneyDetails.seatType})
+                            </span>
+                            <span>•</span>
+                            <span className="text-indigo-800 font-medium">
+                              {item.railJourneyDetails.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama'}
+                            </span>
+                            {item.railJourneyDetails.seatPreference && (
+                              <>
+                                <span>•</span>
+                                <span className="text-slate-500">Seat: {item.railJourneyDetails.seatPreference}</span>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Vehicle Specification Badge for Private Tours and Transfers */}
+                        {Boolean(
+                          item.vehicleNameSnapshot || 
+                          item.configuration_snapshot?.vehicleName || 
+                          item.metadata?.vehicleName ||
+                          (item.product.category === 'Private Tours' && (item.vehicleId || item.product.vehicleId))
+                        ) && (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700 bg-amber-50/80 border border-amber-200/80 px-2 py-0.5 rounded-lg">
+                            <Car className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span className="font-bold text-amber-950">
+                              {item.vehicleNameSnapshot || item.configuration_snapshot?.vehicleName || item.metadata?.vehicleName || 'Private Vehicle'}
+                            </span>
+                            {Boolean(item.vehicleCapacitySnapshot || item.configuration_snapshot?.masterCapacity) && (
+                              <>
+                                <span className="text-amber-300">•</span>
+                                <span className="text-amber-800 font-medium">
+                                  {item.vehicleCapacitySnapshot || item.configuration_snapshot?.masterCapacity} Passenger Seats
+                                </span>
+                              </>
+                            )}
+                            {Boolean(item.vehicleTypeSnapshot || item.configuration_snapshot?.vehicleType) && (
+                              <>
+                                <span className="text-amber-300">•</span>
+                                <span className="text-slate-600">
+                                  {item.vehicleTypeSnapshot || item.configuration_snapshot?.vehicleType}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
+                          <span>Pax: {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</span>
+                          {!isRailQuoteItem(item) && item.product.duration && (
+                            <span>Duration: {item.product.duration}</span>
+                          )}
+                          {item.notes && !isRailQuoteItem(item) && (
+                            <span className="text-amber-700 font-mono">Note: {item.notes}</span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setExpandedItems(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
+                            className="text-[#008f77] hover:text-[#00705d] font-bold text-[10px] cursor-pointer flex items-center space-x-1"
+                          >
+                            <span>{isExpanded ? 'Hide Specs & Inclusions' : 'Show Specs & Inclusions'}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Price & Actions: View, Edit/Customise, Delete */}
+                    <div className="flex items-center space-x-2 shrink-0">
+                      <span className="text-xs sm:text-sm font-bold text-slate-900 font-mono mr-1">
+                        {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onOpenProductDetails(item.product)}
+                        className="p-1.5 rounded-lg bg-white hover:bg-teal-50 text-slate-600 hover:text-teal-700 border border-slate-200 transition-colors cursor-pointer"
+                        title="View Product Details"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onOpenEditItem ? onOpenEditItem(item) : undefined}
+                        className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors cursor-pointer"
+                        title="Edit Service Time / Pax / Notes"
+                      >
+                        <Sliders className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeProductFromQuote(item.id)}
+                        className="p-1.5 rounded-lg bg-white hover:bg-red-50 text-slate-400 hover:text-red-600 border border-slate-200 transition-colors cursor-pointer"
+                        title="Remove Service"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Expanded Snapshot Panel */}
+                  {isExpanded && (
+                    <div className="border-t border-slate-200 pt-3 mt-1.5 space-y-3 text-xs text-slate-600">
+                      {/* Overview & Specifications */}
+                      <div className="space-y-1">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Overview & Specifications</span>
+                        <RichTextRenderer 
+                          content={item.contentSnapshot?.overviewSpecifications || item.product.longDescription || item.product.description || item.product.shortDescription || ''}
+                          className="text-xs text-slate-600 leading-relaxed font-sans"
+                        />
+                      </div>
+
+                      {/* Inclusions */}
+                      {resolveQuoteItemInclusions(item).length > 0 && (
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Inclusions</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {resolveQuoteItemInclusions(item).map((inc: string, iIdx: number) => (
+                              <span key={`${item.id}-inc-${iIdx}-${inc.slice(0, 24)}`} className="text-[10px] bg-white text-emerald-950 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1 font-medium">
+                                <Check className="w-3 h-3 text-emerald-600 shrink-0" />
+                                <span>{inc}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Exclusions */}
+                      {resolveQuoteItemExclusions(item).length > 0 && (
+                        <div className="space-y-1">
+                          <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Exclusions</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {resolveQuoteItemExclusions(item).map((exc: string, eIdx: number) => (
+                              <span key={`${item.id}-exc-${eIdx}-${exc.slice(0, 24)}`} className="text-[10px] bg-white text-rose-950 px-2 py-0.5 rounded border border-rose-200 flex items-center space-x-1 font-medium">
+                                <span className="text-rose-500 font-bold shrink-0">✕</span>
+                                <span>{exc}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Recommended Activities Section (Strictly Collapsed by Default) */}
+        {!resolvedHubRef ? (
+          <div className="bg-amber-50/70 rounded-xl p-3 border border-amber-200 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center space-x-2 text-xs text-amber-900">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                No City Hub assigned for Day {slot.dayNumber}. Assign a City Hub in Step 2 (Route &amp; City Plan) to view Hub-matched recommendations.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onGoToStep2}
+              className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition-colors cursor-pointer shrink-0"
+            >
+              Select Hub in Step 2
+            </button>
+          </div>
+        ) : (
+          <div className="bg-slate-50/80 rounded-xl border border-slate-200 overflow-hidden">
+            <button
+              type="button"
+              onClick={handleToggleThisRecommended}
+              aria-expanded={isRecommendedExpanded}
+              className="w-full px-3.5 py-2.5 flex items-center justify-between gap-3 text-left hover:bg-slate-100/70 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C6A6]"
+            >
+              <div className="flex items-center space-x-2 min-w-0">
+                <Sparkles className="w-3.5 h-3.5 text-[#00A88F] shrink-0" />
+                <span className="text-xs font-bold text-slate-800 truncate">
+                  Recommended Activities
+                </span>
+                <span className="text-[11px] text-slate-500 font-medium truncate tabular-nums">
+                  · {slot.hub?.hubName || resolvedHubRef} Hub · {hubRecommendations.length} {hubRecommendations.length === 1 ? 'Experience' : 'Experiences'}
+                </span>
+              </div>
+              <span className="flex items-center space-x-1 text-[11px] font-semibold text-[#008f77] shrink-0 whitespace-nowrap">
+                <span>{isRecommendedExpanded ? 'Hide' : 'Show'}</span>
+                {isRecommendedExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </span>
+            </button>
+
+            <div
+              className={`grid transition-[grid-template-rows,opacity] duration-150 ease-out motion-reduce:transition-none ${
+                isRecommendedExpanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+              }`}
+              aria-hidden={!isRecommendedExpanded}
+              {...(!isRecommendedExpanded ? { inert: true as any } : {})}
+            >
+              <div className="overflow-hidden min-h-0">
+                {isRecommendedExpanded && (
+                <div className="px-3.5 pb-3.5 pt-1 border-t border-slate-200/70">
+                  {hubRecommendations.length === 0 ? (
+                    <div className="text-[11px] text-slate-500 py-2 px-2.5 bg-white rounded-lg border border-slate-200/80">
+                      All available Hub experiences for <span className="font-semibold text-slate-700">{slot.hub?.hubName || resolvedHubRef}</span> are already added to the itinerary, or no additional Hub-specific activities are available.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                      {hubRecommendations.map(recProd => (
+                        <div
+                          key={recProd.id}
+                          className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-900 block truncate">{recProd.name}</span>
+                            <span className="text-[10px] text-slate-500">{recProd.city || slot.hub?.hubName} · {recProd.category}</span>
+                          </div>
+                          <div className="shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => onConfigureAndAddRec(recProd, slot.dateString)}
+                              className="px-2.5 py-1.5 rounded-lg bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-[11px] transition-colors cursor-pointer shadow-2xs flex items-center whitespace-nowrap"
+                              title="Add to day itinerary"
+                            >
+                              <span>Configure &amp; Add</span>
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+          </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspaceProps> = ({
   activeStepId,
   setActiveStepId,
   currentDestination,
@@ -339,6 +1072,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   onRemoveHotelForHub,
   onOpenEditManualHotel,
   onRemoveManualHotel,
+  onSyncHubStayToHotelItems,
+  onDeleteHubOccurrenceItems,
   onOpenEditItem,
   dayThemes = {},
   setDayThemes,
@@ -349,6 +1084,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   sourcePackageName,
   quoteTitle,
   setQuoteTitle,
+  quoteCompanyId,
+  quoteAgentId,
+  quoteAgentAgency,
+  productLevelMarginEnabled: propProductLevelMarginEnabled,
+  agentLevelMarginPercent: propAgentLevelMarginPercent,
   baseFinalSellingPrice,
   adminManualMarginType: propAdminManualMarginType,
   setAdminManualMarginType: propSetAdminManualMarginType,
@@ -356,6 +1096,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   setAdminManualMarginValue: propSetAdminManualMarginValue,
   adminMarginMode: propAdminMarginMode,
   setAdminMarginMode: propSetAdminMarginMode,
+  onCommitAdminManualMarginAudit,
   agentMarginType: propAgentMarginType,
   setAgentMarginType: propSetAgentMarginType,
   agentMarginValue: propAgentMarginValue,
@@ -397,6 +1138,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   canAddManualHotel,
   autoSaveStatus,
   lastSavedTimestamp,
+  precomputedQuoteBreakdown,
+  onRetryAutoSave,
   quoteNumber = 'QTE-LIVE',
   quoteVersion = 1,
   brandingMode: propBrandingMode = 'STANDARD',
@@ -404,14 +1147,48 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   onOpenCartDrawer,
   packagePricingStatus = 'IDLE',
   packagePricingError = null,
-  onRetryPackagePricing
+  onRetryPackagePricing,
+  termsReadiness,
+  isFinalisedTermsLocked = false,
+  termsSyncLoading = false,
+  canManageDestinationTerms = false,
+  isAdminTermsApprover = false,
+  hasDraftTermsUpdateAvailable = false,
+  adminMissingTermsNotified = false,
+  onRefreshDraftTerms,
+  onNotifyAdminMissingTerms,
+  onConfigureDestinationTerms,
+  onApproveTermsException,
+  outputSyncError = null,
+  outputBusyOption = null,
+  hasUnsavedChanges = false,
+  isSavingExplicitly = false,
+  latestSavedVersion,
+  restoredFromVersion = null,
+  isReadOnlyHistoricalMode = false,
+  onOpenVersionHistory
 }) => {
   const { user, updateUserProfile } = useAuth();
   const { setIsQuoteDrawerOpen } = useQuotation();
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
+  const hubUidRef = useRef<number>(0);
   const [showInternalItemized, setShowInternalItemized] = useState<boolean>(false);
   const [localBrandingMode, setLocalBrandingMode] = useState<QuoteBrandingMode>(propBrandingMode || 'STANDARD');
   const activeBrandingMode: QuoteBrandingMode = propSetBrandingMode ? (propBrandingMode || 'STANDARD') : localBrandingMode;
+  const [showExceptionApprovalBox, setShowExceptionApprovalBox] = useState<boolean>(false);
+  const [exceptionReasonInput, setExceptionReasonInput] = useState<string>('');
+
+  const explicitSaveStatusLabel = isReadOnlyHistoricalMode
+    ? `Viewing v${quoteVersion} (Read-Only)`
+    : isSavingExplicitly || autoSaveStatus === 'SAVING'
+      ? 'Saving Draft...'
+      : restoredFromVersion
+        ? `Restored v${restoredFromVersion} (Unsaved)`
+        : hasUnsavedChanges
+          ? 'Unsaved Changes'
+          : lastSavedTimestamp
+            ? `Saved v${latestSavedVersion || quoteVersion} • ${lastSavedTimestamp}`
+            : 'Unsaved Draft';
 
   const [isEditingAgencyBranding, setIsEditingAgencyBranding] = useState(false);
   const [agencyForm, setAgencyForm] = useState({
@@ -776,9 +1553,20 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const isAgentUser = user?.role === 'B2B_AGENT' || user?.role === 'AGENT' || user?.role === 'AGENCY_OWNER';
   const isTeamMember = user?.role === 'TEAM_MEMBER' || user?.role === 'DMC_STAFF';
 
-  // Resolve Agency Pricing & Margin Configuration from Account Management
-  const agencyPricingSettings = useMemo(() => db.resolveAgencyPricingSettings({ user }), [user]);
-  const isProductLevelMarginEnabled = agencyPricingSettings.productLevelMarginEnabled !== false;
+  // Resolve Agency Pricing & Margin Configuration from Quotation Agency Context
+  const quoteAgencyContext = useMemo(() => {
+    return resolveQuoteAgencyPricingContext(
+      {
+        companyId: quoteCompanyId,
+        agentAgency: quoteAgentAgency,
+        agentId: quoteAgentId,
+        productLevelMarginEnabled: propProductLevelMarginEnabled,
+        agentLevelMarginPercent: propAgentLevelMarginPercent
+      },
+      user
+    );
+  }, [quoteCompanyId, quoteAgentAgency, quoteAgentId, propProductLevelMarginEnabled, propAgentLevelMarginPercent, user]);
+  const isProductLevelMarginEnabled = quoteAgencyContext.productLevelMarginEnabled;
   const activeMarginModeLabel = isProductLevelMarginEnabled ? 'Product-Level Margin (ON)' : 'Agent-Level Margin (ON)';
 
   // 1. Admin / Internal Authorized: Can configure manual margin on Total Nett Cost
@@ -788,6 +1576,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const canConfigureAgentManualMargin = true;
 
   const [markupValidationError, setMarkupValidationError] = useState<string | null>(null);
+  const [adminMarginValidationError, setAdminMarginValidationError] = useState<string | null>(null);
   const [showPerProductMarkupPanel, setShowPerProductMarkupPanel] = useState<boolean>(false);
 
   // Local fallback admin manual margin state (Section 1) — Default mode is 'ADD' (Add to Existing Margin)
@@ -798,6 +1587,20 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const [internalAdminMarginMode, setInternalAdminMarginMode] = useState<'REPLACE' | 'ADD'>(propAdminMarginMode || 'ADD');
 
   useEffect(() => {
+    if (propAdminManualMarginType) {
+      setInternalAdminManualMarginType(propAdminManualMarginType);
+    }
+  }, [propAdminManualMarginType]);
+
+  useEffect(() => {
+    if (propAdminManualMarginValue !== undefined) {
+      const safe = Math.max(0, Number(propAdminManualMarginValue) || 0);
+      setInternalAdminManualMarginValue(safe);
+      lastAuditedAdminValRef.current = safe;
+    }
+  }, [propAdminManualMarginValue]);
+
+  useEffect(() => {
     if (propAdminMarginMode) {
       setInternalAdminMarginMode(propAdminMarginMode);
     }
@@ -806,19 +1609,56 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const effectiveAdminMarginType = propAdminManualMarginType || internalAdminManualMarginType;
   const effectiveAdminMarginValue = propAdminManualMarginValue !== undefined ? propAdminManualMarginValue : internalAdminManualMarginValue;
   const effectiveAdminMarginMode = propAdminMarginMode || internalAdminMarginMode;
+  const lastAuditedAdminValRef = useRef<number>(Number(effectiveAdminMarginValue || 0));
 
   const handleUpdateAdminMarginType = (newType: 'PERCENTAGE' | 'FIXED') => {
+    setAdminMarginValidationError(null);
     setInternalAdminManualMarginType(newType);
     if (propSetAdminManualMarginType) propSetAdminManualMarginType(newType);
   };
 
-  const handleUpdateAdminMarginValue = (val: number) => {
-    const num = Math.max(0, isNaN(val) ? 0 : val);
+  const handleUpdateAdminMarginValue = (val: number, commitAudit = false) => {
+    const check = validateAdminManualMargin(val, effectiveAdminMarginType);
+    if (!check.isValid) {
+      setAdminMarginValidationError(check.errorMessage || 'Invalid manual margin value. Enter 0 or higher.');
+    } else {
+      setAdminMarginValidationError(null);
+    }
+    const num = check.sanitizedValue;
     setInternalAdminManualMarginValue(num);
     if (propSetAdminManualMarginValue) propSetAdminManualMarginValue(num);
+    if (commitAudit && onCommitAdminManualMarginAudit && Math.abs(lastAuditedAdminValRef.current - num) >= 0.0001) {
+      onCommitAdminManualMarginAudit(lastAuditedAdminValRef.current, num);
+      lastAuditedAdminValRef.current = num;
+    }
+  };
+
+  const handleRawAdminMarginInputChange = (rawStr: string) => {
+    const trimmed = rawStr.trim();
+    if (trimmed === '') {
+      setAdminMarginValidationError(null);
+      handleUpdateAdminMarginValue(0);
+      return;
+    }
+    const parsed = Number(trimmed);
+    const check = validateAdminManualMargin(parsed, effectiveAdminMarginType);
+    if (!check.isValid || trimmed.startsWith('-')) {
+      setAdminMarginValidationError(
+        check.errorMessage ||
+        (effectiveAdminMarginType === 'PERCENTAGE'
+          ? 'Validation Error: Manual margin percentage cannot be negative or invalid. Enter 0% or higher.'
+          : 'Validation Error: Manual margin fixed amount cannot be negative or invalid. Enter 0 or higher.')
+      );
+      setInternalAdminManualMarginValue(0);
+      if (propSetAdminManualMarginValue) propSetAdminManualMarginValue(0);
+      return;
+    }
+    setAdminMarginValidationError(null);
+    handleUpdateAdminMarginValue(check.sanitizedValue);
   };
 
   const handleUpdateAdminMarginMode = (mode: 'REPLACE' | 'ADD') => {
+    setAdminMarginValidationError(null);
     setInternalAdminMarginMode(mode);
     if (propSetAdminMarginMode) propSetAdminMarginMode(mode);
   };
@@ -828,6 +1668,18 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   const [internalMarginValue, setInternalMarginValue] = useState<number>(
     propAgentMarginValue !== undefined ? propAgentMarginValue : (agentMarkupPercent ?? 0)
   );
+
+  useEffect(() => {
+    if (propAgentMarginType) {
+      setInternalMarginType(propAgentMarginType);
+    }
+  }, [propAgentMarginType]);
+
+  useEffect(() => {
+    if (propAgentMarginValue !== undefined) {
+      setInternalMarginValue(Math.max(0, Number(propAgentMarginValue) || 0));
+    }
+  }, [propAgentMarginValue]);
 
   const effectiveMarginType = propAgentMarginType || internalMarginType;
   const rawMarginValue = propAgentMarginValue !== undefined ? propAgentMarginValue : internalMarginValue;
@@ -882,31 +1734,52 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     updateItemAdditionalMarkup?.(itemId, markupType, safeVal);
   };
 
-  // Authoritative central pricing breakdown for both B2B Agents (Stage 1 -> Stage 2 -> Stage 3) and Admin
-  const quoteCommercialBreakdown = useMemo(() => calculateQuoteInternalBreakdown({
-    items: quotationScope === 'LAND_ONLY'
-      ? items.filter(it => !(
-          (it.product.category || '').toLowerCase().includes('hotel') ||
-          (it.product.category || '').toLowerCase().includes('accommodation') ||
-          it.product.productType === 'Hotel' ||
-          it.product.productType === 'Hotel & Resort' ||
-          it.isManualHotel
-        ))
-      : items,
-    targetCurrency: currency,
-    agentMarginType: effectiveMarginType,
-    agentMarginValue: effectiveMarginValue,
-    overallDiscountPercent: overallDiscountPercent || 0,
-    userRole: user?.role,
-    user,
-    companyId: user?.companyId,
-    agencyName: user?.agencyName,
-    scope: quotationScope,
-    routeHubs,
-    adminManualMarginType: effectiveAdminMarginType,
-    adminManualMarginValue: effectiveAdminMarginValue,
-    adminMarginMode: effectiveAdminMarginMode
-  }), [
+  // Authoritative central pricing breakdown (reuses precomputed breakdown from parent when synchronized)
+  const quoteCommercialBreakdown = useMemo(() => {
+    if (
+      precomputedQuoteBreakdown &&
+      precomputedQuoteBreakdown.currency === currency &&
+      propAdminManualMarginType === effectiveAdminMarginType &&
+      Number(propAdminManualMarginValue ?? 0) === Number(effectiveAdminMarginValue ?? 0) &&
+      propAdminMarginMode === effectiveAdminMarginMode &&
+      propAgentMarginType === effectiveMarginType &&
+      Number(propAgentMarginValue ?? 0) === Number(effectiveMarginValue ?? 0)
+    ) {
+      return precomputedQuoteBreakdown;
+    }
+    return calculateQuoteInternalBreakdown({
+      items: quotationScope === 'LAND_ONLY'
+        ? items.filter(it => !(
+            (it.product.category || '').toLowerCase().includes('hotel') ||
+            (it.product.category || '').toLowerCase().includes('accommodation') ||
+            it.product.productType === 'Hotel' ||
+            it.product.productType === 'Hotel & Resort' ||
+            it.isManualHotel
+          ))
+        : items,
+      targetCurrency: currency,
+      agentMarginType: effectiveMarginType,
+      agentMarginValue: effectiveMarginValue,
+      overallDiscountPercent: overallDiscountPercent || 0,
+      userRole: user?.role,
+      user,
+      companyId: quoteAgencyContext.companyId,
+      agencyName: quoteAgencyContext.agencyName,
+      productLevelMarginEnabled: quoteAgencyContext.productLevelMarginEnabled,
+      customAgentMarginPercent: quoteAgencyContext.agentLevelMarginPercent,
+      scope: quotationScope,
+      routeHubs,
+      adminManualMarginType: effectiveAdminMarginType,
+      adminManualMarginValue: effectiveAdminMarginValue,
+      adminMarginMode: effectiveAdminMarginMode
+    });
+  }, [
+    precomputedQuoteBreakdown,
+    propAdminManualMarginType,
+    propAdminManualMarginValue,
+    propAdminMarginMode,
+    propAgentMarginType,
+    propAgentMarginValue,
     items,
     quotationScope,
     currency,
@@ -914,6 +1787,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     effectiveMarginValue,
     overallDiscountPercent,
     user,
+    quoteAgencyContext.companyId,
+    quoteAgencyContext.agencyName,
+    quoteAgencyContext.productLevelMarginEnabled,
+    quoteAgencyContext.agentLevelMarginPercent,
     routeHubs,
     effectiveAdminMarginType,
     effectiveAdminMarginValue,
@@ -922,52 +1799,84 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
   const step7BreakdownPricing = isAuthorizedInternalUser ? quoteCommercialBreakdown : null;
 
-  // STAGE 1: Manual Margin Adjustment (Admin Commercial Controls)
+  // Precomputed hub hotel lists & recommended activities outside Step 3 & Step 4 render loops
+  const hotelsByHubIdMap = useMemo(() => {
+    const relevanceSvc = DestinationRelevanceService.getInstance();
+    const map: Record<string, Hotel[]> = {};
+    routeHubs.forEach(hub => {
+      const hubKey = hub.hubId || hub.hubName;
+      if (hubKey && !map[hubKey]) {
+        map[hubKey] = relevanceSvc.getRelevantHotels(currentDestination.id, hubKey);
+      }
+    });
+    return map;
+  }, [currentDestination.id, routeHubs, availableHotels]);
+
+  const selectedProductIdsSet = useMemo(
+    () => new Set(items.map(it => it.product?.id).filter(Boolean) as string[]),
+    [items]
+  );
+
+  const recommendedProductsByHubMap = useMemo(() => {
+    const relevanceSvc = DestinationRelevanceService.getInstance();
+    const map: Record<string, Product[]> = {};
+    routeHubs.forEach(hub => {
+      const hubKey = hub.hubId || hub.hubName;
+      if (hubKey && !map[hubKey]) {
+        map[hubKey] = relevanceSvc
+          .getRelevantProducts(currentDestination.id, hubKey)
+          .hubActivities.filter(p => !selectedProductIdsSet.has(p.id));
+      }
+    });
+    return map;
+  }, [currentDestination.id, routeHubs, selectedProductIdsSet, products]);
+
+  // STAGE 1: Manual Margin Adjustment (Authoritative central pricing engine values)
   const adminTotalNettCost = roundCurrencyAmount(step7BreakdownPricing?.totalNettCost ?? totalNetCost ?? 0, currency);
   const existingCalculatedMargin = roundCurrencyAmount(step7BreakdownPricing?.existingMarginAmount ?? 0, currency);
-  const adminManualMarginAmount = effectiveAdminMarginType === 'PERCENTAGE'
-    ? roundCurrencyAmount(adminTotalNettCost * ((effectiveAdminMarginValue || 0) / 100), currency)
-    : roundCurrencyAmount(effectiveAdminMarginValue || 0, currency);
-
-  const adminSurchargesTotal = roundCurrencyAmount(step7BreakdownPricing?.surchargesTotal || 0, currency);
-  const adminRevisedSellingPrice = step7BreakdownPricing?.revisedSellingPrice !== undefined && step7BreakdownPricing.revisedSellingPrice > 0
-    ? step7BreakdownPricing.revisedSellingPrice
-    : (effectiveAdminMarginMode === 'REPLACE'
-        ? roundCurrencyAmount(adminTotalNettCost + adminManualMarginAmount + adminSurchargesTotal + (step7BreakdownPricing?.serviceFee || 0), currency)
-        : roundCurrencyAmount(adminTotalNettCost + existingCalculatedMargin + adminManualMarginAmount + adminSurchargesTotal + (step7BreakdownPricing?.serviceFee || 0), currency));
-
-  const stage1TaxAmount = roundCurrencyAmount(step7BreakdownPricing?.taxAmount || 0, currency);
-  const stage1PreDiscountTotal = roundCurrencyAmount(adminRevisedSellingPrice + stage1TaxAmount, currency);
-  const stage1DiscountAmount = (overallDiscountPercent || 0) > 0
-    ? roundCurrencyAmount(stage1PreDiscountTotal * ((overallDiscountPercent || 0) / 100), currency)
-    : 0;
-  const adminFinalTotal = step7BreakdownPricing?.adminFinalTotal !== undefined && step7BreakdownPricing.adminFinalTotal > 0
-    ? step7BreakdownPricing.adminFinalTotal
-    : Math.max(0, roundCurrencyAmount(stage1PreDiscountTotal - stage1DiscountAmount, currency));
+  const adminManualMarginAmount = roundCurrencyAmount(step7BreakdownPricing?.adminManualMarginAmount ?? 0, currency);
+  const adminSurchargesTotal = roundCurrencyAmount(step7BreakdownPricing?.surchargesTotal ?? 0, currency);
+  const adminRevisedSellingPrice = roundCurrencyAmount(
+    step7BreakdownPricing?.revisedSellingPrice !== undefined
+      ? step7BreakdownPricing.revisedSellingPrice
+      : (baseFinalSellingPrice ?? totalSellingPrice ?? 0),
+    currency
+  );
+  const adminFinalTotal = roundCurrencyAmount(
+    step7BreakdownPricing?.adminFinalTotal !== undefined
+      ? step7BreakdownPricing.adminFinalTotal
+      : (baseFinalSellingPrice ?? totalSellingPrice ?? 0),
+    currency
+  );
 
   // STAGE 2: Your Additional Markup (B2B Agent Commercial Adjustment on top of TheUnbound Base Selling Price)
-  const hasManualMarginStage = canConfigureAdminManualMargin && adminFinalTotal > 0;
-  const effectiveBasePrice = quoteCommercialBreakdown.theUnboundBaseSellingPrice > 0
-    ? quoteCommercialBreakdown.theUnboundBaseSellingPrice
-    : (hasManualMarginStage
-        ? adminFinalTotal
-        : roundCurrencyAmount(baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice, currency));
+  const effectiveBasePrice = roundCurrencyAmount(
+    quoteCommercialBreakdown.theUnboundBaseSellingPrice !== undefined &&
+    (quoteCommercialBreakdown.itemizedBreakdown.some(ib => !ib.isExcludedNoAccommodation) || quoteCommercialBreakdown.theUnboundBaseSellingPrice > 0)
+      ? quoteCommercialBreakdown.theUnboundBaseSellingPrice
+      : (baseFinalSellingPrice !== undefined ? baseFinalSellingPrice : totalSellingPrice),
+    currency
+  );
 
   const existingFinalPrice = effectiveBasePrice;
   const productLevelAgentMarkupTotal = roundCurrencyAmount(quoteCommercialBreakdown.productLevelAgentMarkupTotal || 0, currency);
-  const overallAgentMarkupAmount = quoteCommercialBreakdown.theUnboundBaseSellingPrice > 0
-    ? roundCurrencyAmount(quoteCommercialBreakdown.overallAgentMarkupAmount || 0, currency)
-    : (effectiveMarginType === 'PERCENTAGE'
-        ? roundCurrencyAmount(existingFinalPrice * ((effectiveMarginValue || 0) / 100), currency)
-        : roundCurrencyAmount(effectiveMarginValue || 0, currency));
-
-  const additionalAgentMarginAmount = roundCurrencyAmount(productLevelAgentMarkupTotal + overallAgentMarkupAmount, currency);
+  const overallAgentMarkupAmount = roundCurrencyAmount(quoteCommercialBreakdown.overallAgentMarkupAmount || 0, currency);
+  const additionalAgentMarginAmount = roundCurrencyAmount(
+    quoteCommercialBreakdown.partnerMarginAmount !== undefined
+      ? quoteCommercialBreakdown.partnerMarginAmount
+      : (productLevelAgentMarkupTotal + overallAgentMarkupAmount),
+    currency
+  );
   const effectiveMarginAmount = additionalAgentMarginAmount;
   const revisedFinalPrice = Math.max(
     existingFinalPrice,
-    quoteCommercialBreakdown.finalPackagePrice > 0
-      ? roundCurrencyAmount(quoteCommercialBreakdown.finalPackagePrice, currency)
-      : roundCurrencyAmount(existingFinalPrice + additionalAgentMarginAmount, currency)
+    roundCurrencyAmount(
+      quoteCommercialBreakdown.finalPackagePrice !== undefined &&
+      (quoteCommercialBreakdown.itemizedBreakdown.some(ib => !ib.isExcludedNoAccommodation) || quoteCommercialBreakdown.finalPackagePrice > 0)
+        ? quoteCommercialBreakdown.finalPackagePrice
+        : (existingFinalPrice + additionalAgentMarginAmount),
+      currency
+    )
   );
   const effectiveFinalPrice = items.length === 0 && routeHubs.every(h => !h.manualHotel) ? 0 : revisedFinalPrice;
 
@@ -977,7 +1886,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     const activeBreakdownItems = quoteCommercialBreakdown.itemizedBreakdown || [];
 
     return (
-      <div className="bg-white rounded-3xl border-2 border-teal-200 p-6 shadow-xs space-y-5 animate-fadeIn">
+      <div className="bg-white rounded-3xl border-2 border-teal-200 p-6 shadow-xs space-y-5">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-teal-100">
           <div className="flex items-center space-x-3">
@@ -1306,39 +2215,266 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     );
   };
 
-  const renderCommercialQuotationTermsCard = () => (
-    <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 rounded-2xl bg-slate-900 text-[#00E5C0] flex items-center justify-center">
-            <ShieldCheck className="w-5 h-5" />
+  const renderCommercialQuotationTermsCard = () => {
+    const status = termsReadiness?.termsStatus || 'DRAFT_UNCHECKED';
+    const resolvedEntries = termsReadiness?.resolvedEntries || [];
+    const missingTargets = termsReadiness?.missingTargets || [];
+    const exceptionApproval = termsReadiness?.snapshot?.termsExceptionApproval;
+    const isBlocked = Boolean(termsReadiness && !termsReadiness.canExportCompleteQuote);
+
+    const statusBadgeConfig: Record<string, { label: string; className: string }> = {
+      QUOTATION_FINALISED: {
+        label: 'QUOTATION FINALISED • Frozen Snapshot',
+        className: 'bg-slate-900 text-[#00E5C0] border-slate-700'
+      },
+      TERMS_CONFIGURED: {
+        label: 'TERMS CONFIGURED • Verified',
+        className: 'bg-emerald-50 text-emerald-700 border-emerald-200'
+      },
+      TERMS_APPROVED: {
+        label: 'TERMS APPROVED • Admin Exception',
+        className: 'bg-amber-50 text-amber-800 border-amber-300'
+      },
+      TERMS_MISSING: {
+        label: 'TERMS MISSING • Action Required',
+        className: 'bg-rose-50 text-rose-700 border-rose-300'
+      },
+      DRAFT_UNCHECKED: {
+        label: 'Draft Preview',
+        className: 'bg-slate-100 text-slate-600 border-slate-200'
+      }
+    };
+    const badge = statusBadgeConfig[status] || statusBadgeConfig.DRAFT_UNCHECKED;
+
+    return (
+      <div className={`bg-white rounded-3xl border p-6 shadow-xs space-y-4 ${
+        isBlocked ? 'border-rose-300 ring-1 ring-rose-100' : 'border-slate-200'
+      }`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
+          <div className="flex items-center space-x-3">
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+              isBlocked ? 'bg-rose-600 text-white' : 'bg-slate-900 text-[#00E5C0]'
+            }`}>
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                  {termsReadiness?.snapshot?.combinedHeading || COMMERCIAL_QUOTATION_TERMS_HEADING}
+                </h3>
+                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${badge.className}`}>
+                  {badge.label}
+                </span>
+                {termsSyncLoading && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Syncing...</span>
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Destination-specific quotation terms resolved automatically from selected itinerary destinations &amp; hubs. Synchronized across Preview, PDF, Email, and WhatsApp.
+              </p>
+            </div>
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
-                {COMMERCIAL_QUOTATION_TERMS_HEADING}
-              </h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
-                Authoritative Quotation Terms
+
+          {hasDraftTermsUpdateAvailable && !isFinalisedTermsLocked && onRefreshDraftTerms && (
+            <button
+              type="button"
+              onClick={onRefreshDraftTerms}
+              className="px-3 py-1.5 rounded-xl bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>CMS Updated — Refresh Draft Terms</span>
+            </button>
+          )}
+        </div>
+
+        {/* Finalised Snapshot Immutability Notice */}
+        {isFinalisedTermsLocked && (
+          <div className="p-3.5 rounded-2xl bg-slate-900 text-slate-100 text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <Lock className="w-4 h-4 text-[#00E5C0] shrink-0" />
+              <span>
+                <strong>Historical Snapshot Locked:</strong> This finalised quotation retains its exact captured Commercial Quotation Terms regardless of subsequent CMS changes.
               </span>
             </div>
-            <p className="text-[11px] text-slate-500">
-              Synchronized across Quote Preview, PDF, Email, and WhatsApp (Standard &amp; White-Label).
+            <span className="text-[10px] font-mono text-[#00E5C0] shrink-0">
+              {termsReadiness?.snapshot?.capturedAt?.slice(0, 10) || 'FROZEN'}
+            </span>
+          </div>
+        )}
+
+        {/* Missing Destination Terms Blocker Banner */}
+        {missingTargets.length > 0 && status === 'TERMS_MISSING' && (
+          <div className="p-4 rounded-2xl bg-rose-50 border border-rose-300 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div className="space-y-1 flex-1">
+                <div className="text-xs font-black text-rose-950 uppercase tracking-wide">
+                  Commercial Quotation Terms are not configured for selected destination(s)
+                </div>
+                <p className="text-xs text-rose-900 leading-relaxed">
+                  Missing terms for:{' '}
+                  <strong>{missingTargets.map((m) => `${m.targetName} (${m.targetType})`).join(', ')}</strong>.
+                  Another destination&apos;s terms will never be substituted. Quotation finalisation, complete PDF export, Email dispatch, WhatsApp sharing, and Booking Conversion are blocked until resolved.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {canManageDestinationTerms && onConfigureDestinationTerms && missingTargets.map((mt) => (
+                <button
+                  key={mt.targetId}
+                  type="button"
+                  onClick={() => onConfigureDestinationTerms(mt.targetId)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Sliders className="w-3.5 h-3.5 text-[#00E5C0]" />
+                  <span>Configure Terms for {mt.targetName}</span>
+                </button>
+              ))}
+
+              {onNotifyAdminMissingTerms && (
+                <button
+                  type="button"
+                  onClick={onNotifyAdminMissingTerms}
+                  disabled={adminMissingTermsNotified}
+                  className={`px-3 py-1.5 rounded-xl border text-[11px] font-bold transition-colors flex items-center gap-1.5 ${
+                    adminMissingTermsNotified
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800 cursor-default'
+                      : 'bg-white hover:bg-rose-100 border-rose-300 text-rose-900 cursor-pointer'
+                  }`}
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  <span>{adminMissingTermsNotified ? 'Admin Notified ✓' : 'Notify Admin to Configure Terms'}</span>
+                </button>
+              )}
+
+              {isAdminTermsApprover && onApproveTermsException && (
+                <button
+                  type="button"
+                  onClick={() => setShowExceptionApprovalBox((v) => !v)}
+                  className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Approve Exception &amp; Proceed</span>
+                </button>
+              )}
+            </div>
+
+            {isAdminTermsApprover && onApproveTermsException && showExceptionApprovalBox && (
+              <div className="p-3 rounded-xl bg-white border border-amber-300 space-y-2">
+                <label className="block text-[11px] font-bold text-slate-800">
+                  Mandatory Admin Exception Reason (Audited on Quotation)
+                </label>
+                <textarea
+                  rows={2}
+                  value={exceptionReasonInput}
+                  onChange={(e) => setExceptionReasonInput(e.target.value)}
+                  placeholder="Enter commercial justification for proceeding without configured destination terms..."
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                />
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowExceptionApprovalBox(false)}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onApproveTermsException(exceptionReasonInput);
+                      if (exceptionReasonInput.trim().length >= 5) {
+                        setShowExceptionApprovalBox(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold cursor-pointer"
+                  >
+                    Confirm Exception Approval
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Admin Exception Audit Banner */}
+        {status === 'TERMS_APPROVED' && exceptionApproval?.approved && (
+          <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-xs text-amber-950 space-y-1">
+            <div className="font-bold flex items-center gap-1.5">
+              <CheckCircle2 className="w-4 h-4 text-amber-700" />
+              <span>Admin Exception Approved for: {exceptionApproval.missingDestinationNames.join(', ')}</span>
+            </div>
+            <p className="text-[11px] text-amber-900">
+              Approved by <strong>{exceptionApproval.approvedBy}</strong> • Reason: {exceptionApproval.reason}
             </p>
           </div>
-        </div>
-      </div>
+        )}
 
-      <div className="space-y-2.5 text-xs text-slate-600 leading-relaxed bg-slate-50/70 rounded-2xl border border-slate-200/80 p-4">
-        {COMMERCIAL_QUOTATION_TERMS_ITEMS.map((term) => (
-          <p key={term.number}>
-            <strong className="font-bold text-slate-900">{term.heading}</strong>{' '}
-            <span>{term.body}</span>
-          </p>
-        ))}
+        {/* Resolved Destination-Wise Terms Sections */}
+        {resolvedEntries.length > 0 ? (
+          <div className="space-y-4">
+            {resolvedEntries.map((entry) => {
+              const activeSections = [...(entry.sections || [])]
+                .filter((s) => s.isActive !== false)
+                .sort((a, b) => a.displayOrder - b.displayOrder);
+              const isConsolidated = (entry.consolidatedTargetNames?.length || 0) > 1;
+              return (
+                <div
+                  key={`${entry.targetId}-${entry.version}`}
+                  className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/80">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-900">
+                        {entry.targetName} — Commercial Quotation Terms
+                      </span>
+                      {isConsolidated && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          Consolidated ({entry.consolidatedTargetNames!.join(' + ')})
+                        </span>
+                      )}
+                      {entry.inheritedFromParentName && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-700 border border-teal-200">
+                          Inherited from {entry.inheritedFromParentName}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
+                      Published v{entry.version} • {activeSections.length} Active Section(s)
+                    </span>
+                  </div>
+
+                  <div className="space-y-2.5 text-xs text-slate-600 leading-relaxed">
+                    {activeSections.map((sec) => (
+                      <div key={sec.sectionId} className="space-y-1 bg-white rounded-xl p-3 border border-slate-200/70">
+                        {sec.heading && (
+                          <div className="font-bold text-slate-900 text-xs">{sec.heading}</div>
+                        )}
+                        <RichTextRenderer content={sec.htmlContent} className="!text-xs text-slate-600" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : missingTargets.length === 0 ? (
+          <div className="space-y-2.5 text-xs text-slate-600 leading-relaxed bg-slate-50/70 rounded-2xl border border-slate-200/80 p-4">
+            {COMMERCIAL_QUOTATION_TERMS_ITEMS.map((term) => (
+              <p key={term.number}>
+                <strong className="font-bold text-slate-900">{term.heading}</strong>{' '}
+                <span>{term.body}</span>
+              </p>
+            ))}
+          </div>
+        ) : null}
       </div>
-    </div>
-  );
+    );
+  };
 
   // Detect any missing/invalid currency pair across items or breakdown
   const missingCurrencyPairsList = useMemo(() => {
@@ -1353,7 +2489,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
   }, [step7BreakdownPricing, items]);
   const hasMissingCurrencyRate = missingCurrencyPairsList.length > 0;
 
-  // Filter items by category (excluding hotel charges when Land-Only Mode or hub No Accommodation is active)
+  // Filter items by category (excluding hotel charges ONLY when Land-Only Mode or THAT item's specific hub occurrence has No Accommodation)
   const hotelItems = useMemo(() => {
     if (quotationScope === 'LAND_ONLY') return [];
     return items.filter(it => {
@@ -1365,16 +2501,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         it.isManualHotel ||
         (it as any).hotelDetails !== undefined;
       if (!isHotel) return false;
-
-      const matchingHub = routeHubs.find(h =>
-        (it.hubId && it.hubId === h.id) ||
-        (it.manualHotelDetails?.hubId && it.manualHotelDetails.hubId === h.id) ||
-        (it.notes && it.notes.includes(h.hubName))
-      );
-      if (matchingHub && (matchingHub.accommodationType === 'none' || matchingHub.accommodationType === 'NO_ACCOMMODATION')) {
-        return false;
-      }
-      return true;
+      return !shouldExcludeHotelItemByNoAccommodation(it, routeHubs, quotationScope === 'LAND_ONLY');
     });
   }, [items, quotationScope, routeHubs]);
 
@@ -1406,9 +2533,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     if (directList.length > 0) return directList;
     
     try {
-      const db = AppDatabase.getInstance();
-      return db.getProducts().filter(p => 
-        (p.status === 'ACTIVE' || !p.status) &&
+      return inventoryVisibilityService.getB2BActiveProducts().filter(p => 
         matchesDestination(currentDestination?.id, p.destinationId, p.destinationName, p.country) &&
         ((p.category || '').toLowerCase().includes('transfer') || Boolean((p as any).isTransfer))
       );
@@ -1428,10 +2553,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     const relevanceService = DestinationRelevanceService.getInstance();
     const railList = relevanceService.getRelevantRailProducts(currentDestination?.id || currentDestination?.name);
     if (railList.length > 0) return railList;
+    if (!inventoryVisibilityService.isDestinationActiveForB2B(currentDestination)) return [];
     try {
-      const db = AppDatabase.getInstance();
-      return db.getProducts().filter(p => 
-        (p.status === 'ACTIVE' || !p.status) &&
+      return inventoryVisibilityService.getB2BActiveProducts().filter(p => 
+        matchesDestination(currentDestination?.id, p.destinationId, p.destinationName, p.country) &&
         (p.id === 'RAIL-JP-ORD-RESERVED' || p.id === 'RAIL-JP-GREEN-RESERVED' || (p.category || '').toLowerCase() === 'rail')
       );
     } catch {
@@ -1797,7 +2922,6 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
   // Custom Transfer Service Modal state
   const [isCustomTransferModalOpen, setIsCustomTransferModalOpen] = useState(false);
-  const [expandedItemDetails, setExpandedItemDetails] = useState<Record<string, boolean>>({});
   const [customTransferMovement, setCustomTransferMovement] = useState<any>(null);
   const [customTransferForm, setCustomTransferForm] = useState({
     routeName: '',
@@ -2017,11 +3141,44 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
+  const itemsByDateMap = useMemo(() => {
+    const map = new Map<string, QuoteItem[]>();
+    for (const it of items) {
+      if (!it.travelDate) continue;
+      const bucket = map.get(it.travelDate);
+      if (bucket) {
+        bucket.push(it);
+      } else {
+        map.set(it.travelDate, [it]);
+      }
+    }
+    return map;
+  }, [items]);
+
+  const visaItemIdSet = useMemo(() => new Set(visaItems.map(v => v.id)), [visaItems]);
+  const addonItemIdSet = useMemo(() => new Set(addonItems.map(a => a.id)), [addonItems]);
+
   // Compute rich day slots with dates, active hub, transition info, and scheduled items
   const daySlots = useMemo(() => {
     if (calendarDays.length === 0) return [];
 
     const sortedHubs = [...routeHubs].sort((a, b) => a.order - b.order);
+
+    const isHotelQuoteItem = (it: QuoteItem): boolean => {
+      return it.product.productType === 'Hotel' || 
+             it.product.productType === 'Hotel & Resort' || 
+             it.isManualHotel === true || 
+             it.product.accommodationType === 'manual' ||
+             (it.product as any).category === 'Hotels';
+    };
+
+    const isVisaQuoteItem = (it: QuoteItem): boolean => {
+      return it.product.productType === 'Visa Service' || 
+             it.product.subcategory === 'Visa Facilitation' || 
+             it.product.sku?.startsWith('VSA-') ||
+             (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
+             Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
+    };
 
     return calendarDays.map((calDay) => {
       let activeHub: TripRouteHub | null = null;
@@ -2052,26 +3209,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         }
       }
 
-      const isHotelQuoteItem = (it: QuoteItem): boolean => {
-        return it.product.productType === 'Hotel' || 
-               it.product.productType === 'Hotel & Resort' || 
-               it.isManualHotel === true || 
-               it.product.accommodationType === 'manual' ||
-               (it.product as any).category === 'Hotels';
-      };
-
-      const isVisaQuoteItem = (it: QuoteItem): boolean => {
-        return it.product.productType === 'Visa Service' || 
-               it.product.subcategory === 'Visa Facilitation' || 
-               it.product.sku?.startsWith('VSA-') ||
-               (it.product.category === 'Travel Services' && it.product.name?.toLowerCase().includes('visa')) ||
-               Boolean(it.product.name?.toLowerCase().includes('visa') && it.product.name?.toLowerCase().includes('entry'));
-      };
-
-      const dayItems = items.filter(it => {
-        if (it.travelDate !== calDay.dateString) return false;
+      const dateItems = itemsByDateMap.get(calDay.dateString) || [];
+      const dayItems = dateItems.filter(it => {
         if (quotationScope === 'LAND_ONLY' && isHotelQuoteItem(it)) return false;
-        if (isHotelQuoteItem(it) && activeHub && (activeHub.accommodationType === 'none' || activeHub.accommodationType === 'NO_ACCOMMODATION')) {
+        if (isHotelQuoteItem(it) && shouldExcludeHotelItemByNoAccommodation(it, sortedHubs, quotationScope === 'LAND_ONLY')) {
           return false;
         }
         return true;
@@ -2096,7 +3237,107 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         daySellingPrice
       };
     });
-  }, [calendarDays, routeHubs, items]);
+  }, [calendarDays, routeHubs, itemsByDateMap, quotationScope]);
+
+  const hubRecommendationsByDay = useMemo(() => {
+    const map: Record<number, Product[]> = {};
+    daySlots.forEach(slot => {
+      const hubRef = slot.hub?.hubId || slot.hub?.hubName;
+      map[slot.dayNumber] = hubRef ? (recommendedProductsByHubMap[hubRef] || []) : [];
+    });
+    return map;
+  }, [daySlots, recommendedProductsByHubMap]);
+
+  // Step 4 Pure Presentational Expand/Collapse State (stable day IDs; single-day default; zero pricing/version side effects)
+  const step4DayIds = useMemo(
+    () => daySlots.map(slot => getStep4DayId(slot.dayNumber)),
+    [daySlots]
+  );
+  const step4DayIdsSignature = useMemo(() => step4DayIds.join('|'), [step4DayIds]);
+  const hasInitializedStep4AccordionRef = useRef<boolean>(step4DayIds.length > 0);
+  const [step4AccordionState, setStep4AccordionState] = useState<Step4AccordionState>(() =>
+    createInitialStep4AccordionState(step4DayIds)
+  );
+
+  useEffect(() => {
+    if (step4DayIds.length === 0) return;
+    setStep4AccordionState(prev => {
+      const { nextState, initialized } = reconcileStep4AccordionDays(
+        prev,
+        step4DayIds,
+        hasInitializedStep4AccordionRef.current
+      );
+      hasInitializedStep4AccordionRef.current = initialized;
+      return nextState;
+    });
+  }, [step4DayIdsSignature, step4DayIds]);
+
+  const handleToggleStep4Day = useCallback((dayId: string) => {
+    setStep4AccordionState(prev => toggleStep4Day(prev, dayId));
+  }, []);
+
+  const handleExpandAllStep4Days = useCallback(() => {
+    setStep4AccordionState(prev => expandAllStep4Days(prev, step4DayIds));
+  }, [step4DayIds]);
+
+  const handleCollapseAllStep4Days = useCallback(() => {
+    setStep4AccordionState(prev => collapseAllStep4Days(prev));
+  }, []);
+
+  const handleToggleStep4Recommended = useCallback((dayId: string) => {
+    setStep4AccordionState(prev => toggleStep4Recommended(prev, dayId));
+  }, []);
+
+  const visibleStep4DaySlots = useMemo(
+    () =>
+      daySlots.filter(
+        slot =>
+          selectedHubFilter === 'ALL' ||
+          getHubOccurrenceId(slot.hub) === selectedHubFilter ||
+          slot.hub?.hubName === selectedHubFilter
+      ),
+    [daySlots, selectedHubFilter]
+  );
+
+  const expandedVisibleStep4DaysCount = useMemo(
+    () =>
+      visibleStep4DaySlots.reduce(
+        (count, slot) => count + (step4AccordionState.expandedDayIds[getStep4DayId(slot.dayNumber)] ? 1 : 0),
+        0
+      ),
+    [visibleStep4DaySlots, step4AccordionState.expandedDayIds]
+  );
+
+  const handleCommitStep4DayTheme = useCallback(
+    (dayNumber: number, value: string) => {
+      setDayThemes?.(prev => (prev[dayNumber] === value ? prev : { ...prev, [dayNumber]: value }));
+    },
+    [setDayThemes]
+  );
+
+  const handleChangeStep4DayDescription = useCallback(
+    (dayNumber: number, value: string) => {
+      setDayDescriptions?.(prev => (prev[dayNumber] === value ? prev : { ...prev, [dayNumber]: value }));
+    },
+    [setDayDescriptions]
+  );
+
+  const handleGoToStep2 = useCallback(() => {
+    setActiveStepId(2);
+  }, [setActiveStepId]);
+
+  const handleConfigureAndAddRec = useCallback(
+    (recProd: Product, dateString: string) => {
+      addProductToQuote(recProd, {
+        adults: adultsCount,
+        children: childrenCount,
+        infants: infantsCount,
+        travelDate: dateString,
+        openDrawer: false
+      });
+    },
+    [addProductToQuote, adultsCount, childrenCount, infantsCount]
+  );
 
   const hotelTotalSelling = useMemo(() => {
     return roundCurrencyAmount(
@@ -2124,23 +3365,33 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     return Math.max(0, roundCurrencyAmount(effectiveFinalPrice - authoritativeHotelTotal, currency));
   }, [quoteCommercialBreakdown, effectiveFinalPrice, authoritativeHotelTotal, currency]);
 
-  const handleSelectHotel = (hubOrder: number, hotel: Hotel, roomTypeId?: string, roomsCount: number = 1) => {
+  const stayDateValidationIssues = useMemo(
+    () => validateHubStayDates(routeHubs, startDate),
+    [routeHubs, startDate]
+  );
+
+  const handleSelectHotel = (hubIdOrOrder: string | number, hotel: Hotel, roomTypeId?: string, roomsCount: number = 1) => {
     if (onSelectHotelForHub) {
-      onSelectHotelForHub(hubOrder, hotel, roomTypeId, roomsCount);
+      onSelectHotelForHub(hubIdOrOrder, hotel, roomTypeId, roomsCount);
       return;
     }
-    const targetHub = routeHubs.find(h => h.order === hubOrder);
+    const targetHub =
+      typeof hubIdOrOrder === 'string'
+        ? routeHubs.find(h => h.id === hubIdOrOrder || getHubOccurrenceId(h) === hubIdOrOrder)
+        : routeHubs.find(h => h.order === hubIdOrOrder);
     if (!targetHub) return;
-    const checkInIso = targetHub.checkInDate || startDate;
-    const checkOutIso = targetHub.checkOutDate || endDate;
+    const targetOccId = getHubOccurrenceId(targetHub);
+    const computedDates = getHubDates(targetOccId, targetHub.nights || 1);
+    const checkInIso = targetHub.checkInDate || computedDates.checkInIso || startDate;
+    const checkOutIso = targetHub.checkOutDate || computedDates.checkOutIso || endDate;
     const selectedRoom = hotel.roomTypes?.find(r => r.id === roomTypeId) || hotel.roomTypes?.[0];
     const selectedRate = selectedRoom?.rates?.[0];
     const nights = targetHub.nights || 1;
     const safeRooms = Math.max(1, roomsCount || 1);
+    const stayId = targetHub.accommodationStayId || generateAccommodationStayId(targetOccId);
 
-    const existingHotelItems = items.filter(it => 
-      ((it.product.category || '').toLowerCase().includes('hotel') || it.isManualHotel) &&
-      (it.hubId === targetHub.id || it.manualHotelDetails?.hubId === targetHub.id || it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+    const existingHotelItems = items.filter(it =>
+      doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
 
@@ -2153,23 +3404,42 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         infants: infantsCount,
         travelDate: checkInIso,
         hubId: targetHub.id,
+        itineraryHubOccurrenceId: targetOccId,
+        accommodationStayId: stayId,
         hotelId: hotel.id,
         roomTypeId: selectedRoom?.id,
+        mealPlanCode: selectedRate?.mealPlanCode,
         roomsCount: safeRooms,
         nights,
         checkInDate: checkInIso,
         checkOutDate: checkOutIso,
-        notes: `${hotel.name} • ${selectedRoom?.roomName || 'Luxury Room'} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'} • ${nights} Nights in ${targetHub.hubName} [Check-in: ${checkInIso}, Check-out: ${checkOutIso}]`,
+        notes: `${hotel.name} • ${selectedRoom?.roomName || 'Luxury Room'} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'} • ${nights} Nights in ${targetHub.hubName} [Stay #${targetHub.order} | Check-in: ${checkInIso}, Check-out: ${checkOutIso}]`,
         openDrawer: false
       });
     }
 
     setRouteHubs(prev =>
       prev.map(h => (h.id === targetHub.id ? { 
-        ...h, 
+        ...h,
+        itineraryHubOccurrenceId: targetOccId,
+        accommodationStayId: stayId,
         hotelId: hotel.id, 
         roomTypeId: selectedRoom?.id,
+        mealPlanCode: selectedRate?.mealPlanCode,
+        mealPlan: selectedRate?.mealPlanName,
         roomsCount: safeRooms,
+        roomConfiguration: {
+          roomTypeId: selectedRoom?.id,
+          roomTypeName: selectedRoom?.roomName,
+          roomsCount: safeRooms,
+          mealPlanCode: selectedRate?.mealPlanCode,
+          mealPlanName: selectedRate?.mealPlanName,
+          adults: adultsCount,
+          children: childrenCount,
+          infants: infantsCount
+        },
+        checkInDate: checkInIso,
+        checkOutDate: checkOutIso,
         isManualHotel: false,
         accommodationType: 'master',
         manualHotel: undefined
@@ -2182,16 +3452,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       onSelectNoAccommodationForHub(hubId);
       return;
     }
-    const targetHub = routeHubs.find(h => h.id === hubId);
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
     if (!targetHub) return;
     const existingHotelItems = items.filter(it =>
-      ((it.product.category || '').toLowerCase().includes('hotel') || it.isManualHotel) &&
-      (it.hubId === hubId || it.manualHotelDetails?.hubId === hubId || it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+      doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
     setRouteHubs(prev =>
       prev.map(h => {
-        if (h.id !== hubId) return h;
+        if (h.id !== targetHub.id) return h;
         const hasActiveConfig = Boolean(h.hotelId || h.isManualHotel || h.manualHotel);
         const snapshot = hasActiveConfig
           ? {
@@ -2208,6 +3477,8 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
           ...h,
           hotelId: undefined,
           roomTypeId: undefined,
+          accommodationStayId: undefined,
+          roomConfiguration: undefined,
           isManualHotel: false,
           accommodationType: 'NO_ACCOMMODATION',
           manualHotel: undefined,
@@ -2222,19 +3493,20 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       onRemoveHotelForHub(hubId);
       return;
     }
-    const targetHub = routeHubs.find(h => h.id === hubId);
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
     if (!targetHub) return;
-    const existingHotelItems = items.filter(it => 
-      ((it.product.category || '').toLowerCase().includes('hotel') || it.isManualHotel) &&
-      (it.hubId === hubId || it.manualHotelDetails?.hubId === hubId || it.notes?.includes(targetHub.hubName) || (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+    const existingHotelItems = items.filter(it =>
+      doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
     setRouteHubs(prev =>
-      prev.map(h => (h.id === hubId ? { 
+      prev.map(h => (h.id === targetHub.id ? { 
         ...h, 
         hotelId: undefined, 
         roomTypeId: undefined, 
         roomsCount: 1,
+        accommodationStayId: undefined,
+        roomConfiguration: undefined,
         isManualHotel: false,
         accommodationType: undefined,
         manualHotel: undefined
@@ -2247,18 +3519,19 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       onRemoveManualHotel(hubId);
       return;
     }
-    const targetHub = routeHubs.find(h => h.id === hubId);
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
     if (!targetHub) return;
-    const existingItems = items.filter(it => 
-      (it.isManualHotel || (it.product.category || '').toLowerCase().includes('hotel')) && 
-      (it.hubId === hubId || it.notes?.includes(targetHub.hubName) || (it.manualHotelDetails?.hubId === hubId))
+    const existingItems = items.filter(it =>
+      doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
     existingItems.forEach(it => removeProductFromQuote(it.id));
     setRouteHubs(prev =>
-      prev.map(h => (h.id === hubId ? {
+      prev.map(h => (h.id === targetHub.id ? {
         ...h,
         hotelId: undefined,
         roomTypeId: undefined,
+        accommodationStayId: undefined,
+        roomConfiguration: undefined,
         isManualHotel: false,
         accommodationType: undefined,
         manualHotel: undefined
@@ -2295,17 +3568,14 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     } else {
       let satisfiedHubs = 0;
       let startedHubs = 0;
-      let hasInvalidHub = false;
+      let hasInvalidHub = stayDateValidationIssues.some(issue => issue.severity === 'ERROR');
 
       for (const hub of routeHubs) {
         const assignedItem = hotelItems.find(it =>
-          it.hubId === hub.id ||
-          it.manualHotelDetails?.hubId === hub.id ||
-          (hub.hotelId && it.product.id.includes(hub.hotelId)) ||
-          it.notes?.includes(hub.hubName)
+          doesHotelItemBelongToHubOccurrence(it, hub, routeHubs)
         );
-        const isNoAcc = hub.accommodationType === 'NO_ACCOMMODATION';
-        const isMan = !isNoAcc && Boolean(hub.accommodationType === 'MANUAL_HOTEL' || hub.isManualHotel || assignedItem?.isManualHotel);
+        const isNoAcc = hub.accommodationType === 'NO_ACCOMMODATION' || hub.accommodationType === 'none';
+        const isMan = !isNoAcc && Boolean(hub.accommodationType === 'MANUAL_HOTEL' || hub.accommodationType === 'manual' || hub.isManualHotel || assignedItem?.isManualHotel);
         const manDetails = hub.manualHotel || assignedItem?.manualHotelDetails;
 
         if (isNoAcc) {
@@ -2503,39 +3773,106 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     }
   };
 
-  // Route Hub Handlers
+  // Route Hub Handlers (repeated hubs are supported without restriction; each occurrence gets a unique ID & stay)
   const handleAddHub = (hub: CityHub) => {
-    const newHub: TripRouteHub = {
-      id: `rhub-${Date.now()}`,
-      hubId: hub.id,
-      hubName: hub.name,
-      nights: 2,
-      order: routeHubs.length + 1,
-      notes: ''
-    };
-    setRouteHubs([...routeHubs, newHub]);
+    const uid = `rhub-${Date.now()}-${++hubUidRef.current}`;
+    setRouteHubs(prev => {
+      const newHub: TripRouteHub = {
+        id: uid,
+        itineraryHubOccurrenceId: uid,
+        hubId: hub.id,
+        hubName: hub.name,
+        nights: 2,
+        order: prev.length + 1,
+        notes: ''
+      };
+      return [...prev, newHub];
+    });
   };
 
   const handleUpdateHubNights = (id: string, nights: number) => {
     const safeNights = Math.max(1, nights);
-    setRouteHubs(routeHubs.map(h => h.id === id ? { ...h, nights: safeNights } : h));
+    let updatedHubSnapshot: TripRouteHub | null = null;
+    const nextHubs = routeHubs.map(h => {
+      if (h.id === id || getHubOccurrenceId(h) === id) {
+        let nextCheckOut = h.checkOutDate;
+        if (h.checkInDate) {
+          const ci = new Date(h.checkInDate);
+          if (!isNaN(ci.getTime())) {
+            ci.setDate(ci.getDate() + safeNights);
+            nextCheckOut = ci.toISOString().split('T')[0];
+          }
+        }
+        updatedHubSnapshot = {
+          ...h,
+          nights: safeNights,
+          ...(nextCheckOut ? { checkOutDate: nextCheckOut } : {})
+        };
+        return updatedHubSnapshot;
+      }
+      return h;
+    });
+    setRouteHubs(nextHubs);
+    if (updatedHubSnapshot && onSyncHubStayToHotelItems) {
+      onSyncHubStayToHotelItems(updatedHubSnapshot, nextHubs);
+    }
+  };
+
+  const handleUpdateHubStayDates = (id: string, checkInDate?: string, checkOutDate?: string) => {
+    let updatedHubSnapshot: TripRouteHub | null = null;
+    const nextHubs = routeHubs.map(h => {
+      if (h.id === id || getHubOccurrenceId(h) === id) {
+        let nextNights = h.nights || 1;
+        if (checkInDate && checkOutDate) {
+          const ci = new Date(checkInDate);
+          const co = new Date(checkOutDate);
+          if (!isNaN(ci.getTime()) && !isNaN(co.getTime()) && co > ci) {
+            nextNights = Math.max(1, Math.round((co.getTime() - ci.getTime()) / (1000 * 60 * 60 * 24)));
+          }
+        }
+        updatedHubSnapshot = {
+          ...h,
+          checkInDate: checkInDate || undefined,
+          checkOutDate: checkOutDate || undefined,
+          nights: nextNights
+        };
+        return updatedHubSnapshot;
+      }
+      return h;
+    });
+    setRouteHubs(nextHubs);
+    if (updatedHubSnapshot && onSyncHubStayToHotelItems) {
+      onSyncHubStayToHotelItems(updatedHubSnapshot, nextHubs);
+    }
   };
 
   const handleDeleteHub = (id: string) => {
-    const filtered = routeHubs.filter(h => h.id !== id);
-    const reindexed = filtered.map((h, idx) => ({ ...h, order: idx + 1 }));
-    setRouteHubs(reindexed);
+    const deletedHub = routeHubs.find(h => h.id === id || getHubOccurrenceId(h) === id);
+    if (deletedHub) {
+      if (onDeleteHubOccurrenceItems) {
+        onDeleteHubOccurrenceItems(deletedHub, routeHubs);
+      } else {
+        items
+          .filter(it => doesHotelItemBelongToHubOccurrence(it, deletedHub, routeHubs))
+          .forEach(it => removeProductFromQuote(it.id));
+      }
+    }
+    setRouteHubs(prev => {
+      const filtered = prev.filter(h => h.id !== id && getHubOccurrenceId(h) !== id);
+      return filtered.map((h, idx) => ({ ...h, order: idx + 1 }));
+    });
   };
 
   const handleMoveHub = (index: number, direction: 'UP' | 'DOWN') => {
-    const newIndex = direction === 'UP' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= routeHubs.length) return;
-    const newArr = [...routeHubs];
-    const temp = newArr[index];
-    newArr[index] = newArr[newIndex];
-    newArr[newIndex] = temp;
-    const reordered = newArr.map((h, idx) => ({ ...h, order: idx + 1 }));
-    setRouteHubs(reordered);
+    setRouteHubs(prev => {
+      const newIndex = direction === 'UP' ? index - 1 : index + 1;
+      if (newIndex < 0 || newIndex >= prev.length) return prev;
+      const newArr = [...prev];
+      const temp = newArr[index];
+      newArr[index] = newArr[newIndex];
+      newArr[newIndex] = temp;
+      return newArr.map((h, idx) => ({ ...h, order: idx + 1 }));
+    });
   };
 
   return (
@@ -2544,16 +3881,32 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       <div className="bg-white rounded-3xl border border-slate-200 p-4 sm:p-5 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         {/* Left: Completeness Meter */}
         <div className="space-y-1.5 w-full md:w-auto">
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center flex-wrap gap-2">
             <span className="text-xs font-black text-slate-900 uppercase tracking-wider">
               Quote Completeness:
             </span>
             <span className="text-xs font-black text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-200">
               {quoteCompleteness.percent}% Complete ({quoteCompleteness.completedSteps} of 7 Steps)
             </span>
-            <span className="text-[11px] text-slate-400 font-medium">
-              • Auto-Saved {lastSavedTimestamp}
+            <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+              isReadOnlyHistoricalMode
+                ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                : hasUnsavedChanges || restoredFromVersion
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+            }`}>
+              {explicitSaveStatusLabel}
             </span>
+            {onOpenVersionHistory && (
+              <button
+                type="button"
+                onClick={onOpenVersionHistory}
+                className="text-[11px] font-bold text-slate-700 hover:text-slate-950 bg-slate-100 hover:bg-slate-200 px-2.5 py-0.5 rounded-full border border-slate-200 transition-colors cursor-pointer inline-flex items-center gap-1"
+              >
+                <History className="w-3 h-3 text-teal-700" />
+                <span>Versions</span>
+              </button>
+            )}
           </div>
           {/* Progress Bar */}
           <div className="w-full md:w-80 h-2 bg-slate-100 rounded-full overflow-hidden border border-slate-200/60">
@@ -2815,7 +4168,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
         <main className="lg:col-span-8 xl:col-span-9 space-y-6 min-w-0">
           {/* STEP 1: TRIP DETAILS */}
           {activeStepId === 1 && (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6">
               <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
@@ -3119,7 +4472,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         const currentAge = childAges[idx] || 7;
                         const isCWB = currentAge >= 6;
                         return (
-                          <div key={idx} className="flex items-center space-x-2 bg-white px-3 py-1.5 rounded-xl border border-teal-200 text-xs">
+                          <div key={`child-age-slot-${idx + 1}`} className="flex items-center space-x-2 bg-white px-3 py-1.5 rounded-xl border border-teal-200 text-xs">
                             <span className="font-bold text-slate-700">Child #{idx + 1} Age:</span>
                             <select
                               value={currentAge}
@@ -3198,7 +4551,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
           {/* STEP 2: DESTINATIONS & ROUTE */}
           {activeStepId === 2 && (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6">
               <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
@@ -3256,18 +4609,21 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     Route Sequence:
                   </span>
                   <div className="flex flex-wrap items-center gap-2">
-                    {routeHubs.map((hub, idx) => (
-                      <React.Fragment key={hub.id}>
-                        <div className="bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-2xs">
-                          <span className="text-[#00E5C0]">Day {idx + 1}:</span>
-                          <span>{hub.hubName}</span>
-                          <span className="text-slate-400 font-mono">({hub.nights}N)</span>
-                        </div>
-                        {idx < routeHubs.length - 1 && (
-                          <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
-                        )}
-                      </React.Fragment>
-                    ))}
+                    {routeHubs.map((hub, idx) => {
+                      const occInfo = getHubCityOccurrenceIndex(hub, routeHubs);
+                      return (
+                        <React.Fragment key={hub.id}>
+                          <div className="bg-slate-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-2xs">
+                            <span className="text-[#00E5C0]">Stay {idx + 1}:</span>
+                            <span>{hub.hubName}{occInfo.totalInCity > 1 ? ` #${occInfo.occurrenceNumber}` : ''}</span>
+                            <span className="text-slate-400 font-mono">({hub.nights}N)</span>
+                          </div>
+                          {idx < routeHubs.length - 1 && (
+                            <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </div>
                 </div>
               ) : null}
@@ -3275,7 +4631,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
               {/* Route Hubs List */}
               <div className="space-y-3">
                 <span className="text-xs font-black text-slate-700 uppercase tracking-wider block">
-                  Configured City Hubs & Stays:
+                  Configured City Hubs & Stays ({routeHubs.length} {routeHubs.length === 1 ? 'Stay' : 'Stays'}):
                 </span>
 
                 {routeHubs.length === 0 ? (
@@ -3289,16 +4645,24 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 ) : (
                   <div className="space-y-2.5">
                     {routeHubs.map((hub, idx) => {
-                      const { checkInFormatted, checkOutFormatted } = getHubDates(hub.order, hub.nights || 1);
+                      const { checkInFormatted, checkOutFormatted } = getHubDates(getHubOccurrenceId(hub), hub.nights || 1);
+                      const occInfo = getHubCityOccurrenceIndex(hub, routeHubs);
 
                       return (
                         <div key={hub.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                           <div className="flex items-center space-x-3">
                             <div className="w-8 h-8 rounded-xl bg-slate-900 text-[#00E5C0] font-black flex items-center justify-center text-xs shrink-0">
-                              #{hub.order}
+                              #{idx + 1}
                             </div>
                             <div>
-                              <h4 className="text-xs font-bold text-slate-900">{hub.hubName} Hub</h4>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="text-xs font-bold text-slate-900">{hub.hubName} Hub</h4>
+                                {occInfo.totalInCity > 1 && (
+                                  <span className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-bold">
+                                    Visit {occInfo.occurrenceNumber} of {occInfo.totalInCity}
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-[11px] text-slate-500">
                                 {checkInFormatted} → {checkOutFormatted} • {hub.nights} {hub.nights === 1 ? 'Night' : 'Nights'}
                               </p>
@@ -3385,7 +4749,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
           {/* STEP 3: HOTELS & ACCOMMODATION */}
           {activeStepId === 3 && (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
@@ -3471,29 +4835,53 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 </div>
               </div>
 
+              {/* Stay Date Validation Alerts (Scoped to specific stay occurrences) */}
+              {stayDateValidationIssues.length > 0 && (
+                <div className="space-y-2">
+                  {stayDateValidationIssues.map((issue, issueIdx) => (
+                    <div
+                      key={`${issue.hubOccurrenceId}-${issueIdx}`}
+                      className={`p-3 rounded-xl border text-xs flex items-center space-x-2 ${
+                        issue.severity === 'ERROR'
+                          ? 'bg-rose-50 border-rose-200 text-rose-800 font-semibold'
+                          : 'bg-amber-50 border-amber-200 text-amber-900'
+                      }`}
+                    >
+                      <AlertTriangle className="w-4 h-4 shrink-0" />
+                      <span>{issue.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Hub Accommodations Grid */}
               <div className="space-y-5">
-                {routeHubs.map(hub => {
+                {routeHubs.map((hub, hubIdx) => {
                   const isLandOnlyMode = quotationScope === 'LAND_ONLY';
                   const isNoAccommodation = isLandOnlyMode || hub.accommodationType === 'none' || hub.accommodationType === 'NO_ACCOMMODATION';
+                  const hubOccId = getHubOccurrenceId(hub);
+                  const occInfo = getHubCityOccurrenceIndex(hub, routeHubs);
+                  const stayLabel = occInfo.totalInCity > 1
+                    ? `Stay #${hubIdx + 1} • ${hub.hubName} Hub (Visit ${occInfo.occurrenceNumber} of ${occInfo.totalInCity})`
+                    : `Stay #${hubIdx + 1} • ${hub.hubName} Hub`;
 
-                  const assignedItem = !isNoAccommodation ? hotelItems.find(it => 
-                    it.hubId === hub.id ||
-                    (it.manualHotelDetails?.hubId === hub.id) ||
-                    it.notes?.includes(hub.hubName) || 
-                    (hub.hotelId && it.product.id.includes(hub.hotelId)) ||
-                    it.product.name.toLowerCase().includes(hub.hubName.toLowerCase())
-                  ) : undefined;
+                  const assignedItem = !isNoAccommodation
+                    ? hotelItems.find(it => doesHotelItemBelongToHubOccurrence(it, hub, routeHubs))
+                    : undefined;
 
-                  const { checkInFormatted, checkOutFormatted } = getHubDates(hub.order, hub.nights || 1);
+                  const computedStayDates = getHubDates(hubOccId, hub.nights || 1);
+                  const { checkInFormatted, checkOutFormatted } = computedStayDates;
+                  const effectiveCheckInIso = hub.checkInDate || computedStayDates.checkInIso || '';
+                  const effectiveCheckOutIso = hub.checkOutDate || computedStayDates.checkOutIso || '';
+                  const hubDateIssue = stayDateValidationIssues.find(issue => issue.hubOccurrenceId === hubOccId);
 
-                  const hotelsToDisplay = DestinationRelevanceService.getInstance().getRelevantHotels(
-                    currentDestination.id,
-                    hub.hubId || hub.hubName
-                  );
+                  const hubLookupKey = hub.hubId || hub.hubName;
+                  const hotelsToDisplay = hubLookupKey ? (hotelsByHubIdMap[hubLookupKey] || []) : [];
 
                   const isManualStay = !isNoAccommodation && Boolean(
                     hub.accommodationType === 'manual' ||
+                    hub.accommodationType === 'MANUAL' ||
+                    hub.accommodationType === 'MANUAL_HOTEL' ||
                     hub.isManualHotel || 
                     hub.manualHotel || 
                     assignedItem?.isManualHotel || 
@@ -3505,12 +4893,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                   const selectedHotel = (!isNoAccommodation && !isManualStay) ? (
                     availableHotels.find(h => h.id === hub.hotelId) || 
-                    (assignedItem ? availableHotels.find(h => assignedItem.product.id.includes(h.id)) : undefined)
+                    (assignedItem ? availableHotels.find(h => h.id === assignedItem.hotelId || assignedItem.product.id.includes(h.id)) : undefined)
                   ) : undefined;
 
                   const selectedRoom = selectedHotel?.roomTypes?.find(r => r.id === hub.roomTypeId) || selectedHotel?.roomTypes?.[0];
                   const selectedRate = selectedRoom?.rates?.[0];
-                  const currentRoomsCount = hub.roomsCount || 1;
+                  const currentRoomsCount = hub.roomConfiguration?.roomsCount || hub.roomsCount || assignedItem?.roomsCount || 1;
                   const currentNights = hub.nights || 1;
 
                   const authoritativeStayPrice = assignedItem?.calculation?.finalTotalSellingPrice;
@@ -3560,7 +4948,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           : isManualStay
                             ? isManualComplete ? 'bg-amber-50/40 border-amber-200' : 'bg-rose-50/40 border-rose-200'
                             : selectedHotel
-                              ? occupancy.isValid ? 'bg-slate-50/90 border-slate-200' : 'bg-rose-50/40 border-rose-200'
+                              ? occupancy.isValid && hubDateIssue?.severity !== 'ERROR' ? 'bg-slate-50/90 border-slate-200' : 'bg-rose-50/40 border-rose-200'
                               : 'bg-slate-50/50 border-slate-200'
                       }`}
                     >
@@ -3568,11 +4956,11 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200/80">
                         <div className="flex items-center space-x-2.5">
                           <div className="w-7 h-7 rounded-lg bg-teal-50 border border-teal-200 text-[#00A88F] flex items-center justify-center font-bold text-xs">
-                            {hub.order}
+                            #{hubIdx + 1}
                           </div>
                           <div>
                             <span className="text-xs font-black text-slate-900 block">
-                              {hub.hubName} Hub • {hub.nights} {hub.nights > 1 ? 'Nights' : 'Night'} Stay
+                              {stayLabel} • {hub.nights} {hub.nights > 1 ? 'Nights' : 'Night'} Stay
                             </span>
                             <span className="text-[11px] text-slate-500 font-mono">
                               {checkInFormatted} → {checkOutFormatted}
@@ -3615,10 +5003,64 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         </div>
                       </div>
 
-                      {/* ACCOMMODATION DROPDOWN (ALWAYS SHOWN FOR EVERY HUB; AUTO-SELECTS NO ACCOMMODATION IN LAND-ONLY MODE) */}
+                      {/* Independent Stay Dates per Occurrence */}
+                      {!isLandOnlyMode && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 bg-white/80 p-3 rounded-xl border border-slate-200/80">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">
+                              Check-In Date
+                            </label>
+                            <input
+                              type="date"
+                              value={effectiveCheckInIso}
+                              onChange={(e) => handleUpdateHubStayDates(hub.id, e.target.value, effectiveCheckOutIso)}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-mono text-slate-900 outline-none focus:border-[#00C6A6]"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-600 uppercase tracking-wider block">
+                              Check-Out Date
+                            </label>
+                            <input
+                              type="date"
+                              value={effectiveCheckOutIso}
+                              onChange={(e) => handleUpdateHubStayDates(hub.id, effectiveCheckInIso, e.target.value)}
+                              className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-mono text-slate-900 outline-none focus:border-[#00C6A6]"
+                            />
+                          </div>
+                          <div className="flex items-end justify-between sm:justify-end gap-2">
+                            {hub.checkInDate || hub.checkOutDate ? (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateHubStayDates(hub.id, undefined, undefined)}
+                                className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer"
+                              >
+                                Sync to Route Dates
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-500 font-medium py-1.5">
+                                Auto-synced to itinerary sequence
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {hubDateIssue && (
+                        <div className={`px-3 py-2 rounded-lg text-[11px] font-semibold flex items-center gap-2 ${
+                          hubDateIssue.severity === 'ERROR'
+                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                            : 'bg-amber-100 text-amber-900 border border-amber-200'
+                        }`}>
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          <span>{hubDateIssue.message}</span>
+                        </div>
+                      )}
+
+                      {/* ACCOMMODATION DROPDOWN (ALWAYS SHOWN FOR EVERY HUB OCCURRENCE) */}
                       <div className="space-y-1.5">
                         <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
-                          <span>Accommodation Selection ({hub.hubName})</span>
+                          <span>Accommodation Selection ({stayLabel})</span>
                           {canAddManualHotel && !isLandOnlyMode && (
                             <button
                               type="button"
@@ -3647,7 +5089,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             } else if (val) {
                               const h = availableHotels.find(x => x.id === val);
                               if (h) {
-                                handleSelectHotel(hub.order, h, h.roomTypes?.[0]?.id, currentRoomsCount);
+                                handleSelectHotel(hub.id, h, h.roomTypes?.[0]?.id, currentRoomsCount);
                               }
                             } else {
                               handleRemoveHotel(hub.id);
@@ -3659,7 +5101,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               : 'bg-white border-slate-300 text-slate-900 cursor-pointer focus:border-[#00C6A6] focus:ring-2 focus:ring-[#00C6A6]/20'
                           }`}
                         >
-                          <option value="">-- Choose Accommodation for {hub.hubName} --</option>
+                          <option value="">-- Choose Accommodation for Stay #{hubIdx + 1}: {hub.hubName} --</option>
                           <option value="NO_ACCOMMODATION">No Accommodation (Arranged by Client)</option>
                           {canAddManualHotel && !isLandOnlyMode && (
                             <option value="ADD_MANUAL_HOTEL_ACTION">
@@ -3698,7 +5140,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         </div>
                       ) : isManualStay && manualDetails ? (
                         /* CASE 1: MANUALLY ADDED HOTEL STAY */
-                        <div className="bg-amber-50/70 rounded-xl p-4 border border-amber-300 space-y-3 shadow-xs animate-fadeIn">
+                        <div className="bg-amber-50/70 rounded-xl p-4 border border-amber-300 space-y-3 shadow-xs">
                           <div className="flex items-start justify-between gap-2">
                             <div>
                               <div className="flex items-center space-x-1.5">
@@ -3827,7 +5269,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 <select
                                   value={selectedRoom?.id || ''}
                                   onChange={(e) => {
-                                    handleSelectHotel(hub.order, selectedHotel, e.target.value, currentRoomsCount);
+                                    handleSelectHotel(hub.id, selectedHotel, e.target.value, currentRoomsCount);
                                   }}
                                   className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer focus:bg-white focus:border-[#00C6A6]"
                                 >
@@ -3876,7 +5318,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                   value={currentRoomsCount ?? 1}
                                   onChange={(e) => {
                                     const newRooms = parseInt(e.target.value, 10) || 1;
-                                    handleSelectHotel(hub.order, selectedHotel, selectedRoom?.id, newRooms);
+                                    handleSelectHotel(hub.id, selectedHotel, selectedRoom?.id, newRooms);
                                   }}
                                   className="w-full px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer focus:bg-white focus:border-[#00C6A6]"
                                 >
@@ -3893,7 +5335,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
                               {/* OCCUPANCY VALIDATION & PRICE DISPLAY */}
                               {!occupancy.isValid ? (
-                                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2.5 text-rose-900 animate-fadeIn shadow-xs">
+                                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2.5 text-rose-900 shadow-xs">
                                   <div className="flex items-start space-x-2">
                                     <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                                     <div>
@@ -3909,7 +5351,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                   {/* Error Breakdown */}
                                   <div className="bg-white rounded-lg p-2.5 border border-rose-200 space-y-1.5 text-[11px]">
                                     {occupancy.errors.map((err, idx) => (
-                                      <div key={idx} className="flex items-start space-x-1.5 text-rose-800 font-medium">
+                                      <div key={`occ-err-${idx}-${err.slice(0, 24)}`} className="flex items-start space-x-1.5 text-rose-800 font-medium">
                                         <span className="text-rose-600 font-bold">•</span>
                                         <span>{err}</span>
                                       </div>
@@ -3923,7 +5365,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                   {/* 1-Click Action to Adjust Rooms */}
                                   <button
                                     type="button"
-                                    onClick={() => handleSelectHotel(hub.order, selectedHotel, selectedRoom?.id, occupancy.recommendedRoomsCount)}
+                                    onClick={() => handleSelectHotel(hub.id, selectedHotel, selectedRoom?.id, occupancy.recommendedRoomsCount)}
                                     className="w-full py-2 px-3 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-lg transition-colors flex items-center justify-center shadow-xs cursor-pointer"
                                   >
                                     <span>Auto-Adjust to {occupancy.recommendedRoomsCount} Rooms</span>
@@ -3933,7 +5375,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                   </p>
                                 </div>
                               ) : (
-                                <div className="space-y-2.5 animate-fadeIn">
+                                <div className="space-y-2.5">
                                   {/* Occupancy Verified Pill */}
                                   <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-1.5 flex items-center justify-between text-[11px] text-emerald-800 font-medium">
                                     <div className="flex items-center space-x-1.5">
@@ -4004,7 +5446,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
 
           {/* STEP 4: ACTIVITIES & EXPERIENCES */}
           {activeStepId === 4 && (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
@@ -4099,20 +5541,24 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   >
                     All Days ({calendarDays.length})
                   </button>
-                  {routeHubs.map(h => (
-                    <button
-                      key={h.id}
-                      type="button"
-                      onClick={() => setSelectedHubFilter(h.hubName)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        selectedHubFilter === h.hubName
-                          ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      📍 {h.hubName} ({h.nights}n)
-                    </button>
-                  ))}
+                  {routeHubs.map((h, idx) => {
+                    const occId = getHubOccurrenceId(h);
+                    const occInfo = getHubCityOccurrenceIndex(h, routeHubs);
+                    return (
+                      <button
+                        key={h.id}
+                        type="button"
+                        onClick={() => setSelectedHubFilter(occId)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          selectedHubFilter === occId
+                            ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        📍 {occInfo.totalInCity > 1 ? `Stay ${idx + 1}: ${h.hubName}` : h.hubName} ({h.nights}n)
+                      </button>
+                    );
+                  })}
                 </div>
 
                 <div className="text-xs text-slate-500 font-medium">
@@ -4148,430 +5594,85 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 />
               </div>
 
+              {/* Day-Section Expand / Collapse Controls */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 bg-slate-50/80 px-3.5 py-2.5 rounded-2xl border border-slate-200/80">
+                <div className="flex items-center flex-wrap gap-2 text-xs">
+                  <span className="font-bold text-slate-900">
+                    Daily Itinerary ({visibleStep4DaySlots.length} {visibleStep4DaySlots.length === 1 ? 'Day' : 'Days'})
+                  </span>
+                  <span className="text-slate-300" aria-hidden="true">·</span>
+                  <span className="text-slate-500 font-medium tabular-nums">
+                    {expandedVisibleStep4DaysCount === 0
+                      ? 'All Days Collapsed'
+                      : expandedVisibleStep4DaysCount === visibleStep4DaySlots.length && visibleStep4DaySlots.length > 1
+                        ? 'All Days Expanded'
+                        : `${expandedVisibleStep4DaysCount} of ${visibleStep4DaySlots.length} Expanded`}
+                  </span>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <button
+                    type="button"
+                    onClick={handleExpandAllStep4Days}
+                    disabled={visibleStep4DaySlots.length === 0 || expandedVisibleStep4DaysCount === visibleStep4DaySlots.length}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer flex items-center space-x-1.5 whitespace-nowrap shrink-0 disabled:opacity-45 disabled:cursor-not-allowed ${
+                      step4AccordionState.isExpandAllActive && expandedVisibleStep4DaysCount === visibleStep4DaySlots.length
+                        ? 'bg-[#00C6A6] text-white border-[#00A88F]'
+                        : 'bg-white hover:bg-teal-50 text-slate-700 hover:text-teal-800 border-slate-200'
+                    }`}
+                  >
+                    <ChevronDown className="w-3.5 h-3.5" />
+                    <span>Expand All</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCollapseAllStep4Days}
+                    disabled={visibleStep4DaySlots.length === 0 || expandedVisibleStep4DaysCount === 0}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 transition-colors cursor-pointer flex items-center space-x-1.5 whitespace-nowrap shrink-0 disabled:opacity-45 disabled:cursor-not-allowed"
+                  >
+                    <ChevronUp className="w-3.5 h-3.5" />
+                    <span>Collapse All</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Day-Wise Activities Canvas */}
-              <div className="space-y-6">
-                {daySlots
-                  .filter(slot => selectedHubFilter === 'ALL' || slot.hub?.hubName === selectedHubFilter)
-                  .map(slot => (
-                    <div
-                      key={slot.dayNumber}
-                      className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden transition-all hover:border-slate-300"
-                    >
-                      {/* Day Header */}
-                      <div className="p-4 bg-gradient-to-r from-slate-50 to-slate-100/60 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex items-center space-x-3">
-                          <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-[#00A88F] flex flex-col items-center justify-center font-bold shrink-0">
-                            <span className="text-[9px] uppercase tracking-wider text-slate-500 font-mono">Day</span>
-                            <span className="text-sm font-black leading-none">{slot.dayNumber}</span>
-                          </div>
-                          <div>
-                            <div className="flex items-center flex-wrap gap-2">
-                              <h3 className="text-xs sm:text-sm font-bold text-slate-900">
-                                {slot.dayOfWeek}, {slot.formattedDate}
-                              </h3>
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white text-teal-800 border border-slate-200 shadow-2xs">
-                                📍 {slot.hub?.hubName || currentDestination.name}
-                              </span>
-                              {slot.isTransitionDay && (
-                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                  🚅 Transit from {slot.prevHub?.hubName}
-                                </span>
-                              )}
-                            </div>
-                            {/* Editable Day Theme */}
-                            <input
-                              type="text"
-                              placeholder="Add day theme (e.g. Arrival in Tokyo, Imperial Palace & Shinjuku Night Tour)..."
-                              value={dayThemes[slot.dayNumber] || ''}
-                              onChange={(e) => setDayThemes?.(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
-                              className="text-xs text-slate-800 placeholder:text-slate-400 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-[#00C6A6] outline-none w-full max-w-md py-0.5 mt-0.5"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Header Actions */}
-                        <div className="flex items-center space-x-2">
-                          <span className="text-xs font-bold text-slate-900 font-mono bg-white px-2.5 py-1 rounded-xl border border-slate-200 shadow-2xs">
-                            {formatCurrency(slot.daySellingPrice, currency)}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => onOpenQuickAddProductModal({ dayNumber: slot.dayNumber, dateString: slot.dateString, hub: slot.hub })}
-                            className="flex items-center px-3 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00A88F] text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
-                          >
-                            <span>Add Product</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Day Body Content */}
-                      <div className="p-4 sm:p-5 space-y-4">
-                        {/* Day Narrative / Overview Editor (Pre-populated from Ready-Made Packages or custom) */}
-                        <div className="bg-slate-50/70 rounded-xl p-3 border border-slate-200/80 space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                              Day {slot.dayNumber} Narrative &amp; Overview
-                            </span>
-                            {dayDescriptions[slot.dayNumber] && (
-                              <span className="text-[10px] text-teal-700 font-semibold">Included in Client Proposal</span>
-                            )}
-                          </div>
-                          <RichTextEditor
-                            value={dayDescriptions[slot.dayNumber] || ''}
-                            onChange={(val) => setDayDescriptions?.(prev => ({ ...prev, [slot.dayNumber]: val }))}
-                            placeholder={`Describe the flow and highlights for Day ${slot.dayNumber} in ${slot.hub?.hubName || currentDestination.name}...`}
-                            minHeight="110px"
-                            compact={true}
-                          />
-                        </div>
-
-                        {/* Night Accommodation Badge for this Day */}
-                        {quotationScope !== 'LAND_ONLY' && (
-                          <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 flex items-center justify-between">
-                            <div className="flex items-center space-x-2.5">
-                              <div className="w-7 h-7 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 flex items-center justify-center">
-                                <BedDouble className="w-3.5 h-3.5" />
-                              </div>
-                              <div>
-                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                                  Night {slot.dayNumber} Stay • {slot.hub?.hubName}
-                                </span>
-                                {slot.hotelItems.length > 0 ? (
-                                  <span className="text-xs font-bold text-slate-900">
-                                    {slot.hotelItems[0].product.name}
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-slate-400 italic">
-                                    No hotel specified for this night (Self-arranged or covered by multi-night stay)
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Scheduled Day Experiences & Products */}
-                        {slot.productItems.length === 0 ? (
-                          <div className="bg-slate-50/60 rounded-xl p-5 border border-dashed border-slate-300 text-center space-y-2">
-                            <Compass className="w-5 h-5 text-slate-400 mx-auto" />
-                            <p className="text-xs text-slate-500 font-medium">
-                              No activities or transfers scheduled for Day {slot.dayNumber} ({slot.hub?.hubName || currentDestination.name}) yet.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => onOpenQuickAddProductModal({ dayNumber: slot.dayNumber, dateString: slot.dateString, hub: slot.hub })}
-                              className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold border border-slate-300 transition-colors inline-flex items-center cursor-pointer shadow-2xs"
-                            >
-                              <span>Browse Experiences for {slot.hub?.hubName || 'this day'}</span>
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="space-y-2.5">
-                            {slot.productItems.map((item) => (
-                              <div
-                                key={item.id}
-                                className="bg-slate-50 rounded-xl p-3.5 border border-slate-200 hover:border-slate-300 hover:bg-white transition-all shadow-2xs space-y-3"
-                              >
-                                <div className="flex flex-wrap items-center justify-between gap-3">
-                                  <div className="flex items-center space-x-3 min-w-0 flex-1">
-                                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                                      isRailQuoteItem(item)
-                                        ? 'bg-indigo-50 border border-indigo-200 text-indigo-700'
-                                        : item.product.category === 'Transfer' || item.product.category === 'Transport'
-                                        ? 'bg-teal-50 border border-teal-200 text-[#00A88F]'
-                                        : 'bg-teal-50 border border-teal-200 text-[#00A88F]'
-                                    }`}>
-                                      {isRailQuoteItem(item) ? (
-                                        <Train className="w-4 h-4" />
-                                      ) : item.product.category === 'Transfer' || item.product.category === 'Transport' ? (
-                                        <Car className="w-3.5 h-3.5" />
-                                      ) : (
-                                        <Compass className="w-3.5 h-3.5" />
-                                      )}
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-50 text-teal-800 border border-teal-200">
-                                          {item.serviceTime || '09:30 AM'}
-                                        </span>
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                                          isRailQuoteItem(item)
-                                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                                            : 'bg-white text-slate-600 border border-slate-200'
-                                        }`}>
-                                          {isRailQuoteItem(item) ? '🚄 Shinkansen Rail' : (item.product?.category || item.category || 'Service')}
-                                        </span>
-                                        {item.product.city && (
-                                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                                            📍 {item.product.city}
-                                          </span>
-                                        )}
-                                        <h4 className="text-xs sm:text-sm font-bold text-slate-900 truncate">
-                                          {item.customTitle || item.title || item.product.name}
-                                        </h4>
-                                      </div>
-
-                                      {/* Shinkansen Route & Seat Specifications */}
-                                      {isRailQuoteItem(item) && item.railJourneyDetails && (
-                                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700 bg-indigo-50/70 border border-indigo-100 px-2 py-1 rounded-lg">
-                                          <span className="font-extrabold text-indigo-900">
-                                            {item.railJourneyDetails.originStationName} → {item.railJourneyDetails.destinationStationName}
-                                          </span>
-                                          <span>•</span>
-                                          <span className="font-semibold text-slate-700">
-                                            {item.railJourneyDetails.carType} Class ({item.railJourneyDetails.seatType})
-                                          </span>
-                                          <span>•</span>
-                                          <span className="text-indigo-800 font-medium">
-                                            {item.railJourneyDetails.serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi Super Express' : 'Hikari/Kodama'}
-                                          </span>
-                                          {item.railJourneyDetails.seatPreference && (
-                                            <>
-                                              <span>•</span>
-                                              <span className="text-slate-500">Seat: {item.railJourneyDetails.seatPreference}</span>
-                                            </>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      {/* Vehicle Specification Badge for Private Tours and Transfers */}
-                                      {Boolean(
-                                        item.vehicleNameSnapshot || 
-                                        item.configuration_snapshot?.vehicleName || 
-                                        item.metadata?.vehicleName ||
-                                        (item.product.category === 'Private Tours' && (item.vehicleId || item.product.vehicleId))
-                                      ) && (
-                                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-700 bg-amber-50/80 border border-amber-200/80 px-2 py-0.5 rounded-lg">
-                                          <Car className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                          <span className="font-bold text-amber-950">
-                                            {item.vehicleNameSnapshot || item.configuration_snapshot?.vehicleName || item.metadata?.vehicleName || 'Private Vehicle'}
-                                          </span>
-                                          {Boolean(item.vehicleCapacitySnapshot || item.configuration_snapshot?.masterCapacity) && (
-                                            <>
-                                              <span className="text-amber-300">•</span>
-                                              <span className="text-amber-800 font-medium">
-                                                {item.vehicleCapacitySnapshot || item.configuration_snapshot?.masterCapacity} Passenger Seats
-                                              </span>
-                                            </>
-                                          )}
-                                          {Boolean(item.vehicleTypeSnapshot || item.configuration_snapshot?.vehicleType) && (
-                                            <>
-                                              <span className="text-amber-300">•</span>
-                                              <span className="text-slate-600">
-                                                {item.vehicleTypeSnapshot || item.configuration_snapshot?.vehicleType}
-                                              </span>
-                                            </>
-                                          )}
-                                        </div>
-                                      )}
-
-                                      <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
-                                        <span>Pax: {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</span>
-                                        {!isRailQuoteItem(item) && item.product.duration && (
-                                          <span>Duration: {item.product.duration}</span>
-                                        )}
-                                        {item.notes && !isRailQuoteItem(item) && (
-                                          <span className="text-amber-700 font-mono">Note: {item.notes}</span>
-                                        )}
-                                        <button
-                                          type="button"
-                                          onClick={() => setExpandedItemDetails(prev => ({ ...prev, [item.id]: !prev[item.id] }))}
-                                          className="text-[#008f77] hover:text-[#00705d] font-bold text-[10px] cursor-pointer flex items-center space-x-1"
-                                        >
-                                          <span>{expandedItemDetails[item.id] ? 'Hide Specs & Inclusions' : 'Show Specs & Inclusions'}</span>
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  {/* Price & Actions: View, Edit/Customise, Delete */}
-                                  <div className="flex items-center space-x-2 shrink-0">
-                                    <span className="text-xs sm:text-sm font-bold text-slate-900 font-mono mr-1">
-                                      {formatCurrency(item.calculation?.finalTotalSellingPrice || 0, currency)}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => onOpenProductDetails(item.product)}
-                                      className="p-1.5 rounded-lg bg-white hover:bg-teal-50 text-slate-600 hover:text-teal-700 border border-slate-200 transition-colors cursor-pointer"
-                                      title="View Product Details"
-                                    >
-                                      <Eye className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => onOpenEditItem ? onOpenEditItem(item) : undefined}
-                                      className="p-1.5 rounded-lg bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors cursor-pointer"
-                                      title="Edit Service Time / Pax / Notes"
-                                    >
-                                      <Sliders className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeProductFromQuote(item.id)}
-                                      className="p-1.5 rounded-lg bg-white hover:bg-red-50 text-slate-400 hover:text-red-600 border border-slate-200 transition-colors cursor-pointer"
-                                      title="Remove Service"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Expanded Snapshot Panel */}
-                                {expandedItemDetails[item.id] && (
-                                  <div className="border-t border-slate-200 pt-3 mt-1.5 space-y-3 text-xs text-slate-600 animate-in slide-in-from-top-1 duration-150">
-                                    {/* Overview & Specifications */}
-                                    <div className="space-y-1">
-                                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Overview & Specifications</span>
-                                      <RichTextRenderer 
-                                        content={item.contentSnapshot?.overviewSpecifications || item.product.longDescription || item.product.description || item.product.shortDescription || ''}
-                                        className="text-xs text-slate-600 leading-relaxed font-sans"
-                                      />
-                                    </div>
-
-                                    {/* Inclusions */}
-                                    {((item.contentSnapshot?.inclusions && item.contentSnapshot.inclusions.length > 0) || (item.product.inclusions && item.product.inclusions.length > 0)) && (
-                                      <div className="space-y-1">
-                                        <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Inclusions</span>
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {(item.contentSnapshot?.inclusions || item.product.inclusions || []).map((inc: string, iIdx: number) => (
-                                            <span key={iIdx} className="text-[10px] bg-white text-emerald-950 px-2 py-0.5 rounded border border-emerald-200 flex items-center space-x-1 font-medium">
-                                              <Check className="w-3 h-3 text-emerald-600 shrink-0" />
-                                              <span>{inc}</span>
-                                            </span>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Exclusions */}
-                                    {((item.contentSnapshot?.exclusions && item.contentSnapshot.exclusions.length > 0) || (item.product.exclusions && item.product.exclusions.length > 0)) && (
-                                      <div className="space-y-1">
-                                        <span className="text-[10px] font-bold text-rose-600 uppercase tracking-wider block">Exclusions</span>
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {(item.contentSnapshot?.exclusions || item.product.exclusions || []).map((exc: string, eIdx: number) => (
-                                            <span key={eIdx} className="text-[10px] bg-white text-rose-950 px-2 py-0.5 rounded border border-rose-200 flex items-center space-x-1 font-medium">
-                                              <span className="text-rose-500 font-bold shrink-0">✕</span>
-                                              <span>{exc}</span>
-                                            </span>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Recommended Highlights for this Day / Hub */}
-                        {(() => {
-                          const resolvedHubRef = slot.hub?.hubId || slot.hub?.hubName;
-                          if (!resolvedHubRef) {
-                            return (
-                              <div className="bg-amber-50/70 rounded-xl p-3 border border-amber-200 flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex items-center space-x-2 text-xs text-amber-900">
-                                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                                  <span>
-                                    No City Hub assigned for Day {slot.dayNumber}. Assign a City Hub in Step 2 (Route &amp; City Plan) to view Hub-matched recommendations.
-                                  </span>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setActiveStepId(2)}
-                                  className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] transition-colors cursor-pointer shrink-0"
-                                >
-                                  Select Hub in Step 2
-                                </button>
-                              </div>
-                            );
-                          }
-
-                          const allHubActivities = DestinationRelevanceService.getInstance()
-                            .getRelevantProducts(currentDestination.id, resolvedHubRef)
-                            .hubActivities.filter(p => !items.some(it => it.product.id === p.id));
-
-                          // Determine index of this day among days assigned to the same Hub to prevent identical duplicate top-3 cards across consecutive days in the same Hub
-                          const sameHubDayIndex = Math.max(
-                            0,
-                            daySlots
-                              .filter(d => (d.hub?.hubId || d.hub?.hubName) === resolvedHubRef)
-                              .findIndex(d => d.dayNumber === slot.dayNumber)
-                          );
-                          const startOffset = (sameHubDayIndex * 3) % Math.max(1, allHubActivities.length);
-                          const rotatedActivities =
-                            allHubActivities.length > 3
-                              ? [
-                                  ...allHubActivities.slice(startOffset),
-                                  ...allHubActivities.slice(0, startOffset)
-                                ]
-                              : allHubActivities;
-                          const hubRecommendations = rotatedActivities.slice(0, 3);
-
-                          return (
-                            <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200 space-y-2">
-                              <div className="flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center space-x-1.5">
-                                  <Sparkles className="w-3.5 h-3.5 text-[#00A88F]" />
-                                  <span>Recommended for {slot.hub?.hubName || resolvedHubRef} Hub</span>
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-medium">Hub-Matched Experiences</span>
-                              </div>
-
-                              {hubRecommendations.length === 0 ? (
-                                <div className="text-[11px] text-slate-500 py-1.5 px-2 bg-white rounded-lg border border-slate-200/80">
-                                  All available Hub experiences for <span className="font-semibold text-slate-700">{slot.hub?.hubName || resolvedHubRef}</span> are already added to the itinerary, or no additional Hub-specific activities are available.
-                                </div>
-                              ) : (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                  {hubRecommendations.map(recProd => (
-                                    <div
-                                      key={recProd.id}
-                                      className="bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs flex items-center justify-between gap-2 text-xs"
-                                    >
-                                      <div className="min-w-0">
-                                        <span className="font-bold text-slate-900 block truncate">{recProd.name}</span>
-                                        <span className="text-[10px] text-slate-500">{recProd.city || slot.hub?.hubName} • {recProd.category}</span>
-                                      </div>
-                                      <div className="shrink-0">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            if (isRailProduct(recProd) && onOpenProductDetails) {
-                                              onOpenProductDetails(recProd);
-                                              return;
-                                            }
-                                            addProductToQuote(recProd, {
-                                              adults: adultsCount,
-                                              children: childrenCount,
-                                              infants: infantsCount,
-                                              travelDate: slot.dateString,
-                                              openDrawer: false
-                                            });
-                                          }}
-                                          className="px-2.5 py-1.5 rounded-lg bg-[#00C6A6] hover:bg-[#00A88F] text-white font-bold text-[11px] transition-colors cursor-pointer shadow-2xs flex items-center"
-                                          title="Add to day itinerary"
-                                        >
-                                          <span>Configure &amp; Add</span>
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-                  ))}
+              <div className="space-y-3">
+                {visibleStep4DaySlots.map(slot => {
+                  const dayId = getStep4DayId(slot.dayNumber);
+                  return (
+                    <Step4DayCard
+                      key={dayId}
+                      dayId={dayId}
+                      slot={slot}
+                      currency={currency}
+                      destinationName={currentDestination.name}
+                      quotationScope={quotationScope}
+                      dayTheme={dayThemes[slot.dayNumber] || ''}
+                      dayDescription={dayDescriptions[slot.dayNumber] || ''}
+                      hubRecommendations={hubRecommendationsByDay[slot.dayNumber] || []}
+                      isDayExpanded={Boolean(step4AccordionState.expandedDayIds[dayId])}
+                      isRecommendedExpanded={Boolean(step4AccordionState.expandedRecommendedDayIds[dayId])}
+                      onToggleDay={handleToggleStep4Day}
+                      onToggleRecommended={handleToggleStep4Recommended}
+                      onCommitDayTheme={handleCommitStep4DayTheme}
+                      onChangeDayDescription={handleChangeStep4DayDescription}
+                      onOpenQuickAddProductModal={onOpenQuickAddProductModal}
+                      onOpenProductDetails={onOpenProductDetails}
+                      onOpenEditItem={onOpenEditItem}
+                      removeProductFromQuote={removeProductFromQuote}
+                      onGoToStep2={handleGoToStep2}
+                      onConfigureAndAddRec={handleConfigureAndAddRec}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* STEP 5: VISA & ANCILLARY SERVICES */}
           {activeStepId === 5 && (
-            <div className="space-y-6 animate-fadeIn">
+            <div className="space-y-6">
               <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center space-x-3">
                   <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
@@ -4636,30 +5737,10 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
             const isNegativeMargin = (effectiveMarginValue || 0) < 0;
             const isHighMargin = effectiveMarginType === 'PERCENTAGE' && (effectiveMarginValue || 0) > 100;
 
-            const internalPricing = canViewInternalCosts ? (step7BreakdownPricing || calculateQuoteInternalBreakdown({
-              items: quotationScope === 'LAND_ONLY'
-                ? items.filter(it => !(
-                    (it.product.category || '').toLowerCase().includes('hotel') ||
-                    (it.product.category || '').toLowerCase().includes('accommodation') ||
-                    it.product.productType === 'Hotel' ||
-                    it.product.productType === 'Hotel & Resort' ||
-                    it.isManualHotel
-                  ))
-                : items,
-              targetCurrency: currency,
-              agentMarginType: effectiveMarginType,
-              agentMarginValue: effectiveMarginValue,
-              overallDiscountPercent: overallDiscountPercent || 0,
-              userRole: user?.role,
-              scope: quotationScope,
-              routeHubs,
-              adminManualMarginType: effectiveAdminMarginType,
-              adminManualMarginValue: effectiveAdminMarginValue,
-              adminMarginMode: effectiveAdminMarginMode
-            })) : null;
+            const internalPricing = canViewInternalCosts ? step7BreakdownPricing : null;
 
             return (
-              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6 animate-fadeIn">
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-6">
                 <div className="flex items-center justify-between pb-4 border-b border-slate-100">
                   <div className="flex items-center space-x-3">
                     <div className="w-10 h-10 rounded-2xl bg-teal-50 border border-teal-200 text-teal-700 flex items-center justify-center">
@@ -4703,7 +5784,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     Operational Warnings & Recommendations:
                   </span>
                   {feasibility.warnings.map((w, idx) => (
-                    <div key={idx} className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between text-xs text-amber-900">
+                    <div key={`feas-warn-${idx}-${w.message.slice(0, 24)}`} className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between text-xs text-amber-900">
                       <div className="flex items-center space-x-2 pr-2">
                         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                         <span>{w.message}</span>
@@ -4791,33 +5872,51 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                   >
                     All Days ({calendarDays.length})
                   </button>
-                  {routeHubs.map(h => (
-                    <button
-                      key={h.id}
-                      type="button"
-                      onClick={() => setSelectedHubFilter(h.hubName)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                        selectedHubFilter === h.hubName
-                          ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      📍 {h.hubName} ({h.nights}n)
-                    </button>
-                  ))}
+                  {routeHubs.map((h, idx) => {
+                    const occId = getHubOccurrenceId(h);
+                    const occInfo = getHubCityOccurrenceIndex(h, routeHubs);
+                    return (
+                      <button
+                        key={h.id}
+                        type="button"
+                        onClick={() => setSelectedHubFilter(occId)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          selectedHubFilter === occId
+                            ? 'bg-slate-900 text-[#00E5C0] shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        📍 {occInfo.totalInCity > 1 ? `Stay ${idx + 1}: ${h.hubName}` : h.hubName} ({h.nights}n)
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Day Cards */}
                 <div className="space-y-3">
                   {daySlots
-                    .filter(slot => selectedHubFilter === 'ALL' || slot.hub?.hubName === selectedHubFilter)
+                    .filter(slot => selectedHubFilter === 'ALL' || getHubOccurrenceId(slot.hub) === selectedHubFilter || slot.hub?.hubName === selectedHubFilter)
                     .map(slot => {
-                      const dayItems = items.filter(it => it.travelDate === slot.dateString);
-                      const dayAccommodations = dayItems.filter(it => (it.product.category || '').toLowerCase().includes('hotel') || (it.product.category || '').toLowerCase().includes('accommodation') || it.isManualHotel);
-                      const dayTransfers = dayItems.filter(it => (it.product as any).isTransfer || (it.product.category || '').toLowerCase().includes('transfer') || (it.product.category || '').toLowerCase().includes('transport') || isRailQuoteItem(it));
-                      const dayActivities = dayItems.filter(it => !dayAccommodations.includes(it) && !dayTransfers.includes(it) && !visaItems.includes(it) && !addonItems.includes(it));
-                      const dayAncillaryItems = dayItems.filter(it => visaItems.includes(it) || addonItems.includes(it));
-                      const dayTotalSelling = dayItems.reduce((acc, it) => acc + (it.calculation?.finalTotalSellingPrice || 0), 0);
+                      const dayItems = itemsByDateMap.get(slot.dateString) || [];
+                      const dayAccommodations: QuoteItem[] = [];
+                      const dayTransfers: QuoteItem[] = [];
+                      const dayActivities: QuoteItem[] = [];
+                      const dayAncillaryItems: QuoteItem[] = [];
+                      let dayTotalSelling = 0;
+
+                      for (const it of dayItems) {
+                        dayTotalSelling += it.calculation?.finalTotalSellingPrice || 0;
+                        const catLower = (it.product.category || '').toLowerCase();
+                        if (catLower.includes('hotel') || catLower.includes('accommodation') || it.isManualHotel) {
+                          dayAccommodations.push(it);
+                        } else if ((it.product as any).isTransfer || catLower.includes('transfer') || catLower.includes('transport') || isRailQuoteItem(it)) {
+                          dayTransfers.push(it);
+                        } else if (visaItemIdSet.has(it.id) || addonItemIdSet.has(it.id)) {
+                          dayAncillaryItems.push(it);
+                        } else {
+                          dayActivities.push(it);
+                        }
+                      }
 
                       return (
                         <div key={slot.dayNumber} className="bg-slate-50/70 rounded-2xl border border-slate-200 p-4 space-y-3">
@@ -4852,13 +5951,12 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             </div>
                           </div>
 
-                          {/* Day Theme Input */}
+                          {/* Day Theme Input (debounced local buffer for 60fps typing) */}
                           <div className="flex items-center space-x-2">
                             <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                            <input
-                              type="text"
+                            <DebouncedTextInput
                               value={dayThemes[slot.dayNumber] || ''}
-                              onChange={(e) => setDayThemes?.(prev => ({ ...prev, [slot.dayNumber]: e.target.value }))}
+                              onCommit={(val) => setDayThemes?.(prev => ({ ...prev, [slot.dayNumber]: val }))}
                               placeholder={`Day ${slot.dayNumber} Theme / Highlights (e.g. Arrival & City Discovery)`}
                               className="w-full text-xs font-medium text-slate-800 placeholder-slate-400 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-teal-500 transition-colors"
                             />
@@ -4871,7 +5969,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                           ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                               {dayAccommodations.map((it, idx) => (
-                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div key={it.id || `day-${slot.dayNumber}-acc-${idx}`} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                   <div className="flex items-center space-x-2 truncate">
                                     <Building2 className="w-4 h-4 text-teal-600 shrink-0" />
                                     <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
@@ -4882,7 +5980,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 </div>
                               ))}
                               {dayTransfers.map((it, idx) => (
-                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div key={it.id || `day-${slot.dayNumber}-trf-${idx}`} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                   <div className="flex items-center space-x-2 truncate">
                                     <Car className="w-4 h-4 text-teal-600 shrink-0" />
                                     <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
@@ -4893,7 +5991,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 </div>
                               ))}
                               {dayActivities.map((it, idx) => (
-                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div key={it.id || `day-${slot.dayNumber}-act-${idx}`} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                   <div className="flex items-center space-x-2 truncate">
                                     <Compass className="w-4 h-4 text-teal-600 shrink-0" />
                                     <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
@@ -4904,7 +6002,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                                 </div>
                               ))}
                               {dayAncillaryItems.map((it, idx) => (
-                                <div key={idx} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
+                                <div key={it.id || `day-${slot.dayNumber}-anc-${idx}`} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                   <div className="flex items-center space-x-2 truncate">
                                     <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0" />
                                     <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
@@ -4939,17 +6037,21 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                   </div>
                   <div className="flex items-center space-x-2">
-                    {lastSavedTimestamp && (
-                      <span className="text-[11px] font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
-                        Auto-saved {lastSavedTimestamp}
-                      </span>
-                    )}
+                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                      isReadOnlyHistoricalMode
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        : hasUnsavedChanges || restoredFromVersion
+                          ? 'bg-amber-50 text-amber-800 border-amber-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    }`}>
+                      {explicitSaveStatusLabel}
+                    </span>
                   </div>
                 </div>
 
                 {/* INTERNAL ONLY SECTION: INTERNAL PRICING BREAKDOWN (ADMIN & AUTHORIZED INTERNAL TEAM) */}
                 {canViewInternalCosts && internalPricing && (
-                  <div className="bg-slate-950 text-white rounded-3xl border-2 border-indigo-500/50 p-6 shadow-md space-y-5 animate-fadeIn">
+                  <div className="bg-slate-950 text-white rounded-3xl border-2 border-indigo-500/50 p-6 shadow-md space-y-5">
                     {/* Section Title & Authorization Metadata */}
                     <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-800">
                       <div className="flex items-center space-x-2.5">
@@ -4989,7 +6091,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         </p>
                         <div className="space-y-1 pt-1">
                           {internalPricing.incompleteWarnings.map((warn, wIdx) => (
-                            <div key={wIdx} className="text-[11px] flex items-center space-x-2 bg-amber-900/40 px-2.5 py-1 rounded-lg border border-amber-800/50">
+                            <div key={`inc-warn-${warn.productName}-${warn.category || 'svc'}-${wIdx}`} className="text-[11px] flex items-center space-x-2 bg-amber-900/40 px-2.5 py-1 rounded-lg border border-amber-800/50">
                               <span className="font-bold text-amber-100">• {warn.productName} ({warn.category || 'Service'}):</span>
                               <span className="text-amber-300">{warn.reason}</span>
                             </div>
@@ -5070,7 +6172,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       {/* 2. Internal Margin (Product-Level ON or Agent-Level ON) */}
                       <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 space-y-1.5">
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
-                          2. Internal Margin ({isProductLevelMarginEnabled ? 'Product-Level ON' : `Agent-Level ON (${agencyPricingSettings.agentLevelMarginPercent}%)`})
+                          2. Internal Margin ({isProductLevelMarginEnabled ? 'Product-Level ON' : `Agent-Level ON (${quoteAgencyContext.agentLevelMarginPercent}%)`})
                         </span>
                         <span className="text-xl font-black font-mono text-[#00E5C0] block">
                           + {formatCurrency(internalPricing.existingMarginAmount, currency)}
@@ -5166,7 +6268,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             </thead>
                             <tbody className="divide-y divide-slate-800/60 bg-slate-950 font-mono text-[11px]">
                               {internalPricing.itemizedBreakdown.map((row, rIdx) => (
-                                <tr key={row.itemId || rIdx} className="hover:bg-slate-900/50 transition-colors">
+                                <tr key={row.itemId || `audit-row-${row.productName}-${row.category}-${rIdx}`} className="hover:bg-slate-900/50 transition-colors">
                                   <td className="px-3.5 py-2 font-sans font-bold text-slate-200">
                                     {row.productName}
                                   </td>
@@ -5374,7 +6476,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 : 0;
 
             return (
-              <div className="space-y-6 animate-fadeIn">
+              <div className="space-y-6">
                 {/* Step Header */}
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center space-x-3">
@@ -5392,11 +6494,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <span className="px-3 py-1 rounded-full text-xs font-bold bg-teal-50 text-teal-700 border border-teal-200">
                       Step 7 of 7
                     </span>
-                    {lastSavedTimestamp && (
-                      <span className="text-[11px] font-medium text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">
-                        Auto-saved {lastSavedTimestamp}
-                      </span>
-                    )}
+                    <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full border ${
+                      isReadOnlyHistoricalMode
+                        ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        : hasUnsavedChanges || restoredFromVersion
+                          ? 'bg-amber-50 text-amber-800 border-amber-200'
+                          : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    }`}>
+                      {explicitSaveStatusLabel}
+                    </span>
                   </div>
                 </div>
 
@@ -5659,23 +6765,33 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 {/* SECTION 1: ADMIN — MANUAL MARGIN ADJUSTMENT (ON TOTAL NETT COST) */}
                 {/* ========================================================================= */}
                 {canConfigureAdminManualMargin && (
-                  <div className="bg-white rounded-3xl border-2 border-indigo-200 p-6 shadow-xs space-y-5 animate-fadeIn">
+                  <div className="bg-white rounded-3xl border-2 border-indigo-200 p-6 shadow-xs space-y-5">
                     <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-indigo-100">
                       <div className="flex items-center space-x-3">
                         <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center">
                           <Sliders className="w-5 h-5" />
                         </div>
                         <div>
-                          <div className="flex items-center space-x-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
                               Manual Margin Adjustment
                             </h3>
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              Admin Commercial Controls
+                              Internal Admin Only
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {activeMarginModeLabel}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              effectiveAdminMarginMode === 'ADD'
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}>
+                              {effectiveAdminMarginMode === 'ADD' ? 'Mode: Add to Existing Margin' : 'Mode: Replace Base Margin'}
                             </span>
                           </div>
-                          <p className="text-[11px] text-slate-500">
-                            Configure an authoritative manual margin calculated directly on top of <strong>Total Nett Cost</strong> before client generation.
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            Internal calculation applied directly on consolidated <strong>Total Nett Cost</strong> to produce <strong>Final Total (Stage 1)</strong> ({formatCurrency(adminFinalTotal, currency)}). Combined with Agent Additional Markup (+{formatCurrency(additionalAgentMarginAmount, currency)}), this yields the single authoritative <strong>Final Customer Selling Price</strong> ({formatCurrency(effectiveFinalPrice, currency)}) across Preview, PDF, Email, and WhatsApp without exposing internal nett/margin data.
                           </p>
                         </div>
                       </div>
@@ -5756,18 +6872,39 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         <span className="text-sm font-black font-mono text-slate-900 block mt-1">
                           {formatCurrency(adminRevisedSellingPrice, currency)}
                         </span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Nett + Margin + Service Fee</span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Nett + Margin + Surcharges + Fee</span>
                       </div>
 
                       {/* Field 5: Final Total */}
                       <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200">
                         <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 block">
-                          Final Total
+                          Final Total (Stage 1)
                         </span>
                         <span className="text-sm font-black font-mono text-emerald-700 block mt-1">
                           {formatCurrency(adminFinalTotal, currency)}
                         </span>
-                        <span className="text-[10px] text-emerald-600 block mt-0.5">With engine tax & discounts</span>
+                        <span className="text-[10px] text-emerald-600 block mt-0.5">Stage 1 Base (incl. Tax & Discounts)</span>
+                      </div>
+                    </div>
+
+                    {/* Stage 1 -> Stage 2 Authoritative Customer Output Reconciliation Strip */}
+                    <div className="p-3.5 rounded-2xl bg-slate-900 text-white flex flex-wrap items-center justify-between gap-3 text-xs">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                        <span className="text-slate-300 font-semibold">
+                          Stage 1 Admin Final Total: <strong className="font-mono text-white">{formatCurrency(adminFinalTotal, currency)}</strong>
+                        </span>
+                        <span className="text-slate-500">+</span>
+                        <span className="text-teal-300 font-semibold">
+                          Stage 2 Agent Additional Markup: <strong className="font-mono">+{formatCurrency(additionalAgentMarginAmount, currency)}</strong>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+                          Customer Output (Preview / PDF / Email / WhatsApp):
+                        </span>
+                        <span className="text-sm font-black font-mono text-[#00E5C0]">
+                          {formatCurrency(effectiveFinalPrice, currency)}
+                        </span>
                       </div>
                     </div>
 
@@ -5812,7 +6949,13 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                             max={effectiveAdminMarginType === 'PERCENTAGE' ? 200 : undefined}
                             step={effectiveAdminMarginType === 'PERCENTAGE' ? 0.5 : 100}
                             value={Number.isNaN(effectiveAdminMarginValue) ? 0 : (effectiveAdminMarginValue ?? 0)}
-                            onChange={(e) => handleUpdateAdminMarginValue(parseFloat(e.target.value) || 0)}
+                            onChange={(e) => handleRawAdminMarginInputChange(e.target.value)}
+                            onBlur={(e) => {
+                              const parsed = e.target.value.trim() === '' ? 0 : Number(e.target.value);
+                              if (Number.isFinite(parsed) && parsed >= 0) {
+                                handleUpdateAdminMarginValue(parsed, true);
+                              }
+                            }}
                             className="w-full pl-3 pr-8 py-1.5 rounded-xl border border-slate-300 font-mono text-xs font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 shadow-2xs"
                           />
                           <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -5827,7 +6970,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               <button
                                 key={pct}
                                 type="button"
-                                onClick={() => handleUpdateAdminMarginValue(pct)}
+                                onClick={() => handleUpdateAdminMarginValue(pct, true)}
                                 className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
                                   effectiveAdminMarginValue === pct
                                     ? 'bg-indigo-600 text-white border-indigo-600'
@@ -5842,7 +6985,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                               <button
                                 key={amt}
                                 type="button"
-                                onClick={() => handleUpdateAdminMarginValue(amt)}
+                                onClick={() => handleUpdateAdminMarginValue(amt, true)}
                                 className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
                                   effectiveAdminMarginValue === amt
                                     ? 'bg-indigo-600 text-white border-indigo-600'
@@ -5857,9 +7000,16 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       </div>
                     </div>
 
+                    {adminMarginValidationError && (
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium flex items-center space-x-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span>{adminMarginValidationError}</span>
+                      </div>
+                    )}
+
                     {/* Applicable Surcharges in Manual Margin Adjustment Area */}
                     <div className="p-4 rounded-2xl bg-amber-50/50 border border-amber-200 space-y-3">
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center space-x-2">
                           <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
                           <h4 className="text-xs font-black uppercase tracking-wider text-amber-900">
@@ -5874,72 +7024,260 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                         Surcharges are calculated and applied <strong>over and above the selling price after the applicable margin has been calculated</strong>. Manual Margin Adjustments do not overwrite or bypass active surcharges.
                       </p>
 
-                      {step7BreakdownPricing && step7BreakdownPricing.appliedSurcharges && step7BreakdownPricing.appliedSurcharges.length > 0 ? (
-                        <div className="overflow-x-auto rounded-xl border border-amber-200 bg-white">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-amber-100/60 text-amber-900 uppercase text-[10px] font-bold border-b border-amber-200">
-                              <tr>
-                                <th className="px-3 py-2">Product / Service</th>
-                                <th className="px-3 py-2">Service Date</th>
-                                <th className="px-3 py-2">Surcharge Name</th>
-                                <th className="px-3 py-2">Period Window</th>
-                                <th className="px-3 py-2 text-center">Type</th>
-                                <th className="px-3 py-2 text-right">Rate</th>
-                                <th className="px-3 py-2 text-right">Calculated Surcharge</th>
-                                <th className="px-3 py-2 text-right">Price After Surcharge</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-amber-100 font-mono text-[11px]">
-                              {step7BreakdownPricing.appliedSurcharges.map((sur, sIdx) => {
-                                const matchedItem = items.find(it => it.id === sur.itemId);
-                                const itemRow = step7BreakdownPricing.itemizedBreakdown.find(ib => ib.itemId === sur.itemId);
-                                const serviceDateStr = sur.serviceDate || matchedItem?.travelDate || 'Journey Period';
-                                const windowStr = `${sur.periodStartDate || sur.periodSnapshot?.travelStartDate || ''} → ${sur.periodEndDate || sur.periodSnapshot?.travelEndDate || ''}`.trim() || 'Active Period';
-                                const rateLabel = sur.calculationType === 'PERCENTAGE'
-                                  ? `${sur.rateValue || sur.percentageSnapshot || 0}%`
-                                  : `${formatCurrency(sur.rateValue || sur.amountSnapshot || 0, sur.currency || currency)}`;
-                                const calculatedAmt = sur.appliedAmountConverted !== undefined
-                                  ? sur.appliedAmountConverted
-                                  : sur.appliedAmountNative;
-                                const postSurchargeItemPrice = itemRow?.theUnboundBaseSellingPrice !== undefined
-                                  ? itemRow.theUnboundBaseSellingPrice
-                                  : itemRow?.finalSellingPrice;
+                      {step7BreakdownPricing && step7BreakdownPricing.appliedSurcharges && step7BreakdownPricing.appliedSurcharges.length > 0 ? (() => {
+                        const surchargeRows = step7BreakdownPricing.appliedSurcharges.map((sur, sIdx) => {
+                          const matchedItem = items.find(it =>
+                            (sur.itemId && it.id === sur.itemId) ||
+                            (!sur.itemId && sur.productId && (it.product?.id === sur.productId || it.hotelId === sur.productId))
+                          );
+                          const itemRow = step7BreakdownPricing.itemizedBreakdown.find(ib =>
+                            (sur.itemId && ib.itemId === sur.itemId) ||
+                            (!sur.itemId && matchedItem && ib.itemId === matchedItem.id)
+                          );
 
-                                return (
-                                  <tr key={`${sur.surchargeId}-${sur.itemId}-${sIdx}`} className="hover:bg-amber-50/30 transition-colors">
-                                    <td className="px-3 py-2 font-sans font-bold text-slate-800">
-                                      {sur.productName || matchedItem?.product?.name || 'Inventory Service'}
-                                    </td>
-                                    <td className="px-3 py-2 font-sans text-slate-600">
-                                      {serviceDateStr}
-                                    </td>
-                                    <td className="px-3 py-2 font-sans text-amber-900 font-medium">
-                                      {sur.surchargeName}
-                                    </td>
-                                    <td className="px-3 py-2 text-[10px] text-slate-500">
-                                      {windowStr}
-                                    </td>
-                                    <td className="px-3 py-2 text-center font-sans">
-                                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
-                                        {sur.calculationType}
-                                      </span>
-                                    </td>
-                                    <td className="px-3 py-2 text-right text-slate-700">
-                                      {rateLabel}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-bold text-amber-900">
-                                      +{formatCurrency(calculatedAmt, currency)}
-                                    </td>
-                                    <td className="px-3 py-2 text-right font-bold text-emerald-700">
-                                      {postSurchargeItemPrice !== undefined ? formatCurrency(postSurchargeItemPrice, currency) : '—'}
-                                    </td>
+                          const productLabel = (
+                            sur.productName ||
+                            sur.affectedProductName ||
+                            matchedItem?.product?.name ||
+                            matchedItem?.manualHotelDetails?.hotelName ||
+                            itemRow?.productName ||
+                            ''
+                          ).trim();
+
+                          const serviceStart = (sur.serviceDate || matchedItem?.travelDate || matchedItem?.checkInDate || '').trim();
+                          const serviceEnd = (
+                            sur.serviceEndDate ||
+                            matchedItem?.checkOutDate ||
+                            matchedItem?.manualHotelDetails?.checkOutDate ||
+                            ''
+                          ).trim();
+                          const serviceDateStr = formatSurchargeDateRange(serviceStart, serviceEnd);
+
+                          const surchargeNameStr = (sur.surchargeName || sur.name || '').trim();
+                          const pStart = (
+                            sur.periodStartDate ||
+                            sur.validFrom ||
+                            sur.periodSnapshot?.travelStartDate ||
+                            sur.periodSnapshot?.travelValidFrom ||
+                            ''
+                          ).trim();
+                          const pEnd = (
+                            sur.periodEndDate ||
+                            sur.validTo ||
+                            sur.periodSnapshot?.travelEndDate ||
+                            sur.periodSnapshot?.travelValidTo ||
+                            ''
+                          ).trim();
+                          const windowStr = formatSurchargeDateRange(pStart, pEnd);
+
+                          const rawType = (sur.calculationType || sur.type || '').toString().toUpperCase();
+                          const calcType: 'PERCENTAGE' | 'FIXED' | '' =
+                            rawType === 'PERCENTAGE' || rawType === 'FIXED' ? rawType : '';
+
+                          const sourceCurrency = (sur.currency || currency) as CurrencyCode;
+                          const rawRate = sur.rateValue ?? sur.value ?? sur.percentageSnapshot ?? sur.amountSnapshot;
+                          const hasValidRate =
+                            rawRate !== undefined &&
+                            rawRate !== null &&
+                            Number.isFinite(Number(rawRate)) &&
+                            (calcType === 'PERCENTAGE'
+                              ? Number(rawRate) > 0
+                              : (Number(rawRate) > 0 || Boolean(sur.isOverridden) || (sur.adultRate ?? 0) > 0));
+
+                          let rateLabel = '';
+                          if (calcType === 'PERCENTAGE' && hasValidRate) {
+                            const pctVal = Number(rawRate);
+                            rateLabel = `${Number.isInteger(pctVal) ? pctVal : Number(pctVal.toFixed(2))}%`;
+                          } else if (calcType === 'FIXED') {
+                            if (
+                              sur.adultRate !== undefined &&
+                              sur.childRate !== undefined &&
+                              sur.adultRate !== sur.childRate
+                            ) {
+                              rateLabel = `${formatCurrency(sur.adultRate, sourceCurrency)} Adt / ${formatCurrency(sur.childRate, sourceCurrency)} Chd`;
+                            } else if (hasValidRate) {
+                              rateLabel = formatCurrency(Number(rawRate), sourceCurrency);
+                            }
+                          }
+
+                          const basisLabel = formatSurchargeBasisLabel(sur.applicationBasis);
+                          const calculatedAmt = sur.appliedAmountConverted !== undefined
+                            ? sur.appliedAmountConverted
+                            : sur.appliedAmountNative;
+                          const postSurchargeItemPrice = sur.priceAfterSurcharge !== undefined
+                            ? sur.priceAfterSurcharge
+                            : (itemRow?.theUnboundBaseSellingPrice !== undefined
+                                ? itemRow.theUnboundBaseSellingPrice
+                                : itemRow?.finalSellingPrice);
+
+                          const missingFields: string[] = [];
+                          if (!productLabel) missingFields.push('Product / Service');
+                          if (!serviceDateStr) missingFields.push('Service Date');
+                          if (!surchargeNameStr) missingFields.push('Surcharge Name');
+                          if (!windowStr) missingFields.push('Period Window');
+                          if (!calcType) missingFields.push('Type');
+                          if (!rateLabel && calculatedAmt > 0) missingFields.push('Rate');
+                          if (postSurchargeItemPrice === undefined) missingFields.push('Price After Surcharge');
+
+                          return {
+                            sur,
+                            sIdx,
+                            productLabel,
+                            serviceDateStr,
+                            surchargeNameStr,
+                            windowStr,
+                            calcType,
+                            sourceCurrency,
+                            rateLabel,
+                            basisLabel,
+                            calculatedAmt,
+                            postSurchargeItemPrice,
+                            missingFields
+                          };
+                        });
+
+                        const rowsWithMissing = surchargeRows.filter(r => r.missingFields.length > 0 || r.sur.applicationStatus === 'MISSING_CONFIG');
+
+                        return (
+                          <>
+                            {rowsWithMissing.length > 0 && (
+                              <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-[11px] text-rose-800 flex items-start space-x-2">
+                                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                <span>
+                                  <strong>Configuration Incomplete ({rowsWithMissing.length}):</strong> Some surcharge rows are missing required metadata ({Array.from(new Set(rowsWithMissing.flatMap(r => r.missingFields))).join(', ')}). Update the product or Surcharge Management record in Admin CMS.
+                                </span>
+                              </div>
+                            )}
+                            <div className="overflow-x-auto rounded-xl border border-amber-200 bg-white">
+                              <table className="w-full text-left text-xs">
+                                <thead className="bg-amber-100/60 text-amber-900 uppercase text-[10px] font-bold border-b border-amber-200">
+                                  <tr>
+                                    <th className="px-3 py-2">Product / Service</th>
+                                    <th className="px-3 py-2">Service Date</th>
+                                    <th className="px-3 py-2">Surcharge Name</th>
+                                    <th className="px-3 py-2">Period Window</th>
+                                    <th className="px-3 py-2 text-center">Type</th>
+                                    <th className="px-3 py-2 text-right">Rate</th>
+                                    <th className="px-3 py-2 text-right">Calculated Surcharge</th>
+                                    <th className="px-3 py-2 text-right">Price After Surcharge</th>
                                   </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
+                                </thead>
+                                <tbody className="divide-y divide-amber-100 font-mono text-[11px]">
+                                  {surchargeRows.map(({
+                                    sur,
+                                    sIdx,
+                                    productLabel,
+                                    serviceDateStr,
+                                    surchargeNameStr,
+                                    windowStr,
+                                    calcType,
+                                    sourceCurrency,
+                                    rateLabel,
+                                    basisLabel,
+                                    calculatedAmt,
+                                    postSurchargeItemPrice
+                                  }) => (
+                                    <tr key={`${sur.surchargeId || 'sur'}-${sur.itemId || 'item'}-${sIdx}`} className="hover:bg-amber-50/30 transition-colors">
+                                      <td className="px-3 py-2 font-sans">
+                                        {productLabel ? (
+                                          <div className="font-bold text-slate-800">{productLabel}</div>
+                                        ) : (
+                                          <span className="text-[10px] font-bold text-rose-600">Missing Product Name</span>
+                                        )}
+                                        {sur.surchargeCode && (
+                                          <div className="text-[10px] font-mono text-slate-400">{sur.surchargeCode}</div>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 font-sans text-slate-700 whitespace-nowrap">
+                                        {serviceDateStr ? (
+                                          <span>{serviceDateStr}</span>
+                                        ) : (
+                                          <span className="text-[10px] font-bold text-rose-600">Missing Date</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 font-sans">
+                                        {surchargeNameStr ? (
+                                          <div className="font-semibold text-amber-900">{surchargeNameStr}</div>
+                                        ) : (
+                                          <span className="text-[10px] font-bold text-rose-600">Missing Surcharge Name</span>
+                                        )}
+                                        {sur.surchargeCategory && (
+                                          <div className="text-[10px] text-slate-500">{sur.surchargeCategory}</div>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-[10px] text-slate-600 whitespace-nowrap font-sans">
+                                        {windowStr ? (
+                                          <div>{windowStr}</div>
+                                        ) : (
+                                          <span className="font-bold text-rose-600">Missing Period Window</span>
+                                        )}
+                                        {(sur.periodLabel || (sur.eligibleDaysCount && sur.eligibleDaysCount > 1)) && (
+                                          <div className="text-[10px] text-slate-400">
+                                            {[sur.periodLabel, sur.eligibleDaysCount && sur.eligibleDaysCount > 1 ? `${sur.eligibleDaysCount} eligible days` : ''].filter(Boolean).join(' • ')}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-center font-sans whitespace-nowrap">
+                                        {calcType === 'PERCENTAGE' ? (
+                                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                            Percentage (%)
+                                          </span>
+                                        ) : calcType === 'FIXED' ? (
+                                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                            Fixed Amount
+                                          </span>
+                                        ) : (
+                                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">
+                                            Type Missing
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-right text-slate-700 whitespace-nowrap">
+                                        {rateLabel ? (
+                                          <div>
+                                            <div className="font-bold text-slate-800">{rateLabel}</div>
+                                            {basisLabel && (
+                                              <div className="text-[10px] font-sans text-slate-400">{basisLabel}</div>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-[10px] font-sans font-bold text-rose-600">Rate Missing</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                                        <div className="font-bold text-amber-900">
+                                          +{formatCurrency(calculatedAmt, currency)}
+                                        </div>
+                                        {sur.currency && sur.currency !== currency && sur.appliedAmountNative > 0 && (
+                                          <div className="text-[10px] text-slate-400">
+                                            ({formatCurrency(sur.appliedAmountNative, sourceCurrency)})
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                                        {postSurchargeItemPrice !== undefined ? (
+                                          <div>
+                                            <div className="font-bold text-emerald-700">
+                                              {formatCurrency(postSurchargeItemPrice, currency)}
+                                            </div>
+                                            {sur.baseSellingPriceInTargetCurrency !== undefined && (
+                                              <div className="text-[10px] text-slate-400">
+                                                from {formatCurrency(sur.baseSellingPriceInTargetCurrency, currency)}
+                                              </div>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-[10px] font-sans font-bold text-rose-600">Missing Price</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        );
+                      })() : (
                         <div className="p-3 rounded-xl bg-white border border-amber-200 text-xs text-amber-800 flex items-center justify-between">
                           <span>No active calendar surcharges currently applicable to selected products and service dates.</span>
                           <span className="text-[10px] font-mono text-amber-600">Base Selling Price unaffected</span>
@@ -6004,13 +7342,35 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                 {/* 3. Dispatch & Generation Action Hub */}
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-4">
                   <div>
-                    <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
-                      Dispatch & Generation Action Hub
-                    </h3>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-black uppercase tracking-wider text-slate-900">
+                        Dispatch &amp; Generation Action Hub
+                      </h3>
+                      {termsReadiness && !termsReadiness.canExportCompleteQuote && (
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-black uppercase bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
+                          <Lock className="w-3 h-3" />
+                          <span>Blocked: Missing Destination Terms ({termsReadiness.missingTargets.map((m) => m.targetName).join(', ')})</span>
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-slate-500">
                       Choose an output format or dispatch channel. All actions compile authoritatively from this quotation snapshot.
                     </p>
                   </div>
+
+                  {termsReadiness && !termsReadiness.canExportCompleteQuote && (
+                    <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-start space-x-2.5">
+                      <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-black text-rose-950">Finalisation &amp; Export Blocked:</span>{' '}
+                        <span>
+                          Commercial Quotation Terms are not configured for{' '}
+                          <strong>{termsReadiness.missingTargets.map((m) => m.targetName).join(', ')}</strong>.
+                          Configure terms in Destination Management or obtain Admin exception approval above before generating final PDF, Email, WhatsApp, or Booking Conversion.
+                        </span>
+                      </div>
+                    </div>
+                  )}
 
                   {packagePricingStatus === 'CALCULATING' && (
                     <div className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200 text-teal-900 text-xs flex items-center space-x-3">
@@ -6051,37 +7411,109 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     </div>
                   )}
 
+                  {outputSyncError && (
+                    <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-center justify-between gap-3">
+                      <div className="flex items-start space-x-2.5">
+                        <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-black text-rose-950">Quotation Action Error:</span>
+                          <span className="ml-1.5">{outputSyncError}</span>
+                        </div>
+                      </div>
+                      {autoSaveStatus === 'FAILED' && (onRetryAutoSave || onSaveDraft) && (
+                        <button
+                          type="button"
+                          onClick={onRetryAutoSave || onSaveDraft}
+                          className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shrink-0 cursor-pointer flex items-center space-x-1"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5" />
+                          <span>Retry Save</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {/* Action 1: Save Draft */}
+                    {/* Action 1: Save Draft (Explicit Version Creation Trigger) */}
                     <div className="p-4 rounded-2xl border border-slate-200 hover:border-slate-300 bg-slate-50/50 hover:bg-white transition-all space-y-3 flex flex-col justify-between">
                       <div className="space-y-1.5">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center">
                             <Save className="w-4 h-4" />
                           </div>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                            autoSaveStatus === 'SAVED'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : autoSaveStatus === 'SAVING'
-                                ? 'bg-teal-50 text-teal-700 border border-teal-200'
-                                : 'bg-slate-100 text-slate-600'
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            isReadOnlyHistoricalMode
+                              ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                              : isSavingExplicitly || autoSaveStatus === 'SAVING'
+                                ? 'bg-teal-50 text-teal-700 border-teal-200'
+                                : autoSaveStatus === 'FAILED'
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200'
+                                  : hasUnsavedChanges || restoredFromVersion
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                    : autoSaveStatus === 'SAVED'
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : 'bg-slate-100 text-slate-600 border-slate-200'
                           }`}>
-                            {autoSaveStatus === 'SAVED' ? 'Saved' : autoSaveStatus === 'SAVING' ? 'Saving...' : 'Draft'}
+                            {isReadOnlyHistoricalMode
+                              ? `Viewing v${quoteVersion} (Read-Only)`
+                              : isSavingExplicitly || autoSaveStatus === 'SAVING'
+                                ? 'Saving Version...'
+                                : autoSaveStatus === 'FAILED'
+                                  ? 'Save Failed'
+                                  : restoredFromVersion
+                                    ? `Restored v${restoredFromVersion} (Unsaved)`
+                                    : hasUnsavedChanges
+                                      ? 'Unsaved Changes'
+                                      : autoSaveStatus === 'SAVED'
+                                        ? `Saved v${latestSavedVersion || quoteVersion}`
+                                        : 'Unsaved Draft'}
                           </span>
                         </div>
                         <h4 className="text-xs font-black text-slate-900">Save Quotation Draft</h4>
                         <p className="text-[11px] text-slate-500 leading-relaxed">
-                          Persist current quotation changes and client configuration to the cloud store.
+                          Versions are never autosaved. Click Save Draft to create and persist an immutable quotation snapshot in Firestore.
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={onSaveDraft}
-                        className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
-                      >
-                        <Save className="w-3.5 h-3.5" />
-                        <span>Save Draft</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={isSavingExplicitly || isReadOnlyHistoricalMode}
+                          onClick={autoSaveStatus === 'FAILED' && onRetryAutoSave ? onRetryAutoSave : onSaveDraft}
+                          className={`flex-1 py-2 px-3 rounded-xl border text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-2xs ${
+                            isSavingExplicitly || isReadOnlyHistoricalMode
+                              ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                              : autoSaveStatus === 'FAILED'
+                                ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-700 cursor-pointer'
+                                : 'bg-slate-900 hover:bg-slate-800 border-slate-900 text-white cursor-pointer'
+                          }`}
+                        >
+                          {isSavingExplicitly ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                          <span>
+                            {isSavingExplicitly
+                              ? 'Saving...'
+                              : isReadOnlyHistoricalMode
+                                ? 'Read-Only Version'
+                                : autoSaveStatus === 'FAILED'
+                                  ? 'Retry Save'
+                                  : restoredFromVersion
+                                    ? 'Save Restored Draft'
+                                    : latestSavedVersion
+                                      ? `Save Draft (v${latestSavedVersion + 1})`
+                                      : 'Save Draft'}
+                          </span>
+                        </button>
+                        {onOpenVersionHistory && (
+                          <button
+                            type="button"
+                            onClick={onOpenVersionHistory}
+                            className="py-2 px-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-1"
+                            title="View Quotation Version History"
+                          >
+                            <History className="w-3.5 h-3.5 text-teal-700" />
+                            <span>Versions</span>
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Action 2: Preview Proposal */}
@@ -6138,19 +7570,25 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                       <button
                         type="button"
                         onClick={onDownloadPDF}
-                        disabled={packagePricingStatus === 'CALCULATING'}
+                        disabled={packagePricingStatus === 'CALCULATING' || outputBusyOption === 'DOWNLOAD_PDF'}
                         className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-xs ${
-                          packagePricingStatus === 'CALCULATING'
+                          packagePricingStatus === 'CALCULATING' || outputBusyOption === 'DOWNLOAD_PDF'
                             ? 'bg-indigo-300 text-white cursor-not-allowed'
                             : 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'
                         }`}
                       >
-                        {packagePricingStatus === 'CALCULATING' ? (
+                        {packagePricingStatus === 'CALCULATING' || outputBusyOption === 'DOWNLOAD_PDF' ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <Download className="w-3.5 h-3.5" />
                         )}
-                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Export PDF Proposal'}</span>
+                        <span>
+                          {packagePricingStatus === 'CALCULATING'
+                            ? 'Calculating...'
+                            : outputBusyOption === 'DOWNLOAD_PDF'
+                              ? 'Generating PDF...'
+                              : 'Export PDF Proposal'}
+                        </span>
                       </button>
                     </div>
 
@@ -6335,10 +7773,15 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
                     <button
                       type="button"
                       onClick={onDownloadPDF}
-                      className="px-4 py-2.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs"
+                      disabled={packagePricingStatus === 'CALCULATING' || outputBusyOption === 'DOWNLOAD_PDF'}
+                      className="px-4 py-2.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Download className="w-4 h-4 text-slate-600" />
-                      <span>Download PDF</span>
+                      {outputBusyOption === 'DOWNLOAD_PDF' ? (
+                        <Loader2 className="w-4 h-4 text-slate-600 animate-spin" />
+                      ) : (
+                        <Download className="w-4 h-4 text-slate-600" />
+                      )}
+                      <span>{outputBusyOption === 'DOWNLOAD_PDF' ? 'Generating PDF...' : 'Download PDF'}</span>
                     </button>
                     <button
                       type="button"
@@ -6392,7 +7835,7 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
       {/* ========================================================================= */}
       {/* REAL-TIME FIXED STICKY PRICING SUMMARY BAR AT BOTTOM (INFORMATIONAL ONLY) */}
       {/* ========================================================================= */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-md text-white border-t border-slate-800 px-4 sm:px-8 py-3 shadow-2xl">
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-slate-900 text-white border-t border-slate-800 px-4 sm:px-8 py-3 shadow-2xl">
         <div className="w-full max-w-[1920px] mx-auto flex flex-wrap items-center justify-between gap-3">
           {/* Left: Summary Stats */}
           <div className="flex items-center space-x-4">
@@ -6682,3 +8125,5 @@ export const StepByStepQuotationWorkspace: React.FC<StepByStepQuotationWorkspace
     </div>
   );
 };
+
+export const StepByStepQuotationWorkspace = React.memo(StepByStepQuotationWorkspaceBase);

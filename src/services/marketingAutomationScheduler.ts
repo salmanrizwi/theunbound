@@ -11,7 +11,6 @@ import {
 } from '../types';
 import { AppDatabase } from './db';
 import { EmailNotificationService } from './emailNotificationService';
-import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
 import { formatCurrency } from './pricingEngine';
 
 export interface VariableDefinition {
@@ -141,6 +140,32 @@ export class MarketingAutomationScheduler {
   private inFlightJobIds: Set<string> = new Set();
   private isDatabaseBound: boolean = false;
   private schedulerInterval: any = null;
+  private cachedSeedCampaigns: EmailCampaignConfig[] = [];
+  private seedLoadPromise: Promise<EmailCampaignConfig[]> | null = null;
+
+  private getSeedCampaignsSync(): EmailCampaignConfig[] {
+    if (this.cachedSeedCampaigns.length > 0) return this.cachedSeedCampaigns;
+    const bundleSeeds = AppDatabase.getInstance().getSeedBundle()?.INITIAL_CAMPAIGNS;
+    if (Array.isArray(bundleSeeds) && bundleSeeds.length > 0) {
+      this.cachedSeedCampaigns = bundleSeeds;
+      return bundleSeeds;
+    }
+    if (!this.seedLoadPromise) {
+      this.seedLoadPromise = this.loadSeedCampaignsAsync();
+    }
+    return [];
+  }
+
+  private async loadSeedCampaignsAsync(): Promise<EmailCampaignConfig[]> {
+    if (this.cachedSeedCampaigns.length > 0) return this.cachedSeedCampaigns;
+    try {
+      const mod = await import('../data/initialCampaigns');
+      this.cachedSeedCampaigns = mod.INITIAL_CAMPAIGNS || [];
+    } catch {
+      this.cachedSeedCampaigns = [];
+    }
+    return this.cachedSeedCampaigns;
+  }
 
   private constructor() {
     this.purgeFabricatedSeeds();
@@ -417,9 +442,11 @@ export class MarketingAutomationScheduler {
     const seenSystemKeys = new Set<MarketingTriggerKey>();
     const normalized: EmailCampaignConfig[] = [];
 
+    const seedCampaigns = this.getSeedCampaignsSync();
+
     for (const c of deduplicatedExisting) {
       const resolvedKey = mapLegacyTypeToKey(c);
-      const isCanonicalId = INITIAL_CAMPAIGNS.some(ic => ic.id === c.id);
+      const isCanonicalId = seedCampaigns.some(ic => ic.id === c.id);
       const isSys = c.isSystemTrigger === true || (c.isSystemTrigger === undefined && isCanonicalId);
 
       if (isSys && seenSystemKeys.has(resolvedKey)) {
@@ -430,7 +457,7 @@ export class MarketingAutomationScheduler {
         seenSystemKeys.add(resolvedKey);
       }
 
-      const templateDefault = INITIAL_CAMPAIGNS.find(ic => ic.triggerKey === resolvedKey);
+      const templateDefault = seedCampaigns.find(ic => ic.triggerKey === resolvedKey);
       const nextStatus = c.status || (c.isEnabled ? 'ACTIVE' : 'INACTIVE');
       const isEnabledResolved = c.isEnabled !== undefined ? Boolean(c.isEnabled) : nextStatus === 'ACTIVE';
 
@@ -461,7 +488,7 @@ export class MarketingAutomationScheduler {
 
     for (const key of canonicalKeys) {
       if (!normalized.some(c => c.isSystemTrigger && c.triggerKey === key)) {
-        const seed = INITIAL_CAMPAIGNS.find(ic => ic.triggerKey === key);
+        const seed = seedCampaigns.find(ic => ic.triggerKey === key);
         if (seed) {
           if (!seenIds.has(seed.id)) {
             normalized.push({ ...seed });
@@ -506,7 +533,8 @@ export class MarketingAutomationScheduler {
     },
     actor?: User | null
   ): Promise<{ success: boolean; trigger?: EmailCampaignConfig; errors?: string[]; syncedToFirestore?: boolean }> {
-    const templateDefault = INITIAL_CAMPAIGNS.find(ic => ic.triggerKey === params.triggerKey);
+    const seedCampaigns = await this.loadSeedCampaignsAsync();
+    const templateDefault = seedCampaigns.find(ic => ic.triggerKey === params.triggerKey);
     const delayVal = Number(params.delayValue ?? (params.timingMode === 'IMMEDIATE' ? 0 : 24));
     const isEnabled = params.isEnabled !== false;
     const defaultSubj = (

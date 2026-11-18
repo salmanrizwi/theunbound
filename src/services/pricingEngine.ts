@@ -5,7 +5,11 @@ import { hotelToProduct, manualHotelToProduct } from '../utils/hotelHelpers';
 import { sanitizePricingResultForAgent } from '../utils/customerQuoteSanitizer';
 import { RailPricingEngine } from './railPricingEngine';
 import { resolveRailRateNettPrice } from '../types/rail';
-import { evaluateCentralizedProductSurcharges, detectCentralizedSurchargeConflicts, validateSurchargeMaster } from './surchargeEngine';
+import { evaluateCentralizedProductSurcharges, detectCentralizedSurchargeConflicts, validateSurchargeMaster, reconcileAppliedSurchargesMetadataAndStacking, doesSurchargeMatchProductScope } from './surchargeEngine';
+import { pricingCache } from './pricingCache';
+import { masterDataCache } from './masterDataCache';
+import { performanceMonitor } from './performanceMonitor';
+import { shouldExcludeHotelItemByNoAccommodation, doesHotelItemBelongToHubOccurrence } from '../utils/hubStayMatching';
 
 // Standardized exchange rate base: 1 USD
 export const EXCHANGE_RATES: Record<CurrencyCode, number> = {
@@ -274,6 +278,19 @@ export function validateInventoryValidityAndSurcharges(params: {
 
 export interface SurchargeEvaluationInput {
   surcharges?: InventorySurcharge[];
+  itemId?: string;
+  productId?: string;
+  productName?: string;
+  category?: string;
+  productType?: string;
+  destinationId?: string;
+  destinationName?: string;
+  country?: string;
+  quoteId?: string;
+  quoteVersion?: number;
+  bookingDate?: string;
+  surchargeOverrides?: QuotationSurchargeOverride[];
+  baseTargetAmount?: number;
   serviceDate?: string;
   serviceEndDate?: string;
   nights?: number;
@@ -313,10 +330,26 @@ function buildServiceDateList(startDate: string, count: number): string[] {
 }
 
 export function evaluateApplicableSurcharges(input: SurchargeEvaluationInput): SurchargeEvaluationOutput {
-  const list = input.surcharges || [];
-  const activeSurcharges = list.filter(s => s && s.status === 'ACTIVE');
+  const rawDate = input.serviceDate?.trim();
+  const dbMastersAll = AppDatabase.getInstance().getSurchargeMasters(false);
+  const syntheticProduct = {
+    id: input.productId || input.itemId || 'generic-inventory-item',
+    name: input.productName || 'Inventory Service',
+    category: (input.category || '') as any,
+    productType: (input.productType || '') as any,
+    destinationId: input.destinationId || '',
+    destinationName: input.destinationName || '',
+    country: input.country || input.destinationName || '',
+    currency: input.nativeCurrency,
+    surcharges: []
+  } as unknown as Product;
 
-  if (activeSurcharges.length === 0) {
+  const matchedCentralCandidates = pricingCache
+    .getCandidateSurchargesForProduct(syntheticProduct.id, dbMastersAll, undefined, false)
+    .filter(s => doesSurchargeMatchProductScope(s, syntheticProduct));
+
+  const hasOverrides = Array.isArray(input.surchargeOverrides) && input.surchargeOverrides.length > 0;
+  if (matchedCentralCandidates.length === 0 && !hasOverrides) {
     return {
       appliedSurcharges: [],
       totalSurchargeNative: 0,
@@ -325,7 +358,6 @@ export function evaluateApplicableSurcharges(input: SurchargeEvaluationInput): S
     };
   }
 
-  const rawDate = input.serviceDate?.trim();
   if (!rawDate || !isValidIsoDateString(rawDate)) {
     return {
       appliedSurcharges: [],
@@ -336,121 +368,40 @@ export function evaluateApplicableSurcharges(input: SurchargeEvaluationInput): S
     };
   }
 
-  const spanDays =
-    input.nights && input.nights > 1
-      ? input.nights
-      : input.coverageDays && input.coverageDays > 1
-        ? input.coverageDays
-        : 1;
-
-  const serviceDates = buildServiceDateList(rawDate, spanDays);
-  const appliedIds = new Set<string>();
-  const appliedSurcharges: AppliedSurchargeDetail[] = [];
-
-  const adults = Math.max(1, input.adults || 1);
-  const children = Math.max(0, input.children || 0);
-  const chargeablePax = adults + children;
-  const qty = Math.max(1, input.quantity || 1);
-  const roomsCount = Math.max(1, input.roomsCount || 1);
-  const vehiclesCount = Math.max(1, input.vehiclesCount || qty);
-  const hoursCount = Math.max(1, input.hoursCount || 1);
-  const devicesCount = Math.max(1, input.devicesCount || adults);
-  const baseNative = Math.max(0, input.baseNativeAmount || 0);
-
-  for (const s of activeSurcharges) {
-    if (!s.surchargeId || appliedIds.has(s.surchargeId)) continue;
-    if (!isValidIsoDateString(s.validFrom) || !isValidIsoDateString(s.validTo)) continue;
-    if (s.validTo < s.validFrom) continue;
-    if (typeof s.value !== 'number' || isNaN(s.value) || s.value < 0) continue;
-
-    const eligibleDaysCount = serviceDates.filter(d => d >= s.validFrom && d <= s.validTo).length;
-    if (eligibleDaysCount === 0) continue;
-
-    appliedIds.add(s.surchargeId);
-
-    const basis = (s.applicationBasis || input.defaultApplicationBasis || 'PER_PERSON').toUpperCase();
-    let appliedAmountNative = 0;
-
-    if (s.type === 'PERCENTAGE') {
-      if (spanDays > 1 && (basis === 'PER_ROOM_NIGHT' || basis === 'PER_NIGHT' || basis === 'PER_DAY')) {
-        const eligibleBasePortion = baseNative * (eligibleDaysCount / spanDays);
-        appliedAmountNative = eligibleBasePortion * (s.value / 100);
-      } else {
-        appliedAmountNative = baseNative * (s.value / 100);
-      }
-    } else {
-      const surchargeCurrency = (s.currency || input.nativeCurrency || 'USD') as CurrencyCode;
-      const unitFixedInNative =
-        surchargeCurrency !== input.nativeCurrency
-          ? convertCurrency(s.value, surchargeCurrency, input.nativeCurrency)
-          : s.value;
-
-      switch (basis) {
-        case 'PER_PERSON':
-          appliedAmountNative = unitFixedInNative * chargeablePax * qty;
-          break;
-        case 'PER_ADULT':
-          appliedAmountNative = unitFixedInNative * adults * qty;
-          break;
-        case 'PER_ROOM_NIGHT':
-          appliedAmountNative = unitFixedInNative * roomsCount * eligibleDaysCount;
-          break;
-        case 'PER_NIGHT':
-          appliedAmountNative = unitFixedInNative * eligibleDaysCount * qty;
-          break;
-        case 'PER_DAY':
-          appliedAmountNative = unitFixedInNative * eligibleDaysCount * chargeablePax;
-          break;
-        case 'PER_VEHICLE':
-          appliedAmountNative = unitFixedInNative * vehiclesCount;
-          break;
-        case 'PER_HOUR':
-          appliedAmountNative = unitFixedInNative * hoursCount * qty;
-          break;
-        case 'PER_DEVICE':
-          appliedAmountNative = unitFixedInNative * devicesCount;
-          break;
-        case 'PER_SERVICE':
-        case 'PER_BOOKING':
-        default:
-          appliedAmountNative = unitFixedInNative * qty;
-          break;
-      }
-    }
-
-    appliedAmountNative = Math.round(appliedAmountNative * 100) / 100;
-    const appliedAmountConverted =
-      input.targetCurrency !== input.nativeCurrency
-        ? convertCurrency(appliedAmountNative, input.nativeCurrency, input.targetCurrency)
-        : appliedAmountNative;
-
-    appliedSurcharges.push({
-      surchargeId: s.surchargeId,
-      name: s.name,
-      validFrom: s.validFrom,
-      validTo: s.validTo,
-      type: s.type,
-      value: s.value,
-      currency: ((s.currency as CurrencyCode) || input.nativeCurrency),
-      applicationBasis: basis,
-      appliedAmountNative,
-      appliedAmountConverted: Math.round(appliedAmountConverted * 100) / 100,
-      eligibleDaysCount
-    });
-  }
-
-  const totalSurchargeNative =
-    Math.round(appliedSurcharges.reduce((sum, item) => sum + item.appliedAmountNative, 0) * 100) / 100;
-  const totalSurchargeConverted =
-    input.targetCurrency !== input.nativeCurrency
-      ? Math.round(convertCurrency(totalSurchargeNative, input.nativeCurrency, input.targetCurrency) * 100) / 100
-      : totalSurchargeNative;
+  const centralResult = evaluateCentralizedProductSurcharges({
+    product: syntheticProduct,
+    productName: input.productName,
+    centralizedSurcharges: dbMastersAll,
+    serviceDate: rawDate,
+    travelDate: rawDate,
+    serviceEndDate: input.serviceEndDate,
+    bookingDate: input.bookingDate,
+    baseNativeSellingAmount: input.baseNativeAmount,
+    baseSellingPriceInTargetCurrency: input.baseTargetAmount,
+    productNativeCurrency: input.nativeCurrency,
+    targetCurrency: input.targetCurrency,
+    adults: input.adults,
+    children: input.children,
+    infants: input.infants,
+    roomsCount: input.roomsCount,
+    nights: input.nights,
+    vehiclesCount: input.vehiclesCount,
+    hoursCount: input.hoursCount,
+    coverageDays: input.coverageDays,
+    devicesCount: input.devicesCount,
+    quantity: input.quantity,
+    itemId: input.itemId,
+    quoteId: input.quoteId,
+    quoteVersion: input.quoteVersion,
+    surchargeOverrides: input.surchargeOverrides
+  });
 
   return {
-    appliedSurcharges,
-    totalSurchargeNative,
-    totalSurchargeConverted,
-    missingServiceDate: false
+    appliedSurcharges: centralResult.appliedSurcharges,
+    totalSurchargeNative: centralResult.surchargeTotalInProductNative,
+    totalSurchargeConverted: centralResult.surchargeTotalConverted,
+    missingServiceDate: false,
+    validationMessage: centralResult.validationMessage
   };
 }
 
@@ -621,10 +572,19 @@ export function resolveCapacityPricingTier(params: CapacityTierResolutionParams)
           ? matched.nettPrice 
           : (matched.netCostPerPax !== undefined ? matched.netCostPerPax : defaultUnitNett));
 
-      const marginPct = matched.marginValue !== undefined 
-        ? matched.marginValue 
-        : (product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20);
-      
+      const isMarginInactive = (product as any).marginStatus === 'INACTIVE';
+      const marginPct = isMarginInactive
+        ? 0
+        : (matched.marginValue !== undefined
+            ? matched.marginValue
+            : (product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20));
+      const tierMarginType = matched.marginType === 'FIXED' ? 'FIXED' : ((product as any).marginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE');
+      const effectiveFixedMargin = isMarginInactive
+        ? 0
+        : (matched.marginType === 'FIXED' && matched.marginValue !== undefined
+            ? matched.marginValue
+            : ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined ? Number((product as any).marginFixed) : 0));
+
       const taxPct = matched.taxValue !== undefined 
         ? matched.taxValue 
         : (product.taxPercent ?? 10);
@@ -633,13 +593,27 @@ export function resolveCapacityPricingTier(params: CapacityTierResolutionParams)
         ? matched.serviceChargeValue 
         : (product.serviceFeeFixed ?? 0);
 
-      const b2bCalc = calculateB2BAgentPrice({
-        nettCost: tierNett,
-        marginPercent: marginPct,
-        taxPercent: taxPct,
-        serviceFeePercent: feePct,
-        currency: curr
-      });
+      const b2bCalc = tierMarginType === 'FIXED'
+        ? (() => {
+            const unified = calculateUnifiedPrice({
+              nettPrice: tierNett,
+              quantity: 1,
+              marginType: 'FIXED',
+              marginValue: effectiveFixedMargin,
+              taxPercent: taxPct,
+              serviceChargeType: 'PERCENTAGE',
+              serviceChargeValue: feePct,
+              currency: curr
+            });
+            return { price: unified.finalPrice };
+          })()
+        : calculateB2BAgentPrice({
+            nettCost: tierNett,
+            marginPercent: marginPct,
+            taxPercent: taxPct,
+            serviceFeePercent: feePct,
+            currency: curr
+          });
 
       const tierVehicles = matched.vehicleCount !== undefined && matched.vehicleCount > 0 ? matched.vehicleCount : 1;
 
@@ -681,17 +655,31 @@ export function resolveCapacityPricingTier(params: CapacityTierResolutionParams)
   const vehiclesNeeded = totalPax > maxSeats && allowMultiple ? Math.ceil(totalPax / maxSeats) : 1;
   const totalNett = defaultUnitNett * vehiclesNeeded;
 
-  const marginPct = product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20;
+  const isMarginInactive = (product as any).marginStatus === 'INACTIVE';
+  const marginPct = isMarginInactive ? 0 : (product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 20);
   const taxPct = product.taxPercent ?? 10;
   const feePct = product.serviceFeeFixed ?? 0;
 
-  const b2bCalc = calculateB2BAgentPrice({
-    nettCost: totalNett,
-    marginPercent: marginPct,
-    taxPercent: taxPct,
-    serviceFeePercent: feePct,
-    currency: curr
-  });
+  const b2bCalc = !isMarginInactive && (product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined
+    ? {
+        price: calculateUnifiedPrice({
+          nettPrice: totalNett,
+          quantity: 1,
+          marginType: 'FIXED',
+          marginValue: Number((product as any).marginFixed),
+          taxPercent: taxPct,
+          serviceChargeType: 'PERCENTAGE',
+          serviceChargeValue: feePct,
+          currency: curr
+        }).finalPrice
+      }
+    : calculateB2BAgentPrice({
+        nettCost: totalNett,
+        marginPercent: marginPct,
+        taxPercent: taxPct,
+        serviceFeePercent: feePct,
+        currency: curr
+      });
 
   return {
     hasMatchedTier: totalPax <= maxSeats || allowMultiple,
@@ -1001,6 +989,7 @@ const MAX_DELIVERED_CACHE_SIZE = 1500;
 
 export function clearPricingEngineCache(): void {
   deliveredPriceCache.clear();
+  pricingCache.clearAll();
 }
 
 /**
@@ -1030,8 +1019,8 @@ export function calculateDeliveredPriceForUser(
     };
   }
 
-  // Fast cache lookup
-  const cacheKey = `${product.id}_${(product as any).updatedAt || (product as any).lastUpdated || ''}_${user?.id || 'anon'}_${user?.role || 'B2B_AGENT'}_${user?.companyId || ''}_${targetCurrency}`;
+  // Fast cache lookup (keyed on product margin governance version and master catalog version)
+  const cacheKey = `${product.id}_${(product as any).updatedAt || (product as any).lastUpdated || ''}_mv${(product as any).marginConfigVersion ?? ''}_${(product as any).b2bAgentMarkupPercent ?? ''}_${(product as any).defaultMarkupPercent ?? ''}_${(product as any).marginType ?? ''}_${(product as any).marginFixed ?? ''}_${(product as any).marginStatus ?? ''}_pv${masterDataCache.getVersion('products')}_pmv${masterDataCache.getVersion('product_margin_configs')}_${user?.id || 'anon'}_${user?.role || 'B2B_AGENT'}_${user?.companyId || ''}_${targetCurrency}`;
   const cachedEntry = deliveredPriceCache.get(cacheKey);
   if (cachedEntry) {
     return cachedEntry.result;
@@ -1418,7 +1407,7 @@ export function calculateProductPrice(
               buyerMarkupPercent: rebuiltHotelProd.buyerMarkupPercent,
               taxPercent: rebuiltHotelProd.taxPercent,
               serviceFeePercent: rebuiltHotelProd.serviceFeePercent,
-              surcharges: rebuiltHotelProd.surcharges,
+              surcharges: [],
               currency: rebuiltHotelProd.currency,
               nativeCurrency: rebuiltHotelProd.nativeCurrency || rebuiltHotelProd.currency
             } as Product;
@@ -1446,6 +1435,12 @@ export function calculateProductPrice(
             defaultMarkupPercent: masterProd.defaultMarkupPercent,
             b2bAgentMarkupPercent: masterProd.b2bAgentMarkupPercent,
             buyerMarkupPercent: masterProd.buyerMarkupPercent,
+            marginType: masterProd.marginType,
+            marginFixed: masterProd.marginFixed,
+            commissionPercent: masterProd.commissionPercent,
+            marginStatus: masterProd.marginStatus,
+            marginConfigVersion: masterProd.marginConfigVersion,
+            marginUpdatedAt: masterProd.marginUpdatedAt,
             taxPercent: masterProd.taxPercent,
             serviceFeeFixed: masterProd.serviceFeeFixed,
             serviceFeePercent: masterProd.serviceFeePercent,
@@ -1457,7 +1452,7 @@ export function calculateProductPrice(
             mealPricing: masterProd.mealPricing || product.mealPricing,
             upsells: masterProd.upsells || product.upsells,
             addons: masterProd.addons || product.addons,
-            surcharges: masterProd.surcharges || product.surcharges,
+            surcharges: [],
             currency: product.currency || masterProd.currency,
             nativeCurrency: product.nativeCurrency || masterProd.nativeCurrency || masterProd.currency
           };
@@ -1844,9 +1839,23 @@ export function calculateProductPrice(
     selectedMarginReason = product.b2bAgentMarkupPercent !== undefined
       ? `Hotel B2B Agent margin (${product.b2bAgentMarkupPercent}%)`
       : `Hotel default margin (${configuredMarkupPercent}%)`;
+  } else if ((product as any).marginStatus === 'INACTIVE') {
+    // CASE 1 (Product Margin Governance INACTIVE): Product-Level Margin is ON at account level,
+    // but this product's governance margin configuration is explicitly deactivated (0% product margin).
+    configuredMarkupPercent = 0;
+    selectedMarginValue = 0;
+    selectedMarginType = 'PERCENTAGE';
+    selectedMarginRuleId = `RULE-PROD-INACTIVE-${product.id}`;
+    selectedMarginReason = `Product margin configuration is INACTIVE (0% product margin applied)`;
   } else {
     // CASE 1 (Product): Product-Level Margin = ON -> Apply Product-Level Margin; Agent-Level Margin is DISABLED
-    if (rateMarkupAgent !== undefined) {
+    if ((product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
+      configuredMarkupPercent = 0;
+      selectedMarginType = 'FIXED';
+      selectedMarginValue = Number((product as any).marginFixed);
+      selectedMarginRuleId = `RULE-PROD-FIXED-${product.id}`;
+      selectedMarginReason = `Product fixed margin (${selectedMarginValue} ${nativeCurrency})`;
+    } else if (rateMarkupAgent !== undefined) {
       configuredMarkupPercent = rateMarkupAgent;
       selectedMarginValue = rateMarkupAgent;
       selectedMarginRuleId = authoritativeRateId || `RULE-RATE-${product.id}`;
@@ -1891,8 +1900,8 @@ export function calculateProductPrice(
   let markupRate = configuredMarkupPercent / 100;
   let nativeMarkupAmount = nativeTotalNetCost * markupRate;
 
-  // Support for configured fixed margin amounts ONLY when Product-Level Margin is ON
-  if (isProductLevelMarginEnabled && request.customMarkupPercent === undefined) {
+  // Support for configured fixed margin amounts ONLY when Product-Level Margin is ON and rule is ACTIVE
+  if (isProductLevelMarginEnabled && request.customMarkupPercent === undefined && (product as any).marginStatus !== 'INACTIVE') {
     if (isCapacity && matchingTierFound && matchingTierFound.marginType === 'FIXED' && matchingTierFound.marginValue !== undefined) {
       nativeMarkupAmount = matchingTierFound.marginValue * quantity;
       markupRate = nativeTotalNetCost > 0 ? nativeMarkupAmount / nativeTotalNetCost : 0;
@@ -1956,66 +1965,39 @@ export function calculateProductPrice(
   const isConverted = targetCurrency !== nativeCurrency;
 
   // Centralized Surcharge Evaluation (Finance & Administration -> Surcharges)
-  // Also seamlessly maps any unmigrated in-memory legacy `product.surcharges` if present
-  const dbSurchargeMasters = AppDatabase.getInstance().getSurchargeMasters(false);
-  const inlineLegacySurcharges: SurchargeMaster[] = [];
-  if (Array.isArray(product.surcharges) && product.surcharges.length > 0) {
-    product.surcharges.forEach((ls, idx) => {
-      if (!ls || ls.status !== 'ACTIVE') return;
-      const alreadyInCentral = dbSurchargeMasters.some(
-        m =>
-          m.id === ls.surchargeId ||
-          m.id === `sur-mig-${product.id}-${ls.surchargeId}` ||
-          (m.linkedProductIds.includes(product.id) &&
-            m.name.trim().toLowerCase() === (ls.name || '').trim().toLowerCase() &&
-            m.validFrom === ls.validFrom &&
-            m.validTo === ls.validTo)
-      );
-      if (!alreadyInCentral) {
-        inlineLegacySurcharges.push({
-          id: ls.surchargeId || `sur-inline-${product.id}-${idx}`,
-          surchargeCode: ls.surchargeId || `SUR-INLINE-${idx + 1}`,
-          code: ls.surchargeId || `SUR-INLINE-${idx + 1}`,
-          name: ls.name || 'Surcharge',
-          surchargeCategory: 'PEAK_SEASON',
-          status: 'ACTIVE',
-          isActive: true,
-          validFrom: ls.validFrom,
-          validTo: ls.validTo,
-          timezone: 'UTC',
-          allowStacking: true,
-          linkedProductIds: [product.id],
-          calculationType: ls.type === 'PERCENTAGE' ? 'PERCENTAGE' : 'FIXED',
-          pricingBasis: ls.applicationBasis || 'PER_PERSON',
-          amount: ls.type === 'FIXED' ? ls.value : 0,
-          percentage: ls.type === 'PERCENTAGE' ? ls.value : 0,
-          currency: (ls.currency || nativeCurrency) as CurrencyCode,
-          version: 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        });
-      }
-    });
-  }
+  // Pass full central master catalog (including INACTIVE/ARCHIVED for migration provenance deduplication;
+  // evaluateCentralizedProductSurcharges strictly filters to ACTIVE rules when computing amounts).
+  const allApplicableSurchargeMasters = AppDatabase.getInstance().getSurchargeMasters(true);
 
-  const allApplicableSurchargeMasters = [...dbSurchargeMasters, ...inlineLegacySurcharges];
+  const explicitServiceEndDate =
+    (request.serviceEndDate || (product as any).checkOutDate || (product as any).manualHotelDetails?.checkOutDate || '').trim() || undefined;
+  const resolvedProductName = (request.productName || product.name || (product as any).title || '').trim();
+  const effectiveNights = (request as any).nights || (product as any).nights;
+  const effectiveRoomsCount = (request as any).roomsCount || (product as any).roomsCount || 1;
+  const effectiveCoverageDays = (request as any).coverageDays || (product as any).coverageDays;
 
   const centralizedSurchargeEval = evaluateCentralizedProductSurcharges({
     product,
+    productName: resolvedProductName,
     itemId: request.itemId,
+    quoteId: request.quoteId,
+    quoteVersion: request.quoteVersion,
+    serviceDate: explicitServiceDate,
     travelDate: explicitServiceDate,
+    serviceEndDate: explicitServiceEndDate,
     bookingDate: request.bookingDate,
-    nights: (product as any).nights || (request as any).nights,
-    coverageDays: (request as any).coverageDays || (product as any).coverageDays,
+    nights: effectiveNights,
+    coverageDays: effectiveCoverageDays,
     adults,
     children,
     infants,
-    roomsCount: (product as any).roomsCount || (request as any).roomsCount || 1,
+    roomsCount: effectiveRoomsCount,
     vehiclesCount: vehicleDetails?.vehiclesAllocated || quantity,
     hoursCount: (request as any).serviceDurationHours || (request as any).hours || (product as any).minHours || 1,
     devicesCount: (request as any).devicesCount || adults,
     quantity,
     baseNativeSellingAmount: baseNativeSellingPriceBeforeSurcharges,
+    baseSellingPriceInTargetCurrency: request.baseSellingPriceInTargetCurrency,
     productNativeCurrency: nativeCurrency,
     targetCurrency,
     centralizedSurcharges: allApplicableSurchargeMasters,
@@ -2074,9 +2056,23 @@ export function calculateProductPrice(
   // Compute commercial components in targetCurrency from converted totalNetCost so line-item sum is 100% consistent
   let markupAmount = 0;
   if (combinedFxValid) {
-    if (isProductLevelMarginEnabled && request.customMarkupPercent === undefined && isCapacity && matchingTierFound && matchingTierFound.marginType === 'FIXED' && matchingTierFound.marginValue !== undefined) {
+    if (
+      isProductLevelMarginEnabled &&
+      request.customMarkupPercent === undefined &&
+      (product as any).marginStatus !== 'INACTIVE' &&
+      isCapacity &&
+      matchingTierFound &&
+      matchingTierFound.marginType === 'FIXED' &&
+      matchingTierFound.marginValue !== undefined
+    ) {
       markupAmount = conv(matchingTierFound.marginValue * quantity);
-    } else if (isProductLevelMarginEnabled && request.customMarkupPercent === undefined && (product as any).marginType === 'FIXED' && (product as any).marginFixed !== undefined) {
+    } else if (
+      isProductLevelMarginEnabled &&
+      request.customMarkupPercent === undefined &&
+      (product as any).marginStatus !== 'INACTIVE' &&
+      (product as any).marginType === 'FIXED' &&
+      (product as any).marginFixed !== undefined
+    ) {
       markupAmount = conv(Number((product as any).marginFixed) * (isCapacity ? 1 : totalPax));
     } else {
       markupAmount = roundCurrencyAmount(totalNetCost * markupRate, targetCurrency);
@@ -2114,7 +2110,31 @@ export function calculateProductPrice(
     ? roundCurrencyAmount(preDiscountConverted * discountRate, targetCurrency)
     : 0;
   const baseSellingPriceBeforeSurcharges = Math.max(0, roundCurrencyAmount(preDiscountConverted - discountAmount, targetCurrency));
-  const convertedSurchargeTotal = combinedFxValid ? roundCurrencyAmount(centralizedSurchargeEval.surchargeTotalConverted, targetCurrency) : 0;
+  const reconciledProductSurcharges = combinedFxValid
+    ? reconcileAppliedSurchargesMetadataAndStacking({
+        appliedSurcharges: centralizedSurchargeEval.appliedSurcharges,
+        itemId: request.itemId,
+        product,
+        productName: resolvedProductName,
+        serviceDate: explicitServiceDate || travelDate,
+        serviceEndDate: explicitServiceEndDate,
+        nights: effectiveNights,
+        targetCurrency,
+        baseSellingPriceInTargetCurrency: baseSellingPriceBeforeSurcharges,
+        quoteId: request.quoteId,
+        quoteVersion: request.quoteVersion,
+        masterSurcharges: allApplicableSurchargeMasters,
+        preserveHistoricalAmounts: true
+      })
+    : centralizedSurchargeEval.appliedSurcharges;
+  const convertedSurchargeTotal = combinedFxValid
+    ? roundCurrencyAmount(
+        reconciledProductSurcharges.length > 0
+          ? reconciledProductSurcharges.reduce((sum, s) => sum + (s.appliedAmountConverted || 0), 0)
+          : centralizedSurchargeEval.surchargeTotalConverted,
+        targetCurrency
+      )
+    : 0;
   const finalTotalSellingPrice = combinedFxValid
     ? Math.max(0, roundCurrencyAmount(baseSellingPriceBeforeSurcharges + convertedSurchargeTotal, targetCurrency))
     : 0;
@@ -2225,11 +2245,12 @@ export function calculateProductPrice(
 
     // Validity & Surcharge Evaluation Snapshot
     validityCheck,
-    appliedSurcharges: centralizedSurchargeEval.appliedSurcharges,
+    appliedSurcharges: reconciledProductSurcharges,
     surchargeTotalNative: centralizedSurchargeEval.surchargeTotalInProductNative,
     surchargeTotal: convertedSurchargeTotal,
     baseSellingPriceBeforeSurcharges,
-    surchargeValidationMessage: centralizedSurchargeEval.validationMessage || centralizedSurchargeEval.fxError
+    surchargeValidationMessage: centralizedSurchargeEval.validationMessage || centralizedSurchargeEval.fxError,
+    surchargeCatalogVersion: pricingCache.getSurchargeCatalogVersion()
   } as PricingCalculationResult;
 }
 
@@ -3361,6 +3382,7 @@ export interface InternalBreakdownItemResult {
   serviceFee: number;
   surchargeTotal?: number;
   appliedSurcharges?: AppliedSurchargeDetail[];
+  baseSellingPriceBeforeSurcharges?: number;
   finalSellingPrice: number;
   theUnboundBaseSellingPrice?: number;
   agentAdditionalMarkupType?: 'PERCENTAGE' | 'FIXED';
@@ -3473,6 +3495,38 @@ export function validateAgentAdditionalMarkup(
 }
 
 /**
+ * Authoritative validation helper for Admin Manual Margin Adjustment on Total Nett Cost.
+ * Rejects negative, NaN, or non-finite values and clamps sanitizedValue >= 0.
+ */
+export function validateAdminManualMargin(
+  rawValue: unknown,
+  marginType: 'PERCENTAGE' | 'FIXED' = 'PERCENTAGE'
+): {
+  isValid: boolean;
+  sanitizedValue: number;
+  errorMessage?: string;
+} {
+  if (rawValue === undefined || rawValue === null || rawValue === '') {
+    return { isValid: true, sanitizedValue: 0 };
+  }
+  const numericVal = typeof rawValue === 'number' ? rawValue : Number(rawValue);
+  if (!Number.isFinite(numericVal) || numericVal < 0) {
+    return {
+      isValid: false,
+      sanitizedValue: 0,
+      errorMessage:
+        marginType === 'PERCENTAGE'
+          ? 'Validation Error: Manual margin percentage cannot be negative or invalid. Enter 0% or higher.'
+          : 'Validation Error: Manual margin fixed amount cannot be negative or invalid. Enter 0 or higher.'
+    };
+  }
+  return {
+    isValid: true,
+    sanitizedValue: numericVal
+  };
+}
+
+/**
  * Currency-aware rounding helper.
  * Preserves 2 decimal places for decimal currencies (INR, USD, EUR, GBP, AED, SGD, etc.)
  * and 0 decimal places for integer currencies (JPY, THB).
@@ -3484,6 +3538,322 @@ export function roundCurrencyAmount(amount: number, currency?: string): number {
     return Math.round(amount);
   }
   return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+export interface ResolvedQuoteAgencyPricingContext {
+  productLevelMarginEnabled: boolean;
+  activeMarginMode: 'PRODUCT_LEVEL' | 'AGENT_LEVEL';
+  agentLevelMarginPercent: number;
+  companyId?: string;
+  agencyName?: string;
+  agentId?: string;
+}
+
+/**
+ * Resolves the authoritative agency margin configuration for a quotation using
+ * the quotation's own agency context (companyId / agentAgency / agentId) rather
+ * than letting a logged-in internal Admin's user profile override the agent's settings.
+ */
+export function resolveQuoteAgencyPricingContext(
+  quoteOrContext?: any,
+  fallbackUser?: User | null
+): ResolvedQuoteAgencyPricingContext {
+  const qAny = quoteOrContext || {};
+  const explicitCompanyId = qAny.companyId;
+  const explicitAgencyName = qAny.agentAgency || qAny.agencyName || qAny.agentCompany || qAny.clientCompany;
+  const explicitAgentId = qAny.agentId || qAny.createdBy;
+  // Never fall back to an unrelated Admin user when the quotation already identifies an agent/agency
+  const safeUserFallback =
+    qAny.user ??
+    (!explicitAgentId && !explicitAgencyName && !explicitCompanyId ? fallbackUser : undefined);
+
+  let resolvedProductLevel = true;
+  let resolvedAgentPercent = 10;
+  try {
+    const resolved = AppDatabase.getInstance().resolveAgencyPricingSettings({
+      companyId: explicitCompanyId || safeUserFallback?.companyId,
+      agencyName: explicitAgencyName || safeUserFallback?.agencyName || safeUserFallback?.companyName,
+      userId: explicitAgentId || safeUserFallback?.id,
+      user: safeUserFallback || undefined
+    });
+    resolvedProductLevel = resolved.productLevelMarginEnabled;
+    resolvedAgentPercent = resolved.agentLevelMarginPercent;
+  } catch {
+    // defaults apply
+  }
+
+  const explicitBool =
+    typeof qAny.productLevelMarginEnabled === 'boolean'
+      ? qAny.productLevelMarginEnabled
+      : typeof qAny.agencyPricingSettings?.productLevelMarginEnabled === 'boolean'
+        ? qAny.agencyPricingSettings.productLevelMarginEnabled
+        : typeof qAny.pricingSnapshot?.productLevelMarginEnabled === 'boolean'
+          ? qAny.pricingSnapshot.productLevelMarginEnabled
+          : typeof qAny.authoritativeSnapshot?.pricing?.productLevelMarginEnabled === 'boolean'
+            ? qAny.authoritativeSnapshot.pricing.productLevelMarginEnabled
+            : undefined;
+
+  const explicitPctRaw =
+    typeof qAny.agentLevelMarginPercent === 'number'
+      ? qAny.agentLevelMarginPercent
+      : typeof qAny.customAgentMarginPercent === 'number'
+        ? qAny.customAgentMarginPercent
+        : typeof qAny.agencyPricingSettings?.agentLevelMarginPercent === 'number'
+          ? qAny.agencyPricingSettings.agentLevelMarginPercent
+          : typeof qAny.pricingSnapshot?.agentLevelMarginPercent === 'number'
+            ? qAny.pricingSnapshot.agentLevelMarginPercent
+            : typeof qAny.authoritativeSnapshot?.pricing?.agentLevelMarginPercent === 'number'
+              ? qAny.authoritativeSnapshot.pricing.agentLevelMarginPercent
+              : undefined;
+
+  const productLevelMarginEnabled =
+    explicitBool !== undefined ? Boolean(explicitBool) : resolvedProductLevel;
+  const agentLevelMarginPercent =
+    explicitPctRaw !== undefined && Number.isFinite(explicitPctRaw) && explicitPctRaw >= 0
+      ? Number(explicitPctRaw)
+      : resolvedAgentPercent;
+
+  return {
+    productLevelMarginEnabled,
+    activeMarginMode: productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL',
+    agentLevelMarginPercent,
+    companyId: explicitCompanyId || safeUserFallback?.companyId,
+    agencyName: explicitAgencyName || safeUserFallback?.agencyName || safeUserFallback?.companyName,
+    agentId: explicitAgentId || safeUserFallback?.id
+  };
+}
+
+function isManualHotelQuoteItem(item: any): boolean {
+  if (!item) return false;
+  return Boolean(
+    item.isManualHotel ||
+      item.product?.isManualHotel ||
+      item.product?.sku?.startsWith('MAN-HTL-') ||
+      item.product?.accommodationType === 'manual' ||
+      item.accommodationType === 'manual' ||
+      item.accommodationType === 'MANUAL'
+  );
+}
+
+function isHotelCategoryOrProductItem(item: any): boolean {
+  if (!item) return false;
+  const catLower = (
+    item.product?.category ||
+    item.category ||
+    item.product?.productType ||
+    ''
+  ).toLowerCase();
+  return Boolean(
+    catLower.includes('hotel') ||
+      catLower.includes('accommodation') ||
+      catLower.includes('resort') ||
+      catLower.includes('ryokan') ||
+      item.product?.productType === 'HOTEL' ||
+      item.service_type === 'HOTEL' ||
+      item.isManualHotel ||
+      item.manualHotelDetails ||
+      item.hotelId
+  );
+}
+
+function isExcludedNoAccommodationItem(
+  item: any,
+  routeHubs: TripRouteHub[],
+  isLandOnlyQuote: boolean
+): boolean {
+  if (!item) return true;
+  const productName = item.product?.name || item.product?.title || '';
+  const isExcludedByHubScope = shouldExcludeHotelItemByNoAccommodation(item, routeHubs, isLandOnlyQuote);
+  return Boolean(
+    isExcludedByHubScope ||
+      item.isNoAccommodation ||
+      item.accommodationType === 'NO_ACCOMMODATION' ||
+      item.accommodationType === 'none' ||
+      item.product?.accommodationType === 'NO_ACCOMMODATION' ||
+      item.product?.accommodationType === 'none' ||
+      item.product?.id === 'LAND_ONLY_HUB' ||
+      item.product?.sku === 'LAND_ONLY_HUB' ||
+      item.product?.sku === 'NO_ACCOMMODATION' ||
+      productName.toLowerCase().includes('no accommodation') ||
+      productName.toLowerCase().includes('arranged by client') ||
+      (item.notes || '').toLowerCase().includes('arranged by client')
+  );
+}
+
+interface ResolvedManualHotelPricing {
+  hasValidRate: boolean;
+  isComplimentary: boolean;
+  productName: string;
+  nativeCurrency: CurrencyCode;
+  nativeNett: number;
+  convertedNetCost: number;
+  markupAmount: number;
+  taxAmount: number;
+  serviceFee: number;
+  surchargeTotal: number;
+  appliedSurcharges: AppliedSurchargeDetail[];
+  finalSellingPrice: number;
+  errorReason?: string;
+}
+
+function resolveManualHotelPricingInTargetCurrency(
+  item: any,
+  targetCurrency: CurrencyCode,
+  preserveHistoricalSnapshot: boolean,
+  snapshotLine?: CurrencyConversionLineRecord
+): ResolvedManualHotelPricing {
+  const manual = item.manualHotelDetails || item.product?.manualHotelDetails;
+  const productName = manual?.hotelName || item.product?.name || item.product?.title || 'Manual Hotel Stay';
+  const nights = Math.max(1, Number(manual?.numberOfNights ?? manual?.nights ?? item.nights ?? item.product?.nights ?? 1));
+  const rooms = Math.max(1, Number(manual?.numberOfRooms ?? manual?.roomsCount ?? item.roomsCount ?? item.product?.roomsCount ?? 1));
+  const rateBasis = manual?.rateBasis || manual?.rateType || 'PER_ROOM_PER_NIGHT';
+  const rawNativeCurrency = (manual?.rateCurrency || manual?.currency || item.product?.nativeCurrency || item.product?.currency || 'USD') as string;
+  const nativeCurrency = currencyEngine.normalizeCurrencyCode(rawNativeCurrency, 'USD') as CurrencyCode;
+
+  const rawRate =
+    manual?.ratePerNight !== undefined
+      ? Number(manual.ratePerNight)
+      : manual?.sellingPrice !== undefined
+        ? Number(manual.sellingPrice)
+        : manual?.netCost !== undefined
+          ? Number(manual.netCost)
+          : manual?.totalNetCost !== undefined
+            ? Number(manual.totalNetCost)
+            : item.product?.adultNetPrice !== undefined
+              ? Number(item.product.adultNetPrice)
+              : undefined;
+
+  const effectiveValidationRate =
+    rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON'
+      ? Number(manual?.adultRate ?? rawRate ?? 0)
+      : Number(rawRate ?? 0);
+
+  const isComplimentary = Boolean(manual?.isComplimentary || manual?.isFreeStay);
+  if (rawRate === undefined || Number.isNaN(effectiveValidationRate) || (effectiveValidationRate <= 0 && !isComplimentary)) {
+    return {
+      hasValidRate: false,
+      isComplimentary: false,
+      productName,
+      nativeCurrency,
+      nativeNett: 0,
+      convertedNetCost: 0,
+      markupAmount: 0,
+      taxAmount: 0,
+      serviceFee: 0,
+      surchargeTotal: 0,
+      appliedSurcharges: [],
+      finalSellingPrice: item.calculation?.finalTotalSellingPrice || 0,
+      errorReason: `Manual hotel rate missing or invalid (${rawRate ?? 'unspecified'})`
+    };
+  }
+
+  let nativeNett = 0;
+  if (rateBasis === 'TOTAL_STAY' || rateBasis === 'TOTAL' || rateBasis === 'TOTAL_PACKAGE') {
+    nativeNett = rawRate;
+  } else if (rateBasis === 'PER_ROOM_TOTAL_STAY') {
+    nativeNett = rawRate * rooms;
+  } else if (rateBasis === 'PER_NIGHT' || rateBasis === 'PER_ROOM_PER_NIGHT') {
+    nativeNett = rawRate * rooms * nights;
+  } else if (rateBasis === 'PER_PERSON_TOTAL_STAY') {
+    const adultsCount = item.pax?.adults ?? (rooms * 2);
+    nativeNett = rawRate * adultsCount;
+  } else if (rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON') {
+    const adultRate = manual?.adultRate !== undefined ? Number(manual.adultRate) : rawRate;
+    const childRate = manual?.childRate !== undefined ? Number(manual.childRate) : 0;
+    const adultsCount = item.pax?.adults ?? (rooms * 2);
+    const childrenCount = item.pax?.children ?? 0;
+    nativeNett = (adultRate * adultsCount + childRate * childrenCount) * nights;
+  } else {
+    nativeNett = rawRate * rooms * nights;
+  }
+
+  const snapshotRate =
+    snapshotLine?.appliedExchangeRate ??
+    (preserveHistoricalSnapshot && item.calculation?.currency === targetCurrency
+      ? (item.calculation as any)?.fxDetails?.effectiveRate
+      : undefined);
+
+  const convMeta = currencyEngine.convertWithMetadata(nativeNett, nativeCurrency, targetCurrency, snapshotRate);
+  if (!convMeta.isValid) {
+    return {
+      hasValidRate: false,
+      isComplimentary,
+      productName,
+      nativeCurrency,
+      nativeNett,
+      convertedNetCost: 0,
+      markupAmount: 0,
+      taxAmount: 0,
+      serviceFee: 0,
+      surchargeTotal: 0,
+      appliedSurcharges: [],
+      finalSellingPrice: 0,
+      errorReason: convMeta.error || `Missing exchange rate ${convMeta.originalCurrency} -> ${convMeta.targetCurrency}`
+    };
+  }
+
+  const convertedNetCost = roundCurrencyAmount(convMeta.convertedAmount, targetCurrency);
+  const calc = item.calculation as any;
+  const calcCurrency = calc?.currency ? currencyEngine.normalizeCurrencyCode(calc.currency) : undefined;
+  const hasMatchingCalcCurrency = calcCurrency === targetCurrency;
+
+  let markupAmount = 0;
+  let taxAmount = 0;
+  let serviceFee = 0;
+  let surchargeTotal = 0;
+  let appliedSurcharges: AppliedSurchargeDetail[] = [];
+
+  const convertCalcVal = (val?: number): number => {
+    const n = Number(val || 0);
+    if (n <= 0 || !calcCurrency) return 0;
+    return hasMatchingCalcCurrency
+      ? roundCurrencyAmount(n, targetCurrency)
+      : roundCurrencyAmount(currencyEngine.convert(n, calcCurrency, targetCurrency), targetCurrency);
+  };
+
+  if (calc && calcCurrency) {
+    markupAmount = convertCalcVal(calc.markupAmount);
+    taxAmount = convertCalcVal(calc.taxAmount);
+    serviceFee = convertCalcVal(calc.serviceFee);
+    surchargeTotal = convertCalcVal(calc.surchargeTotal);
+    if (Array.isArray(calc.appliedSurcharges)) {
+      appliedSurcharges = hasMatchingCalcCurrency
+        ? calc.appliedSurcharges
+        : calc.appliedSurcharges.map((s: any) => ({
+            ...s,
+            appliedAmountConverted:
+              typeof s.appliedAmountConverted === 'number'
+                ? roundCurrencyAmount(currencyEngine.convert(s.appliedAmountConverted, calcCurrency, targetCurrency), targetCurrency)
+                : s.appliedAmountConverted
+          }));
+    }
+  } else if (manual?.totalSellingPrice !== undefined && Number(manual.totalSellingPrice) > nativeNett) {
+    const nativeExtra = Number(manual.totalSellingPrice) - nativeNett;
+    const convExtra = currencyEngine.convertWithMetadata(nativeExtra, nativeCurrency, targetCurrency, snapshotRate);
+    if (convExtra.isValid) {
+      markupAmount = roundCurrencyAmount(convExtra.convertedAmount, targetCurrency);
+    }
+  }
+
+  const finalSellingPrice = roundCurrencyAmount(
+    convertedNetCost + markupAmount + taxAmount + serviceFee + surchargeTotal,
+    targetCurrency
+  );
+
+  return {
+    hasValidRate: true,
+    isComplimentary,
+    productName,
+    nativeCurrency,
+    nativeNett,
+    convertedNetCost,
+    markupAmount,
+    taxAmount,
+    serviceFee,
+    surchargeTotal,
+    appliedSurcharges,
+    finalSellingPrice
+  };
 }
 
 /**
@@ -3519,12 +3889,17 @@ export function calculateQuoteInternalBreakdown(
     bookingDate
   } = params;
 
-  const agencySettings = AppDatabase.getInstance().resolveAgencyPricingSettings({
-    companyId: companyId || user?.companyId,
-    agencyName: agencyName || user?.agencyName || user?.companyName,
-    userId: user?.id,
+  const agencySettings = resolveQuoteAgencyPricingContext(
+    {
+      companyId,
+      agencyName,
+      agentId: (params as any).agentId,
+      productLevelMarginEnabled: params.productLevelMarginEnabled,
+      agentLevelMarginPercent: params.customAgentMarginPercent,
+      user: (!companyId && !agencyName && !(params as any).agentId) ? user : undefined
+    },
     user
-  });
+  );
 
   const isProductLevelMarginEnabled =
     params.productLevelMarginEnabled !== undefined
@@ -3536,26 +3911,49 @@ export function calculateQuoteInternalBreakdown(
       ? Number(params.customAgentMarginPercent)
       : agencySettings.agentLevelMarginPercent;
 
+  const perfT0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const activeMarginMode: 'PRODUCT_LEVEL' | 'AGENT_LEVEL' = isProductLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL';
 
+  const breakdownCacheKey = buildQuoteBreakdownCacheKey({
+    items,
+    targetCurrency,
+    agentMarginType,
+    agentMarginValue,
+    overallDiscountPercent,
+    activeMarginMode,
+    isProductLevelMarginEnabled,
+    configuredAgentLevelMarginPercent,
+    scope,
+    routeHubs,
+    adminManualMarginType: params.adminManualMarginType,
+    adminManualMarginValue: params.adminManualMarginValue,
+    adminMarginMode: params.adminMarginMode,
+    preserveHistoricalSnapshot,
+    historicalSnapshotId: historicalSnapshot?.snapshotId,
+    surchargeOverrides,
+    bookingDate: bookingDate || ''
+  });
+
+  const cachedBreakdown = pricingCache.getBreakdown<QuoteInternalBreakdownResult>(breakdownCacheKey);
+  if (cachedBreakdown) {
+    const perfT1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    performanceMonitor.recordTiming('PRICING_ENGINE', 'calculateQuoteInternalBreakdown (cached)', perfT1 - perfT0);
+    return cachedBreakdown;
+  }
+
   const isLandOnlyQuote = scope === 'LAND_ONLY';
-  const noAccommodationHubIds = new Set(
-    routeHubs
-      .filter(h => isLandOnlyQuote || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
-      .map(h => h.id)
-  );
-  const noAccommodationHubNames = new Set(
-    routeHubs
-      .filter(h => isLandOnlyQuote || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
-      .map(h => (h.hubName || '').toLowerCase())
-      .filter(Boolean)
-  );
 
   const incompleteWarnings: QuoteInternalBreakdownResult['incompleteWarnings'] = [];
   const missingCurrencyPairsSet = new Set<string>();
   const itemizedBreakdown: InternalBreakdownItemResult[] = [];
   const allAppliedSurcharges: AppliedSurchargeDetail[] = [];
   const processedItemIds = new Set<string>();
+  let centralizedMasterSurcharges: SurchargeMaster[] = [];
+  try {
+    centralizedMasterSurcharges = AppDatabase.getInstance().getSurchargeMasters(true);
+  } catch {
+    centralizedMasterSurcharges = [];
+  }
 
   let accumulatedNetCost = 0;
   let accumulatedUnderlyingMarkup = 0;
@@ -3567,6 +3965,7 @@ export function calculateQuoteInternalBreakdown(
   let hotelNetCost = 0;
   let hotelSellingPrice = 0;
   let hotelFeeAndTax = 0;
+  let hotelItemCount = 0;
   let landNetCost = 0;
   let landSellingPrice = 0;
   let landFeeAndTax = 0;
@@ -3590,12 +3989,7 @@ export function calculateQuoteInternalBreakdown(
       item.manualHotelDetails ||
       item.hotelId
     );
-    const itemHubId = item.hubId || item.manualHotelDetails?.hubId || (item as any).metadata?.hubId;
-    const itemCity = (item.manualHotelDetails?.city || item.product?.city || '').toLowerCase();
-    const isExcludedByHubScope = isHotelItem && (
-      isLandOnlyQuote ||
-      (itemHubId ? noAccommodationHubIds.has(itemHubId) : (itemCity ? noAccommodationHubNames.has(itemCity) : false))
-    );
+    const isExcludedByHubScope = shouldExcludeHotelItemByNoAccommodation(item, routeHubs, isLandOnlyQuote);
 
     // 1. Exclude items marked "No Accommodation (Arranged By Client)" or excluded by Land-Only / hub No Accommodation
     const isNoAccommodation = Boolean(
@@ -3636,154 +4030,77 @@ export function calculateQuoteInternalBreakdown(
       ? historicalSnapshot.lineItems.find(li => li.itemId === item.id || li.productId === item.product?.id)
       : undefined;
 
-    // 2. Manual Hotel Accommodation
-    const isManualHotel = Boolean(
-      item.isManualHotel ||
-      item.product?.isManualHotel ||
-      item.product?.sku?.startsWith('MAN-HTL-') ||
-      item.product?.accommodationType === 'manual' ||
-      (item as any).accommodationType === 'manual' ||
-      (item as any).accommodationType === 'MANUAL'
-    );
+    const isManualHotel = isManualHotelQuoteItem(item);
 
     if (isManualHotel) {
-      const manual = item.manualHotelDetails || item.product?.manualHotelDetails || (item.product as any)?.manualHotelDetails;
-      const nights = Math.max(1, Number(manual?.numberOfNights ?? manual?.nights ?? (item.product as any)?.nights ?? 1));
-      const rooms = Math.max(1, Number(manual?.numberOfRooms ?? manual?.roomsCount ?? (item.product as any)?.roomsCount ?? 1));
-      const rateBasis = manual?.rateBasis || manual?.rateType || 'PER_ROOM_PER_NIGHT';
-      const rawNativeCurrency = manual?.rateCurrency || manual?.currency || item.product?.nativeCurrency || item.product?.currency || 'USD';
-      const nativeCurrency: CurrencyCode = (typeof rawNativeCurrency === 'string' ? rawNativeCurrency : 'USD') as CurrencyCode;
-
-      const rawRate = manual?.ratePerNight !== undefined
-        ? Number(manual.ratePerNight)
-        : (manual?.sellingPrice !== undefined
-          ? Number(manual.sellingPrice)
-          : (manual?.netCost !== undefined
-            ? Number(manual.netCost)
-            : (item.product?.adultNetPrice !== undefined ? Number(item.product.adultNetPrice) : undefined)));
-
-      const effectiveValidationRate = (rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON')
-        ? Number(manual?.adultRate ?? rawRate ?? 0)
-        : Number(rawRate ?? 0);
-
-      if (rawRate === undefined || isNaN(effectiveValidationRate) || (effectiveValidationRate <= 0 && !manual?.isComplimentary && !manual?.isFreeStay)) {
-        isComplete = false;
-        incompleteWarnings.push({
-          itemId: item.id,
-          productName: manual?.hotelName || productName,
-          category: 'Hotels & Accommodation',
-          reason: `Manual hotel rate missing or invalid (${rawRate ?? 'unspecified'})`
-        });
-
-        itemizedBreakdown.push({
-          itemId: item.id,
-          productName: manual?.hotelName || productName,
-          category: 'Hotels & Accommodation',
-          nativeNetCost: 0,
-          nativeCurrency,
-          convertedNetCost: 0,
-          currency: targetCurrency,
-          markupAmount: 0,
-          taxAmount: 0,
-          serviceFee: 0,
-          finalSellingPrice: item.calculation?.finalTotalSellingPrice || 0,
-          isExcludedNoAccommodation: false,
-          hasValidRate: false,
-          incompleteReason: 'Missing authoritative manual nett rate'
-        });
-        continue;
-      }
-
-      // Calculate authoritative native nett cost based on rate basis
-      let nativeNett = 0;
-      if (rateBasis === 'TOTAL_STAY') {
-        nativeNett = rawRate;
-      } else if (rateBasis === 'PER_ROOM_TOTAL_STAY') {
-        nativeNett = rawRate * rooms;
-      } else if (rateBasis === 'PER_NIGHT' || rateBasis === 'PER_ROOM_PER_NIGHT') {
-        nativeNett = rawRate * rooms * nights;
-      } else if (rateBasis === 'PER_PERSON_PER_NIGHT' || rateBasis === 'PER_PERSON') {
-        const adultRate = manual?.adultRate !== undefined ? Number(manual.adultRate) : rawRate;
-        const childRate = manual?.childRate !== undefined ? Number(manual.childRate) : 0;
-        const adultsCount = item.pax?.adults ?? (rooms * 2);
-        const childrenCount = item.pax?.children ?? 0;
-        nativeNett = (adultRate * adultsCount + childRate * childrenCount) * nights;
-      } else {
-        nativeNett = rawRate * rooms * nights;
-      }
-
-      const snapshotRate = snapshotLine?.appliedExchangeRate ??
-        (preserveHistoricalSnapshot && item.calculation?.currency === targetCurrency ? (item.calculation as any)?.fxDetails?.effectiveRate : undefined);
-      const convMeta = currencyEngine.convertWithMetadata(nativeNett, rawNativeCurrency, targetCurrency, snapshotRate);
-
-      if (!convMeta.isValid) {
-        isComplete = false;
-        const pairStr = `${convMeta.originalCurrency} -> ${convMeta.targetCurrency}`;
-        missingCurrencyPairsSet.add(pairStr);
-        incompleteWarnings.push({
-          itemId: item.id,
-          productName: manual?.hotelName || productName,
-          category: 'Hotels & Accommodation',
-          reason: convMeta.error || `Exchange rate unavailable for currency pair ${pairStr}`
-        });
-
-        itemizedBreakdown.push({
-          itemId: item.id,
-          productName: manual?.hotelName || productName,
-          category: 'Hotels & Accommodation',
-          nativeNetCost: nativeNett,
-          nativeCurrency,
-          convertedNetCost: 0,
-          currency: targetCurrency,
-          markupAmount: 0,
-          taxAmount: 0,
-          serviceFee: 0,
-          finalSellingPrice: 0,
-          isExcludedNoAccommodation: false,
-          hasValidRate: false,
-          incompleteReason: convMeta.error || `Missing exchange rate ${pairStr}`
-        });
-        continue;
-      }
-
-      const convertedNetCost = roundCurrencyAmount(convMeta.convertedAmount, targetCurrency);
-      const hasMatchingCalcCurrency = item.calculation?.currency === targetCurrency;
-      const markupAmount = hasMatchingCalcCurrency
-        ? roundCurrencyAmount(item.calculation?.markupAmount || 0, targetCurrency)
-        : 0;
-      const taxAmount = hasMatchingCalcCurrency
-        ? roundCurrencyAmount(item.calculation?.taxAmount || 0, targetCurrency)
-        : 0;
-      const serviceFee = hasMatchingCalcCurrency
-        ? roundCurrencyAmount(item.calculation?.serviceFee || 0, targetCurrency)
-        : 0;
-      const finalSellingPrice = roundCurrencyAmount(
-        convertedNetCost + markupAmount + taxAmount + serviceFee,
-        targetCurrency
+      const mh = resolveManualHotelPricingInTargetCurrency(
+        item,
+        targetCurrency,
+        preserveHistoricalSnapshot,
+        snapshotLine
       );
 
-      accumulatedNetCost += convertedNetCost;
-      accumulatedUnderlyingMarkup += markupAmount;
-      accumulatedTax += taxAmount;
-      accumulatedServiceFee += serviceFee;
-      accumulatedSellingPrice += finalSellingPrice;
+      if (!mh.hasValidRate) {
+        isComplete = false;
+        if (mh.errorReason && mh.errorReason.includes('exchange rate')) {
+          const pairStr = `${mh.nativeCurrency} -> ${targetCurrency}`;
+          missingCurrencyPairsSet.add(pairStr);
+        }
+        incompleteWarnings.push({
+          itemId: item.id,
+          productName: mh.productName,
+          category: 'Hotels & Accommodation',
+          reason: mh.errorReason || 'Manual hotel rate missing or invalid'
+        });
 
-      hotelNetCost += convertedNetCost;
-      hotelSellingPrice += finalSellingPrice;
-      hotelFeeAndTax += (serviceFee + taxAmount);
+        itemizedBreakdown.push({
+          itemId: item.id,
+          productName: mh.productName,
+          category: 'Hotels & Accommodation',
+          nativeNetCost: mh.nativeNett,
+          nativeCurrency: mh.nativeCurrency,
+          convertedNetCost: 0,
+          currency: targetCurrency,
+          markupAmount: 0,
+          taxAmount: 0,
+          serviceFee: 0,
+          finalSellingPrice: mh.finalSellingPrice,
+          isExcludedNoAccommodation: false,
+          hasValidRate: false,
+          incompleteReason: mh.errorReason || 'Missing authoritative manual nett rate'
+        });
+        continue;
+      }
+
+      accumulatedNetCost += mh.convertedNetCost;
+      accumulatedUnderlyingMarkup += mh.markupAmount;
+      accumulatedTax += mh.taxAmount;
+      accumulatedServiceFee += mh.serviceFee;
+      accumulatedSurcharges += mh.surchargeTotal;
+      accumulatedSellingPrice += mh.finalSellingPrice;
+
+      hotelItemCount++;
+      hotelNetCost += mh.convertedNetCost;
+      hotelSellingPrice += mh.finalSellingPrice;
+      hotelFeeAndTax += (mh.serviceFee + mh.taxAmount + mh.surchargeTotal);
+      if (mh.appliedSurcharges.length > 0) {
+        allAppliedSurcharges.push(...mh.appliedSurcharges);
+      }
 
       itemizedBreakdown.push({
         itemId: item.id,
-        productName: manual?.hotelName || productName,
+        productName: mh.productName,
         category: 'Hotels & Accommodation',
-        nativeNetCost: nativeNett,
-        nativeCurrency,
-        convertedNetCost,
+        nativeNetCost: mh.nativeNett,
+        nativeCurrency: mh.nativeCurrency,
+        convertedNetCost: mh.convertedNetCost,
         currency: targetCurrency,
-        markupAmount,
-        taxAmount,
-        serviceFee,
-        finalSellingPrice,
+        markupAmount: mh.markupAmount,
+        taxAmount: mh.taxAmount,
+        serviceFee: mh.serviceFee,
+        surchargeTotal: mh.surchargeTotal,
+        appliedSurcharges: mh.appliedSurcharges,
+        finalSellingPrice: mh.finalSellingPrice,
         isExcludedNoAccommodation: false,
         hasValidRate: true
       });
@@ -3833,7 +4150,14 @@ export function calculateQuoteInternalBreakdown(
         continue;
       }
 
-      const existingCalcCurrency = existingCalc?.currency || existingCalc?.nativeCurrency;
+      const existingCalcCurrency = existingCalc?.currency
+        ? currencyEngine.normalizeCurrencyCode(existingCalc.currency)
+        : (existingCalc?.nativeCurrency &&
+            !(existingCalc as any)?.fxDetails?.isConverted &&
+            existingCalc?.totalNetCost !== undefined &&
+            existingCalc?.totalNetCost === existingCalc?.nativeTotalNetCost
+              ? currencyEngine.normalizeCurrencyCode(existingCalc.nativeCurrency)
+              : undefined);
       const existingCalcRate = (existingCalc as any)?.fxDetails?.effectiveRate;
       const isRateStillCurrent =
         preserveHistoricalSnapshot ||
@@ -3847,9 +4171,51 @@ export function calculateQuoteInternalBreakdown(
       const existingCalcMarginMode = (existingCalc as any)?.activeMarginMode;
       const isMarginModeStillCurrent =
         preserveHistoricalSnapshot ||
-        (existingCalcMarginMode === activeMarginMode &&
-          (isProductLevelMarginEnabled ||
-            Math.abs(((existingCalc?.markupRate || 0) * 100) - configuredAgentLevelMarginPercent) < 0.001));
+        (!existingCalcMarginMode
+          ? isProductLevelMarginEnabled
+          : (existingCalcMarginMode === activeMarginMode &&
+              (isProductLevelMarginEnabled ||
+                Math.abs(((existingCalc?.markupRate || 0) * 100) - configuredAgentLevelMarginPercent) < 0.001)));
+
+      const existingSurchargesArr = existingCalc?.appliedSurcharges || snapshotLine?.appliedSurcharges;
+      const hasCompleteSurchargeList =
+        !existingCalc?.surchargeTotal ||
+        existingCalc.surchargeTotal === 0 ||
+        (Array.isArray(existingSurchargesArr) && existingSurchargesArr.length > 0);
+      const isTravelDateCurrent =
+        preserveHistoricalSnapshot ||
+        !item.travelDate ||
+        !existingCalc?.travelDate ||
+        existingCalc.travelDate === item.travelDate;
+
+      // For unlocked/draft quotations, ensure cached item.calculation matches current Surcharge Management catalog version
+      // and does not contain any deleted, deactivated, or non-existent surcharge IDs.
+      const activeCentralMasterIdSet = new Set(
+        (centralizedMasterSurcharges || [])
+          .filter(s => s && !s.isDeleted && s.status === 'ACTIVE' && s.isActive !== false)
+          .map(s => s.id)
+      );
+      const hasStaleOrMissingDraftSurcharge =
+        !preserveHistoricalSnapshot &&
+        Array.isArray(existingSurchargesArr) &&
+        existingSurchargesArr.some(as => {
+          if (!as || as.overrideType === 'ADD_CUSTOM_SURCHARGE') return false;
+          const sid = as.surchargeId;
+          const isValidActive = Boolean(sid && activeCentralMasterIdSet.has(sid));
+          if (!isValidActive && sid) {
+            console.warn(
+              `[PricingEngine Diagnostic] Draft quotation item "${productName}" (${item.id}) referenced surcharge ID "${sid}" ("${as.surchargeName || as.name || ''}") which no longer exists or is inactive in Surcharge Management. Rejecting stale surcharge and recalculating.`
+            );
+          }
+          return !isValidActive;
+        });
+
+      const existingSurchargeVersion = (existingCalc as any)?.surchargeCatalogVersion;
+      const isSurchargeCatalogVersionCurrent =
+        preserveHistoricalSnapshot ||
+        (!hasStaleOrMissingDraftSurcharge &&
+          (existingSurchargeVersion === pricingCache.getSurchargeCatalogVersion() ||
+            (existingSurchargeVersion === undefined && activeCentralMasterIdSet.size === 0)));
 
       const hasValidExistingCalc = Boolean(
         !hasItemSurchargeOverrides &&
@@ -3858,7 +4224,9 @@ export function calculateQuoteInternalBreakdown(
         existingCalc.totalNetCost > 0 &&
         existingCalcCurrency === targetCurrency &&
         isRateStillCurrent &&
-        isMarginModeStillCurrent
+        isMarginModeStillCurrent &&
+        isSurchargeCatalogVersionCurrent &&
+        (preserveHistoricalSnapshot || (hasCompleteSurchargeList && isTravelDateCurrent))
       );
 
       const enrichedItemProduct: Product =
@@ -3874,6 +4242,12 @@ export function calculateQuoteInternalBreakdown(
               ...((item as any).master_product_id ? { master_product_id: (item as any).master_product_id } : {})
             } as Product);
 
+      const itemServiceDate = (item.travelDate || (item as any).checkInDate || (item as any).serviceDate || '').trim() || undefined;
+      const itemServiceEndDate = ((item as any).checkOutDate || (item as any).serviceEndDate || (item as any).manualHotelDetails?.checkOutDate || '').trim() || undefined;
+      const itemNights = (item as any).nights || (item.product as any)?.nights || (item as any).manualHotelDetails?.numberOfNights;
+      const itemRoomsCount = (item as any).roomsCount || (item.product as any)?.roomsCount || (item as any).manualHotelDetails?.numberOfRooms || 1;
+      const itemCoverageDays = (item as any).coverageDays || (item.product as any)?.coverageDays;
+
       const calc = hasValidExistingCalc
         ? {
             nativeTotalNetCost: existingCalc!.nativeTotalNetCost ?? existingCalc!.totalNetCost,
@@ -3884,10 +4258,12 @@ export function calculateQuoteInternalBreakdown(
             taxAmount: roundCurrencyAmount(existingCalc!.taxAmount || 0, targetCurrency),
             serviceFee: roundCurrencyAmount(existingCalc!.serviceFee || 0, targetCurrency),
             surchargeTotal: roundCurrencyAmount(existingCalc!.surchargeTotal || 0, targetCurrency),
+            baseSellingPriceBeforeSurcharges: (existingCalc as any).baseSellingPriceBeforeSurcharges,
             appliedSurcharges: existingCalc!.appliedSurcharges || snapshotLine?.appliedSurcharges || []
           }
         : calculateProductPrice(enrichedItemProduct, {
             productId: enrichedItemProduct.id,
+            productName,
             itemId: item.id,
             pricingTier: 'B2B',
             userRole: 'ADMIN',
@@ -3899,7 +4275,11 @@ export function calculateQuoteInternalBreakdown(
             adults: item.pax?.adults || 2,
             children: item.pax?.children || 0,
             infants: item.pax?.infants || 0,
-            travelDate: item.travelDate,
+            travelDate: itemServiceDate,
+            serviceEndDate: itemServiceEndDate,
+            nights: itemNights,
+            roomsCount: itemRoomsCount,
+            coverageDays: itemCoverageDays,
             bookingDate,
             targetCurrency,
             selectedAddonIds: item.selectedAddonIds || [],
@@ -3957,10 +4337,34 @@ export function calculateQuoteInternalBreakdown(
       const itemMarkup = roundCurrencyAmount(calc.markupAmount || 0, targetCurrency);
       const itemTax = roundCurrencyAmount(calc.taxAmount || 0, targetCurrency);
       const itemFee = roundCurrencyAmount(calc.serviceFee || 0, targetCurrency);
-      const itemSurcharge = roundCurrencyAmount((calc as any).surchargeTotal || 0, targetCurrency);
-      const itemAppliedSurcharges: AppliedSurchargeDetail[] = Array.isArray((calc as any).appliedSurcharges)
+      const rawAppliedSurcharges: AppliedSurchargeDetail[] = Array.isArray((calc as any).appliedSurcharges)
         ? (calc as any).appliedSurcharges
         : [];
+      const itemPreSurchargeBase =
+        (calc as any).baseSellingPriceBeforeSurcharges !== undefined
+          ? roundCurrencyAmount((calc as any).baseSellingPriceBeforeSurcharges, targetCurrency)
+          : roundCurrencyAmount((calc.finalTotalSellingPrice || 0) - ((calc as any).surchargeTotal || 0), targetCurrency);
+      const itemAppliedSurcharges = rawAppliedSurcharges.length > 0
+        ? reconcileAppliedSurchargesMetadataAndStacking({
+            appliedSurcharges: rawAppliedSurcharges,
+            itemId: item.id,
+            product: enrichedItemProduct,
+            productName,
+            serviceDate: itemServiceDate || (calc as any).travelDate,
+            serviceEndDate: itemServiceEndDate,
+            nights: itemNights,
+            targetCurrency,
+            baseSellingPriceInTargetCurrency: itemPreSurchargeBase,
+            masterSurcharges: centralizedMasterSurcharges,
+            preserveHistoricalAmounts: preserveHistoricalSnapshot || hasValidExistingCalc
+          })
+        : [];
+      const itemSurcharge = itemAppliedSurcharges.length > 0
+        ? roundCurrencyAmount(
+            itemAppliedSurcharges.reduce((sum, s) => sum + (s.appliedAmountConverted || 0), 0),
+            targetCurrency
+          )
+        : roundCurrencyAmount((calc as any).surchargeTotal || 0, targetCurrency);
       const itemSelling = roundCurrencyAmount(calc.finalTotalSellingPrice || 0, targetCurrency);
 
       accumulatedNetCost += itemNet;
@@ -3969,11 +4373,9 @@ export function calculateQuoteInternalBreakdown(
       accumulatedServiceFee += itemFee;
       accumulatedSurcharges += itemSurcharge;
       accumulatedSellingPrice += itemSelling;
-      if (itemAppliedSurcharges.length > 0) {
-        allAppliedSurcharges.push(...itemAppliedSurcharges);
-      }
 
       if (isHotelItem) {
+        hotelItemCount++;
         hotelNetCost += itemNet;
         hotelSellingPrice += itemSelling;
         hotelFeeAndTax += (itemFee + itemTax + itemSurcharge);
@@ -3996,6 +4398,7 @@ export function calculateQuoteInternalBreakdown(
         serviceFee: itemFee,
         surchargeTotal: itemSurcharge,
         appliedSurcharges: itemAppliedSurcharges,
+        baseSellingPriceBeforeSurcharges: itemPreSurchargeBase,
         finalSellingPrice: itemSelling,
         isExcludedNoAccommodation: false,
         hasValidRate: true
@@ -4028,6 +4431,122 @@ export function calculateQuoteInternalBreakdown(
     }
   }
 
+  // Include any orphaned routeHub.manualHotel that has no matching quote item (consistent with calculateQuoteTotal)
+  if (!isLandOnlyQuote && Array.isArray(routeHubs) && routeHubs.length > 0) {
+    const matchedHubItemIds = new Set<string>();
+    routeHubs.forEach(h => {
+      if (h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none') return;
+      const existingHotelItem = items.find(it =>
+        !matchedHubItemIds.has(it.id) &&
+        isHotelCategoryOrProductItem(it) &&
+        doesHotelItemBelongToHubOccurrence(it as QuoteItem, h, routeHubs)
+      );
+      if (existingHotelItem) {
+        matchedHubItemIds.add(existingHotelItem.id);
+      } else if (h.manualHotel) {
+        const manualSourceCurr = currencyEngine.normalizeCurrencyCode(
+          (h.manualHotel as any)?.rateCurrency || (h.manualHotel as any)?.currency || targetCurrency,
+          targetCurrency
+        ) as CurrencyCode;
+        const synthItem: any = {
+          id: `hub-manual-hotel-${h.itineraryHubOccurrenceId || h.id}`,
+          isManualHotel: true,
+          accommodationType: 'manual',
+          manualHotelDetails: h.manualHotel,
+          nights: h.nights || h.manualHotel.numberOfNights,
+          roomsCount: h.roomsCount || h.manualHotel.numberOfRooms,
+          hubId: h.id,
+          itineraryHubOccurrenceId: h.itineraryHubOccurrenceId || h.id,
+          product: {
+            id: `hub-manual-hotel-${h.itineraryHubOccurrenceId || h.id}`,
+            name: h.manualHotel.hotelName || `${h.hubName} Manual Hotel`,
+            category: 'Hotels',
+            currency: manualSourceCurr,
+            nativeCurrency: manualSourceCurr
+          }
+        };
+        const mh = resolveManualHotelPricingInTargetCurrency(synthItem, targetCurrency, preserveHistoricalSnapshot);
+        if (mh.hasValidRate && mh.convertedNetCost > 0) {
+          accumulatedNetCost += mh.convertedNetCost;
+          accumulatedUnderlyingMarkup += mh.markupAmount;
+          accumulatedTax += mh.taxAmount;
+          accumulatedServiceFee += mh.serviceFee;
+          accumulatedSurcharges += mh.surchargeTotal;
+          accumulatedSellingPrice += mh.finalSellingPrice;
+          hotelItemCount++;
+          hotelNetCost += mh.convertedNetCost;
+          hotelSellingPrice += mh.finalSellingPrice;
+          hotelFeeAndTax += (mh.serviceFee + mh.taxAmount + mh.surchargeTotal);
+          itemizedBreakdown.push({
+            itemId: synthItem.id,
+            productName: mh.productName,
+            category: 'Hotels & Accommodation',
+            nativeNetCost: mh.nativeNett,
+            nativeCurrency: mh.nativeCurrency,
+            convertedNetCost: mh.convertedNetCost,
+            currency: targetCurrency,
+            markupAmount: mh.markupAmount,
+            taxAmount: mh.taxAmount,
+            serviceFee: mh.serviceFee,
+            surchargeTotal: mh.surchargeTotal,
+            appliedSurcharges: mh.appliedSurcharges,
+            finalSellingPrice: mh.finalSellingPrice,
+            isExcludedNoAccommodation: false,
+            hasValidRate: true
+          });
+        } else {
+          const rawManualPrice =
+            (h.manualHotel as any)?.totalSellingPrice ||
+            (h.manualHotel as any)?.totalPrice ||
+            (h.manualHotel as any)?.price ||
+            (Number(h.manualHotel.ratePerNight || 0) *
+              Math.max(1, Number(h.nights || h.manualHotel.numberOfNights || 1)) *
+              Math.max(1, Number(h.roomsCount || h.manualHotel.numberOfRooms || 1)));
+          if (rawManualPrice > 0) {
+            const convertedManualPrice =
+              preserveHistoricalSnapshot && (h.manualHotel as any)?.totalSellingPrice
+                ? rawManualPrice
+                : currencyEngine.convert(rawManualPrice, manualSourceCurr, targetCurrency);
+            const rawManualNet =
+              (h.manualHotel as any)?.totalNetCost ??
+              (h.manualHotel as any)?.netCost ??
+              (Number(h.manualHotel.ratePerNight || 0) *
+                Math.max(1, Number(h.nights || h.manualHotel.numberOfNights || 1)) *
+                Math.max(1, Number(h.roomsCount || h.manualHotel.numberOfRooms || 1)));
+            const convertedManualNet =
+              rawManualNet > 0
+                ? currencyEngine.convert(rawManualNet, manualSourceCurr, targetCurrency)
+                : 0;
+            const inferredMarkup = Math.max(0, roundCurrencyAmount(convertedManualPrice - convertedManualNet, targetCurrency));
+            accumulatedNetCost += convertedManualNet;
+            accumulatedUnderlyingMarkup += inferredMarkup;
+            accumulatedSellingPrice += convertedManualPrice;
+            hotelItemCount++;
+            hotelNetCost += convertedManualNet;
+            hotelSellingPrice += convertedManualPrice;
+            itemizedBreakdown.push({
+              itemId: synthItem.id,
+              productName: synthItem.product.name,
+              category: 'Hotels & Accommodation',
+              nativeNetCost: rawManualNet,
+              nativeCurrency: manualSourceCurr,
+              convertedNetCost: convertedManualNet,
+              currency: targetCurrency,
+              markupAmount: inferredMarkup,
+              taxAmount: 0,
+              serviceFee: 0,
+              surchargeTotal: 0,
+              appliedSurcharges: [],
+              finalSellingPrice: convertedManualPrice,
+              isExcludedNoAccommodation: false,
+              hasValidRate: true
+            });
+          }
+        }
+      }
+    });
+  }
+
   // 4. Commercial Package Pricing Aggregations
   const totalNettCost = roundCurrencyAmount(isComplete ? accumulatedNetCost : 0, targetCurrency);
   const existingMarginAmount = roundCurrencyAmount(accumulatedUnderlyingMarkup, targetCurrency);
@@ -4036,13 +4555,17 @@ export function calculateQuoteInternalBreakdown(
 
   const hasAdminManualMargin =
     params.adminManualMarginValue !== undefined || params.adminMarginMode !== undefined;
-  const adminMarginMode = params.adminMarginMode || 'ADD';
-  const adminMarginType = params.adminManualMarginType || 'PERCENTAGE';
+  const adminMarginMode = params.adminMarginMode === 'REPLACE' ? 'REPLACE' : 'ADD';
+  const adminMarginType = params.adminManualMarginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+  const validatedAdminMarginValue = validateAdminManualMargin(
+    params.adminManualMarginValue,
+    adminMarginType
+  ).sanitizedValue;
 
   const adminManualMarginAmount = hasAdminManualMargin
     ? (adminMarginType === 'FIXED'
-        ? roundCurrencyAmount(params.adminManualMarginValue || 0, targetCurrency)
-        : roundCurrencyAmount(totalNettCost * ((params.adminManualMarginValue || 0) / 100), targetCurrency))
+        ? roundCurrencyAmount(validatedAdminMarginValue, targetCurrency)
+        : roundCurrencyAmount(totalNettCost * (validatedAdminMarginValue / 100), targetCurrency))
     : 0;
 
   // STAGE 1: Manual Margin Adjustment on Total Nett Cost
@@ -4098,8 +4621,8 @@ export function calculateQuoteInternalBreakdown(
   let effectiveHotelStage1 = roundedHotelBaseSelling;
   let effectiveLandStage1 = roundedLandBaseSelling;
 
-  if (hasAdminManualMargin && totalNettCost > 0) {
-    const safeAdminVal = Number(params.adminManualMarginValue || 0);
+  if (hasAdminManualMargin && (totalNettCost > 0 || (adminMarginType === 'FIXED' && adminManualMarginAmount > 0))) {
+    const safeAdminVal = validatedAdminMarginValue;
     if (adminMarginType === 'PERCENTAGE') {
       const hotelAdminMargin = roundCurrencyAmount(roundedHotelNet * (safeAdminVal / 100), targetCurrency);
       const landAdminMargin = roundCurrencyAmount(adminManualMarginAmount - hotelAdminMargin, targetCurrency);
@@ -4112,7 +4635,7 @@ export function calculateQuoteInternalBreakdown(
     } else {
       const basisTotal = adminMarginMode === 'REPLACE' ? totalNettCost : roundCurrencyAmount(accumulatedSellingPrice, targetCurrency);
       const hotelBasis = adminMarginMode === 'REPLACE' ? roundedHotelNet : roundedHotelBaseSelling;
-      const hotelShare = basisTotal > 0 ? (hotelBasis / basisTotal) : 0;
+      const hotelShare = basisTotal > 0 ? (hotelBasis / basisTotal) : (hotelItemCount > 0 ? 1 : 0);
       const hotelAdminMargin = roundCurrencyAmount(adminManualMarginAmount * hotelShare, targetCurrency);
       const landAdminMargin = roundCurrencyAmount(adminManualMarginAmount - hotelAdminMargin, targetCurrency);
       effectiveHotelStage1 = adminMarginMode === 'REPLACE'
@@ -4137,6 +4660,7 @@ export function calculateQuoteInternalBreakdown(
   let unmarkedItemsStage1Base = 0;
   let unmarkedHotelStage1Base = 0;
 
+  const nonExcludedCount = itemizedBreakdown.filter(x => !x.isExcludedNoAccommodation).length;
   for (const ib of itemizedBreakdown) {
     if (ib.isExcludedNoAccommodation) {
       ib.theUnboundBaseSellingPrice = 0;
@@ -4155,11 +4679,54 @@ export function calculateQuoteInternalBreakdown(
       matchedItem?.manualHotelDetails ||
       matchedItem?.hotelId
     );
-    const itemStage1Base = Math.abs(stage1ScaleRatio - 1) > 0.00001
-      ? roundCurrencyAmount(ib.finalSellingPrice * stage1ScaleRatio, targetCurrency)
-      : roundCurrencyAmount(ib.finalSellingPrice, targetCurrency);
+    let itemStage1PreDiscount = ib.finalSellingPrice;
+    if (hasAdminManualMargin && (totalNettCost > 0 || (adminMarginType === 'FIXED' && adminManualMarginAmount > 0))) {
+      const safeAdminVal = validatedAdminMarginValue;
+      let itemAdminMargin = 0;
+      if (adminMarginType === 'PERCENTAGE') {
+        itemAdminMargin = roundCurrencyAmount(ib.convertedNetCost * (safeAdminVal / 100), targetCurrency);
+      } else {
+        const basisTotal = adminMarginMode === 'REPLACE' ? totalNettCost : roundCurrencyAmount(accumulatedSellingPrice, targetCurrency);
+        const itemBasis = adminMarginMode === 'REPLACE' ? ib.convertedNetCost : ib.finalSellingPrice;
+        const itemShare = basisTotal > 0 ? itemBasis / basisTotal : (nonExcludedCount > 0 ? 1 / nonExcludedCount : 0);
+        itemAdminMargin = roundCurrencyAmount(adminManualMarginAmount * itemShare, targetCurrency);
+      }
+      itemStage1PreDiscount = adminMarginMode === 'REPLACE'
+        ? roundCurrencyAmount(ib.convertedNetCost + itemAdminMargin + ib.serviceFee + ib.taxAmount + (ib.surchargeTotal || 0), targetCurrency)
+        : roundCurrencyAmount(ib.finalSellingPrice + itemAdminMargin, targetCurrency);
+    }
+    const itemStage1Discount = overallDiscountPercent > 0
+      ? roundCurrencyAmount(itemStage1PreDiscount * (overallDiscountPercent / 100), targetCurrency)
+      : 0;
+    const itemStage1Base = hasAdminManualMargin
+      ? Math.max(0, roundCurrencyAmount(itemStage1PreDiscount - itemStage1Discount, targetCurrency))
+      : (Math.abs(stage1ScaleRatio - 1) > 0.00001
+          ? roundCurrencyAmount(ib.finalSellingPrice * stage1ScaleRatio, targetCurrency)
+          : roundCurrencyAmount(ib.finalSellingPrice, targetCurrency));
 
     ib.theUnboundBaseSellingPrice = itemStage1Base;
+
+    if (Array.isArray(ib.appliedSurcharges) && ib.appliedSurcharges.length > 0) {
+      const itemPreSurchargeStage1 = Math.max(
+        0,
+        roundCurrencyAmount(itemStage1Base - (ib.surchargeTotal || 0), targetCurrency)
+      );
+      const reconciledItemSurcharges = reconcileAppliedSurchargesMetadataAndStacking({
+        appliedSurcharges: ib.appliedSurcharges,
+        itemId: ib.itemId,
+        product: matchedItem?.product,
+        productName: ib.productName,
+        serviceDate: matchedItem?.travelDate || matchedItem?.checkInDate || matchedItem?.serviceDate,
+        serviceEndDate: matchedItem?.checkOutDate || matchedItem?.serviceEndDate || matchedItem?.manualHotelDetails?.checkOutDate,
+        nights: matchedItem?.nights || matchedItem?.product?.nights || matchedItem?.manualHotelDetails?.numberOfNights,
+        targetCurrency,
+        baseSellingPriceInTargetCurrency: itemPreSurchargeStage1,
+        masterSurcharges: centralizedMasterSurcharges,
+        preserveHistoricalAmounts: true
+      });
+      ib.appliedSurcharges = reconciledItemSurcharges;
+      allAppliedSurcharges.push(...reconciledItemSurcharges);
+    }
 
     const rawItemMarkupVal = matchedItem?.agentAdditionalMarkupValue;
     const itemMarkupValidation = validateAgentAdditionalMarkup(rawItemMarkupVal);
@@ -4248,7 +4815,7 @@ export function calculateQuoteInternalBreakdown(
   const hotelAccommodationTotal = Math.max(0, roundCurrencyAmount(stage1HotelAfterDiscount + hotelPartnerMargin, targetCurrency));
   const landPartTotal = Math.max(0, roundCurrencyAmount(finalPackagePrice - hotelAccommodationTotal, targetCurrency));
 
-  return {
+  const breakdownResult: QuoteInternalBreakdownResult = {
     isComplete,
     activeMarginMode,
     productLevelMarginEnabled: isProductLevelMarginEnabled,
@@ -4279,6 +4846,127 @@ export function calculateQuoteInternalBreakdown(
     revisedSellingPrice,
     adminFinalTotal
   };
+
+  pricingCache.setBreakdown(breakdownCacheKey, breakdownResult);
+  const perfT1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  performanceMonitor.recordTiming('PRICING_ENGINE', 'calculateQuoteInternalBreakdown', perfT1 - perfT0, {
+    items: items.length
+  });
+  return breakdownResult;
+}
+
+function buildQuoteBreakdownCacheKey(args: {
+  items: QuoteItemForBreakdown[];
+  targetCurrency: CurrencyCode;
+  agentMarginType: string;
+  agentMarginValue: number;
+  overallDiscountPercent: number;
+  activeMarginMode: string;
+  isProductLevelMarginEnabled: boolean;
+  configuredAgentLevelMarginPercent: number;
+  scope?: string;
+  routeHubs: TripRouteHub[];
+  adminManualMarginType?: string;
+  adminManualMarginValue?: number;
+  adminMarginMode?: string;
+  preserveHistoricalSnapshot: boolean;
+  historicalSnapshotId?: string;
+  surchargeOverrides?: QuotationSurchargeOverride[];
+  bookingDate: string;
+}): string {
+  const itemSig = args.items.map((it: any) => {
+    if (!it) return '';
+    const p = it.product || {};
+    const m = it.manualHotelDetails || p.manualHotelDetails || {};
+    const calc = it.calculation || {};
+    return [
+      it.id || '',
+      p.id || '',
+      p.updatedAt || '',
+      p.adultNetPrice ?? '',
+      p.childNetPrice ?? '',
+      p.adultPrice ?? '',
+      p.currency || p.nativeCurrency || '',
+      p.b2bAgentMarkupPercent ?? p.defaultMarkupPercent ?? p.b2bMarginPercent ?? p.marginPercent ?? '',
+      p.marginType ?? '',
+      p.marginFixed ?? '',
+      p.marginStatus ?? '',
+      p.marginConfigVersion ?? '',
+      p.surcharges?.length || 0,
+      it.travelDate || '',
+      it.checkInDate || '',
+      it.checkOutDate || '',
+      it.nights ?? p.nights ?? '',
+      it.roomsCount ?? p.roomsCount ?? '',
+      it.coverageDays ?? p.coverageDays ?? '',
+      it.hubId || '',
+      it.hotelId || '',
+      it.roomTypeId || '',
+      it.isManualHotel ? 1 : 0,
+      it.isNoAccommodation ? 1 : 0,
+      (it as any).accommodationType || '',
+      it.pax ? `${it.pax.adults}:${it.pax.children}:${it.pax.infants}` : '',
+      Array.isArray(it.selectedAddonIds) ? it.selectedAddonIds.join(',') : '',
+      it.agentAdditionalMarkupType || '',
+      it.agentAdditionalMarkupValue ?? '',
+      m.ratePerNight ?? '',
+      m.rateCurrency ?? '',
+      m.rateBasis ?? m.rateType ?? '',
+      m.numberOfNights ?? m.nights ?? '',
+      m.numberOfRooms ?? m.roomsCount ?? '',
+      m.sellingPrice ?? m.netCost ?? '',
+      m.adultRate ?? '',
+      m.childRate ?? '',
+      calc.currency || '',
+      calc.totalNetCost ?? '',
+      calc.finalTotalSellingPrice ?? '',
+      calc.markupAmount ?? '',
+      calc.activeMarginMode || '',
+      (calc as any).fxDetails?.effectiveRate ?? '',
+      (calc as any).surchargeCatalogVersion ?? '',
+      calc.surchargeTotal ?? '',
+      calc.appliedSurcharges?.length || 0,
+      calc.travelDate || ''
+    ].join(':');
+  }).join('|');
+
+  const hubSig = (args.routeHubs || [])
+    .map(h => `${h.itineraryHubOccurrenceId || h.id}:${h.hubName || ''}:${h.accommodationType || ''}:${h.nights || ''}:${h.roomsCount || ''}:${h.manualHotel?.ratePerNight ?? ''}:${h.manualHotel?.rateCurrency ?? ''}`)
+    .join(',');
+
+  const ovSig = Array.isArray(args.surchargeOverrides) && args.surchargeOverrides.length > 0
+    ? args.surchargeOverrides
+        .map(o => `${o.id}:${o.overrideType}:${o.surchargeId}:${o.itemId || ''}:${o.productId || ''}:${o.overriddenAmount ?? ''}:${o.overriddenCurrency || ''}`)
+        .join(',')
+    : '';
+
+  return [
+    args.targetCurrency,
+    args.scope || '',
+    args.agentMarginType,
+    args.agentMarginValue,
+    args.overallDiscountPercent,
+    args.activeMarginMode,
+    args.isProductLevelMarginEnabled ? 1 : 0,
+    args.configuredAgentLevelMarginPercent,
+    args.adminMarginMode || '',
+    args.adminManualMarginType || '',
+    args.adminManualMarginValue ?? '',
+    args.preserveHistoricalSnapshot ? 1 : 0,
+    args.historicalSnapshotId || '',
+    args.bookingDate,
+    `scv${pricingCache.getSurchargeCatalogVersion()}`,
+    `fxv${pricingCache.getFxCatalogVersion()}`,
+    `smv${masterDataCache.getVersion('surcharge_masters')}`,
+    `prd${masterDataCache.getVersion('products')}`,
+    `pmc${masterDataCache.getVersion('product_margin_configs')}`,
+    `rmr${masterDataCache.getVersion('rail_markup_rules')}`,
+    `cmp${masterDataCache.getVersion('companies')}`,
+    `usr${masterDataCache.getVersion('system_users')}`,
+    hubSig,
+    ovSig,
+    itemSig
+  ].join('~');
 }
 
 /**
@@ -4378,33 +5066,7 @@ export function calculateQuoteTotal(
     const effectiveScope = activeOption?.scope || activeOption?.quotationScope || quote.scope || quote.quotationScope || 'HOTEL_LAND';
     isLandOnly = effectiveScope === 'LAND_ONLY';
 
-    const noAccHubIds = new Set(
-      hubs
-        .filter(h => isLandOnly || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
-        .map(h => h.id)
-    );
-    const noAccHubNames = new Set(
-      hubs
-        .filter(h => isLandOnly || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none')
-        .map(h => (h.hubName || '').toLowerCase())
-        .filter(Boolean)
-    );
-
-    activeItems = rawItems.filter(it => {
-      if (it.isNoAccommodation || (it as any).accommodationType === 'NO_ACCOMMODATION' || (it as any).accommodationType === 'none') {
-        return false;
-      }
-      if (isHotelItem(it)) {
-        if (isLandOnly) return false;
-        const itemHubId = it.hubId || it.manualHotelDetails?.hubId || (it.metadata as any)?.hubId;
-        if (itemHubId && noAccHubIds.has(itemHubId)) return false;
-        if (!itemHubId) {
-          const itemCity = (it.manualHotelDetails?.city || it.product?.city || '').toLowerCase();
-          if (itemCity && noAccHubNames.has(itemCity)) return false;
-        }
-      }
-      return true;
-    });
+    activeItems = rawItems.filter(it => !isExcludedNoAccommodationItem(it, hubs, isLandOnly));
 
     marginType = quote.agentMarginType || (quote as any).agent_margin_type || 'PERCENTAGE';
     marginValue = quote.agentMarginValue !== undefined
@@ -4412,22 +5074,204 @@ export function calculateQuoteTotal(
       : ((quote as any).agent_margin_value !== undefined ? (quote as any).agent_margin_value : (quote.overallMarkupPercent || 0));
     discountPercent = quote.overallDiscountPercent || 0;
 
+    const reqRawAdminVal = (quote as any).adminManualMarginValue ?? (quote as any).admin_manual_margin_value;
+    const reqAdminType: 'PERCENTAGE' | 'FIXED' =
+      ((quote as any).adminManualMarginType ?? (quote as any).admin_manual_margin_type) === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+    const reqAdminMode: 'REPLACE' | 'ADD' =
+      ((quote as any).adminMarginMode ?? (quote as any).admin_margin_mode) === 'REPLACE' ? 'REPLACE' : 'ADD';
+    const reqAdminValue = validateAdminManualMargin(reqRawAdminVal, reqAdminType).sanitizedValue;
+    const hasReqAdminConfig =
+      reqRawAdminVal !== undefined ||
+      (quote as any).adminMarginMode !== undefined ||
+      (quote as any).admin_margin_mode !== undefined;
+
+    const quoteAgencyCtxForSnap = resolveQuoteAgencyPricingContext(quote);
+
+    // AUTHORITATIVE SNAPSHOT PRIORITY:
+    // If the quotation carries a validated AuthoritativeQuotationSnapshot for this currency and option
+    // (or is locked), return its frozen commercial breakdown directly without recalculation.
+    const authSnap = quote.authoritativeSnapshot;
+    const requestedOptionId = activeOptionIdOrMarginType || activeOption?.id || quote.activeOptionId;
+    const authSnapAdminMatches =
+      !hasReqAdminConfig ||
+      (
+        (authSnap?.pricing?.adminMarginMode ??
+          (authSnap?.pricing?.currencyConversionSnapshot?.totals as any)?.manualMarginAdjustmentMode ??
+          'ADD') === reqAdminMode &&
+        (authSnap?.pricing?.adminManualMarginType ??
+          (authSnap?.pricing?.currencyConversionSnapshot?.totals as any)?.manualMarginAdjustmentType ??
+          'PERCENTAGE') === reqAdminType &&
+        Math.abs(
+          Number(
+            authSnap?.pricing?.adminManualMarginValue ??
+            (authSnap?.pricing?.currencyConversionSnapshot?.totals as any)?.manualMarginAdjustmentValue ??
+            0
+          ) - reqAdminValue
+        ) < 0.0001
+      );
+    const authSnapMarginMode =
+      (authSnap?.pricing as any)?.activeMarginMode ??
+      ((authSnap?.pricing as any)?.productLevelMarginEnabled !== undefined
+        ? ((authSnap?.pricing as any)?.productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL')
+        : undefined);
+    const authSnapAgencyMatches =
+      !authSnapMarginMode ||
+      (authSnapMarginMode === quoteAgencyCtxForSnap.activeMarginMode &&
+        (quoteAgencyCtxForSnap.productLevelMarginEnabled ||
+          (authSnap?.pricing as any)?.agentLevelMarginPercent === undefined ||
+          Math.abs(Number((authSnap?.pricing as any).agentLevelMarginPercent) - quoteAgencyCtxForSnap.agentLevelMarginPercent) < 0.001));
+
+    const isWorkingQuoteLocked = Boolean(
+      quote.isLocked ||
+      ['ISSUED', 'SENT', 'APPROVED', 'ACCEPTED', 'CONVERTED', 'BOOKED'].includes(String(quote.status || '').toUpperCase())
+    );
+    const quoteVerForSnap = Number(quote.version || quote.latestVersion || 0);
+    const authSnapVer = Number(authSnap?.versionNumber || 0);
+    const authSnapVersionMatches = !quoteVerForSnap || !authSnapVer || quoteVerForSnap === authSnapVer;
+    const authSnapOverridesMatch =
+      JSON.stringify((quote as any).surchargeOverrides || []) ===
+      JSON.stringify(authSnap?.pricing?.surchargeOverrides || []);
+    const activeHasProductMarkup = activeItems.some(it => Number(it.agentAdditionalMarkupValue || 0) > 0);
+    const snapHasProductMarkup = Number(authSnap?.pricing?.productLevelAgentMarkupTotal || 0) > 0;
+    const authSnapItemMarkupsMatch = activeHasProductMarkup === snapHasProductMarkup;
+
+    if (
+      authSnap &&
+      authSnap.pricing &&
+      currencyEngine.normalizeCurrencyCode(authSnap.pricing.currency) === effectiveCurrency &&
+      (!requestedOptionId || !authSnap.selectedOptionId || authSnap.selectedOptionId === requestedOptionId) &&
+      (
+        (isWorkingQuoteLocked && authSnapVersionMatches && authSnapAdminMatches && authSnapOverridesMatch) ||
+        (
+          !isWorkingQuoteLocked &&
+          authSnapVersionMatches &&
+          authSnap.itinerary.itemsCount === activeItems.length &&
+          authSnap.pricing.agentMarginType === marginType &&
+          Math.abs(Number(authSnap.pricing.agentMarginValue || 0) - Number(marginValue || 0)) < 0.0001 &&
+          Math.abs(Number(authSnap.pricing.overallDiscountPercent || 0) - Number(discountPercent || 0)) < 0.0001 &&
+          authSnapAdminMatches &&
+          authSnapAgencyMatches &&
+          authSnapOverridesMatch &&
+          authSnapItemMarkupsMatch
+        )
+      )
+    ) {
+      const sp = authSnap.pricing;
+      const hotelCount = activeItems.filter(isHotelItem).length;
+      const landCount = activeItems.filter(it => !isHotelItem(it)).length;
+      const hotelSelling = isLandOnly ? 0 : roundCurrencyAmount(sp.hotelAccommodationTotal || 0, effectiveCurrency);
+      const landSelling = roundCurrencyAmount(sp.landPartTotal || 0, effectiveCurrency);
+      const finalPrice = isLandOnly ? landSelling : roundCurrencyAmount(sp.finalCustomerSellingPrice || 0, effectiveCurrency);
+      const b2bBase = roundCurrencyAmount(sp.theUnboundBaseSellingPrice ?? sp.baseFinalSellingPrice ?? finalPrice, effectiveCurrency);
+      const markupAmt = roundCurrencyAmount(sp.agentMarginAmount ?? 0, effectiveCurrency);
+      const snapTotalNet = roundCurrencyAmount(
+        sp.currencyConversionSnapshot?.totals?.convertedTotalNetCost ?? (quote.totalNetCost || 0),
+        effectiveCurrency
+      );
+      const hotelNet = sp.currencyConversionSnapshot
+        ? roundCurrencyAmount(
+            sp.currencyConversionSnapshot.lineItems.filter(li => li.isHotel).reduce((s, li) => s + li.convertedNetCost, 0),
+            effectiveCurrency
+          )
+        : 0;
+      const landNet = sp.currencyConversionSnapshot
+        ? roundCurrencyAmount(
+            sp.currencyConversionSnapshot.lineItems.filter(li => !li.isHotel).reduce((s, li) => s + li.convertedNetCost, 0),
+            effectiveCurrency
+          )
+        : 0;
+
+      return {
+        baseSellingPrice: b2bBase,
+        baseTotalPrice: b2bBase,
+        theUnboundBaseSellingPrice: b2bBase,
+        markupAmount: markupAmt,
+        marginAmount: markupAmt,
+        additionalAgentMarginAmount: markupAmt,
+        productLevelAgentMarkupTotal: roundCurrencyAmount(sp.productLevelAgentMarkupTotal || 0, effectiveCurrency),
+        overallAgentMarkupAmount: roundCurrencyAmount(sp.overallAgentMarkupAmount ?? markupAmt, effectiveCurrency),
+        discountAmount: roundCurrencyAmount(sp.discountsTotal || 0, effectiveCurrency),
+        finalCustomerSellingPrice: finalPrice,
+        finalTotalSellingPrice: finalPrice,
+        totalSellingPrice: finalPrice,
+        totalNetCost: snapTotalNet,
+        itemsIncludedCount: activeItems.length,
+        hotelItemsIncludedCount: isLandOnly ? 0 : hotelCount,
+        hotelTotalSellingPrice: hotelSelling,
+        hotelTotalNetCost: isLandOnly ? 0 : hotelNet,
+        hasHotelAccommodation: !isLandOnly && hotelSelling > 0 && (hotelCount > 0 || (hubs || []).some(h => h.accommodationType !== 'NO_ACCOMMODATION' && (h.hotelId || h.manualHotel?.hotelName))),
+        landItemsIncludedCount: landCount,
+        landBaseSellingPrice: landSelling,
+        landPartTotalSellingPrice: landSelling,
+        landTotalNetCost: landNet,
+        hasLandServices: landSelling > 0 || landCount > 0
+      };
+    }
+
     const hasAnyItemLevelAgentMarkup = activeItems.some(it => Number(it.agentAdditionalMarkupValue) > 0);
+    const snapshotIncludesProductMarkups =
+      activeCurrencySnapshot?.totals?.productLevelAgentMarkupTotal !== undefined &&
+      activeItems.every((it) => {
+        const val = Number(it.agentAdditionalMarkupValue || 0);
+        if (val <= 0) return true;
+        return typeof it.agentAdditionalMarkupAmount === 'number';
+      });
+
+    const hubsHaveActiveHotel =
+      !isLandOnly &&
+      (hubs || []).some(
+        (h) => h.accommodationType !== 'NO_ACCOMMODATION' && (Boolean(h.hotelId) || Boolean(h.manualHotel?.hotelName))
+      );
+    const snapshotHasMissingHubHotel =
+      hubsHaveActiveHotel &&
+      activeCurrencySnapshot &&
+      Number(activeCurrencySnapshot.totals?.hotelAccommodationTotal || 0) <= 0;
+
+    const currencySnapAdminMatches =
+      !hasReqAdminConfig ||
+      (
+        ((activeCurrencySnapshot?.totals as any)?.manualMarginAdjustmentMode ?? 'ADD') === reqAdminMode &&
+        ((activeCurrencySnapshot?.totals as any)?.manualMarginAdjustmentType ?? 'PERCENTAGE') === reqAdminType &&
+        Math.abs(
+          Number((activeCurrencySnapshot?.totals as any)?.manualMarginAdjustmentValue ?? 0) - reqAdminValue
+        ) < 0.0001
+      );
+
+    const hasQuoteSurchargeOverrides = Array.isArray((quote as any).surchargeOverrides) && (quote as any).surchargeOverrides.length > 0;
+    const curSnapMarginMode =
+      (activeCurrencySnapshot as any)?.activeMarginMode ??
+      ((activeCurrencySnapshot as any)?.productLevelMarginEnabled !== undefined
+        ? ((activeCurrencySnapshot as any).productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL')
+        : undefined);
+    const curSnapAgencyMatches =
+      !curSnapMarginMode ||
+      (curSnapMarginMode === quoteAgencyCtxForSnap.activeMarginMode &&
+        (quoteAgencyCtxForSnap.productLevelMarginEnabled ||
+          (activeCurrencySnapshot as any)?.agentLevelMarginPercent === undefined ||
+          Math.abs(Number((activeCurrencySnapshot as any).agentLevelMarginPercent) - quoteAgencyCtxForSnap.agentLevelMarginPercent) < 0.001));
+    const curSnapHasProductMarkup = Number((activeCurrencySnapshot?.totals as any)?.productLevelAgentMarkupTotal || 0) > 0;
 
     // HISTORICAL QUOTE PROTECTION:
     // If the quote has a valid immutable currencyConversionSnapshot for this targetCurrency
-    // and its margin & item count match (or the quote is locked/finalized), return the exact snapshot values!
+    // and its margin, agency, admin manual adjustment & item count match (or the quote is locked/finalized), return the exact snapshot values!
     if (
       activeCurrencySnapshot &&
       activeCurrencySnapshot.isValid &&
+      !snapshotHasMissingHubHotel &&
       currencyEngine.normalizeCurrencyCode(activeCurrencySnapshot.targetCurrency) === effectiveCurrency &&
       (
-        quote.isLocked ||
+        (isWorkingQuoteLocked && currencySnapAdminMatches && !hasQuoteSurchargeOverrides) ||
         (
-          !hasAnyItemLevelAgentMarkup &&
+          !isWorkingQuoteLocked &&
+          !hasQuoteSurchargeOverrides &&
+          (!hasAnyItemLevelAgentMarkup || snapshotIncludesProductMarkups) &&
+          hasAnyItemLevelAgentMarkup === curSnapHasProductMarkup &&
           activeCurrencySnapshot.lineItems.length === activeItems.length &&
           activeCurrencySnapshot.totals.additionalAgentMarginType === marginType &&
-          Number(activeCurrencySnapshot.totals.additionalAgentMarginValue || 0) === Number(marginValue || 0)
+          Math.abs(Number(activeCurrencySnapshot.totals.additionalAgentMarginValue || 0) - Number(marginValue || 0)) < 0.0001 &&
+          Number((activeCurrencySnapshot.totals as any).overallDiscountPercent ?? discountPercent) === Number(discountPercent || 0) &&
+          currencySnapAdminMatches &&
+          curSnapAgencyMatches
         )
       )
     ) {
@@ -4482,52 +5326,104 @@ export function calculateQuoteTotal(
     }
   }
 
-  const isQuoteLockedOrSaved = !Array.isArray(quoteOrItems) && Boolean(
-    quoteOrItems.isLocked ||
-    (activePricingSnapshot && currencyEngine.normalizeCurrencyCode(activePricingSnapshot.currency) === effectiveCurrency)
-  );
+  const preserveHistorical = !Array.isArray(quoteOrItems) && Boolean(quoteOrItems.isLocked);
+  const quoteAgencyCtx = !Array.isArray(quoteOrItems)
+    ? resolveQuoteAgencyPricingContext(quoteOrItems)
+    : resolveQuoteAgencyPricingContext({});
+  const isProductLevelMarginEnabled = quoteAgencyCtx.productLevelMarginEnabled;
+  const customAgentMarginPercent = quoteAgencyCtx.agentLevelMarginPercent;
+  const expectedMarginMode = quoteAgencyCtx.activeMarginMode;
 
-  // Authoritatively resolve agency margin settings to ensure margin mechanism (Product-Level vs Internal Agent-Level) is respected
-  let isProductLevelMarginEnabled = true;
-  let customAgentMarginPercent = 10;
-  if (!Array.isArray(quoteOrItems)) {
-    const qAny = quoteOrItems as any;
-    if (typeof qAny.productLevelMarginEnabled === 'boolean') {
-      isProductLevelMarginEnabled = qAny.productLevelMarginEnabled;
-    } else if (typeof qAny.agencyPricingSettings?.productLevelMarginEnabled === 'boolean') {
-      isProductLevelMarginEnabled = qAny.agencyPricingSettings.productLevelMarginEnabled;
-    } else {
-      try {
-        const resolved = AppDatabase.getInstance().resolveAgencyPricingSettings({
-          companyId: qAny.companyId,
-          agencyName: qAny.agentAgency || qAny.agencyName,
-          userId: qAny.agentId
-        });
-        isProductLevelMarginEnabled = resolved.productLevelMarginEnabled;
-        customAgentMarginPercent = resolved.agentLevelMarginPercent;
-      } catch {
-        // default
-      }
-    }
-
-    if (typeof qAny.agentLevelMarginPercent === 'number') {
-      customAgentMarginPercent = qAny.agentLevelMarginPercent;
-    } else if (typeof qAny.agencyPricingSettings?.agentLevelMarginPercent === 'number') {
-      customAgentMarginPercent = qAny.agencyPricingSettings.agentLevelMarginPercent;
-    }
+  let centralizedMasterSurcharges: SurchargeMaster[] = [];
+  try {
+    centralizedMasterSurcharges = AppDatabase.getInstance().getSurchargeMasters(true);
+  } catch {
+    centralizedMasterSurcharges = [];
   }
+  const activeCentralMasterIdSet = new Set(
+    (centralizedMasterSurcharges || [])
+      .filter(s => s && !s.isDeleted && s.status === 'ACTIVE' && s.isActive !== false)
+      .map(s => s.id)
+  );
+  const quoteSurchargeOverrides = !Array.isArray(quoteOrItems) ? (quoteOrItems as any).surchargeOverrides : undefined;
 
-  const expectedMarginMode = isProductLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL';
-
-  // Resolve each item's calculation in effectiveCurrency.
-  // If an item's cached calculation is in a different currency or obsolete margin mode (and not locked), recalculate in effectiveCurrency.
+  // Resolve each item's calculation in effectiveCurrency identically to calculateQuoteInternalBreakdown.
   const resolveItemInTargetCurrency = (it: QuoteItem): { selling: number; net: number; feeAndTax: number } => {
-    const calc = it.calculation as any;
-    const calcCurrency = calc?.currency ? currencyEngine.normalizeCurrencyCode(calc.currency) : undefined;
-    const calcMarginMode = calc?.activeMarginMode;
-    const isMarginModeMatching = !calcMarginMode || calcMarginMode === expectedMarginMode;
+    if (isManualHotelQuoteItem(it)) {
+      const mh = resolveManualHotelPricingInTargetCurrency(it, effectiveCurrency, preserveHistorical);
+      return {
+        selling: mh.hasValidRate ? mh.finalSellingPrice : 0,
+        net: mh.hasValidRate ? mh.convertedNetCost : 0,
+        feeAndTax: mh.hasValidRate ? roundCurrencyAmount(mh.serviceFee + mh.taxAmount + mh.surchargeTotal, effectiveCurrency) : 0
+      };
+    }
 
-    if (calc && calcCurrency === effectiveCurrency && isMarginModeMatching) {
+    const calc = it.calculation as any;
+    const rawSourceCurrency = it.product?.nativeCurrency || it.product?.currency || calc?.nativeCurrency || effectiveCurrency;
+    const snapshotRate = preserveHistorical && calc?.currency === effectiveCurrency ? calc?.fxDetails?.effectiveRate : undefined;
+    const fxCheck = snapshotRate
+      ? { isValid: true, fromCode: rawSourceCurrency, toCode: effectiveCurrency, effectiveRate: snapshotRate }
+      : currencyEngine.validateConversion(rawSourceCurrency, effectiveCurrency);
+
+    const calcCurrency = calc?.currency
+      ? currencyEngine.normalizeCurrencyCode(calc.currency)
+      : (calc?.nativeCurrency &&
+          !calc?.fxDetails?.isConverted &&
+          calc?.totalNetCost !== undefined &&
+          calc?.totalNetCost === calc?.nativeTotalNetCost
+            ? currencyEngine.normalizeCurrencyCode(calc.nativeCurrency)
+            : undefined);
+    const calcRate = calc?.fxDetails?.effectiveRate;
+    const isRateStillCurrent =
+      preserveHistorical ||
+      String(rawSourceCurrency).toUpperCase() === String(effectiveCurrency).toUpperCase() ||
+      (fxCheck.isValid && typeof calcRate === 'number' && Math.abs(calcRate - fxCheck.effectiveRate) < 0.0000001);
+
+    const calcMarginMode = calc?.activeMarginMode;
+    const isMarginModeMatching =
+      preserveHistorical ||
+      (!calcMarginMode
+        ? isProductLevelMarginEnabled
+        : (calcMarginMode === expectedMarginMode &&
+            (isProductLevelMarginEnabled ||
+              Math.abs(((calc?.markupRate || 0) * 100) - customAgentMarginPercent) < 0.001)));
+
+    const hasItemSurchargeOverrides =
+      Array.isArray(quoteSurchargeOverrides) &&
+      quoteSurchargeOverrides.some(
+        (ov: any) => !ov.itemId || ov.itemId === it.id || !ov.productId || ov.productId === it.product?.id
+      );
+    const existingSurchargesArr = calc?.appliedSurcharges;
+    const hasCompleteSurchargeList =
+      !calc?.surchargeTotal ||
+      calc.surchargeTotal === 0 ||
+      (Array.isArray(existingSurchargesArr) && existingSurchargesArr.length > 0);
+    const isTravelDateCurrent =
+      preserveHistorical || !it.travelDate || !calc?.travelDate || calc.travelDate === it.travelDate;
+    const hasStaleOrMissingDraftSurcharge =
+      !preserveHistorical &&
+      Array.isArray(existingSurchargesArr) &&
+      existingSurchargesArr.some((as: any) => {
+        if (!as || as.overrideType === 'ADD_CUSTOM_SURCHARGE') return false;
+        return !(as.surchargeId && activeCentralMasterIdSet.has(as.surchargeId));
+      });
+    const isSurchargeCatalogVersionCurrent =
+      preserveHistorical ||
+      (!hasStaleOrMissingDraftSurcharge &&
+        (calc?.surchargeCatalogVersion === pricingCache.getSurchargeCatalogVersion() ||
+          (calc?.surchargeCatalogVersion === undefined && activeCentralMasterIdSet.size === 0)));
+
+    if (
+      !hasItemSurchargeOverrides &&
+      calc &&
+      typeof calc.totalNetCost === 'number' &&
+      calc.totalNetCost > 0 &&
+      calcCurrency === effectiveCurrency &&
+      isRateStillCurrent &&
+      isMarginModeMatching &&
+      isSurchargeCatalogVersionCurrent &&
+      (preserveHistorical || (hasCompleteSurchargeList && isTravelDateCurrent))
+    ) {
       const selling =
         calc.finalTotalSellingPrice ??
         calc.totalSellingPrice ??
@@ -4536,7 +5432,7 @@ export function calculateQuoteTotal(
         (it as any).sellingPrice ??
         0;
       const net = calc.totalNetCost ?? (it as any).totalNetCost ?? 0;
-      const feeAndTax = (calc.serviceFee || 0) + (calc.taxAmount || 0);
+      const feeAndTax = (calc.serviceFee || 0) + (calc.taxAmount || 0) + (calc.surchargeTotal || 0);
       return {
         selling: roundCurrencyAmount(selling, effectiveCurrency),
         net: roundCurrencyAmount(net, effectiveCurrency),
@@ -4545,24 +5441,80 @@ export function calculateQuoteTotal(
     }
 
     if (it.product) {
-      const freshCalc = calculateProductPrice(it.product, {
-        productId: it.product.id,
+      const enrichedProduct: Product = {
+        ...it.product,
+        ...((it as any).hotelId ? { hotelId: (it as any).hotelId } : {}),
+        ...((it as any).roomTypeId ? { roomTypeId: (it as any).roomTypeId } : {}),
+        ...((it as any).nights ? { nights: (it as any).nights } : {}),
+        ...((it as any).roomsCount ? { roomsCount: (it as any).roomsCount } : {}),
+        ...((it as any).manualHotelDetails ? { manualHotelDetails: (it as any).manualHotelDetails } : {}),
+        ...((it as any).master_product_id ? { master_product_id: (it as any).master_product_id } : {})
+      } as Product;
+      const itemServiceDate = (it.travelDate || (it as any).checkInDate || (it as any).serviceDate || '').trim() || undefined;
+      const itemServiceEndDate = ((it as any).checkOutDate || (it as any).serviceEndDate || (it as any).manualHotelDetails?.checkOutDate || '').trim() || undefined;
+      const itemNights = (it as any).nights || (it.product as any)?.nights || (it as any).manualHotelDetails?.numberOfNights;
+      const itemRoomsCount = (it as any).roomsCount || (it.product as any)?.roomsCount || (it as any).manualHotelDetails?.numberOfRooms || 1;
+      const itemCoverageDays = (it as any).coverageDays || (it.product as any)?.coverageDays;
+
+      const freshCalc = calculateProductPrice(enrichedProduct, {
+        productId: enrichedProduct.id,
+        productName: enrichedProduct.name,
+        itemId: it.id,
         pricingTier: 'B2B',
         userRole: 'ADMIN',
+        companyId: quoteAgencyCtx.companyId,
+        agencyName: quoteAgencyCtx.agencyName,
         adults: it.pax?.adults || 2,
         children: it.pax?.children || 0,
         infants: it.pax?.infants || 0,
-        travelDate: it.travelDate,
+        travelDate: itemServiceDate,
+        serviceEndDate: itemServiceEndDate,
+        nights: itemNights,
+        roomsCount: itemRoomsCount,
+        coverageDays: itemCoverageDays,
         targetCurrency: effectiveCurrency,
         selectedAddonIds: it.selectedAddonIds || [],
+        surchargeOverrides: quoteSurchargeOverrides,
         productLevelMarginEnabled: isProductLevelMarginEnabled,
-        customAgentMarginPercent: customAgentMarginPercent
-      });
-      return {
-        selling: roundCurrencyAmount(freshCalc.finalTotalSellingPrice, effectiveCurrency),
-        net: roundCurrencyAmount(freshCalc.totalNetCost, effectiveCurrency),
-        feeAndTax: roundCurrencyAmount((freshCalc.serviceFee || 0) + (freshCalc.taxAmount || 0), effectiveCurrency)
-      };
+        customAgentMarginPercent,
+        frozenAppliedSurcharges: preserveHistorical ? existingSurchargesArr : undefined,
+        ...(snapshotRate ? { snapshotExchangeRate: snapshotRate } : {})
+      } as any);
+
+      const rawApplied = Array.isArray((freshCalc as any).appliedSurcharges) ? (freshCalc as any).appliedSurcharges : [];
+      const itemPreSurcharge =
+        (freshCalc as any).baseSellingPriceBeforeSurcharges !== undefined
+          ? roundCurrencyAmount((freshCalc as any).baseSellingPriceBeforeSurcharges, effectiveCurrency)
+          : roundCurrencyAmount((freshCalc.finalTotalSellingPrice || 0) - ((freshCalc as any).surchargeTotal || 0), effectiveCurrency);
+      const reconciled = rawApplied.length > 0
+        ? reconcileAppliedSurchargesMetadataAndStacking({
+            appliedSurcharges: rawApplied,
+            itemId: it.id,
+            product: enrichedProduct,
+            productName: enrichedProduct.name,
+            serviceDate: itemServiceDate || (freshCalc as any).travelDate,
+            serviceEndDate: itemServiceEndDate,
+            nights: itemNights,
+            targetCurrency: effectiveCurrency,
+            baseSellingPriceInTargetCurrency: itemPreSurcharge,
+            masterSurcharges: centralizedMasterSurcharges,
+            preserveHistoricalAmounts: preserveHistorical
+          })
+        : [];
+      const reconciledSurcharge = reconciled.length > 0
+        ? roundCurrencyAmount(reconciled.reduce((sum, s) => sum + (s.appliedAmountConverted || 0), 0), effectiveCurrency)
+        : roundCurrencyAmount((freshCalc as any).surchargeTotal || 0, effectiveCurrency);
+
+      if (freshCalc.totalNetCost > 0 || freshCalc.finalTotalSellingPrice > 0) {
+        return {
+          selling: roundCurrencyAmount(freshCalc.finalTotalSellingPrice, effectiveCurrency),
+          net: roundCurrencyAmount(freshCalc.totalNetCost, effectiveCurrency),
+          feeAndTax: roundCurrencyAmount(
+            (freshCalc.serviceFee || 0) + (freshCalc.taxAmount || 0) + reconciledSurcharge,
+            effectiveCurrency
+          )
+        };
+      }
     }
 
     const fallbackSelling =
@@ -4580,10 +5532,14 @@ export function calculateQuoteTotal(
     const convertedNet = fallbackFromCurr === effectiveCurrency
       ? fallbackNet
       : currencyEngine.convert(fallbackNet, fallbackFromCurr, effectiveCurrency);
+    const rawFallbackFeeAndTax = (calc?.serviceFee || 0) + (calc?.taxAmount || 0) + (calc?.surchargeTotal || 0);
+    const convertedFeeAndTax = fallbackFromCurr === effectiveCurrency
+      ? rawFallbackFeeAndTax
+      : currencyEngine.convert(rawFallbackFeeAndTax, fallbackFromCurr, effectiveCurrency);
     return {
       selling: roundCurrencyAmount(convertedSelling, effectiveCurrency),
       net: roundCurrencyAmount(convertedNet, effectiveCurrency),
-      feeAndTax: 0
+      feeAndTax: roundCurrencyAmount(convertedFeeAndTax, effectiveCurrency)
     };
   };
 
@@ -4595,36 +5551,59 @@ export function calculateQuoteTotal(
   const resolvedLands = landItems.map(resolveItemInTargetCurrency);
 
   let hotelBaseSellingPrice = roundCurrencyAmount(resolvedHotels.reduce((sum, r) => sum + r.selling, 0), effectiveCurrency);
-  const hotelTotalNetCost = roundCurrencyAmount(resolvedHotels.reduce((sum, r) => sum + r.net, 0), effectiveCurrency);
-  const hotelFeeAndTax = roundCurrencyAmount(resolvedHotels.reduce((sum, r) => sum + r.feeAndTax, 0), effectiveCurrency);
+  let hotelTotalNetCost = roundCurrencyAmount(resolvedHotels.reduce((sum, r) => sum + r.net, 0), effectiveCurrency);
+  let hotelFeeAndTax = roundCurrencyAmount(resolvedHotels.reduce((sum, r) => sum + r.feeAndTax, 0), effectiveCurrency);
 
-  // Include any routeHub manualHotel that was not already represented in hotelItems (converting from its source currency!)
+  // Include any routeHub manualHotel that was not already represented in hotelItems using strict occurrence matching
   let hubManualHotelsCount = 0;
   if (!isLandOnly && activeHubs.length > 0) {
     const countedHotelIds = new Set<string>();
     activeHubs.forEach(h => {
       if (h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none') return;
-      const matched = hotelItems.find(it => {
-        if (countedHotelIds.has(it.id)) return false;
-        return (h.hotelId && it.product?.id?.includes(h.hotelId)) ||
-               (h.manualHotel?.hotelName && it.product?.name?.toLowerCase().includes(h.manualHotel.hotelName.toLowerCase())) ||
-               (it.notes && it.notes.toLowerCase().includes((h.hubName || '').toLowerCase())) ||
-               (it.hubId === h.id || it.manualHotelDetails?.hubId === h.id);
-      });
+      const matched = hotelItems.find(it =>
+        !countedHotelIds.has(it.id) && doesHotelItemBelongToHubOccurrence(it, h, activeHubs)
+      );
       if (matched) {
         countedHotelIds.add(matched.id);
       } else if (h.manualHotel) {
-        const manualSourceCurr = (h.manualHotel as any)?.rateCurrency || (h.manualHotel as any)?.currency || effectiveCurrency;
-        const rawManualPrice = (h.manualHotel as any)?.totalSellingPrice ||
-                               (h.manualHotel as any)?.totalPrice ||
-                               (h.manualHotel as any)?.price ||
-                               ((Number(h.manualHotel.ratePerNight || 0)) * Math.max(1, Number(h.nights || h.manualHotel.numberOfNights || 1)) * Math.max(1, Number(h.manualHotel.numberOfRooms || 1)));
-        if (rawManualPrice > 0) {
-          const convertedManualPrice = isQuoteLockedOrSaved && (h.manualHotel as any)?.totalSellingPrice
-            ? rawManualPrice
-            : currencyEngine.convert(rawManualPrice, manualSourceCurr, effectiveCurrency);
-          hotelBaseSellingPrice = roundCurrencyAmount(hotelBaseSellingPrice + convertedManualPrice, effectiveCurrency);
+        const manualSourceCurr = currencyEngine.normalizeCurrencyCode(
+          (h.manualHotel as any)?.rateCurrency || (h.manualHotel as any)?.currency || effectiveCurrency,
+          effectiveCurrency
+        ) as CurrencyCode;
+        const synthItem: any = {
+          id: `hub-manual-hotel-${h.itineraryHubOccurrenceId || h.id}`,
+          isManualHotel: true,
+          accommodationType: 'manual',
+          manualHotelDetails: h.manualHotel,
+          nights: h.nights || h.manualHotel.numberOfNights,
+          roomsCount: h.roomsCount || h.manualHotel.numberOfRooms,
+          hubId: h.id,
+          itineraryHubOccurrenceId: h.itineraryHubOccurrenceId || h.id
+        };
+        const mh = resolveManualHotelPricingInTargetCurrency(synthItem, effectiveCurrency, preserveHistorical);
+        if (mh.hasValidRate && mh.convertedNetCost > 0) {
+          hotelBaseSellingPrice = roundCurrencyAmount(hotelBaseSellingPrice + mh.finalSellingPrice, effectiveCurrency);
+          hotelTotalNetCost = roundCurrencyAmount(hotelTotalNetCost + mh.convertedNetCost, effectiveCurrency);
+          hotelFeeAndTax = roundCurrencyAmount(hotelFeeAndTax + mh.serviceFee + mh.taxAmount + mh.surchargeTotal, effectiveCurrency);
           hubManualHotelsCount++;
+        } else {
+          const rawManualPrice = (h.manualHotel as any)?.totalSellingPrice ||
+                                 (h.manualHotel as any)?.totalPrice ||
+                                 (h.manualHotel as any)?.price ||
+                                 ((Number(h.manualHotel.ratePerNight || 0)) * Math.max(1, Number(h.nights || h.manualHotel.numberOfNights || 1)) * Math.max(1, Number(h.manualHotel.numberOfRooms || 1)));
+          if (rawManualPrice > 0) {
+            const convertedManualPrice = preserveHistorical && (h.manualHotel as any)?.totalSellingPrice
+              ? rawManualPrice
+              : currencyEngine.convert(rawManualPrice, manualSourceCurr, effectiveCurrency);
+            hotelBaseSellingPrice = roundCurrencyAmount(hotelBaseSellingPrice + convertedManualPrice, effectiveCurrency);
+            const rawManualNet = (h.manualHotel as any)?.totalNetCost ?? (h.manualHotel as any)?.netCost ??
+                                 ((Number(h.manualHotel.ratePerNight || 0)) * Math.max(1, Number(h.nights || h.manualHotel.numberOfNights || 1)) * Math.max(1, Number(h.manualHotel.numberOfRooms || 1)));
+            if (rawManualNet > 0) {
+              const convertedManualNet = currencyEngine.convert(rawManualNet, manualSourceCurr, effectiveCurrency);
+              hotelTotalNetCost = roundCurrencyAmount(hotelTotalNetCost + convertedManualNet, effectiveCurrency);
+            }
+            hubManualHotelsCount++;
+          }
         }
       }
     });
@@ -4638,17 +5617,18 @@ export function calculateQuoteTotal(
   const totalNetCost = roundCurrencyAmount(hotelTotalNetCost + landTotalNetCost, effectiveCurrency);
   const totalFeeAndTax = roundCurrencyAmount(hotelFeeAndTax + landFeeAndTax, effectiveCurrency);
 
-  const adminMarginValue = !Array.isArray(quoteOrItems)
+  const rawAdminMarginVal = !Array.isArray(quoteOrItems)
     ? ((quoteOrItems as any).adminManualMarginValue ?? (quoteOrItems as any).admin_manual_margin_value ?? activePricingSnapshot?.adminManualMarginValue)
     : undefined;
-  const adminMarginType = !Array.isArray(quoteOrItems)
-    ? ((quoteOrItems as any).adminManualMarginType ?? (quoteOrItems as any).admin_manual_margin_type ?? activePricingSnapshot?.adminManualMarginType ?? 'PERCENTAGE')
+  const adminMarginType: 'PERCENTAGE' | 'FIXED' = !Array.isArray(quoteOrItems)
+    ? (((quoteOrItems as any).adminManualMarginType ?? (quoteOrItems as any).admin_manual_margin_type ?? activePricingSnapshot?.adminManualMarginType) === 'FIXED' ? 'FIXED' : 'PERCENTAGE')
     : 'PERCENTAGE';
-  const adminMarginMode = !Array.isArray(quoteOrItems)
-    ? ((quoteOrItems as any).adminMarginMode ?? (quoteOrItems as any).admin_margin_mode ?? activePricingSnapshot?.adminMarginMode ?? 'ADD')
+  const adminMarginMode: 'REPLACE' | 'ADD' = !Array.isArray(quoteOrItems)
+    ? (((quoteOrItems as any).adminMarginMode ?? (quoteOrItems as any).admin_margin_mode ?? activePricingSnapshot?.adminMarginMode) === 'REPLACE' ? 'REPLACE' : 'ADD')
     : 'ADD';
+  const adminMarginValue = validateAdminManualMargin(rawAdminMarginVal, adminMarginType).sanitizedValue;
   const hasAdminMarginConfig = !Array.isArray(quoteOrItems) && (
-    adminMarginValue !== undefined ||
+    rawAdminMarginVal !== undefined ||
     (quoteOrItems as any).adminMarginMode !== undefined ||
     (quoteOrItems as any).admin_margin_mode !== undefined ||
     activePricingSnapshot?.adminMarginMode !== undefined
@@ -4658,17 +5638,19 @@ export function calculateQuoteTotal(
   let effectiveHotelBaseSellingPrice = hotelBaseSellingPrice;
   let effectiveLandBaseSellingPrice = landBaseSellingPrice;
 
-  if (hasAdminMarginConfig && totalNetCost > 0) {
-    const safeAdminMarginVal = Number(adminMarginValue ?? 0);
-    const adminMarginAmount = adminMarginType === 'PERCENTAGE'
-      ? roundCurrencyAmount(totalNetCost * (safeAdminMarginVal / 100), effectiveCurrency)
-      : roundCurrencyAmount(safeAdminMarginVal, effectiveCurrency);
+  const adminMarginAmount = adminMarginType === 'PERCENTAGE'
+    ? roundCurrencyAmount(totalNetCost * (adminMarginValue / 100), effectiveCurrency)
+    : roundCurrencyAmount(adminMarginValue, effectiveCurrency);
+
+  let usedSavedStage1Base = false;
+
+  if (hasAdminMarginConfig && (totalNetCost > 0 || (adminMarginType === 'FIXED' && adminMarginAmount > 0))) {
     effectiveBaseSellingPrice = adminMarginMode === 'REPLACE'
       ? roundCurrencyAmount(totalNetCost + adminMarginAmount + totalFeeAndTax, effectiveCurrency)
       : roundCurrencyAmount(baseSellingPrice + adminMarginAmount, effectiveCurrency);
 
     if (adminMarginType === 'PERCENTAGE') {
-      const hotelAdminMargin = roundCurrencyAmount(hotelTotalNetCost * (safeAdminMarginVal / 100), effectiveCurrency);
+      const hotelAdminMargin = roundCurrencyAmount(hotelTotalNetCost * (adminMarginValue / 100), effectiveCurrency);
       const landAdminMargin = roundCurrencyAmount(adminMarginAmount - hotelAdminMargin, effectiveCurrency);
       effectiveHotelBaseSellingPrice = adminMarginMode === 'REPLACE'
         ? roundCurrencyAmount(hotelTotalNetCost + hotelAdminMargin + hotelFeeAndTax, effectiveCurrency)
@@ -4679,7 +5661,7 @@ export function calculateQuoteTotal(
     } else {
       const basisTotal = adminMarginMode === 'REPLACE' ? totalNetCost : baseSellingPrice;
       const hotelBasis = adminMarginMode === 'REPLACE' ? hotelTotalNetCost : hotelBaseSellingPrice;
-      const hotelShare = basisTotal > 0 ? (hotelBasis / basisTotal) : 0;
+      const hotelShare = basisTotal > 0 ? (hotelBasis / basisTotal) : ((hotelItems.length + hubManualHotelsCount) > 0 ? 1 : 0);
       const hotelAdminMargin = roundCurrencyAmount(adminMarginAmount * hotelShare, effectiveCurrency);
       const landAdminMargin = roundCurrencyAmount(adminMarginAmount - hotelAdminMargin, effectiveCurrency);
       effectiveHotelBaseSellingPrice = adminMarginMode === 'REPLACE'
@@ -4689,8 +5671,8 @@ export function calculateQuoteTotal(
         ? roundCurrencyAmount(landTotalNetCost + landAdminMargin + landFeeAndTax, effectiveCurrency)
         : roundCurrencyAmount(landBaseSellingPrice + landAdminMargin, effectiveCurrency);
     }
-  } else if (!Array.isArray(quoteOrItems)) {
-    // When net costs have been stripped (e.g. sanitized customer/agent quote), honor saved Stage 1 Final Total
+  } else if (!Array.isArray(quoteOrItems) && (quoteOrItems as any).totalNetCost === undefined) {
+    // When net costs and admin manual margin were stripped (sanitized customer/agent quote), honor saved Stage 1 Final Total (which already includes Stage 1 discounts)
     const savedStage1Base =
       (quoteOrItems as any).revisedSellingPrice ??
       (quoteOrItems as any).revised_selling_price ??
@@ -4700,6 +5682,7 @@ export function calculateQuoteTotal(
       activePricingSnapshot?.theUnboundBaseSellingPrice ??
       activePricingSnapshot?.baseFinalSellingPrice;
     if (typeof savedStage1Base === 'number' && savedStage1Base > 0 && (!isLandOnly || hotelBaseSellingPrice === 0)) {
+      usedSavedStage1Base = true;
       effectiveBaseSellingPrice = roundCurrencyAmount(savedStage1Base, effectiveCurrency);
       if (baseSellingPrice > 0 && effectiveBaseSellingPrice !== baseSellingPrice) {
         const hotelShare = hotelBaseSellingPrice / baseSellingPrice;
@@ -4709,17 +5692,21 @@ export function calculateQuoteTotal(
     }
   }
 
-  // Apply overall discount at Stage 1 if not already baked into savedStage1Base
-  const stage1DiscountAmount = discountPercent > 0 && (totalNetCost > 0 || Array.isArray(quoteOrItems))
-    ? roundCurrencyAmount(effectiveBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
-    : 0;
-  const stage1FinalBase = Math.max(0, roundCurrencyAmount(effectiveBaseSellingPrice - stage1DiscountAmount, effectiveCurrency));
+  // Apply overall discount at Stage 1 ONLY when not already baked into a sanitized savedStage1Base
+  const stage1DiscountAmount = usedSavedStage1Base
+    ? roundCurrencyAmount(activePricingSnapshot?.discountsTotal ?? 0, effectiveCurrency)
+    : (discountPercent > 0 && (totalNetCost > 0 || Array.isArray(quoteOrItems))
+        ? roundCurrencyAmount(effectiveBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
+        : 0);
+  const stage1FinalBase = usedSavedStage1Base
+    ? effectiveBaseSellingPrice
+    : Math.max(0, roundCurrencyAmount(effectiveBaseSellingPrice - stage1DiscountAmount, effectiveCurrency));
 
-  const hotelDiscountAmount = discountPercent > 0 && stage1DiscountAmount > 0
+  const hotelDiscountAmount = !usedSavedStage1Base && discountPercent > 0 && stage1DiscountAmount > 0
     ? roundCurrencyAmount(effectiveHotelBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
     : 0;
   const stage1HotelFinalBase = Math.max(0, roundCurrencyAmount(effectiveHotelBaseSellingPrice - hotelDiscountAmount, effectiveCurrency));
-  const landDiscountAmount = roundCurrencyAmount(stage1DiscountAmount - hotelDiscountAmount, effectiveCurrency);
+  const landDiscountAmount = !usedSavedStage1Base ? roundCurrencyAmount(stage1DiscountAmount - hotelDiscountAmount, effectiveCurrency) : 0;
   const stage1LandFinalBase = Math.max(0, roundCurrencyAmount(effectiveLandBaseSellingPrice - landDiscountAmount, effectiveCurrency));
 
   // STAGE 2: Agent-Controlled Additional Markup ("Your Additional Markup")
@@ -4732,11 +5719,36 @@ export function calculateQuoteTotal(
   let unmarkedItemsStage1Base = 0;
   let unmarkedHotelStage1Base = 0;
 
+  const nonExcludedItemCount = hotelItems.length + landItems.length;
+  const computeItemStage1Base = (rawSelling: number, itemNet: number, itemFeeAndTax: number): number => {
+    let itemStage1PreDiscount = rawSelling;
+    if (!usedSavedStage1Base && hasAdminMarginConfig && (totalNetCost > 0 || (adminMarginType === 'FIXED' && adminMarginAmount > 0))) {
+      let itemAdminMargin = 0;
+      if (adminMarginType === 'PERCENTAGE') {
+        itemAdminMargin = roundCurrencyAmount(itemNet * (adminMarginValue / 100), effectiveCurrency);
+      } else {
+        const basisTotal = adminMarginMode === 'REPLACE' ? totalNetCost : baseSellingPrice;
+        const itemBasis = adminMarginMode === 'REPLACE' ? itemNet : rawSelling;
+        const itemShare = basisTotal > 0 ? itemBasis / basisTotal : (nonExcludedItemCount > 0 ? 1 / nonExcludedItemCount : 0);
+        itemAdminMargin = roundCurrencyAmount(adminMarginAmount * itemShare, effectiveCurrency);
+      }
+      itemStage1PreDiscount = adminMarginMode === 'REPLACE'
+        ? roundCurrencyAmount(itemNet + itemAdminMargin + itemFeeAndTax, effectiveCurrency)
+        : roundCurrencyAmount(rawSelling + itemAdminMargin, effectiveCurrency);
+    }
+    const itemStage1Discount = !usedSavedStage1Base && discountPercent > 0
+      ? roundCurrencyAmount(itemStage1PreDiscount * (discountPercent / 100), effectiveCurrency)
+      : 0;
+    return hasAdminMarginConfig && !usedSavedStage1Base
+      ? Math.max(0, roundCurrencyAmount(itemStage1PreDiscount - itemStage1Discount, effectiveCurrency))
+      : (Math.abs(stage1ScaleRatio - 1) > 0.00001
+          ? roundCurrencyAmount(rawSelling * stage1ScaleRatio, effectiveCurrency)
+          : roundCurrencyAmount(rawSelling, effectiveCurrency));
+  };
+
   hotelItems.forEach((it, idx) => {
-    const rawSelling = resolvedHotels[idx]?.selling || 0;
-    const itemStage1 = Math.abs(stage1ScaleRatio - 1) > 0.00001
-      ? roundCurrencyAmount(rawSelling * stage1ScaleRatio, effectiveCurrency)
-      : roundCurrencyAmount(rawSelling, effectiveCurrency);
+    const resolved = resolvedHotels[idx] || { selling: 0, net: 0, feeAndTax: 0 };
+    const itemStage1 = computeItemStage1Base(resolved.selling, resolved.net, resolved.feeAndTax);
     const itemMarkupVal = validateAgentAdditionalMarkup(it.agentAdditionalMarkupValue).sanitizedValue;
     const itemMarkupType = it.agentAdditionalMarkupType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
     if (itemMarkupVal > 0) {
@@ -4752,10 +5764,8 @@ export function calculateQuoteTotal(
   });
 
   landItems.forEach((it, idx) => {
-    const rawSelling = resolvedLands[idx]?.selling || 0;
-    const itemStage1 = Math.abs(stage1ScaleRatio - 1) > 0.00001
-      ? roundCurrencyAmount(rawSelling * stage1ScaleRatio, effectiveCurrency)
-      : roundCurrencyAmount(rawSelling, effectiveCurrency);
+    const resolved = resolvedLands[idx] || { selling: 0, net: 0, feeAndTax: 0 };
+    const itemStage1 = computeItemStage1Base(resolved.selling, resolved.net, resolved.feeAndTax);
     const itemMarkupVal = validateAgentAdditionalMarkup(it.agentAdditionalMarkupValue).sanitizedValue;
     const itemMarkupType = it.agentAdditionalMarkupType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
     if (itemMarkupVal > 0) {
@@ -4888,6 +5898,7 @@ export function buildQuotationCurrencySnapshot(params: {
   existingSnapshot?: QuotationCurrencySnapshot;
   surchargeOverrides?: QuotationSurchargeOverride[];
   bookingDate?: string;
+  precomputedBreakdown?: QuoteInternalBreakdownResult;
 }): QuotationCurrencySnapshot {
   const {
     quoteId,
@@ -4911,31 +5922,34 @@ export function buildQuotationCurrencySnapshot(params: {
     preserveHistoricalSnapshot = false,
     existingSnapshot,
     surchargeOverrides,
-    bookingDate
+    bookingDate,
+    precomputedBreakdown
   } = params;
 
-  const breakdown = calculateQuoteInternalBreakdown({
-    items: items as any,
-    targetCurrency,
-    scope,
-    routeHubs,
-    userRole,
-    user,
-    companyId,
-    agencyName,
-    productLevelMarginEnabled,
-    customAgentMarginPercent,
-    adminMarginMode,
-    adminManualMarginType,
-    adminManualMarginValue,
-    overallDiscountPercent,
-    agentMarginType,
-    agentMarginValue,
-    preserveHistoricalSnapshot,
-    historicalSnapshot: existingSnapshot,
-    surchargeOverrides,
-    bookingDate
-  });
+  const breakdown = (precomputedBreakdown && precomputedBreakdown.currency === targetCurrency)
+    ? precomputedBreakdown
+    : calculateQuoteInternalBreakdown({
+        items: items as any,
+        targetCurrency,
+        scope,
+        routeHubs,
+        userRole,
+        user,
+        companyId,
+        agencyName,
+        productLevelMarginEnabled,
+        customAgentMarginPercent,
+        adminMarginMode,
+        adminManualMarginType,
+        adminManualMarginValue,
+        overallDiscountPercent,
+        agentMarginType,
+        agentMarginValue,
+        preserveHistoricalSnapshot,
+        historicalSnapshot: existingSnapshot,
+        surchargeOverrides,
+        bookingDate
+      });
 
   const fxStatus = currencyEngine.getStatus();
   const capturedAt = new Date().toISOString();
@@ -5008,6 +6022,10 @@ export function buildQuotationCurrencySnapshot(params: {
   const landPartTotal = breakdown.landPartTotal ?? breakdown.finalPackagePrice;
   const finalCustomerSellingPrice = breakdown.finalPackagePrice;
 
+  const normalizedAdminMode: 'ADD' | 'REPLACE' = adminMarginMode === 'REPLACE' ? 'REPLACE' : 'ADD';
+  const normalizedAdminType: 'PERCENTAGE' | 'FIXED' = adminManualMarginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+  const sanitizedAdminMarginValue = validateAdminManualMargin(adminManualMarginValue, normalizedAdminType).sanitizedValue;
+
   return {
     snapshotId: `fx-snap-${quoteId}-v${quoteVersion}-${Date.now()}`,
     quoteId,
@@ -5017,16 +6035,19 @@ export function buildQuotationCurrencySnapshot(params: {
     roundingMode,
     fxSource: fxStatus.provider,
     capturedAt,
+    activeMarginMode: breakdown.activeMarginMode,
+    productLevelMarginEnabled: breakdown.productLevelMarginEnabled,
+    agentLevelMarginPercent: breakdown.configuredAgentLevelMarginPercent,
     lineItems,
     totals: {
       convertedTotalNetCost: breakdown.totalNettCost,
       baseMarginTotal: existingBaseMarginAmount,
-      manualMarginAdjustmentMode: adminMarginMode,
-      manualMarginAdjustmentType: adminManualMarginType,
-      manualMarginAdjustmentValue: adminManualMarginValue,
+      manualMarginAdjustmentMode: normalizedAdminMode,
+      manualMarginAdjustmentType: normalizedAdminType,
+      manualMarginAdjustmentValue: sanitizedAdminMarginValue,
       manualMarginAdjustmentAmount,
       effectiveUnderlyingMarginAmount:
-        adminMarginMode === 'REPLACE'
+        normalizedAdminMode === 'REPLACE'
           ? manualMarginAdjustmentAmount
           : roundCurrencyAmount(existingBaseMarginAmount + manualMarginAdjustmentAmount, targetCurrency),
       taxesTotal: breakdown.taxAmount,

@@ -1,9 +1,13 @@
 import { MasterRegion, Destination, DestinationRegionItem, CityHub, Product } from '../types';
 import { AppDatabase } from './db';
+import {
+  buildDestinationVisibilityIndex,
+  isDestinationActive as isDestActiveStrict,
+  isCityHubActiveForB2B,
+  isRegionActiveForB2B,
+  isProductActiveForB2B
+} from './destinationVisibility';
 import { envService } from './environment';
-import { INITIAL_MASTER_REGIONS } from '../data/initialRegions';
-import { DESTINATIONS } from '../data/destinations';
-import { INITIAL_CITY_HUBS } from '../data/initialCityHubs';
 
 export interface HierarchyValidationResult {
   valid: boolean;
@@ -241,17 +245,19 @@ export class MasterDataService {
   public getAllDestinations(): Destination[] {
     const db = AppDatabase.getInstance();
     const raw = db.getDestinations();
-    const source = raw && raw.length > 0 ? raw : (envService.allowDemoData() ? DESTINATIONS : []);
+    const source = raw || [];
     return source
       .filter(d => d && d.id && (d as any).status !== 'DELETED')
       .map(toCanonicalDestination);
   }
 
   /**
-   * Retrieves currently active/visible Destinations from the authoritative database.
+   * Retrieves strictly ACTIVE Destinations from the authoritative database.
+   * Excludes COMING_SOON, DRAFT, INACTIVE, ARCHIVED, DISABLED, missing, or deleted records.
    */
   public getActiveDestinations(): Destination[] {
-    return this.getAllDestinations().filter(d => d.status !== 'INACTIVE');
+    const deletedSet = AppDatabase.getInstance().getDeletedEntityIds();
+    return this.getAllDestinations().filter(d => isDestActiveStrict(d, deletedSet));
   }
 
   /**
@@ -302,10 +308,12 @@ export class MasterDataService {
   }
 
   /**
-   * Retrieves all active Destination Regions from the authoritative database.
+   * Retrieves all active Destination Regions whose parent Destination is strictly ACTIVE.
    */
   public getActiveDestinationRegions(): DestinationRegionItem[] {
-    return this.getAllDestinationRegions().filter(r => r.status !== 'INACTIVE' && r.isActive !== false);
+    const db = AppDatabase.getInstance();
+    const index = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), db.getDeletedEntityIds());
+    return this.getAllDestinationRegions().filter(r => isRegionActiveForB2B(r, index, db.getDeletedEntityIds()));
   }
 
   /**
@@ -345,7 +353,7 @@ export class MasterDataService {
   public getActiveRegions(): MasterRegion[] {
     const db = AppDatabase.getInstance();
     const raw = db.getMasterRegions();
-    const source = raw && raw.length > 0 ? raw : (envService.allowDemoData() ? INITIAL_MASTER_REGIONS : []);
+    const source = raw || [];
     return source
       .filter(r => r && r.id && r.status !== 'INACTIVE' && (r as any).status !== 'DELETED')
       .map(toCanonicalMasterRegion);
@@ -423,17 +431,20 @@ export class MasterDataService {
   public getAllHubs(): CityHub[] {
     const db = AppDatabase.getInstance();
     const raw = db.getCityHubs();
-    const source = raw && raw.length > 0 ? raw : (envService.allowDemoData() ? INITIAL_CITY_HUBS : []);
+    const source = raw || [];
     return source
       .filter(h => h && h.id && (h as any).status !== 'DELETED')
       .map(toCanonicalHub);
   }
 
   /**
-   * Retrieves all active City Hubs from the authoritative database.
+   * Retrieves all active City Hubs whose parent Destination is strictly ACTIVE.
    */
   public getActiveHubs(): CityHub[] {
-    return this.getAllHubs().filter(h => h.status !== 'ARCHIVED' && h.status !== 'INACTIVE' && h.isActive !== false);
+    const db = AppDatabase.getInstance();
+    const deletedSet = db.getDeletedEntityIds();
+    const index = buildDestinationVisibilityIndex(db.getDestinations(), this.getAllHubs(), deletedSet);
+    return this.getAllHubs().filter(h => isCityHubActiveForB2B(h, index, deletedSet));
   }
 
   /**
@@ -441,7 +452,7 @@ export class MasterDataService {
    */
   public getHubsByDestinationId(destinationId?: string, includeInactive: boolean = false): CityHub[] {
     if (!destinationId || !destinationId.trim()) return [];
-    const resolvedDest = this.getDestinationById(destinationId, true);
+    const resolvedDest = this.getDestinationById(destinationId, includeInactive);
     if (!resolvedDest) return [];
     const targetDestId = resolvedDest.id;
 
@@ -458,13 +469,15 @@ export class MasterDataService {
     const hubs = includeInactive ? this.getAllHubs() : this.getActiveHubs();
 
     // Check direct DestinationRegion match first (Destination -> Region -> Hub)
-    const destReg = this.getDestinationRegionById(cleanRegId, true);
+    const destReg = this.getDestinationRegionById(cleanRegId, includeInactive);
     if (destReg) {
       return hubs.filter(h => h.regionId === destReg.id && h.destinationId === destReg.destinationId);
     }
 
     // Fallback for macro MasterRegion IDs (e.g. REG-001)
-    const validDests = this.getDestinationsByRegionId(cleanRegId);
+    const validDests = this.getDestinationsByRegionId(cleanRegId).filter(d =>
+      includeInactive || isDestActiveStrict(d)
+    );
     const validDestIds = new Set(validDests.map(d => d.id));
     return hubs.filter(h => validDestIds.has(h.destinationId));
   }
@@ -498,13 +511,15 @@ export class MasterDataService {
    */
   public getProductsByDestinationId(destinationId?: string, onlyActive: boolean = true): Product[] {
     if (!destinationId || !destinationId.trim()) return [];
-    const dest = this.getDestinationById(destinationId, true);
+    const dest = this.getDestinationById(destinationId, !onlyActive);
     if (!dest) return [];
     const db = AppDatabase.getInstance();
+    const deletedSet = db.getDeletedEntityIds();
+    const index = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
     const products = db.getProducts();
     return products.filter(p => {
       if (!p || (p as any).status === 'DELETED') return false;
-      if (onlyActive && p.status !== 'ACTIVE') return false;
+      if (onlyActive && !isProductActiveForB2B(p, index, deletedSet)) return false;
       const pDest = this.getDestinationById(p.destinationId, true);
       return pDest?.id === dest.id;
     });
@@ -515,14 +530,16 @@ export class MasterDataService {
    */
   public getProductsByRegionId(regionId?: string, onlyActive: boolean = true): Product[] {
     if (!regionId || !regionId.trim()) return [];
-    const reg = this.getDestinationRegionById(regionId, true);
+    const reg = this.getDestinationRegionById(regionId, !onlyActive);
     if (!reg) return [];
-    const validHubIdsInRegion = new Set(this.getHubsByRegionId(reg.id, true).map(h => h.id));
+    const validHubIdsInRegion = new Set(this.getHubsByRegionId(reg.id, !onlyActive).map(h => h.id));
     const db = AppDatabase.getInstance();
+    const deletedSet = db.getDeletedEntityIds();
+    const index = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
     const products = db.getProducts();
     return products.filter(p => {
       if (!p || (p as any).status === 'DELETED') return false;
-      if (onlyActive && p.status !== 'ACTIVE') return false;
+      if (onlyActive && !isProductActiveForB2B(p, index, deletedSet)) return false;
       const pDest = this.getDestinationById(p.destinationId, true);
       if (pDest?.id !== reg.destinationId) return false;
       if (p.regionId === reg.id) return true;
@@ -547,13 +564,15 @@ export class MasterDataService {
    */
   public getProductsByHubId(hubId?: string, onlyActive: boolean = true): Product[] {
     if (!hubId || !hubId.trim()) return [];
-    const hub = this.getHubById(hubId, true);
+    const hub = this.getHubById(hubId, !onlyActive);
     if (!hub) return [];
     const db = AppDatabase.getInstance();
+    const deletedSet = db.getDeletedEntityIds();
+    const index = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
     const products = db.getProducts();
     return products.filter(p => {
       if (!p || (p as any).status === 'DELETED') return false;
-      if (onlyActive && p.status !== 'ACTIVE') return false;
+      if (onlyActive && !isProductActiveForB2B(p, index, deletedSet)) return false;
       const pDest = this.getDestinationById(p.destinationId, true);
       if (pDest?.id !== hub.destinationId) return false;
       if (p.hubId) {

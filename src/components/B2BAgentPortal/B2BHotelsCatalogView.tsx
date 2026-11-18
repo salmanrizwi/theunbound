@@ -29,6 +29,7 @@ import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { canonicalImageService } from '../../services/imageService';
 import { AppDatabase } from '../../services/db';
 import { inventoryDiscoveryService } from '../../services/inventoryDiscoveryService';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 interface B2BHotelsCatalogViewProps {
   hotels?: Hotel[];
@@ -48,7 +49,18 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   const [dbTick, setDbTick] = useState(0);
 
   useEffect(() => {
-    const unsubDb = db.subscribe(() => setDbTick(t => t + 1));
+    const unsubDb = db.subscribeToCollections([
+      'hotels',
+      'hotel_rooms',
+      'hotel_rates',
+      'hotel_meal_plans',
+      'destinations',
+      'city_hubs',
+      'regions',
+      'surcharge_masters',
+      'surcharge_product_mappings',
+      'inventory_tombstones'
+    ], () => setDbTick(t => t + 1));
     const unsubImg = canonicalImageService.subscribe(() => setDbTick(t => t + 1));
     return () => {
       unsubDb();
@@ -57,13 +69,11 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   }, [db]);
 
   const canonicalHotels = useMemo(() => {
-    const fresh = db.getHotels();
-    return (fresh && fresh.length > 0) ? fresh : hotels;
+    return inventoryVisibilityService.getB2BActiveHotels();
   }, [hotels, db, dbTick]);
 
   const canonicalDestinations = useMemo(() => {
-    const fresh = db.getDestinations();
-    return (fresh && fresh.length > 0) ? fresh : destinations;
+    return inventoryVisibilityService.getB2BActiveDestinations();
   }, [destinations, db, dbTick]);
 
   // Search-First State Management
@@ -662,6 +672,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
                     >
                       <img
                         loading="lazy"
+                        decoding="async"
                         src={canonicalImageService.resolveHotelImage(hotel)}
                         alt={hotel.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"

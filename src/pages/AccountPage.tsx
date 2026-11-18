@@ -387,6 +387,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
               <img
                 src={formData.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop'}
                 alt={formData.name}
+                loading="eager"
+                decoding="async"
                 className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl object-cover ring-4 ring-[#00C6A6]/40 shadow-xl bg-slate-800"
               />
               <div className="absolute -bottom-1 -right-1 bg-emerald-500 w-5 h-5 rounded-full border-2 border-slate-950 flex items-center justify-center" title="Active Account">
@@ -539,6 +541,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
                 <img
                   src={formData.avatarUrl || PRESET_AVATARS[0].url}
                   alt="Avatar Preview"
+                  loading="lazy"
+                  decoding="async"
                   className="w-16 h-16 rounded-2xl object-cover ring-2 ring-[#00C6A6] bg-white shadow-xs"
                 />
                 <div className="space-y-1">
@@ -600,6 +604,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
                           <img
                             src={avatar.url}
                             alt={avatar.label}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                           />
                           {isSelected && (
@@ -1042,6 +1048,8 @@ export const AccountPage: React.FC<AccountPageProps> = ({
                     <img
                       src={formData.brandLogoUrl}
                       alt="Brand Logo"
+                      loading="lazy"
+                      decoding="async"
                       className="max-h-16 max-w-xs mx-auto object-contain bg-white p-2 rounded-lg border border-slate-200"
                     />
                   </div>

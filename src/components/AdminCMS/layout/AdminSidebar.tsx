@@ -39,9 +39,15 @@ import {
   Sparkles,
   Mail,
   Handshake,
+  Percent,
+  SlidersHorizontal,
+  Tag,
+  Wallet,
   LucideIcon
 } from 'lucide-react';
 import { CMSSection } from '../AdminCMSHub';
+import { User } from '../../../types';
+import { canUserAccessCMSModule, canUserAccessCMSSubTab } from '../../../services/permissionEngine';
 
 export interface NavChildItemConfig {
   id: string;
@@ -77,6 +83,7 @@ interface AdminSidebarProps {
   onToggleCollapse: () => void;
   isMobileOpen: boolean;
   onCloseMobile: () => void;
+  currentUser?: User | null;
   counts: {
     products: number;
     hotels: number;
@@ -98,6 +105,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
   onToggleCollapse,
   isMobileOpen,
   onCloseMobile,
+  currentUser,
   counts
 }) => {
   // Collapsible groups state
@@ -390,10 +398,17 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       items: [
         {
           id: 'pricing',
-          label: 'Pricing',
-          section: 'PRODUCT_MANAGEMENT',
-          subTab: 'PRODUCTS',
+          label: 'Pricing Management',
+          section: 'PRICING_MANAGEMENT',
+          subTab: 'PRICING',
           icon: DollarSign
+        },
+        {
+          id: 'margins',
+          label: 'Margin Management',
+          section: 'PRICING_MANAGEMENT',
+          subTab: 'MARGINS',
+          icon: SlidersHorizontal
         },
         {
           id: 'currency',
@@ -401,6 +416,34 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
           section: 'CURRENCY_MANAGEMENT',
           subTab: 'RATES_TABLE',
           icon: CircleDollarSign
+        },
+        {
+          id: 'tax_fees',
+          label: 'Tax & Fees',
+          section: 'PRICING_MANAGEMENT',
+          subTab: 'TAX_FEES',
+          icon: Receipt
+        },
+        {
+          id: 'discounts',
+          label: 'Discounts',
+          section: 'MARKETING_MANAGEMENT',
+          subTab: 'PROMOTIONS',
+          icon: Tag
+        },
+        {
+          id: 'surcharges',
+          label: 'Surcharge Management',
+          section: 'SURCHARGE_MANAGEMENT',
+          subTab: 'SURCHARGES',
+          icon: Percent
+        },
+        {
+          id: 'cashback_management',
+          label: 'Cashback Management',
+          section: 'CASHBACK_MANAGEMENT',
+          subTab: 'OVERVIEW_USERS',
+          icon: Wallet
         },
         {
           id: 'invoices',
@@ -597,7 +640,18 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
         </div>
 
         {/* Grouped Sections */}
-        {navGroups.map((group) => {
+        {navGroups
+          .map((group) => ({
+            ...group,
+            items: group.items.filter((item) => {
+              if (!currentUser) return true;
+              return item.subTab
+                ? canUserAccessCMSSubTab(currentUser, item.section, item.subTab)
+                : canUserAccessCMSModule(currentUser, item.section);
+            })
+          }))
+          .filter((group) => group.items.length > 0)
+          .map((group) => {
           const isGroupCollapsed = collapsedGroups[group.id] || false;
 
           return (

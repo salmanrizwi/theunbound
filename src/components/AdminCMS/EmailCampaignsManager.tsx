@@ -140,10 +140,15 @@ export const EmailCampaignsManager: React.FC<EmailCampaignsManagerProps> = ({
   };
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections([
+      'campaigns',
+      'automation_jobs',
+      'automation_logs',
+      'campaign_events'
+    ], () => {
       refreshData();
     });
-  }, []);
+  }, [db]);
 
   const showNotice = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
     setFeedbackBanner({ type, message });

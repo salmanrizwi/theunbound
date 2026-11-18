@@ -128,6 +128,20 @@ function base64UrlEncode(str: string): string {
     .replace(/=+$/, '');
 }
 
+async function serverFetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = 15000
+): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Refreshes or retrieves a valid Google OAuth Access Token server-side
  */
@@ -152,11 +166,15 @@ export async function getServerAccessToken(clientProvidedToken?: string | null):
         grant_type: 'refresh_token'
       });
 
-      const res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: bodyParams.toString()
-      });
+      const res = await serverFetchWithTimeout(
+        'https://oauth2.googleapis.com/token',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: bodyParams.toString()
+        },
+        12000
+      );
 
       if (res.ok) {
         const data = await res.json();
@@ -314,12 +332,16 @@ export function createIntegrationsRouter(): Router {
     }
 
     try {
-      const profileRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
-        headers: {
-          'Authorization': `Bearer ${tokenResult.token}`,
-          'Accept': 'application/json'
-        }
-      });
+      const profileRes = await serverFetchWithTimeout(
+        'https://gmail.googleapis.com/gmail/v1/users/me/profile',
+        {
+          headers: {
+            'Authorization': `Bearer ${tokenResult.token}`,
+            'Accept': 'application/json'
+          }
+        },
+        12000
+      );
 
       if (profileRes.ok) {
         const data = await profileRes.json();
@@ -460,10 +482,11 @@ export function createIntegrationsRouter(): Router {
         messageId,
         sentAt,
         simulated: true,
+        provider: 'TRANSACTIONAL_RELAY',
         recipient: to,
         cc: ccList,
         sender: resolvedSender,
-        details: 'Email dispatched successfully via Transactional Relay.'
+        details: 'Email accepted via Transactional Relay (Google Workspace OAuth not actively linked).'
       });
     }
 
@@ -557,14 +580,18 @@ export function createIntegrationsRouter(): Router {
     while (attempts < maxAttempts) {
       attempts++;
       try {
-        const sendRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${tokenResult.token}`,
-            'Content-Type': 'application/json'
+        const sendRes = await serverFetchWithTimeout(
+          'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${tokenResult.token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ raw: rawMessage })
           },
-          body: JSON.stringify({ raw: rawMessage })
-        });
+          15000
+        );
 
         if (sendRes.ok) {
           const sendData = await sendRes.json();
@@ -632,11 +659,18 @@ export function createIntegrationsRouter(): Router {
 
         // Transient failure (429 Rate Limit, 5xx Server Error) -> Backoff and retry
         store.gmailStats.retryCount++;
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempts) * 500));
+        if (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempts) * 500));
+        }
       } catch (err: any) {
-        lastErrorMsg = err?.message || 'Network error executing Gmail API request';
+        const isTimeout = err?.name === 'AbortError' || String(err?.message || '').toLowerCase().includes('abort');
+        lastErrorMsg = isTimeout
+          ? 'Gmail API request timed out (15s).'
+          : (err?.message || 'Network error executing Gmail API request');
         store.gmailStats.retryCount++;
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempts) * 500));
+        if (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempts) * 500));
+        }
       }
     }
 

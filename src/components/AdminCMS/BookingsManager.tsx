@@ -54,11 +54,26 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   );
   const [initialDeskSection, setInitialDeskSection] = useState<DeskSection>('OVERVIEW');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const bookingsPageSize = 25;
   const [activeFilter, setActiveFilter] = useState('ALL');
   const [channelFilter, setChannelFilter] = useState('ALL');
   const [ownershipFilter, setOwnershipFilter] = useState<string>('ALL');
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeFilter, channelFilter, ownershipFilter]);
 
   const handleRunMigration = () => {
     setIsMigrating(true);
@@ -75,7 +90,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   };
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['bookings', 'system_users'], () => {
       setBookings(db.getAllBookings());
       setInternalTeamMembers(db.getEligibleInternalTeamMembers());
     });
@@ -105,8 +120,8 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
   // Filter Bookings
   const filteredBookings = useMemo(() => {
+    const q = (debouncedSearchQuery || '').toLowerCase().trim();
     return bookings.filter((b) => {
-      const q = (searchQuery || '').toLowerCase().trim();
       const matchesSearch = 
         !q ||
         (b.bookingReference || '').toLowerCase().includes(q) ||
@@ -361,7 +376,9 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredBookings.map((b) => {
+                {filteredBookings
+                  .slice((currentPage - 1) * bookingsPageSize, currentPage * bookingsPageSize)
+                  .map((b) => {
                   const totalItems = b.items?.length || 0;
                   const allocatedItems = b.items?.filter(it => Boolean(it.supplierId || it.supplierName)).length || 0;
                   const unallocatedCount = totalItems - allocatedItems;
@@ -525,6 +542,40 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                 })}
               </tbody>
             </table>
+            {filteredBookings.length > bookingsPageSize && (() => {
+              const totalPages = Math.max(1, Math.ceil(filteredBookings.length / bookingsPageSize));
+              const safePage = Math.min(currentPage, totalPages);
+              return (
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-50/70 border-t border-slate-200 text-xs text-slate-600">
+                  <span>
+                    Showing <strong>{((safePage - 1) * bookingsPageSize) + 1}</strong> to{' '}
+                    <strong>{Math.min(safePage * bookingsPageSize, filteredBookings.length)}</strong> of{' '}
+                    <strong>{filteredBookings.length}</strong> bookings
+                  </span>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      disabled={safePage <= 1}
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      className="px-3 py-1 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                    >
+                      Prev
+                    </button>
+                    <span className="font-mono font-bold px-2">
+                      Page {safePage} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safePage >= totalPages}
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      className="px-3 py-1 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>

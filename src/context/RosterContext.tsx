@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { 
   RosterResource, 
   ProductRosterRule, 
@@ -6,7 +6,6 @@ import {
   AvailabilityCheckResult, 
   DateAvailabilityStatus 
 } from '../types';
-import { INITIAL_ROSTER_RESOURCES, INITIAL_PRODUCT_ROSTER_RULES } from '../data/initialRoster';
 import { envService } from '../services/environment';
 import { AppDatabase } from '../services/db';
 
@@ -38,8 +37,8 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [resources, setResources] = useState<RosterResource[]>(() => db.getResources());
 
   useEffect(() => {
-    // Subscribe to DB updates so Firestore real-time synchronization updates Roster resources
-    const unsubscribe = db.subscribe(() => {
+    // Scoped subscription: only update when roster_resources changes
+    const unsubscribe = db.subscribeToCollections(['roster_resources'], () => {
       setResources(db.getResources());
     });
     return unsubscribe;
@@ -54,11 +53,16 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           if (parsed && typeof parsed === 'object') return parsed;
         }
       }
-    } catch (e) {
-      return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
-    }
-    return allowDemo ? INITIAL_PRODUCT_ROSTER_RULES : {};
+    } catch {}
+    return {};
   });
+
+  useEffect(() => {
+    if (!allowDemo || Object.keys(rosterRules).length > 0) return;
+    void import('../data/initialRoster').then(m => {
+      setRosterRules(prev => (Object.keys(prev).length === 0 ? m.INITIAL_PRODUCT_ROSTER_RULES : prev));
+    });
+  }, [allowDemo]);
 
   useEffect(() => {
     try {
@@ -421,37 +425,43 @@ export const RosterProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setResources(db.getResources());
   };
 
-  const resetRosterToDefaults = () => {
+  const resetRosterToDefaults = React.useCallback(() => {
     if (allowDemo) {
-      INITIAL_ROSTER_RESOURCES.forEach(r => db.saveResource(r, null));
-      setResources(db.getResources());
-      setRosterRules(INITIAL_PRODUCT_ROSTER_RULES);
+      void import('../data/initialRoster').then(m => {
+        m.INITIAL_ROSTER_RESOURCES.forEach(r => db.saveResource(r, null));
+        setResources(db.getResources());
+        setRosterRules(m.INITIAL_PRODUCT_ROSTER_RULES);
+      });
     } else {
       setResources([]);
       setRosterRules({});
     }
-    localStorage.removeItem('unbound_roster_rules');
-  };
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('unbound_roster_rules');
+      }
+    } catch {}
+  }, [allowDemo, db]);
+
+  const contextValue = useMemo<RosterContextType>(() => ({
+    resources,
+    rosterRules,
+    checkDateAvailability,
+    toggleBlackoutDate,
+    setDateOverride,
+    removeDateOverride,
+    assignResource,
+    setOperatingDays,
+    addResource,
+    updateResource,
+    deleteResource,
+    getNextAvailableDate,
+    getMonthlyAvailabilityMap,
+    resetRosterToDefaults
+  }), [resources, rosterRules, resetRosterToDefaults]);
 
   return (
-    <RosterContext.Provider
-      value={{
-        resources,
-        rosterRules,
-        checkDateAvailability,
-        toggleBlackoutDate,
-        setDateOverride,
-        removeDateOverride,
-        assignResource,
-        setOperatingDays,
-        addResource,
-        updateResource,
-        deleteResource,
-        getNextAvailableDate,
-        getMonthlyAvailabilityMap,
-        resetRosterToDefaults
-      }}
-    >
+    <RosterContext.Provider value={contextValue}>
       {children}
     </RosterContext.Provider>
   );

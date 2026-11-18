@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Building, 
   ShieldCheck, 
@@ -7,7 +7,12 @@ import {
   Image, 
   DollarSign,
   Palette,
-  AlertCircle
+  AlertCircle,
+  Landmark,
+  Plus,
+  Trash2,
+  Edit3,
+  X
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
@@ -15,6 +20,10 @@ import {
   isTheUnboundBrandString,
   validateWhiteLabelReadiness
 } from '../../services/quotePresentationModel';
+import { cashbackService } from '../../services/cashbackService';
+import { validateBankAccountInput } from '../../services/cashbackEngine';
+import { AppDatabase } from '../../services/db';
+import { UserBankAccount } from '../../types';
 
 export const B2BAccountView: React.FC = () => {
   const { user, updateUserProfile } = useAuth();
@@ -88,6 +97,125 @@ export const B2BAccountView: React.FC = () => {
     });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 4000);
+  };
+
+  // Synchronized Cashback Bank Account Management
+  const [bankRefreshTick, setBankRefreshTick] = useState(0);
+  const [showBankForm, setShowBankForm] = useState(false);
+  const [editingBankId, setEditingBankId] = useState<string | null>(null);
+  const [bankHolderName, setBankHolderName] = useState(user?.name || '');
+  const [bankName, setBankName] = useState('');
+  const [branchName, setBranchName] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [accountType, setAccountType] = useState<'SAVINGS' | 'CURRENT'>('CURRENT');
+  const [ifscCode, setIfscCode] = useState('');
+  const [swiftCode, setSwiftCode] = useState('');
+  const [iban, setIban] = useState('');
+  const [bankCountry, setBankCountry] = useState('India');
+  const [bankCurrency, setBankCurrency] = useState('INR');
+  const [isDefaultBank, setIsDefaultBank] = useState(true);
+  const [bankStatusMsg, setBankStatusMsg] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    const db = AppDatabase.getInstance();
+    return db.subscribeToCollections([
+      'user_bank_accounts',
+      'user_cashback_configs',
+      'cashback_wallets',
+      'system_users',
+      'companies'
+    ], () => setBankRefreshTick(t => t + 1));
+  }, []);
+
+  const bankAccounts = useMemo<UserBankAccount[]>(() => {
+    if (!user?.id) return [];
+    return cashbackService.getBankAccountsForUser(user.id, true);
+  }, [user?.id, bankRefreshTick]);
+
+  const resetBankForm = () => {
+    setEditingBankId(null);
+    setBankHolderName(user?.name || '');
+    setBankName('');
+    setBranchName('');
+    setAccountNumber('');
+    setAccountType('CURRENT');
+    setIfscCode('');
+    setSwiftCode('');
+    setIban('');
+    setBankCountry('India');
+    setBankCurrency('INR');
+    setIsDefaultBank(bankAccounts.length === 0);
+  };
+
+  const handleEditBank = (acc: UserBankAccount) => {
+    setEditingBankId(acc.id);
+    setBankHolderName(acc.accountHolderName);
+    setBankName(acc.bankName);
+    setBranchName(acc.branchName || '');
+    setAccountNumber('');
+    setAccountType(acc.accountType || 'CURRENT');
+    setIfscCode(acc.ifscCode || '');
+    setSwiftCode(acc.swiftCode || '');
+    setIban(acc.iban || '');
+    setBankCountry(acc.country || 'India');
+    setBankCurrency(acc.currency || 'INR');
+    setIsDefaultBank(acc.isDefault);
+    setBankStatusMsg(null);
+    setShowBankForm(true);
+  };
+
+  const handleSaveBankAccount = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setBankStatusMsg(null);
+    const check = validateBankAccountInput({
+      accountHolderName: bankHolderName,
+      bankName,
+      accountNumber,
+      ifscCode,
+      swiftCode,
+      iban,
+      country: bankCountry
+    });
+    if (!check.valid) {
+      setBankStatusMsg({ kind: 'error', text: check.errors.join(' ') });
+      return;
+    }
+    try {
+      cashbackService.saveBankAccount({
+        id: editingBankId || undefined,
+        userId: user.id,
+        accountHolderName: bankHolderName,
+        bankName,
+        branchName,
+        accountNumber,
+        accountType,
+        ifscCode,
+        swiftCode,
+        iban,
+        country: bankCountry,
+        currency: bankCurrency,
+        isDefault: isDefaultBank,
+        actor: user
+      });
+      setBankStatusMsg({ kind: 'success', text: editingBankId ? 'Bank account updated securely.' : 'Bank account added securely.' });
+      setShowBankForm(false);
+      resetBankForm();
+      setBankRefreshTick(t => t + 1);
+    } catch (err: any) {
+      setBankStatusMsg({ kind: 'error', text: err?.message || 'Unable to save bank account.' });
+    }
+  };
+
+  const handleDeleteBank = (id: string) => {
+    if (!user) return;
+    try {
+      cashbackService.deleteBankAccount({ bankAccountId: id, userId: user.id, actor: user });
+      setBankStatusMsg({ kind: 'success', text: 'Bank account removed.' });
+      setBankRefreshTick(t => t + 1);
+    } catch (err: any) {
+      setBankStatusMsg({ kind: 'error', text: err?.message || 'Unable to remove bank account.' });
+    }
   };
 
   return (
@@ -372,6 +500,215 @@ export const B2BAccountView: React.FC = () => {
           </button>
         </div>
       </form>
+
+      {/* Cashback Payout Bank Account Details (Synced with My Cashback Wallet) */}
+      <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 space-y-5 shadow-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+          <div className="flex items-center gap-2.5">
+            <Landmark className="w-4 h-4 text-[#00C6A6]" />
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Cashback Payout Bank Account Details</h2>
+              <p className="text-xs text-slate-500">
+                Manage payout destinations used for Cashback & Rewards Wallet withdrawals. Account numbers are masked for security.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              resetBankForm();
+              setBankStatusMsg(null);
+              setShowBankForm(!showBankForm);
+            }}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+          >
+            {showBankForm ? <X className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+            <span>{showBankForm ? 'Close Form' : 'Add Bank Account'}</span>
+          </button>
+        </div>
+
+        {bankStatusMsg && (
+          <div className={`p-3 rounded-xl border text-xs font-medium flex items-center gap-2 ${
+            bankStatusMsg.kind === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}>
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{bankStatusMsg.text}</span>
+          </div>
+        )}
+
+        {showBankForm && (
+          <form onSubmit={handleSaveBankAccount} className="p-4 sm:p-5 bg-slate-50/80 border border-slate-200 rounded-2xl space-y-4 text-xs">
+            <div className="font-bold text-slate-900 text-sm">
+              {editingBankId ? 'Update Bank Account Details (Re-enter full account number to verify)' : 'Register Payout Bank Account'}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Account Holder Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={bankHolderName}
+                  onChange={(e) => setBankHolderName(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Bank Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  placeholder="e.g. HDFC Bank"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Branch Name</label>
+                <input
+                  type="text"
+                  value={branchName}
+                  onChange={(e) => setBranchName(e.target.value)}
+                  placeholder="Optional"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Account Number *</label>
+                <input
+                  type="text"
+                  required
+                  value={accountNumber}
+                  onChange={(e) => setAccountNumber(e.target.value)}
+                  placeholder="6-24 digits"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-mono outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">IFSC Code (India)</label>
+                <input
+                  type="text"
+                  value={ifscCode}
+                  onChange={(e) => setIfscCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. HDFC0001234"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-mono uppercase outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">SWIFT / IBAN (International)</label>
+                <input
+                  type="text"
+                  value={swiftCode || iban}
+                  onChange={(e) => {
+                    const val = e.target.value.toUpperCase();
+                    if (val.length > 14) { setIban(val); setSwiftCode(''); } else { setSwiftCode(val); }
+                  }}
+                  placeholder="Optional SWIFT or IBAN"
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-mono uppercase outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Account Type</label>
+                <select
+                  value={accountType}
+                  onChange={(e) => setAccountType(e.target.value as 'SAVINGS' | 'CURRENT')}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 outline-none focus:border-[#00C6A6]"
+                >
+                  <option value="CURRENT">Current</option>
+                  <option value="SAVINGS">Savings</option>
+                </select>
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Country</label>
+                <input
+                  type="text"
+                  value={bankCountry}
+                  onChange={(e) => setBankCountry(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Currency</label>
+                <input
+                  type="text"
+                  value={bankCurrency}
+                  onChange={(e) => setBankCurrency(e.target.value.toUpperCase())}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-slate-900 font-mono uppercase outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+              <label className="inline-flex items-center gap-2 text-slate-700 font-medium cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isDefaultBank}
+                  onChange={(e) => setIsDefaultBank(e.target.checked)}
+                  className="rounded border-slate-300 text-[#008972] focus:ring-[#00C6A6]"
+                />
+                <span>Set as default withdrawal payout account</span>
+              </label>
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-bold cursor-pointer"
+              >
+                {editingBankId ? 'Update Bank Account' : 'Save Bank Account'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {bankAccounts.length === 0 ? (
+          <div className="p-6 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-xs text-slate-500">
+            No payout bank accounts saved yet. Add a bank account above to enable Cashback withdrawal requests.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {bankAccounts.map((acc) => (
+              <div key={acc.id} className="p-4 rounded-2xl border border-slate-200 bg-white flex flex-col justify-between gap-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900 text-xs">{acc.bankName}</span>
+                      {acc.isDefault && (
+                        <span className="px-2 py-0.5 rounded bg-teal-50 border border-teal-200 text-[#008972] text-[10px] font-bold">
+                          Default
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-600 mt-0.5">{acc.accountHolderName}</div>
+                    <div className="text-xs font-mono text-slate-900 font-semibold mt-1 tabular-nums">
+                      {acc.accountNumberMasked}
+                    </div>
+                    <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                      {acc.ifscCode ? `IFSC: ${acc.ifscCode}` : acc.swiftCode ? `SWIFT: ${acc.swiftCode}` : acc.iban ? `IBAN: ${acc.iban}` : ''} • {acc.currency}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleEditBank(acc)}
+                      className="p-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      title="Edit Bank Account"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteBank(acc.id)}
+                      className="p-1.5 rounded-lg border border-slate-200 text-rose-600 hover:bg-rose-50 cursor-pointer"
+                      title="Delete Bank Account"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

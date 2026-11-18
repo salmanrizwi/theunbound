@@ -38,7 +38,8 @@ import {
   Building,
   CheckCircle2,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Wallet
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
@@ -46,6 +47,8 @@ import { B2BTabType, CurrencyCode, SUPPORTED_CURRENCIES } from '../../types';
 import { formatCurrency } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
 import { navigateTo } from '../../services/portalRouter';
+import { cashbackService } from '../../services/cashbackService';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 export type { B2BTabType };
 
@@ -109,7 +112,26 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({ visa: true });
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections([
+      'destinations',
+      'city_hubs',
+      'products',
+      'hotels',
+      'b2b_packages',
+      'visas',
+      'travel_protection_plans',
+      'vip_ground_services',
+      'connectivity_plans',
+      'saved_quotes',
+      'bookings',
+      'b2b_customers',
+      'wishlist_items',
+      'leads',
+      'inventory_tombstones',
+      'cashback_wallets',
+      'cashback_transactions',
+      'cashback_withdrawal_requests'
+    ], () => {
       setDataVersion(v => v + 1);
     });
   }, [db]);
@@ -133,14 +155,14 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
     }));
   };
 
-  // Live Database Counts for B2B Navigation
-  const packagesCount = db.getPackages().length;
-  const productsCount = db.getProducts().length;
-  const hotelsCount = db.getHotels().length;
-  const visasCount = db.getVisas().filter(v => v.status === 'ACTIVE' || !v.status).length + 
-    db.getTravelProtectionPlans().filter(p => p.status === 'ACTIVE' || !p.status).length + 
-    db.getVipGroundServices().filter(s => s.status === 'ACTIVE' || !s.status).length + 
-    db.getConnectivityPlans().filter(c => c.status === 'ACTIVE' || !c.status).length;
+  // Live Database Counts for B2B Navigation (strictly scoped to ACTIVE destinations)
+  const packagesCount = inventoryVisibilityService.getB2BActivePackages().length;
+  const productsCount = inventoryVisibilityService.getB2BActiveProducts().length;
+  const hotelsCount = inventoryVisibilityService.getB2BActiveHotels().length;
+  const visasCount = inventoryVisibilityService.getB2BActiveVisas().length + 
+    inventoryVisibilityService.getB2BActiveTravelProtectionPlans().length + 
+    inventoryVisibilityService.getB2BActiveVipGroundServices().length + 
+    inventoryVisibilityService.getB2BActiveConnectivityPlans().length;
   const quotesCount = user ? db.getQuotesForUser(user).length : db.getAllSavedQuotes().length;
   const authorizedBookings = user ? db.getBookingsForUser(user) : [];
   const bookingsCount = authorizedBookings.length;
@@ -199,6 +221,9 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
     {
       title: 'ACCOUNT',
       items: [
+        ...(cashbackService.canUserSeeCashbackWallet(user)
+          ? [{ id: 'my-cashback' as B2BTabType, label: 'My Cashback', icon: Wallet }]
+          : []),
         { id: 'account', label: 'Agency & Profile', icon: UserIcon }
       ]
     }
@@ -220,6 +245,8 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
             <img 
               src="/White Icon.jpg?v=3" 
               alt="TheUnbound" 
+              loading="eager"
+              decoding="async"
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).src = '/white-icon.jpg?v=3';
               }}
@@ -268,6 +295,8 @@ export const B2BPortalSidebar: React.FC<B2BPortalSidebarProps> = ({
             <img 
               src="/White Icon.jpg?v=3" 
               alt="TheUnbound" 
+              loading="eager"
+              decoding="async"
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).src = '/white-icon.jpg?v=3';
               }}
@@ -786,6 +815,32 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
                   </div>
                 )}
 
+                {/* Cashback & Withdrawal Notifications */}
+                {actionItems.notifications
+                  .filter(n => n.entityType === 'CASHBACK' || n.entityType === 'WITHDRAWAL')
+                  .slice(0, 4)
+                  .map(n => (
+                    <div key={n.id} className="p-3 rounded-xl bg-teal-50/70 border border-teal-200 space-y-1">
+                      <div className="flex items-center justify-between text-teal-950 font-bold gap-2">
+                        <span className="flex items-center gap-1.5 truncate">
+                          <Wallet className="w-3.5 h-3.5 text-[#008972] shrink-0" />
+                          <span className="truncate">{n.title}</span>
+                        </span>
+                        <button
+                          onClick={() => {
+                            db.markNotificationAsRead(n.id);
+                            onSelectTab(n.deepLinkTab === 'account' ? 'account' : 'my-cashback');
+                            setIsNotificationsOpen(false);
+                          }}
+                          className="text-[10px] text-[#008972] underline font-bold shrink-0 cursor-pointer"
+                        >
+                          Open Wallet
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-teal-900 leading-snug">{n.message}</p>
+                    </div>
+                  ))}
+
                 {actionItems.totalUrgent === 0 && (
                   <div className="py-6 text-center text-slate-400 text-xs">
                     No urgent operational alerts at this time.
@@ -833,6 +888,18 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
               </div>
 
               <div className="py-1">
+                {cashbackService.canUserSeeCashbackWallet(user) && (
+                  <button
+                    onClick={() => {
+                      onSelectTab('my-cashback');
+                      setIsUserMenuOpen(false);
+                    }}
+                    className="w-full text-left px-4 py-2 hover:bg-teal-50/70 flex items-center gap-2 text-slate-800 font-semibold"
+                  >
+                    <Wallet className="w-3.5 h-3.5 text-[#008972]" />
+                    <span>My Cashback Wallet</span>
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     onSelectTab('account');

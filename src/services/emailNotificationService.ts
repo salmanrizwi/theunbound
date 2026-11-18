@@ -20,6 +20,20 @@ function base64UrlEncode(str: string): string {
     .replace(/=+$/, '');
 }
 
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = 20000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class EmailNotificationService {
   private static instance: EmailNotificationService;
 
@@ -105,33 +119,37 @@ export class EmailNotificationService {
         ? `${window.location.origin}/api/integrations/gmail/send`
         : 'http://localhost:3000/api/integrations/gmail/send';
 
-      // Dispatch through secure backend integration proxy
-      const res = await fetch(apiUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          to: cleanTo,
-          cc: meta?.cc,
-          senderName: meta?.senderName,
-          senderEmail: meta?.senderEmail,
-          subject,
-          htmlBody,
-          textBody,
-          meta: {
-            quoteId: meta?.quoteId,
-            bookingId: meta?.bookingId,
-            leadId: meta?.leadId,
-            recipientType,
-            eventType,
-            idempotencyKey,
-            sentBy: meta?.sentBy,
-            sentByName: meta?.sentByName,
+      // Dispatch through secure backend integration proxy with bounded timeout
+      const res = await fetchWithTimeout(
+        apiUrl,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            to: cleanTo,
             cc: meta?.cc,
             senderName: meta?.senderName,
-            senderEmail: meta?.senderEmail
-          }
-        })
-      });
+            senderEmail: meta?.senderEmail,
+            subject,
+            htmlBody,
+            textBody,
+            meta: {
+              quoteId: meta?.quoteId,
+              bookingId: meta?.bookingId,
+              leadId: meta?.leadId,
+              recipientType,
+              eventType,
+              idempotencyKey,
+              sentBy: meta?.sentBy,
+              sentByName: meta?.sentByName,
+              cc: meta?.cc,
+              senderName: meta?.senderName,
+              senderEmail: meta?.senderEmail
+            }
+          })
+        },
+        20000
+      );
 
       const data = await res.json().catch(() => ({}));
 
@@ -181,7 +199,10 @@ export class EmailNotificationService {
         providerStatus: data.simulated ? 'EMAIL_ACCEPTED_RELAY' : 'EMAIL_SENT_GMAIL_API'
       };
     } catch (err: any) {
-      const errorMsg = err?.message || 'Network error executing Gmail API';
+      const isAbort = err?.name === 'AbortError' || String(err?.message || '').toLowerCase().includes('abort');
+      const errorMsg = isAbort
+        ? 'Email dispatch timed out waiting for mail gateway response (20s).'
+        : (err?.message || 'Network error executing Gmail API');
       db.saveCommunicationAuditLog({
         id: `audit-${Date.now()}`,
         communicationId,
@@ -199,7 +220,7 @@ export class EmailNotificationService {
         deliveryStatus: 'FAILED',
         failureReason: errorMsg
       });
-      return { success: false, error: errorMsg, providerStatus: 'NETWORK_ERROR' };
+      return { success: false, error: errorMsg, providerStatus: isAbort ? 'TIMEOUT' : 'NETWORK_ERROR' };
     }
   }
 

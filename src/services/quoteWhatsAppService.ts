@@ -1,5 +1,6 @@
 import { Quotation, User, TravelLead, CommunicationAuditLog } from '../types';
 import { AppDatabase } from './db';
+import { withBoundedTimeout } from './quotationOperationsService';
 import {
   buildQuotePresentationModel,
   renderQuoteWhatsAppFromPresentationModel,
@@ -13,6 +14,7 @@ import {
 import { splitWhatsAppMessage } from '../utils/richTextFormatter';
 
 export { splitWhatsAppMessage };
+export const MAX_WHATSAPP_URL_MESSAGE_CHARS = 1800;
 
 export interface WhatsAppSenderBranding {
   name?: string;
@@ -148,64 +150,81 @@ export function generateWhatsAppQuoteMessage(options: GenerateWhatsAppMessageOpt
   return fullMessage;
 }
 
-/**
- * Generates official click-to-chat WhatsApp URL (wa.me or api.whatsapp.com/send)
- */
-export function generateWhatsAppShareUrl(phoneNumber: string, messageText: string): string {
+export function compactMessageForWhatsAppUrl(
+  messageText: string,
+  maxChars: number = MAX_WHATSAPP_URL_MESSAGE_CHARS
+): { urlMessage: string; wasCompacted: boolean } {
+  const normalized = (messageText || '').replace(/\r\n/g, '\n').trim();
+  if (normalized.length <= maxChars && encodeURIComponent(normalized).length <= 3600) {
+    return { urlMessage: normalized, wasCompacted: false };
+  }
+
+  const lines = normalized.split('\n');
+  const keptLines: string[] = [];
+  const budget = Math.max(400, maxChars - 160);
+  let len = 0;
+  for (const line of lines) {
+    if (len + line.length + 1 > budget) break;
+    keptLines.push(line);
+    len += line.length + 1;
+  }
+  const footerNote = '\n...\n[Full day-by-day itinerary copied to clipboard — paste here if needed.]';
+  const compacted = `${keptLines.join('\n')}${footerNote}`.slice(0, maxChars);
+  return { urlMessage: compacted, wasCompacted: true };
+}
+
+export function buildSafeWhatsAppSharePayload(
+  phoneNumber: string,
+  messageText: string,
+  maxChars: number = MAX_WHATSAPP_URL_MESSAGE_CHARS
+): {
+  url: string;
+  urlMessage: string;
+  fullMessage: string;
+  wasCompactedForUrl: boolean;
+} {
   let cleanPhone = normalizePhoneNumber(phoneNumber);
   if (cleanPhone.startsWith('00')) {
     cleanPhone = cleanPhone.slice(2);
   }
-  const normalizedText = messageText.replace(/\r\n/g, '\n');
-  const encodedText = encodeURIComponent(normalizedText);
-  if (!cleanPhone) {
-    return `https://api.whatsapp.com/send?text=${encodedText}`;
-  }
-  return `https://wa.me/${cleanPhone}?text=${encodedText}`;
+  const fullMessage = (messageText || '').replace(/\r\n/g, '\n');
+  const { urlMessage, wasCompacted } = compactMessageForWhatsAppUrl(fullMessage, maxChars);
+  const encodedText = encodeURIComponent(urlMessage);
+  const url = !cleanPhone
+    ? `https://api.whatsapp.com/send?text=${encodedText}`
+    : `https://wa.me/${cleanPhone}?text=${encodedText}`;
+  return {
+    url,
+    urlMessage,
+    fullMessage,
+    wasCompactedForUrl: wasCompacted
+  };
 }
 
 /**
- * Records WhatsApp share event, updates quote version/history,
- * logs comprehensive CommunicationAuditLog according to Section 32,
- * and seamlessly synchronizes with Lead CRM.
+ * Generates official click-to-chat WhatsApp URL (wa.me or api.whatsapp.com/send)
+ * safely compacted so browser/WhatsApp URL length limits never trigger HTTP 414.
  */
-export function recordWhatsAppQuoteShare(
+export function generateWhatsAppShareUrl(phoneNumber: string, messageText: string): string {
+  return buildSafeWhatsAppSharePayload(phoneNumber, messageText).url;
+}
+
+function applyWhatsAppShareCrmAndAudit(
   db: AppDatabase,
   quote: Quotation,
-  options: RecordWhatsAppShareOptions
+  savedQuote: Quotation,
+  options: RecordWhatsAppShareOptions,
+  timestamp: string
 ): {
   updatedQuote: Quotation;
   lead?: TravelLead;
 } {
-  const timestamp = new Date().toISOString();
   const maskedPhone = maskPhoneNumber(options.recipientPhone);
   const userName = options.user?.name || quote.agentName || 'Agent';
   const userRole = options.user?.role || 'B2B_AGENT';
   const optionDetail = options.selectedOptionTitle ? ` (Option: ${options.selectedOptionTitle})` : '';
-  const shareDetails = `Proposal shared via WhatsApp to ${maskedPhone}${optionDetail}`;
 
-  // 1. Update quote record
-  const updatedQuote: Quotation = {
-    ...quote,
-    status: quote.status === 'DRAFT' ? 'SENT' : quote.status,
-    lastSharedViaWhatsAppAt: timestamp,
-    lastSharedRecipientPhone: maskedPhone,
-    clientPhone: options.savePhoneToCustomerProfile ? (options.recipientPhone || quote.clientPhone) : quote.clientPhone,
-    versionHistory: [
-      {
-        version: quote.version || 1,
-        updatedAt: timestamp,
-        updatedBy: userName,
-        changesSummary: shareDetails,
-        totalSellingPrice: quote.totalSellingPrice
-      },
-      ...(quote.versionHistory || [])
-    ]
-  };
-
-  const savedQuote = db.saveQuote(updatedQuote, options.user, 'WHATSAPP_SHARED', shareDetails);
-
-  // 2. Authoritative Communication Audit Log (Section 32 Mandate)
+  // Authoritative Communication Audit Log (Section 32 Mandate)
   const commId = `comm-wa-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
   db.saveCommunicationAuditLog({
     id: `audit-${Date.now()}`,
@@ -232,11 +251,10 @@ export function recordWhatsAppQuoteShare(
     `WHATSAPP_QUOTE_SHARE_INITIATED: ${quote.quoteNumber} (v${quote.version || 1}) shared with ${maskedPhone} by ${userName} (${userRole})`
   );
 
-  // 3. Link or update CRM Lead
+  // Link or update CRM Lead
   let linkedLead: TravelLead | undefined = undefined;
   const allLeads = db.getLeads();
 
-  // Find existing lead by quote.leadId, or quote.id linkage, or client email
   let existingLead = allLeads.find(l => 
     (quote.leadId && l.id === quote.leadId) ||
     (l.quoteId === quote.id) ||
@@ -335,9 +353,8 @@ export function recordWhatsAppQuoteShare(
     db.saveLead(newLead, options.user);
     linkedLead = newLead;
 
-    if (!quote.leadId) {
+    if (!savedQuote.leadId) {
       savedQuote.leadId = newLead.id;
-      db.saveQuote(savedQuote, options.user, 'EDITED');
     }
   }
 
@@ -345,4 +362,68 @@ export function recordWhatsAppQuoteShare(
     updatedQuote: savedQuote,
     lead: linkedLead
   };
+}
+
+/**
+ * Records WhatsApp share event, updates quote version/history,
+ * logs comprehensive CommunicationAuditLog according to Section 32,
+ * and seamlessly synchronizes with Lead CRM.
+ */
+export function recordWhatsAppQuoteShare(
+  db: AppDatabase,
+  quote: Quotation,
+  options: RecordWhatsAppShareOptions
+): {
+  updatedQuote: Quotation;
+  lead?: TravelLead;
+} {
+  const timestamp = new Date().toISOString();
+  const maskedPhone = maskPhoneNumber(options.recipientPhone);
+  const optionDetail = options.selectedOptionTitle ? ` (Option: ${options.selectedOptionTitle})` : '';
+  const shareDetails = `Proposal shared via WhatsApp to ${maskedPhone}${optionDetail}`;
+
+  // Update quote record (do NOT inject synthetic entries into immutable versionHistory)
+  const updatedQuote: Quotation = {
+    ...quote,
+    status: quote.status === 'DRAFT' ? 'SENT' : quote.status,
+    lastSharedViaWhatsAppAt: timestamp,
+    lastSharedRecipientPhone: maskedPhone,
+    clientPhone: options.savePhoneToCustomerProfile ? (options.recipientPhone || quote.clientPhone) : quote.clientPhone
+  };
+
+  const savedQuote = db.saveQuote(updatedQuote, options.user, 'WHATSAPP_SHARED', shareDetails);
+  return applyWhatsAppShareCrmAndAudit(db, quote, savedQuote, options, timestamp);
+}
+
+/**
+ * Durable async variant for Quote Builder WhatsApp share flow:
+ * avoids corrupting versionHistory and awaits cloud persistence cleanly.
+ */
+export async function recordWhatsAppQuoteShareAsync(
+  db: AppDatabase,
+  quote: Quotation,
+  options: RecordWhatsAppShareOptions
+): Promise<{
+  updatedQuote: Quotation;
+  lead?: TravelLead;
+}> {
+  const timestamp = new Date().toISOString();
+  const maskedPhone = maskPhoneNumber(options.recipientPhone);
+  const optionDetail = options.selectedOptionTitle ? ` (Option: ${options.selectedOptionTitle})` : '';
+  const shareDetails = `Proposal shared via WhatsApp to ${maskedPhone}${optionDetail}`;
+
+  const updatedQuote: Quotation = {
+    ...quote,
+    status: quote.status === 'DRAFT' ? 'SENT' : quote.status,
+    lastSharedViaWhatsAppAt: timestamp,
+    lastSharedRecipientPhone: maskedPhone,
+    clientPhone: options.savePhoneToCustomerProfile ? (options.recipientPhone || quote.clientPhone) : quote.clientPhone
+  };
+
+  const durablySaved = await withBoundedTimeout(
+    db.saveQuoteAsync(updatedQuote, options.user, 'WHATSAPP_SHARED', shareDetails),
+    12000,
+    'WhatsApp Share Persistence'
+  );
+  return applyWhatsAppShareCrmAndAudit(db, quote, durablySaved || updatedQuote, options, timestamp);
 }

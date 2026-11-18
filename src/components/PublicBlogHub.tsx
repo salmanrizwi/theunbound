@@ -95,6 +95,8 @@ export const PublicBlogHub: React.FC<PublicBlogHubProps> = ({ onBackToExplore, o
             <img
               src={featuredBlog.featuredImage}
               alt={featuredBlog.title}
+              loading="eager"
+              decoding="async"
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-transparent to-transparent lg:hidden" />
@@ -125,6 +127,8 @@ export const PublicBlogHub: React.FC<PublicBlogHubProps> = ({ onBackToExplore, o
                 <img
                   src={featuredBlog.authorAvatar}
                   alt={featuredBlog.author}
+                  loading="lazy"
+                  decoding="async"
                   className="w-10 h-10 rounded-full object-cover border border-slate-200"
                 />
                 <div>
@@ -175,6 +179,8 @@ export const PublicBlogHub: React.FC<PublicBlogHubProps> = ({ onBackToExplore, o
                 <img
                   src={blog.featuredImage}
                   alt={blog.title}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                 />
                 <div className="absolute top-4 left-4">
@@ -208,6 +214,8 @@ export const PublicBlogHub: React.FC<PublicBlogHubProps> = ({ onBackToExplore, o
                 <img
                   src={blog.authorAvatar}
                   alt={blog.author}
+                  loading="lazy"
+                  decoding="async"
                   className="w-7 h-7 rounded-full object-cover border border-slate-200"
                 />
                 <div className="text-[11px] font-semibold text-slate-800 truncate">
@@ -249,6 +257,8 @@ export const PublicBlogHub: React.FC<PublicBlogHubProps> = ({ onBackToExplore, o
               <img
                 src={readingArticle.featuredImage}
                 alt={readingArticle.title}
+                loading="eager"
+                decoding="async"
                 className="w-full h-full object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />
@@ -270,6 +280,8 @@ export const PublicBlogHub: React.FC<PublicBlogHubProps> = ({ onBackToExplore, o
                   <img
                     src={readingArticle.authorAvatar}
                     alt={readingArticle.author}
+                    loading="lazy"
+                    decoding="async"
                     className="w-11 h-11 rounded-full object-cover border border-slate-200"
                   />
                   <div>

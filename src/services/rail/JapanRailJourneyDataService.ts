@@ -1,11 +1,7 @@
-import { RailStation, RailRoute, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, RailServiceGroup, JapanRailCommercialProduct } from '../../types/rail';
+import { RailStation, RailRoute, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, JapanRailCommercialProduct } from '../../types/rail';
 import { Product } from '../../types';
-import { INITIAL_RAIL_STATIONS, getStationById, searchStations } from '../../data/initialRailStations';
-import { INITIAL_RAIL_ROUTES, findRoute } from '../../data/initialRailRoutes';
-import { INITIAL_RAIL_RATES, findExactRate } from '../../data/initialRailRates';
-import { INITIAL_RAIL_SEASON_CALENDAR, RAIL_SEASON_ADJUSTMENTS, determineRailSeason, resolveRailSeasonForDate } from '../../data/initialRailSeasons';
+import { RAIL_SEASON_ADJUSTMENTS, determineRailSeason, resolveRailSeasonForDate } from '../../utils/railSeasonHelper';
 import { INITIAL_RAIL_MARKUP_RULE } from '../../data/initialRailMarkup';
-import { INITIAL_PRODUCTS } from '../../data/initialProducts';
 import { JapanRailStationRef } from '../../types/japanRailJourney';
 import { AppDatabase } from '../db';
 
@@ -50,7 +46,17 @@ export class JapanRailJourneyDataService {
   }
 
   public getStationRef(stationId: string): JapanRailStationRef {
-    const station = this.getStation(stationId) || this.getAllStations()[0] || INITIAL_RAIL_STATIONS[0];
+    const station = this.getStation(stationId) || this.getAllStations()[0];
+    if (!station) {
+      return {
+        stationId,
+        stationCode: stationId,
+        stationName: stationId,
+        displayName: stationId,
+        city: '',
+        shinkansenLine: 'Tokaido'
+      };
+    }
     return {
       stationId: station.stationId,
       stationCode: station.stationCode,
@@ -105,7 +111,7 @@ export class JapanRailJourneyDataService {
   }
 
   public getRailProduct(productId: string): Product | undefined {
-    return AppDatabase.getInstance().getProductById(productId) || INITIAL_PRODUCTS.find(p => p.id === productId);
+    return AppDatabase.getInstance().getProductById(productId);
   }
 
   public getMarkupRule(): RailMarkupRule {
@@ -113,8 +119,7 @@ export class JapanRailJourneyDataService {
   }
 
   public getSeasonCalendar(): RailSeasonCalendarPeriod[] {
-    const seasons = AppDatabase.getInstance().getRailSeasons();
-    return seasons.length > 0 ? seasons : INITIAL_RAIL_SEASON_CALENDAR;
+    return AppDatabase.getInstance().getRailSeasons();
   }
 
   public getSeasonAdjustments() {

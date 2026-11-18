@@ -21,6 +21,7 @@ import { RichTextRenderer } from './common/RichTextRenderer';
 import { AppDatabase } from '../services/db';
 import { canonicalImageService } from '../services/imageService';
 import { PackageDetailModal } from './PackageDetailModal';
+import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
 import { 
   X, 
   MapPin, 
@@ -203,6 +204,43 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
     );
   }
 
+  const isDestinationAccessibleInB2B = useMemo(() => {
+    if (product) return inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', product);
+    if (hotel) return inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', hotel);
+    if (packageItem) return inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', packageItem);
+    return true;
+  }, [product, hotel, packageItem]);
+
+  if (!isDestinationAccessibleInB2B) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="relative bg-white rounded-3xl max-w-lg w-full p-8 text-center space-y-5 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95">
+          <button
+            onClick={onClose}
+            className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 mx-auto">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-black text-slate-900">Service Unavailable</h3>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              This inventory item belongs to a destination that is currently inactive or unavailable in the B2B Agent Portal.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (packageItem && !product && !hotel) {
     return (
       <PackageDetailModal
@@ -373,6 +411,8 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                   <img
                     src={images[activeImageIdx] || defaultImage}
                     alt={name}
+                    loading="eager"
+                    decoding="async"
                     onError={(e) => {
                       (e.target as HTMLImageElement).src = defaultImage;
                     }}
@@ -393,7 +433,7 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
                           activeImageIdx === idx ? 'border-[#00C6A6] ring-2 ring-[#00C6A6]/30' : 'border-transparent opacity-70 hover:opacity-100'
                         }`}
                       >
-                        <img src={img} alt={`thumbnail-${idx}`} className="w-full h-full object-cover" />
+                        <img src={img} alt={`thumbnail-${idx}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                       </button>
                     ))}
                   </div>

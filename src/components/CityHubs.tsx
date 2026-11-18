@@ -267,6 +267,8 @@ export const CityHubs: React.FC<CityHubsProps> = ({
                   <img
                     src={hub.heroImage || (hub.images && hub.images[0]) || 'https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=800&auto=format&fit=crop'}
                     alt={hub.name}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-700"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/30 to-transparent" />
@@ -394,6 +396,8 @@ export const CityHubs: React.FC<CityHubsProps> = ({
                         <img
                           src={hub.heroImage}
                           alt={hub.name}
+                          loading="lazy"
+                          decoding="async"
                           className="w-12 h-12 rounded-lg object-cover shrink-0"
                         />
                         <div className="min-w-0 flex-1">
@@ -426,6 +430,8 @@ export const CityHubs: React.FC<CityHubsProps> = ({
               <img
                 src={inspectingHub.heroImage}
                 alt={inspectingHub.name}
+                loading="eager"
+                decoding="async"
                 className="w-full h-full object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />

@@ -18,6 +18,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { RichTextRenderer } from './common/RichTextRenderer';
+import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
 import {
   X,
   MapPin,
@@ -44,6 +45,7 @@ import {
 
 interface PackageDetailModalProps {
   packageItem: B2BPackage;
+  portalOrigin?: 'B2B_AGENT' | 'ADMIN_CMS' | 'BUYER';
   onClose: () => void;
   onCustomizePackage?: (pkg: B2BPackage) => void;
   onInstantBook?: (pkg: B2BPackage) => void;
@@ -52,6 +54,7 @@ interface PackageDetailModalProps {
 
 export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
   packageItem: initialPackageItem,
+  portalOrigin = 'B2B_AGENT',
   onClose,
   onCustomizePackage,
   onInstantBook,
@@ -63,7 +66,13 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
 
   const [dbTick, setDbTick] = useState(0);
   useEffect(() => {
-    const unsubDb = db.subscribe(() => setDbTick(t => t + 1));
+    const unsubDb = db.subscribeToCollections([
+      'b2b_packages',
+      'package_items',
+      'destinations',
+      'city_hubs',
+      'inventory_tombstones'
+    ], () => setDbTick(t => t + 1));
     const unsubImg = canonicalImageService.subscribe(() => setDbTick(t => t + 1));
     return () => {
       unsubDb();
@@ -220,6 +229,31 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
       .filter((p): p is Product => Boolean(p));
   }, [packageItem, masterProducts]);
 
+  const isAccessibleInPortal =
+    portalOrigin === 'ADMIN_CMS' || inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', packageItem);
+
+  if (!isAccessibleInPortal) {
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="bg-white rounded-3xl max-w-md w-full p-7 text-center shadow-2xl border border-slate-200 space-y-4">
+          <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mx-auto">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h3 className="text-lg font-black text-slate-900">Package Unavailable</h3>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            This itinerary references a destination that is not currently Active in the B2B Agent Portal.
+          </p>
+          <button
+            onClick={onClose}
+            className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
       <div className="bg-white rounded-2xl sm:rounded-3xl max-w-5xl w-full my-auto shadow-2xl border border-slate-200 flex flex-col max-h-[94dvh] sm:max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
@@ -228,6 +262,8 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
           <img
             src={galleryImages[activeImageIdx] || galleryImages[0]}
             alt={packageItem.title}
+            loading="eager"
+            decoding="async"
             className="w-full h-full object-cover"
             referrerPolicy="no-referrer"
             onError={e => {
@@ -308,7 +344,7 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                       activeImageIdx === i ? 'border-[#00C6A6] scale-105' : 'border-white/30 opacity-70 hover:opacity-100'
                     }`}
                   >
-                    <img src={img} alt="" className="w-full h-full object-cover" />
+                    <img src={img} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                   </button>
                 ))}
               </div>

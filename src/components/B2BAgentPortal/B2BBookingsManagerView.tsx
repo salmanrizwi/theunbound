@@ -43,13 +43,15 @@ export const B2BBookingsManagerView: React.FC<B2BBookingsManagerViewProps> = ({
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'ACTION_REQUIRED' | 'UPCOMING' | 'CONFIRMED' | 'COMPLETED'>('ACTION_REQUIRED');
+  const [currentPage, setCurrentPage] = useState(1);
+  const BOOKINGS_PAGE_SIZE = 20;
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['bookings'], () => {
       setBookings(db.getBookingsForUser(user));
     });
     return unsub;
-  }, [user]);
+  }, [user, db]);
 
   // Categorize bookings
   const { actionRequiredBookings, upcomingBookings, confirmedBookings, completedBookings } = useMemo(() => {
@@ -103,6 +105,17 @@ export const B2BBookingsManagerView: React.FC<B2BBookingsManagerViewProps> = ({
       b.items?.some(it => it.productName.toLowerCase().includes(q))
     );
   }, [activeTab, actionRequiredBookings, upcomingBookings, confirmedBookings, completedBookings, searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(currentTabBookings.length / BOOKINGS_PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedBookings = useMemo(() => {
+    const start = (safePage - 1) * BOOKINGS_PAGE_SIZE;
+    return currentTabBookings.slice(start, start + BOOKINGS_PAGE_SIZE);
+  }, [currentTabBookings, safePage]);
 
   if (selectedBookingId) {
     return (
@@ -252,7 +265,7 @@ export const B2BBookingsManagerView: React.FC<B2BBookingsManagerViewProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {currentTabBookings.map(b => {
+                {paginatedBookings.map(b => {
                   const maxPax = (b.customer?.totalAdults || 0) + (b.customer?.totalChildren || 0) || 
                     b.items?.reduce((max, it) => Math.max(max, it.totalPax), 0) || 1;
                   const currentPax = b.passengers?.length || 0;
@@ -354,6 +367,32 @@ export const B2BBookingsManagerView: React.FC<B2BBookingsManagerViewProps> = ({
                 })}
               </tbody>
             </table>
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50/70 text-xs">
+                <span className="text-slate-600 font-medium">
+                  Showing {(safePage - 1) * BOOKINGS_PAGE_SIZE + 1}–{Math.min(safePage * BOOKINGS_PAGE_SIZE, currentTabBookings.length)} of {currentTabBookings.length} bookings
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                    className="px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                  >
+                    Previous
+                  </button>
+                  <span className="font-mono font-bold text-slate-700">
+                    {safePage} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={safePage >= totalPages}
+                    className="px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

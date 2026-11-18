@@ -40,6 +40,7 @@ import { isHotelService, isVisaService } from '../services/configuratorRoutingEn
 import { HotelConfigurator } from './B2BAgentPortal/AddHotelToQuoteModal';
 import { VisaServiceAndFacilitationConfigurator } from './Configurators/VisaServiceAndFacilitationConfigurator';
 import { RichTextRenderer } from './common/RichTextRenderer';
+import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
 
 interface ProductDetailModalProps {
   product: Product;
@@ -57,6 +58,36 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   hidePrice = false
 }) => {
   const { user, isAuthenticated, openAuthModal, role } = useAuth();
+
+  if (!inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', product)) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="relative bg-white rounded-3xl max-w-lg w-full p-8 text-center space-y-5 shadow-2xl border border-slate-200">
+          <button
+            onClick={onClose}
+            className="absolute top-5 right-5 p-2 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-600 mx-auto">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div className="space-y-2">
+            <h3 className="text-xl font-black text-slate-900">Product Unavailable</h3>
+            <p className="text-sm text-slate-600 leading-relaxed">
+              This service belongs to a destination that is currently inactive or unavailable in the B2B Agent Portal.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // NON-NEGOTIABLE RULE: Japan Rail / Shinkansen products MUST only use Shinkansen Dynamic Journey Configurator
   if (isRailProduct(product)) {
@@ -97,7 +128,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   tripleNetRate: (product.adultNetPrice || 300) * 1.4,
                   extraBedRate: 80,
                   childRate: 40,
-                  markupPercent: product.defaultMarkupPercent || 15,
+                  markupPercent: product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 15,
                   taxPercent: 10,
                   feePercent: 2.5,
                   currency: product.currency || 'USD',
@@ -331,6 +362,8 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   <img
                     src={primaryDisplayUrl}
                     alt={product.name}
+                    loading="eager"
+                    decoding="async"
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute bottom-2 right-2 sm:bottom-3 sm:right-3 bg-slate-950/80 backdrop-blur-md text-white text-[10px] sm:text-xs px-2 sm:px-3 py-0.5 sm:py-1 rounded-md sm:rounded-lg">
@@ -348,7 +381,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                           activeImageIdx === idx ? 'border-[#00C6A6] ring-2 ring-[#00C6A6]/30' : 'border-transparent opacity-70 hover:opacity-100'
                         }`}
                       >
-                        <img src={img} alt="thumbnail" className="w-full h-full object-cover" />
+                        <img src={img} alt="thumbnail" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                       </button>
                     ))}
                   </div>
@@ -726,7 +759,9 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     <p className="text-slate-400 text-[11px] mt-0.5">Code: {product.supplierProductCode}</p>
                     <div className="mt-2 pt-2 border-t border-slate-700/80 flex justify-between text-slate-300">
                       <span>Net Adult: {formatCurrency(product.adultNetPrice, product.currency)}</span>
-                      <span>Margin: {product.defaultMarkupPercent}%</span>
+                      <span>
+                        Margin: {product.marginStatus === 'INACTIVE' ? '0% (Inactive)' : product.marginType === 'FIXED' ? formatCurrency(product.marginFixed ?? 0, product.currency) : `${product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 0}%`}
+                      </span>
                     </div>
                   </div>
                 )}

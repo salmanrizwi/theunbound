@@ -170,6 +170,8 @@ export const PublicPromotionsBanner: React.FC<PublicPromotionsBannerProps> = ({ 
               <img
                 src={modalPromo.bannerImage || 'https://images.unsplash.com/photo-1506377247377-2a5b3b417ebb?q=80&w=800&auto=format&fit=crop'}
                 alt={modalPromo.title}
+                loading="eager"
+                decoding="async"
                 className="w-full h-full object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/40 to-transparent" />

@@ -445,7 +445,19 @@ export const DataSyncAuditViewer: React.FC<{ currentUser?: User | null }> = ({ c
 
   useEffect(() => {
     runAuditScan();
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections([
+      'destinations',
+      'master_regions',
+      'regions',
+      'city_hubs',
+      'hotels',
+      'products',
+      'b2b_packages',
+      'bookings',
+      'saved_quotes',
+      'leads',
+      'inventory_tombstones'
+    ], () => {
       runAuditScan();
     });
     return () => unsub();

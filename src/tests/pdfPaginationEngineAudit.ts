@@ -4,6 +4,7 @@ import {
   getPageContentBounds,
   buildSemanticBlocks,
   validatePaginatedQuoteCompleteness,
+  validatePdfLayoutBounds,
   computeMinimumDayStartHeight,
   A4_DIMENSIONS,
   MIN_DAY_START_HEIGHT
@@ -272,10 +273,10 @@ async function runPdfPaginationEngineAudit() {
 
   assert(page1Bounds.width === 820, 'Page width is standard A4 proportional 820px');
   assert(page1Bounds.height === 1160, 'Page height is standard A4 proportional 1160px');
-  assert(page1Bounds.footerHeight === 36, 'Footer height is reserved at 36px');
-  assert(page1Bounds.footerGap >= 36, 'Footer safe gap is at least 36px to prevent content collisions');
-  assert(page1Bounds.contentBottom <= A4_DIMENSIONS.height - 110, 'Content boundary strictly terminates well before the footer safe zone');
-  assert(page2Bounds.availableContentHeight > 880, 'Continuation page provides ample safe content height');
+  assert(page1Bounds.footerHeight >= 54, `Footer height (${page1Bounds.footerHeight}px) reserves multi-line company address clearance`);
+  assert(page1Bounds.footerGap >= 24, `Footer safe gap (${page1Bounds.footerGap}px) prevents content collisions`);
+  assert(page1Bounds.contentBottom <= A4_DIMENSIONS.height - page1Bounds.bottomMargin - page1Bounds.footerHeight - page1Bounds.footerGap, 'Content boundary strictly terminates well before the footer safe zone');
+  assert(page2Bounds.availableContentHeight > 850, `Continuation page provides ample safe content height (${page2Bounds.availableContentHeight}px)`);
   assert(MIN_DAY_START_HEIGHT >= 180, `MIN_DAY_START_HEIGHT (${MIN_DAY_START_HEIGHT}px) enforces Day Header + associated content grouping`);
 
   // 2. Audit Semantic Block Building
@@ -309,9 +310,11 @@ async function runPdfPaginationEngineAudit() {
 
   // 4. Audit Page-by-Page Composition & Non-Orphaning Invariants
   console.log('\n--- 4. Inspecting Page-by-Page Composition & Footer Integrity ---');
+  const layoutValidation = validatePdfLayoutBounds(pages);
+  assert(layoutValidation.valid, `Layout bounds validation passed cleanly across all ${pages.length} pages`);
   pages.forEach((page) => {
     console.log(`  📄 Checking Page ${page.pageNumber} of ${page.totalPages} (Used Height: ${page.usedContentHeight}px / Max: ${page.availableContentHeight}px)`);
-    assert(page.usedContentHeight <= page.availableContentHeight + 10, `Page ${page.pageNumber} content fits safely inside content boundaries without overflowing footer`);
+    assert(page.usedContentHeight <= page.availableContentHeight + 2, `Page ${page.pageNumber} content fits safely inside content boundaries without overflowing footer`);
     assert(page.footerHtml.includes(`Page ${page.pageNumber} of ${page.totalPages}`), `Page ${page.pageNumber} has accurate running footer numbering`);
     assert(page.footerHtml.includes('THEUNBOUND'), `Page ${page.pageNumber} footer has agency branding`);
     assert(page.blocks.length > 0, `Page ${page.pageNumber} contains meaningful content blocks`);
@@ -320,6 +323,7 @@ async function runPdfPaginationEngineAudit() {
     const lastBlock = page.blocks[page.blocks.length - 1];
     assert(lastBlock.type !== 'DAY_HEADER', `Page ${page.pageNumber} never ends with an orphaned Day Header`);
     assert(lastBlock.type !== 'DAY_CONTINUATION_HEADER', `Page ${page.pageNumber} never ends with an orphaned Day Continuation Header`);
+    assert(!lastBlock.keepWithNext, `Page ${page.pageNumber} never ends with an orphaned heading (keepWithNext)`);
   });
 
   // 5. Test Short Quote Dynamic Handling (2 Days)
@@ -511,8 +515,11 @@ async function runPdfPaginationEngineAudit() {
     items: [
       // Day 1 (multiple items to force CONTINUE DAY 1)
       ...splitActivityQuote.items,
-      // Day 2 (multiple items to force CONTINUE DAY 2)
-      ...splitActivityQuote.items.map((it, idx) => ({
+      // Day 2 (5 rich items to span across Page 2 -> Page 3 and force CONTINUE DAY 2)
+      ...[
+        ...splitActivityQuote.items,
+        ...splitActivityQuote.items.slice(0, 2)
+      ].map((it, idx) => ({
         ...it,
         id: `item-d2-multi-${idx}`,
         dayNumber: 2,

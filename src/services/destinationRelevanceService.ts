@@ -11,6 +11,18 @@ import {
   TripRouteHub 
 } from '../types';
 import { AppDatabase } from './db';
+import { masterDataCache } from './masterDataCache';
+import { performanceMonitor } from './performanceMonitor';
+import {
+  buildDestinationVisibilityIndex,
+  resolveDestinationIdToken,
+  isCityHubActiveForB2B,
+  isHotelActiveForB2B,
+  isProductActiveForB2B,
+  isTransferRouteActiveForB2B,
+  isVisaOrAncillaryActiveForB2B,
+  isPackageActiveForB2B
+} from './destinationVisibility';
 
 /**
  * Normalizes a destination identifier (id, slug, or name) for canonical matching.
@@ -129,16 +141,58 @@ export class DestinationRelevanceService {
     return DestinationRelevanceService.instance;
   }
 
+  private isTargetDestinationActive(destinationIdOrSlug: string): boolean {
+    if (!destinationIdOrSlug) return false;
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
+    );
+    const resolvedId = resolveDestinationIdToken(destinationIdOrSlug, index);
+    return Boolean(resolvedId && index.activeDestinationIds.has(resolvedId));
+  }
+
   /**
    * LEVEL 2: Hubs / Cities strictly belonging to the destination.
-   * Never returns hubs from other destinations or global fallbacks.
+   * Never returns hubs from non-active destinations or other destinations.
    */
   public getRelevantHubs(destinationIdOrSlug: string, sourceHubs?: CityHub[]): CityHub[] {
-    const allHubs = sourceHubs || this.db.getCityHubs();
     if (!destinationIdOrSlug) return [];
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      sourceHubs || this.db.getCityHubs(),
+      deletedSet
+    );
+    const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, visIndex);
+    if (!targetDestId || !visIndex.activeDestinationIds.has(targetDestId)) {
+      return [];
+    }
 
-    return allHubs.filter(h => {
-      if (h.status && h.status !== 'ACTIVE') return false;
+    if (!sourceHubs) {
+      const destVer = masterDataCache.getVersion('destinations');
+      const hubsVer = masterDataCache.getVersion('city_hubs');
+      const combinedVer = hubsVer * 100003 + destVer;
+      const tombVer = masterDataCache.getVersion('inventory_tombstones');
+      const cacheKey = `rel_hubs:${normalizeDestinationToken(destinationIdOrSlug)}`;
+      const cached = masterDataCache.getDerived<CityHub[]>(cacheKey, combinedVer, tombVer);
+      if (cached) {
+        performanceMonitor.recordCacheHit('relevanceHubs');
+        return [...cached];
+      }
+      performanceMonitor.recordCacheMiss('relevanceHubs');
+      const allHubs = this.db.getCityHubs();
+      const result = allHubs.filter(h => {
+        if (!isCityHubActiveForB2B(h, visIndex, deletedSet)) return false;
+        return matchesDestination(destinationIdOrSlug, h.destinationId, h.destinationName);
+      });
+      masterDataCache.setDerived(cacheKey, combinedVer, tombVer, result);
+      return [...result];
+    }
+
+    return sourceHubs.filter(h => {
+      if (!isCityHubActiveForB2B(h, visIndex, deletedSet)) return false;
       return matchesDestination(destinationIdOrSlug, h.destinationId, h.destinationName);
     });
   }
@@ -148,9 +202,15 @@ export class DestinationRelevanceService {
    */
   public resolveHubRecord(destinationIdOrSlug: string, hubIdOrName?: string, sourceHubs?: CityHub[]): CityHub | undefined {
     if (!hubIdOrName || typeof hubIdOrName !== 'string' || !hubIdOrName.trim()) return undefined;
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      sourceHubs || this.db.getCityHubs(),
+      deletedSet
+    );
     const relevantHubs = destinationIdOrSlug
       ? this.getRelevantHubs(destinationIdOrSlug, sourceHubs)
-      : (sourceHubs || this.db.getCityHubs()).filter(h => !h.status || h.status === 'ACTIVE');
+      : (sourceHubs || this.db.getCityHubs()).filter(h => isCityHubActiveForB2B(h, visIndex, deletedSet));
 
     const clean = hubIdOrName.trim().toLowerCase();
     return relevantHubs.find(h =>
@@ -163,26 +223,79 @@ export class DestinationRelevanceService {
   }
 
   /**
-   * LEVEL 3: Hotels strictly belonging to the destination, and optionally narrowed to a hub.
+   * LEVEL 3: Hotels strictly belonging to an ACTIVE destination, and optionally narrowed to a hub.
    * When hubIdOrName is provided, only returns hotels in that hub.
-   * If none exist, returns [] (never falls back to other cities or global list).
+   * If none exist or destination is non-active, returns [].
    */
   public getRelevantHotels(
     destinationIdOrSlug: string, 
     hubIdOrName?: string, 
     sourceHotels?: Hotel[]
   ): Hotel[] {
-    const allHotels = (sourceHotels || this.db.getHotels()).filter(
-      h => h.status === 'PUBLISHED' || !h.status
-    );
     if (!destinationIdOrSlug) return [];
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
+    );
+    const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, visIndex);
+    if (!targetDestId || !visIndex.activeDestinationIds.has(targetDestId)) {
+      return [];
+    }
 
-    // Filter by Destination
+    if (!sourceHotels) {
+      const destVer = masterDataCache.getVersion('destinations');
+      const hotelsVer = masterDataCache.getVersion('hotels');
+      const hubsVer = masterDataCache.getVersion('city_hubs');
+      const tombVer = masterDataCache.getVersion('inventory_tombstones');
+      const combinedVer = hotelsVer * 100003 + hubsVer * 1009 + destVer;
+      const destToken = normalizeDestinationToken(destinationIdOrSlug);
+      const hubToken = (hubIdOrName || '').toLowerCase().trim();
+      const cacheKey = `rel_hotels:${destToken}:${hubToken}`;
+      const cached = masterDataCache.getDerived<Hotel[]>(cacheKey, combinedVer, tombVer);
+      if (cached) {
+        performanceMonitor.recordCacheHit('relevanceHotels');
+        return [...cached];
+      }
+      performanceMonitor.recordCacheMiss('relevanceHotels');
+
+      // First resolve/cache destination-level hotels
+      const destCacheKey = `rel_hotels_dest:${destToken}`;
+      const destCombinedVer = hotelsVer * 100003 + destVer;
+      let destHotels = masterDataCache.getDerived<Hotel[]>(destCacheKey, destCombinedVer, tombVer);
+      if (!destHotels) {
+        const allHotels = this.db.getHotels().filter(h => isHotelActiveForB2B(h, visIndex, deletedSet));
+        destHotels = allHotels.filter(h =>
+          matchesDestination(destinationIdOrSlug, h.destinationId, h.destinationName, h.country)
+        );
+        masterDataCache.setDerived(destCacheKey, destCombinedVer, tombVer, destHotels);
+      }
+
+      if (hubIdOrName) {
+        const resolvedHub = this.resolveHubRecord(destinationIdOrSlug, hubIdOrName);
+        const criteriaTokens = Array.from(new Set(
+          [hubIdOrName, resolvedHub?.id, resolvedHub?.name, (resolvedHub as any)?.hubName, resolvedHub?.slug].filter(Boolean) as string[]
+        ));
+        const filtered = destHotels.filter(h =>
+          criteriaTokens.some(token => matchesHub(token, h.hubId, h.city, h.cityId, h.cityName))
+        );
+        masterDataCache.setDerived(cacheKey, combinedVer, tombVer, filtered);
+        return [...filtered];
+      }
+
+      masterDataCache.setDerived(cacheKey, combinedVer, tombVer, destHotels);
+      return [...destHotels];
+    }
+
+    const allHotels = sourceHotels.filter(
+      h => isHotelActiveForB2B(h, visIndex, deletedSet)
+    );
+
     const destHotels = allHotels.filter(h => 
       matchesDestination(destinationIdOrSlug, h.destinationId, h.destinationName, h.country)
     );
 
-    // Filter by Hub if specified
     if (hubIdOrName) {
       const resolvedHub = this.resolveHubRecord(destinationIdOrSlug, hubIdOrName);
       const criteriaTokens = Array.from(new Set(
@@ -247,19 +360,21 @@ export class DestinationRelevanceService {
     destinationWideProducts: Product[];
     allDestinationProducts: Product[];
   } {
-    const allProducts = (sourceProducts || this.db.getProducts()).filter(
-      p => p.status === 'ACTIVE' || !p.status
-    );
     if (!destinationIdOrSlug) {
       return { hubActivities: [], destinationWideProducts: [], allDestinationProducts: [] };
     }
 
-    // Filter strictly to the destination
-    const destProducts = allProducts.filter(p => 
-      matchesDestination(destinationIdOrSlug, p.destinationId, p.destinationName, p.country)
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
     );
+    const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, visIndex);
+    if (!targetDestId || !visIndex.activeDestinationIds.has(targetDestId)) {
+      return { hubActivities: [], destinationWideProducts: [], allDestinationProducts: [] };
+    }
 
-    // Identify destination-wide products (Rail passes, eSIM, Insurance, nationwide services)
     const isDestinationWide = (p: Product) => {
       const cat = (p.category || '').toLowerCase();
       const sub = (p.subcategory || '').toLowerCase();
@@ -285,9 +400,91 @@ export class DestinationRelevanceService {
       );
     };
 
+    if (!sourceProducts) {
+      const destVer = masterDataCache.getVersion('destinations');
+      const prodVer = masterDataCache.getVersion('products');
+      const railVer = masterDataCache.getVersion('japan_rail_commercial_products');
+      const hubsVer = masterDataCache.getVersion('city_hubs');
+      const tombVer = masterDataCache.getVersion('inventory_tombstones');
+      const combinedVer = prodVer * 100003 + railVer * 1009 + hubsVer * 31 + destVer;
+      const destToken = normalizeDestinationToken(destinationIdOrSlug);
+      const hubToken = (hubIdOrName || '').toLowerCase().trim();
+      const cacheKey = `rel_prods:${destToken}:${hubToken}`;
+      const cached = masterDataCache.getDerived<{
+        hubActivities: Product[];
+        destinationWideProducts: Product[];
+        allDestinationProducts: Product[];
+      }>(cacheKey, combinedVer, tombVer);
+      if (cached) {
+        performanceMonitor.recordCacheHit('relevanceProducts');
+        return {
+          hubActivities: [...cached.hubActivities],
+          destinationWideProducts: [...cached.destinationWideProducts],
+          allDestinationProducts: [...cached.allDestinationProducts]
+        };
+      }
+      performanceMonitor.recordCacheMiss('relevanceProducts');
+
+      const destCacheKey = `rel_prods_dest:${destToken}`;
+      const destCombinedVer = prodVer * 100003 + railVer * 1009 + destVer;
+      let destBucket = masterDataCache.getDerived<{
+        destProducts: Product[];
+        destinationWideProducts: Product[];
+      }>(destCacheKey, destCombinedVer, tombVer);
+      if (!destBucket) {
+        const allProducts = this.db.getProducts().filter(p => isProductActiveForB2B(p, visIndex, deletedSet));
+        const destProducts = allProducts.filter(p =>
+          matchesDestination(destinationIdOrSlug, p.destinationId, p.destinationName, p.country)
+        );
+        const destinationWideProducts = destProducts.filter(isDestinationWide);
+        destBucket = { destProducts, destinationWideProducts };
+        masterDataCache.setDerived(destCacheKey, destCombinedVer, tombVer, destBucket);
+      }
+
+      let hubActivities: Product[] = [];
+      if (hubIdOrName && String(hubIdOrName).trim()) {
+        const resolvedHub = this.resolveHubRecord(destinationIdOrSlug, hubIdOrName);
+        const criteriaTokens = Array.from(new Set(
+          [
+            hubIdOrName,
+            resolvedHub?.id,
+            resolvedHub?.name,
+            (resolvedHub as any)?.hubName,
+            resolvedHub?.slug
+          ].filter(Boolean) as string[]
+        ));
+        hubActivities = destBucket.destProducts.filter(p => {
+          if (isDestinationWide(p)) return false;
+          return criteriaTokens.some(token =>
+            matchesHub(token, (p as any).hubId, p.city, (p as any).cityId, (p as any).cityName) ||
+            (Array.isArray(p.hubIds) && p.hubIds.some(hId => matchesHub(token, hId))) ||
+            matchesHub(token, p.fromHubId, p.fromHubName)
+          );
+        });
+      }
+
+      const result = {
+        hubActivities,
+        destinationWideProducts: destBucket.destinationWideProducts,
+        allDestinationProducts: destBucket.destProducts
+      };
+      masterDataCache.setDerived(cacheKey, combinedVer, tombVer, result);
+      return {
+        hubActivities: [...result.hubActivities],
+        destinationWideProducts: [...result.destinationWideProducts],
+        allDestinationProducts: [...result.allDestinationProducts]
+      };
+    }
+
+    const allProducts = sourceProducts.filter(
+      p => isProductActiveForB2B(p, visIndex, deletedSet)
+    );
+
+    const destProducts = allProducts.filter(p => 
+      matchesDestination(destinationIdOrSlug, p.destinationId, p.destinationName, p.country)
+    );
     const destinationWideProducts = destProducts.filter(isDestinationWide);
 
-    // Strictly resolve Hub activities only when a Hub is specified; never fall back to generic destination products
     let hubActivities: Product[] = [];
     if (hubIdOrName && String(hubIdOrName).trim()) {
       const resolvedHub = this.resolveHubRecord(destinationIdOrSlug, hubIdOrName);
@@ -320,34 +517,39 @@ export class DestinationRelevanceService {
 
   /**
    * LEVEL 3: Rail Commercial Master Products for Destination.
-   * When Japan is selected, returns the canonical Commercial Master Products:
-   * 1. Ordinary Car — Reserved Seat (ORDINARY_RESERVED / RAIL-JP-ORD-RESERVED)
-   * 2. Green Car — First Class / Reserved (GREEN_RESERVED / RAIL-JP-GREEN-RESERVED)
+   * Strictly verifies Japan destination is ACTIVE before returning Shinkansen products.
    */
   public getRelevantRailProducts(destinationIdOrSlug: string): Product[] {
     if (!destinationIdOrSlug) return [];
     const isJapan = matchesDestination(destinationIdOrSlug, 'dest-japan', 'Japan', 'Japan');
     if (!isJapan) return [];
+    if (!this.isTargetDestinationActive('dest-japan') && !this.isTargetDestinationActive(destinationIdOrSlug)) {
+      return [];
+    }
 
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
+    );
     const allProducts = this.db.getProducts();
     const ord = allProducts.find(p => p.id === 'RAIL-JP-ORD-RESERVED');
     const grn = allProducts.find(p => p.id === 'RAIL-JP-GREEN-RESERVED');
     const list: Product[] = [];
-    if (ord && (ord.status === 'ACTIVE' || !ord.status)) list.push(ord);
-    if (grn && (grn.status === 'ACTIVE' || !grn.status)) list.push(grn);
+    if (ord && isProductActiveForB2B(ord, visIndex, deletedSet)) list.push(ord);
+    if (grn && isProductActiveForB2B(grn, visIndex, deletedSet)) list.push(grn);
 
     if (list.length > 0) return list;
 
-    // Fallback if not in database
     return allProducts.filter(p => 
-      (p.status === 'ACTIVE' || !p.status) &&
+      isProductActiveForB2B(p, visIndex, deletedSet) &&
       (p.id === 'RAIL-JP-ORD-RESERVED' || p.id === 'RAIL-JP-GREEN-RESERVED')
     );
   }
 
   /**
-   * LEVEL 3: Transfer Routes strictly within the selected destination.
-   * Verifies that both departure hub and arrival hub are mapped to the destination.
+   * LEVEL 3: Transfer Routes strictly within the selected ACTIVE destination.
    */
   public getRelevantTransferRoutes(
     destinationIdOrSlug: string,
@@ -355,22 +557,30 @@ export class DestinationRelevanceService {
     toHubId?: string,
     sourceRoutes?: TransferRoute[]
   ): TransferRoute[] {
-    const allRoutes = (sourceRoutes || this.db.getTransferRoutes()).filter(
-      r => r.status === 'ACTIVE' || !r.status
-    );
     if (!destinationIdOrSlug) return [];
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
+    );
+    const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, visIndex);
+    if (!targetDestId || !visIndex.activeDestinationIds.has(targetDestId)) {
+      return [];
+    }
 
-    // Filter by destination
+    const allRoutes = (sourceRoutes || this.db.getTransferRoutes()).filter(
+      r => isTransferRouteActiveForB2B(r, visIndex, deletedSet)
+    );
+
     let destRoutes = allRoutes.filter(r => 
       matchesDestination(destinationIdOrSlug, r.destinationId, r.destinationName)
     );
 
-    // If fromHubId is specified
     if (fromHubId) {
       destRoutes = destRoutes.filter(r => matchesHub(fromHubId, r.fromHubId, r.fromHubName));
     }
 
-    // If toHubId is specified
     if (toHubId) {
       destRoutes = destRoutes.filter(r => matchesHub(toHubId, r.toHubId, r.toHubName));
     }
@@ -379,15 +589,28 @@ export class DestinationRelevanceService {
   }
 
   /**
-   * LEVEL 3: Visa facilitation products strictly mapped to the destination country.
+   * LEVEL 3: Visa facilitation products strictly mapped to an ACTIVE destination country.
    */
   public getRelevantVisas(
     destinationIdOrSlug: string,
     nationality?: string,
     sourceVisas?: VisaProduct[]
   ): VisaProduct[] {
-    const allVisas = sourceVisas || this.db.getVisas();
     if (!destinationIdOrSlug) return [];
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
+    );
+    const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, visIndex);
+    if (!targetDestId || !visIndex.activeDestinationIds.has(targetDestId)) {
+      return [];
+    }
+
+    const allVisas = (sourceVisas || this.db.getVisas()).filter(v =>
+      isVisaOrAncillaryActiveForB2B(v, visIndex, deletedSet)
+    );
 
     return allVisas.filter(v => 
       matchesDestination(destinationIdOrSlug, v.destinationId, undefined, v.country)
@@ -395,17 +618,27 @@ export class DestinationRelevanceService {
   }
 
   /**
-   * Reference Packages configured for the selected destination.
-   * Used by AI Planner for structural reference and presets.
+   * Reference Packages configured for the selected ACTIVE destination.
    */
   public getRelevantPackages(
     destinationIdOrSlug: string,
     sourcePackages?: B2BPackage[]
   ): B2BPackage[] {
-    const allPackages = (sourcePackages || this.db.getPackages()).filter(
-      p => p.status === 'PUBLISHED' || !p.status
-    );
     if (!destinationIdOrSlug) return [];
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
+    );
+    const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, visIndex);
+    if (!targetDestId || !visIndex.activeDestinationIds.has(targetDestId)) {
+      return [];
+    }
+
+    const allPackages = (sourcePackages || this.db.getPackages()).filter(
+      p => isPackageActiveForB2B(p, visIndex, deletedSet)
+    );
 
     return allPackages.filter(p => 
       matchesDestination(destinationIdOrSlug, p.destinationId, p.destinationName)

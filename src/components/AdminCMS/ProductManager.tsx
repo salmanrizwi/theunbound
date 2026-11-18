@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Product, 
   ProductCategory, 
@@ -99,17 +99,33 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => db.getSuppliers());
   
   useEffect(() => {
-    return db.subscribe(() => {
+    const unsubCfg = db.ensureCollectionSynced('product_margin_configs', 'product_margin_configs');
+    const unsubStore = db.subscribeToCollections([
+      'products',
+      'product_pricing_rates',
+      'product_capacities',
+      'product_margin_configs',
+      'master_regions',
+      'regions',
+      'city_hubs',
+      'suppliers',
+      'inventory_tombstones'
+    ], () => {
       setProducts(db.getProducts());
       setMasterRegions(db.getMasterRegions());
       setRegions(db.getRegions());
       setCityHubs(db.getCityHubs());
       setSuppliers(db.getSuppliers());
     });
-  }, []);
+    return () => {
+      unsubCfg();
+      unsubStore();
+    };
+  }, [db]);
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [selectedMasterRegion, setSelectedMasterRegion] = useState<string>('ALL');
   const [selectedDestination, setSelectedDestination] = useState<string>('ALL');
   const [selectedCityHub, setSelectedCityHub] = useState<string>('ALL');
@@ -119,7 +135,15 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
   
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = 15;
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -479,7 +503,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
       validityFrom: effectiveValidFrom,
       validityTo: effectiveValidTo,
-      surcharges: formData.surcharges || [],
+      surcharges: [],
       requireValidity: isSellable,
       nativeCurrency: (formData.currency as CurrencyCode) || (formData.nativeCurrency as CurrencyCode) || 'USD'
     });
@@ -564,7 +588,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
         validFrom: effectiveValidFrom || '2026-01-01',
         validTo: effectiveValidTo || '2026-12-31'
       },
-      surcharges: formData.surcharges !== undefined ? formData.surcharges : (editingProduct?.surcharges || []),
+      surcharges: editingProduct?.surcharges || formData.surcharges || [],
       minPax: Number(formData.minPax) || 1,
       maxPax: maxSeats > 0 ? maxSeats : (Number(formData.maxPax) || 1),
       availability: (formData.availability as any) || 'INSTANT',
@@ -611,50 +635,58 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     return matchesDest && matchesReg;
   });
 
-  const unmappedCount = products.filter(p => !masterData.auditProductHierarchy(p).valid).length;
+  const unmappedCount = useMemo(
+    () => products.filter(p => !masterData.auditProductHierarchy(p).valid).length,
+    [products]
+  );
 
-  const filtered = products.filter(p => {
-    const q = (searchQuery || '').toLowerCase().trim();
-    const matchesSearch = !q ||
-      (p.name || '').toLowerCase().includes(q) ||
-      (p.sku || '').toLowerCase().includes(q) ||
-      (p.id || '').toLowerCase().includes(q) ||
-      ((p as any).product_id || '').toLowerCase().includes(q) ||
-      (p.city || '').toLowerCase().includes(q) ||
-      (p.regionName || '').toLowerCase().includes(q) ||
-      (p.supplierName || '').toLowerCase().includes(q);
-    const matchesDest = selectedDestination === 'ALL' || p.destinationId === selectedDestination;
-    const matchesReg =
-      selectedMasterRegion === 'ALL' ||
-      p.regionId === selectedMasterRegion ||
-      (Array.isArray(p.regionIds) && p.regionIds.includes(selectedMasterRegion));
-    const matchesHub =
-      selectedCityHub === 'ALL' ||
-      p.hubId === selectedCityHub ||
-      (Array.isArray(p.hubIds) && p.hubIds.includes(selectedCityHub));
-    const matchesCat =
-      selectedCategory === 'ALL' ||
-      p.category === selectedCategory ||
-      (selectedCategory === 'Ferries' && (p.category === 'Ferry' || p.category === 'Ferries')) ||
-      (selectedCategory === 'Ferry' && (p.category === 'Ferry' || p.category === 'Ferries')) ||
-      (selectedCategory === 'Rail / Shinkansen' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen')) ||
-      (selectedCategory === 'Rail' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen'));
-    const matchesStat =
-      selectedStatus === 'ALL'
-        ? true
-        : selectedStatus === 'UNMAPPED'
-        ? !masterData.auditProductHierarchy(p).valid
-        : p.status === selectedStatus;
-    return matchesSearch && matchesDest && matchesReg && matchesHub && matchesCat && matchesStat;
-  }).sort((a, b) => {
-    if (sortBy === 'name') return a.name.localeCompare(b.name);
-    if (sortBy === 'price-asc') return a.adultNetPrice - b.adultNetPrice;
-    if (sortBy === 'price-desc') return b.adultNetPrice - a.adultNetPrice;
-    return (b.lastUpdated || '').localeCompare(a.lastUpdated || '');
-  });
+  const filtered = useMemo(() => {
+    const q = (debouncedSearchQuery || '').toLowerCase().trim();
+    return products.filter(p => {
+      const matchesSearch = !q ||
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.sku || '').toLowerCase().includes(q) ||
+        (p.id || '').toLowerCase().includes(q) ||
+        ((p as any).product_id || '').toLowerCase().includes(q) ||
+        (p.city || '').toLowerCase().includes(q) ||
+        (p.regionName || '').toLowerCase().includes(q) ||
+        (p.supplierName || '').toLowerCase().includes(q);
+      const matchesDest = selectedDestination === 'ALL' || p.destinationId === selectedDestination;
+      const matchesReg =
+        selectedMasterRegion === 'ALL' ||
+        p.regionId === selectedMasterRegion ||
+        (Array.isArray(p.regionIds) && p.regionIds.includes(selectedMasterRegion));
+      const matchesHub =
+        selectedCityHub === 'ALL' ||
+        p.hubId === selectedCityHub ||
+        (Array.isArray(p.hubIds) && p.hubIds.includes(selectedCityHub));
+      const matchesCat =
+        selectedCategory === 'ALL' ||
+        p.category === selectedCategory ||
+        (selectedCategory === 'Ferries' && (p.category === 'Ferry' || p.category === 'Ferries')) ||
+        (selectedCategory === 'Ferry' && (p.category === 'Ferry' || p.category === 'Ferries')) ||
+        (selectedCategory === 'Rail / Shinkansen' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen')) ||
+        (selectedCategory === 'Rail' && (p.category === 'Rail' || p.category === 'Rail / Shinkansen'));
+      const matchesStat =
+        selectedStatus === 'ALL'
+          ? true
+          : selectedStatus === 'UNMAPPED'
+          ? !masterData.auditProductHierarchy(p).valid
+          : p.status === selectedStatus;
+      return matchesSearch && matchesDest && matchesReg && matchesHub && matchesCat && matchesStat;
+    }).sort((a, b) => {
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'price-asc') return a.adultNetPrice - b.adultNetPrice;
+      if (sortBy === 'price-desc') return b.adultNetPrice - a.adultNetPrice;
+      return (b.lastUpdated || '').localeCompare(a.lastUpdated || '');
+    });
+  }, [products, debouncedSearchQuery, selectedDestination, selectedMasterRegion, selectedCityHub, selectedCategory, selectedStatus, sortBy]);
 
   const totalPages = Math.ceil(filtered.length / pageSize) || 1;
-  const paginated = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const paginated = useMemo(
+    () => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [filtered, currentPage, pageSize]
+  );
 
   // Form Cascading helpers
   const modalAvailableDestinations = destinations;
@@ -959,7 +991,17 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   </td>
                   <td className="py-3.5 px-4">
                     <div className="text-[11px] space-y-0.5">
-                      <div>Markup: <strong className="text-emerald-700">+{product.defaultMarkupPercent}%</strong></div>
+                      <div>
+                        Markup:{' '}
+                        <strong className={product.marginStatus === 'INACTIVE' ? 'text-slate-500' : 'text-emerald-700'}>
+                          {product.marginType === 'FIXED'
+                            ? `+${formatCurrency(product.marginFixed ?? 0, product.nativeCurrency || product.currency)}`
+                            : `+${product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 0}%`}
+                        </strong>
+                        {product.marginStatus === 'INACTIVE' && (
+                          <span className="ml-1 text-[10px] text-amber-700 font-semibold">(Inactive)</span>
+                        )}
+                      </div>
                       <div className="text-slate-400 text-[10px]">Tax: +{product.taxPercent}% • Fee: {formatCurrency(product.serviceFeeFixed, product.nativeCurrency || product.currency)}</div>
                     </div>
                   </td>
@@ -2637,9 +2679,13 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                 <InventoryValidityAndSurchargesSection
                   productId={formData.id || editingProduct?.id}
                   productName={formData.name || editingProduct?.name}
+                  category={formData.category || editingProduct?.category}
+                  productType={formData.productType || editingProduct?.productType}
+                  destinationId={formData.destinationId || editingProduct?.destinationId}
+                  destinationName={formData.destinationName || editingProduct?.destinationName}
+                  country={formData.country || editingProduct?.country}
                   validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
                   validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
-                  surcharges={formData.surcharges || []}
                   nativeCurrency={(formData.currency as CurrencyCode) || (formData.nativeCurrency as CurrencyCode) || 'USD'}
                   defaultApplicationBasis={
                     CAPACITY_BASED_CATEGORIES.includes(formData.category as any)

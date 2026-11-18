@@ -21,6 +21,8 @@ export const AuditTrailViewer: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterAction, setFilterAction] = useState('ALL');
   const [filterRole, setFilterRole] = useState('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const AUDIT_PAGE_SIZE = 50;
 
   const refreshLogs = () => {
     setLogs(db.getAuditLogs());
@@ -47,6 +49,10 @@ export const AuditTrailViewer: React.FC = () => {
     const matchesRole = filterRole === 'ALL' || l.userRole === filterRole;
     return matchesSearch && matchesAction && matchesRole;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / AUDIT_PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedLogs = filtered.slice((safePage - 1) * AUDIT_PAGE_SIZE, safePage * AUDIT_PAGE_SIZE);
 
   return (
     <div className="space-y-6">
@@ -131,7 +137,7 @@ export const AuditTrailViewer: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((log, idx) => (
+              {paginatedLogs.map((log, idx) => (
                 <tr key={`audit-row-${log.id || 'entry'}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
                   <td className="py-3.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
                     {(log.timestamp || '').replace('T', ' ').substring(0, 19)}
@@ -174,6 +180,32 @@ export const AuditTrailViewer: React.FC = () => {
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50/70 text-xs">
+            <span className="text-slate-600 font-medium">
+              Showing {(safePage - 1) * AUDIT_PAGE_SIZE + 1}–{Math.min(safePage * AUDIT_PAGE_SIZE, filtered.length)} of {filtered.length} events
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="font-mono font-bold text-slate-700">
+                {safePage} / {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

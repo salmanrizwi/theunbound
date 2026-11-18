@@ -15,7 +15,7 @@ export interface RichTextRendererProps {
  * semantic typography hierarchy.
  * ============================================================================
  */
-export const RichTextRenderer: React.FC<RichTextRendererProps> = ({
+const RichTextRendererBase: React.FC<RichTextRendererProps> = ({
   content,
   className = '',
   fallback = '',
@@ -51,3 +51,6 @@ export const RichTextRenderer: React.FC<RichTextRendererProps> = ({
     />
   );
 };
+
+export const RichTextRenderer = React.memo(RichTextRendererBase);
+

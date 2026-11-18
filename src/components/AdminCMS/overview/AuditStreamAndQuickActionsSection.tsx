@@ -53,7 +53,7 @@ export const AuditStreamAndQuickActionsSection: React.FC<AuditStreamAndQuickActi
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['saved_quotes', 'quotations'], () => {
       const qList = db.getAllSavedQuotesForUser(currentUser);
       setQuotations(qList);
       if (qList.length > 0 && !selectedQuoteId) {

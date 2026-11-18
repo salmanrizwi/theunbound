@@ -1,4 +1,5 @@
 import { CurrencyCode, CurrencyPairConfig, CurrencyAuditLog, CurrencySettings, FXRateDetails, SUPPORTED_CURRENCIES, User } from '../types';
+import { pricingCache } from './pricingCache';
 
 // Default baseline rates relative to 1 USD
 export const BASELINE_USD_RATES: Record<CurrencyCode, number> = {
@@ -375,6 +376,7 @@ export class CurrencyEngine {
       pair.lastFetchedAt = now;
       pair.status = this.isStale ? 'STALE' : 'ACTIVE';
     });
+    pricingCache.bumpFxCatalogVersion();
   }
 
   /**
@@ -951,6 +953,7 @@ export class CurrencyEngine {
     }
 
     this.lastFetchedAt = now;
+    pricingCache.bumpFxCatalogVersion();
     this.notify();
     return true;
   }
@@ -987,6 +990,7 @@ export class CurrencyEngine {
         this.initDefaultPairs();
       }
     }
+    pricingCache.bumpFxCatalogVersion();
     this.notify();
   }
 
@@ -997,6 +1001,7 @@ export class CurrencyEngine {
     this.usdRates = { ...BASELINE_USD_RATES };
     this.isStale = false;
     this.initDefaultPairs();
+    pricingCache.bumpFxCatalogVersion();
     this.notify();
   }
 
@@ -1045,6 +1050,7 @@ export class CurrencyEngine {
     };
 
     this.auditLogs.unshift(auditRecord);
+    pricingCache.bumpFxCatalogVersion();
     this.notify();
     return true;
   }
@@ -1075,6 +1081,7 @@ export class CurrencyEngine {
       timestamp: new Date().toISOString()
     });
 
+    pricingCache.bumpFxCatalogVersion();
     this.notify();
     return true;
   }
@@ -1113,6 +1120,7 @@ export class CurrencyEngine {
       reason: 'Global Currency Engine configuration updated',
       timestamp: new Date().toISOString()
     });
+    pricingCache.bumpFxCatalogVersion();
     this.notify();
   }
 

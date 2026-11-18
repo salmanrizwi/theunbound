@@ -348,10 +348,10 @@ const masterQuote: Quotation = {
   status: 'DRAFT',
   validUntil: '2026-12-31',
   totalNetCost: 100000,
-  totalSellingPrice: 137500,
+  totalSellingPrice: 126500,
   totalTaxes: 0,
-  totalMargin: 37500,
-  baseFinalSellingPrice: 125000,
+  totalMargin: 26500,
+  baseFinalSellingPrice: 115000,
   adminManualMarginType: 'PERCENTAGE',
   adminManualMarginValue: 15,
   adminManualMarginAmount: 15000,
@@ -359,8 +359,8 @@ const masterQuote: Quotation = {
   revisedSellingPrice: 115000,
   agentMarginType: 'PERCENTAGE',
   agentMarginValue: 10,
-  agentMarginAmount: 12500,
-  finalCustomerSellingPrice: 137500,
+  agentMarginAmount: 11500,
+  finalCustomerSellingPrice: 126500,
   agentId: 'usr-agent-margin-test',
   agentName: 'B2B Travel Agent',
   clientName: 'VIP Client',
@@ -396,14 +396,14 @@ assert(
 );
 
 assert(
-  sanitizedForAgent.finalCustomerSellingPrice === 137500,
-  'Agent sanitized quote preserves customer selling price of ₹137,500',
+  sanitizedForAgent.finalCustomerSellingPrice === 126500,
+  'Agent sanitized quote preserves authoritative customer selling price of ₹126,500',
   { received: sanitizedForAgent.finalCustomerSellingPrice }
 );
 
 assert(
-  sanitizedForAgent.agentMarginAmount === 12500,
-  'Agent sanitized quote preserves agent margin amount of ₹12,500',
+  sanitizedForAgent.agentMarginAmount === 11500,
+  'Agent sanitized quote preserves authoritative agent margin amount of ₹11,500',
   { received: sanitizedForAgent.agentMarginAmount }
 );
 

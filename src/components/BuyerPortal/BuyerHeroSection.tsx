@@ -49,7 +49,7 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
   }, [activeIncomingConfig]);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['homepage_config'], () => {
       setCurrentConfig(db.getHomepageConfig());
     });
   }, []);
@@ -219,6 +219,9 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
             <img
               src={heroImage}
               alt={heroImageAlt}
+              loading="eager"
+              decoding="async"
+              fetchPriority="high"
               className="w-full h-full object-cover object-center mix-blend-luminosity scale-105"
               style={{ opacity: Math.max(0.15, 1 - overlayOpacity) }}
               referrerPolicy="no-referrer"
@@ -389,6 +392,9 @@ export const BuyerHeroSection: React.FC<BuyerHeroSectionProps> = ({
                 <img
                   src={heroImage}
                   alt={heroImageAlt}
+                  loading="eager"
+                  decoding="async"
+                  fetchPriority="high"
                   className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700"
                   referrerPolicy="no-referrer"
                 />

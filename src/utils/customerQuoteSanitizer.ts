@@ -1,6 +1,7 @@
 import { 
   Quotation, 
   QuotationOption, 
+  QuoteVersionRecord,
   TripRouteHub, 
   Product, 
   QuoteItem, 
@@ -10,6 +11,7 @@ import {
   B2BPackage
 } from '../types';
 import { formatCurrency, roundCurrencyAmount, calculateQuoteTotal } from '../services/pricingEngine';
+import { doesHotelItemBelongToHubOccurrence } from './hubStayMatching';
 
 export interface CustomerSanitizedQuote {
   quoteId: string;
@@ -194,14 +196,24 @@ export function sanitizeQuoteForCustomer(
 
   const hotelsSummary: string[] = [];
   if (!isLandOnly && effectiveHubs.length > 0) {
-    effectiveHubs.forEach(h => {
+    const sortedHubs = [...effectiveHubs].sort((a, b) => (a.order || 0) - (b.order || 0));
+    sortedHubs.forEach(h => {
       const isHubNoAcc = h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
-      if (!isHubNoAcc && (h.hotelId || h.manualHotel?.hotelName)) {
+      if (isHubNoAcc) return;
+      const matchedItem = effectiveItems.find(it =>
+        doesHotelItemBelongToHubOccurrence(it, h, sortedHubs)
+      );
+      if (matchedItem || h.hotelId || h.manualHotel?.hotelName) {
         const city = h.hubName || h.destinationName || 'City';
-        const hotelName = h.manualHotel?.hotelName || h.hotelId || 'Premium Selected Hotel';
+        const hotelName =
+          h.manualHotel?.hotelName ||
+          matchedItem?.manualHotelDetails?.hotelName ||
+          matchedItem?.product?.name ||
+          h.hotelId ||
+          'Premium Selected Hotel';
         const nights = h.nights || 1;
-        const roomType = h.manualHotel?.roomType || '';
-        const mealPlan = h.manualHotel?.mealPlan || '';
+        const roomType = h.roomConfiguration?.roomTypeName || h.manualHotel?.roomType || '';
+        const mealPlan = h.roomConfiguration?.mealPlanName || h.manualHotel?.mealPlanName || h.manualHotel?.mealPlan || '';
         
         let desc = `${city} — ${hotelName} (${nights} ${nights === 1 ? 'Night' : 'Nights'}`;
         if (roomType) desc += `, ${roomType}`;
@@ -476,7 +488,14 @@ export function sanitizePricingResultForAgent(
     calculatedAt: calc.calculatedAt || new Date().toISOString(),
 
     validityCheck: (calc as PricingCalculationResult).validityCheck,
-    appliedSurcharges: (calc as PricingCalculationResult).appliedSurcharges,
+    appliedSurcharges: Array.isArray((calc as PricingCalculationResult).appliedSurcharges)
+      ? (calc as PricingCalculationResult).appliedSurcharges!.map(s => {
+          const cleanS = { ...s };
+          delete (cleanS as any).supplierNettNative;
+          delete (cleanS as any).supplierNettConverted;
+          return cleanS;
+        })
+      : (calc as PricingCalculationResult).appliedSurcharges,
     surchargeTotal: (calc as PricingCalculationResult).surchargeTotal,
     baseSellingPriceBeforeSurcharges: (calc as PricingCalculationResult).baseSellingPriceBeforeSurcharges,
     surchargeValidationMessage: (calc as PricingCalculationResult).surchargeValidationMessage,
@@ -490,7 +509,10 @@ export function sanitizePricingResultForAgent(
  */
 export function sanitizeProductForAgent(product: Product): Product {
   if (!product) return product;
-  const clone: Product = JSON.parse(JSON.stringify(product));
+  const clone: Product = { ...product };
+  if ((product as any).pricingTiers) {
+    (clone as any).pricingTiers = { ...(product as any).pricingTiers };
+  }
 
   delete (clone as any).adultNetPrice;
   delete (clone as any).adultNettCost;
@@ -498,9 +520,28 @@ export function sanitizeProductForAgent(product: Product): Product {
   delete (clone as any).childNettCost;
   delete (clone as any).infantNetPrice;
   delete (clone as any).infantNettCost;
+  delete (clone as any).internalNettCost;
+  delete (clone as any).internalNetCost;
+  delete (clone as any).supplierCost;
+  delete (clone as any).totalNetCost;
+  delete (clone as any).netCost;
+  delete (clone as any).costPrice;
+  delete (clone as any).unitNetPrice;
   delete (clone as any).defaultMarkupPercent;
   delete (clone as any).b2bAgentMarkupPercent;
   delete (clone as any).buyerMarkupPercent;
+  delete (clone as any).b2bMargin;
+  delete (clone as any).marginType;
+  delete (clone as any).marginFixed;
+  delete (clone as any).commissionPercent;
+  delete (clone as any).marginStatus;
+  delete (clone as any).marginConfigVersion;
+  delete (clone as any).marginUpdatedAt;
+  delete (clone as any).marginUpdatedBy;
+  delete (clone as any).marginUpdatedByName;
+  delete (clone as any).marginUpdatedByEmail;
+  delete (clone as any).marginLastChangeReason;
+  delete (clone as any).marginConfig;
   delete (clone as any).supplierProductCode;
   delete (clone as any).supplierId;
   delete (clone as any).supplierName;
@@ -541,7 +582,7 @@ export function sanitizeProductForAgent(product: Product): Product {
  */
 export function sanitizeQuoteItemForAgent(item: QuoteItem): QuoteItem {
   if (!item) return item;
-  const clone: QuoteItem = JSON.parse(JSON.stringify(item));
+  const clone: QuoteItem = { ...item };
 
   delete (clone as any).totalNetCost;
   delete (clone as any).internalNettCost;
@@ -558,9 +599,22 @@ export function sanitizeQuoteItemForAgent(item: QuoteItem): QuoteItem {
   }
 
   if (clone.manualHotelDetails) {
+    clone.manualHotelDetails = { ...clone.manualHotelDetails };
     delete (clone.manualHotelDetails as any).netRate;
     delete (clone.manualHotelDetails as any).costPerNight;
     delete (clone.manualHotelDetails as any).supplierCost;
+    delete (clone.manualHotelDetails as any).totalNetCost;
+    delete (clone.manualHotelDetails as any).netCost;
+  }
+
+  if (Array.isArray((clone as any).appliedSurcharges)) {
+    (clone as any).appliedSurcharges = (clone as any).appliedSurcharges.map((s: any) => {
+      if (!s) return s;
+      const cleanS = { ...s };
+      delete cleanS.supplierNettNative;
+      delete cleanS.supplierNettConverted;
+      return cleanS;
+    });
   }
 
   // Ensure non-negative agent additional markup if present
@@ -580,7 +634,9 @@ export function sanitizeQuoteItemForAgent(item: QuoteItem): QuoteItem {
  */
 export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
   if (!quote) return quote;
-  const clone: Quotation = JSON.parse(JSON.stringify(quote));
+  const clone: Quotation = { ...quote };
+  if (quote.pricingSnapshot) clone.pricingSnapshot = { ...quote.pricingSnapshot };
+  if ((quote as any).pricing_snapshot) (clone as any).pricing_snapshot = { ...(quote as any).pricing_snapshot };
 
   const centralTotals = calculateQuoteTotal(clone, clone.activeOptionId, undefined, clone.currency);
   const theUnboundBaseSellingPrice = roundCurrencyAmount(
@@ -672,23 +728,55 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
     clone.pricingSnapshot.totalSellingPrice = finalCustomerSellingPrice;
   }
   if ((clone as any).pricing_snapshot) {
-    delete ((clone as any).pricing_snapshot as any).adminManualMarginType;
-    delete ((clone as any).pricing_snapshot as any).adminManualMarginValue;
-    delete ((clone as any).pricing_snapshot as any).adminManualMarginAmount;
-    delete ((clone as any).pricing_snapshot as any).adminMarginMode;
-    delete ((clone as any).pricing_snapshot as any).revisedSellingPrice;
-    delete ((clone as any).pricing_snapshot as any).totalNettCost;
+    const pss = { ...(clone as any).pricing_snapshot };
+    delete pss.adminManualMarginType;
+    delete pss.adminManualMarginValue;
+    delete pss.adminManualMarginAmount;
+    delete pss.adminMarginMode;
+    delete pss.revisedSellingPrice;
+    delete pss.totalNettCost;
+    delete pss.totalNetCost;
+    delete pss.totalMargin;
+    if (pss.currencyConversionSnapshot) {
+      pss.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+        pss.currencyConversionSnapshot,
+        false
+      );
+    }
+    (clone as any).pricing_snapshot = pss;
   }
 
-  // Sanitize items
+  // Sanitize items and routeHubs (strip manualHotel internal nett costs)
   if (clone.items && Array.isArray(clone.items)) {
     clone.items = clone.items.map(sanitizeQuoteItemForAgent);
+  }
+  if (Array.isArray(clone.routeHubs)) {
+    clone.routeHubs = sanitizeRouteHubsForExternal(clone.routeHubs, false);
+  }
+
+  if (clone.currencyConversionSnapshot) {
+    clone.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+      clone.currencyConversionSnapshot,
+      false
+    );
+  }
+  if (clone.pricingSnapshot?.currencyConversionSnapshot) {
+    clone.pricingSnapshot.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+      clone.pricingSnapshot.currencyConversionSnapshot,
+      false
+    );
+  }
+  if (clone.authoritativeSnapshot) {
+    clone.authoritativeSnapshot = sanitizeAuthoritativeSnapshotForExternal(
+      clone.authoritativeSnapshot,
+      false
+    );
   }
 
   // Sanitize quotation options if present
   if (clone.options && Array.isArray(clone.options)) {
     clone.options = clone.options.map(option => {
-      const optClone: QuotationOption = JSON.parse(JSON.stringify(option));
+      const optClone: QuotationOption = { ...option };
       delete (optClone as any).totalNetCost;
       delete (optClone as any).totalMargin;
       delete (optClone as any).internalNettCost;
@@ -696,14 +784,313 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
       delete (optClone as any).internalProfit;
       delete (optClone as any).supplierCost;
       delete (optClone as any).agentMarkupPercent;
+      if ((optClone as any).currencyConversionSnapshot) {
+        (optClone as any).currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+          (optClone as any).currencyConversionSnapshot,
+          false
+        );
+      }
+      if ((optClone as any).pricingSnapshot) {
+        const ops = { ...(optClone as any).pricingSnapshot };
+        delete ops.adminManualMarginType;
+        delete ops.adminManualMarginValue;
+        delete ops.adminManualMarginAmount;
+        delete ops.adminMarginMode;
+        delete ops.revisedSellingPrice;
+        delete ops.totalNettCost;
+        delete ops.totalNetCost;
+        delete ops.totalMargin;
+        if (ops.currencyConversionSnapshot) {
+          ops.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+            ops.currencyConversionSnapshot,
+            false
+          );
+        }
+        (optClone as any).pricingSnapshot = ops;
+      }
       if (optClone.items && Array.isArray(optClone.items)) {
         optClone.items = optClone.items.map(sanitizeQuoteItemForAgent);
+      }
+      if (Array.isArray(optClone.routeHubs)) {
+        optClone.routeHubs = sanitizeRouteHubsForExternal(optClone.routeHubs, false);
       }
       return optClone;
     });
   }
 
+  // Sanitize versionHistory and versionSummaries snapshots so no nett costs or internal margins leak to B2B Agents
+  if (Array.isArray(clone.versionHistory)) {
+    clone.versionHistory = clone.versionHistory.map(sanitizeQuoteVersionForAgent);
+  }
+  if (Array.isArray((clone as any).versionSummaries)) {
+    (clone as any).versionSummaries = (clone as any).versionSummaries.map((vs: any) => {
+      if (!vs || typeof vs !== 'object') return vs;
+      const cleanVs = { ...vs };
+      delete cleanVs.totalNetCost;
+      delete cleanVs.totalMargin;
+      delete cleanVs.internalMarkup;
+      delete cleanVs.adminManualMarginType;
+      delete cleanVs.adminManualMarginValue;
+      delete cleanVs.adminManualMarginAmount;
+      delete cleanVs.adminMarginMode;
+      delete cleanVs.revisedSellingPrice;
+      delete cleanVs.productLevelMarginEnabled;
+      delete cleanVs.activeMarginMode;
+      delete cleanVs.agentLevelMarginPercent;
+      return cleanVs;
+    });
+  }
+
   return clone;
+}
+
+/**
+ * Strips supplier nett costs and internal margin fields from routeHubs manualHotel records.
+ */
+function sanitizeRouteHubsForExternal(routeHubs: any[], stripCustomerHotelPrices: boolean): any[] {
+  if (!Array.isArray(routeHubs)) return routeHubs;
+  return routeHubs.map((rh: any) => {
+    if (!rh || typeof rh !== 'object') return rh;
+    const rhClone = { ...rh };
+    if (rhClone.manualHotel && typeof rhClone.manualHotel === 'object') {
+      const mh = { ...rhClone.manualHotel };
+      delete mh.totalNetCost;
+      delete mh.netCost;
+      delete mh.costPerNight;
+      delete mh.netRate;
+      delete mh.ratePerNightNett;
+      delete mh.supplierCost;
+      delete mh.internalNotes;
+      delete mh.dmcMarginAmount;
+      if (stripCustomerHotelPrices) {
+        delete mh.ratePerNight;
+        delete mh.sellingPricePerNight;
+        delete mh.totalSellingPrice;
+      }
+      rhClone.manualHotel = mh;
+    }
+    return rhClone;
+  });
+}
+
+/**
+ * Sanitizes a QuotationCurrencySnapshot so internal nett costs, underlying base margins,
+ * and Admin manual margin overrides never leak to external B2B Agents or Customers.
+ */
+function sanitizeCurrencyConversionSnapshotForExternal(snap: any, stripAgentFields: boolean): any {
+  if (!snap || typeof snap !== 'object') return snap;
+  const cleanSnap = { ...snap };
+  delete cleanSnap.totalConvertedNettCost;
+  delete cleanSnap.existingBaseMarginAmount;
+  delete cleanSnap.manualMarginAdjustmentAmount;
+  delete cleanSnap.manualMarginAdjustedTotal;
+  delete cleanSnap.activeMarginMode;
+  delete cleanSnap.productLevelMarginEnabled;
+  delete cleanSnap.agentLevelMarginPercent;
+  if (stripAgentFields) {
+    delete cleanSnap.theUnboundBaseSellingPrice;
+    delete cleanSnap.additionalAgentMarginAmount;
+    delete cleanSnap.productLevelAgentMarkupTotal;
+    delete cleanSnap.overallAgentMarkupAmount;
+  }
+  if (cleanSnap.totals && typeof cleanSnap.totals === 'object') {
+    const cleanTotals = { ...cleanSnap.totals };
+    delete cleanTotals.convertedTotalNetCost;
+    delete cleanTotals.baseMarginTotal;
+    delete cleanTotals.manualMarginAdjustmentMode;
+    delete cleanTotals.manualMarginAdjustmentType;
+    delete cleanTotals.manualMarginAdjustmentValue;
+    delete cleanTotals.manualMarginAdjustmentAmount;
+    delete cleanTotals.effectiveUnderlyingMarginAmount;
+    if (stripAgentFields) {
+      delete cleanTotals.theUnboundBaseSellingPrice;
+      delete cleanTotals.b2bSellingPriceTotal;
+      delete cleanTotals.additionalAgentMarginType;
+      delete cleanTotals.additionalAgentMarginValue;
+      delete cleanTotals.additionalAgentMarginAmount;
+      delete cleanTotals.productLevelAgentMarkupTotal;
+      delete cleanTotals.overallAgentMarkupAmount;
+    }
+    cleanSnap.totals = cleanTotals;
+  }
+  if (Array.isArray(cleanSnap.appliedSurcharges)) {
+    cleanSnap.appliedSurcharges = cleanSnap.appliedSurcharges.map((s: any) => {
+      if (!s || typeof s !== 'object') return s;
+      const cleanS = { ...s };
+      delete cleanS.supplierNettNative;
+      delete cleanS.supplierNettConverted;
+      return cleanS;
+    });
+  }
+  if (Array.isArray(cleanSnap.lineItems)) {
+    cleanSnap.lineItems = cleanSnap.lineItems.map((li: any) => {
+      if (!li || typeof li !== 'object') return li;
+      const cleanLi = { ...li };
+      delete cleanLi.originalAmount;
+      delete cleanLi.originalNetCost;
+      delete cleanLi.convertedNetCost;
+      delete cleanLi.baseMarginPercent;
+      delete cleanLi.baseMarginAmount;
+      if (Array.isArray(cleanLi.appliedSurcharges)) {
+        cleanLi.appliedSurcharges = cleanLi.appliedSurcharges.map((s: any) => {
+          if (!s || typeof s !== 'object') return s;
+          const cs = { ...s };
+          delete cs.supplierNettNative;
+          delete cs.supplierNettConverted;
+          return cs;
+        });
+      }
+      if (stripAgentFields) {
+        delete cleanLi.convertedBaseSellingAmount;
+        delete cleanLi.finalLineSellingAmount;
+        delete cleanLi.taxAmount;
+        delete cleanLi.serviceFeeAmount;
+        delete cleanLi.surchargeTotal;
+        delete cleanLi.appliedSurcharges;
+        delete cleanLi.discountAmount;
+      }
+      return cleanLi;
+    });
+  }
+  return cleanSnap;
+}
+
+/**
+ * Sanitizes an AuthoritativeQuotationSnapshot for external B2B Agents or Customers.
+ */
+function sanitizeAuthoritativeSnapshotForExternal(authSnap: any, stripAgentFields: boolean): any {
+  if (!authSnap || typeof authSnap !== 'object') return authSnap;
+  const cleanAuth = { ...authSnap };
+  if (cleanAuth.pricing && typeof cleanAuth.pricing === 'object') {
+    const cleanPricing = { ...cleanAuth.pricing };
+    delete cleanPricing.adminManualMarginType;
+    delete cleanPricing.adminManualMarginValue;
+    delete cleanPricing.adminManualMarginAmount;
+    delete cleanPricing.adminMarginMode;
+    delete cleanPricing.revisedSellingPrice;
+    delete cleanPricing.totalNetCost;
+    delete cleanPricing.totalNettCost;
+    delete cleanPricing.totalMargin;
+    delete cleanPricing.activeMarginMode;
+    delete cleanPricing.productLevelMarginEnabled;
+    delete cleanPricing.agentLevelMarginPercent;
+    if (stripAgentFields) {
+      delete cleanPricing.theUnboundBaseSellingPrice;
+      delete cleanPricing.baseFinalSellingPrice;
+      delete cleanPricing.agentMarginType;
+      delete cleanPricing.agentMarginValue;
+      delete cleanPricing.agentMarginAmount;
+      delete cleanPricing.productLevelAgentMarkupTotal;
+      delete cleanPricing.overallAgentMarkupAmount;
+      delete cleanPricing.totalAgentAdditionalMarkupAmount;
+    }
+    if (cleanPricing.currencyConversionSnapshot) {
+      cleanPricing.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+        cleanPricing.currencyConversionSnapshot,
+        stripAgentFields
+      );
+    }
+    cleanAuth.pricing = cleanPricing;
+  }
+  if (cleanAuth.trip && typeof cleanAuth.trip === 'object') {
+    const cleanTrip = { ...cleanAuth.trip };
+    if (Array.isArray(cleanTrip.routeHubs)) {
+      cleanTrip.routeHubs = sanitizeRouteHubsForExternal(cleanTrip.routeHubs, stripAgentFields);
+    }
+    cleanAuth.trip = cleanTrip;
+  }
+  return cleanAuth;
+}
+
+/**
+ * Sanitizes a historical QuoteVersionRecord snapshot for B2B Agents & non-internal users.
+ * Strictly removes supplier nett costs, internal DMC margins, and admin manual margin overrides
+ * while preserving historical selling prices, items, hubs, itinerary, terms, and agent markup.
+ */
+export function sanitizeQuoteVersionForAgent(v: QuoteVersionRecord): QuoteVersionRecord {
+  if (!v) return v;
+  const vClone: QuoteVersionRecord = { ...v };
+  delete (vClone as any).totalNetCost;
+  delete (vClone as any).marginPercent;
+  delete (vClone as any).marginAmount;
+  delete (vClone as any).internalNettCost;
+  delete (vClone as any).supplierCost;
+  delete (vClone as any).internalMarkup;
+  delete (vClone as any).internalProfit;
+  delete (vClone as any).adminManualMarginType;
+  delete (vClone as any).adminManualMarginValue;
+  delete (vClone as any).adminManualMarginAmount;
+  delete (vClone as any).adminManualMarginMode;
+  delete (vClone as any).adminMarginMode;
+  delete (vClone as any).revisedSellingPrice;
+  delete (vClone as any).dmcMarginAmount;
+  delete (vClone as any).productLevelMarginEnabled;
+  delete (vClone as any).activeMarginMode;
+  delete (vClone as any).agentLevelMarginPercent;
+
+  if (vClone.pricingSnapshot) {
+    const ps = { ...vClone.pricingSnapshot };
+    delete (ps as any).adminManualMarginType;
+    delete (ps as any).adminManualMarginValue;
+    delete (ps as any).adminManualMarginAmount;
+    delete (ps as any).adminMarginMode;
+    delete (ps as any).revisedSellingPrice;
+    delete (ps as any).totalNettCost;
+    delete (ps as any).totalNetCost;
+    delete (ps as any).totalMargin;
+    delete (ps as any).productLevelMarginEnabled;
+    delete (ps as any).activeMarginMode;
+    delete (ps as any).agentLevelMarginPercent;
+    if (ps.currencyConversionSnapshot) {
+      ps.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+        ps.currencyConversionSnapshot,
+        false
+      );
+    }
+    vClone.pricingSnapshot = ps;
+  }
+
+  if (vClone.currencyConversionSnapshot) {
+    vClone.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+      vClone.currencyConversionSnapshot,
+      false
+    );
+  }
+
+  if (vClone.authoritativeSnapshot) {
+    vClone.authoritativeSnapshot = sanitizeAuthoritativeSnapshotForExternal(
+      vClone.authoritativeSnapshot,
+      false
+    );
+  }
+
+  if (Array.isArray(vClone.items)) {
+    vClone.items = vClone.items.map(sanitizeQuoteItemForAgent);
+  }
+  if (Array.isArray(vClone.routeHubs)) {
+    vClone.routeHubs = sanitizeRouteHubsForExternal(vClone.routeHubs, false);
+  }
+
+  if (Array.isArray(vClone.options)) {
+    vClone.options = vClone.options.map(option => {
+      const optClone: QuotationOption = { ...option };
+      delete (optClone as any).totalNetCost;
+      delete (optClone as any).totalMargin;
+      delete (optClone as any).internalNettCost;
+      delete (optClone as any).internalMarkup;
+      delete (optClone as any).internalProfit;
+      delete (optClone as any).supplierCost;
+      if (Array.isArray(optClone.items)) {
+        optClone.items = optClone.items.map(sanitizeQuoteItemForAgent);
+      }
+      if (Array.isArray(optClone.routeHubs)) {
+        optClone.routeHubs = sanitizeRouteHubsForExternal(optClone.routeHubs, false);
+      }
+      return optClone;
+    });
+  }
+
+  return vClone;
 }
 
 /**
@@ -717,7 +1104,7 @@ export function sanitizeQuoteForAgent(quote: Quotation): Quotation {
  */
 export function sanitizeBookingForAgent(b: Booking): Booking {
   if (!b) return b;
-  const clone: Booking = JSON.parse(JSON.stringify(b));
+  const clone: Booking = { ...b };
 
   delete clone.totalNetCost;
   delete clone.grossProfit;
@@ -746,7 +1133,8 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
   clone.uploadedInvoices = [];
 
   if (clone.items && Array.isArray(clone.items)) {
-    clone.items = clone.items.map(it => {
+    clone.items = clone.items.map(rawIt => {
+      const it = { ...rawIt };
       // Eliminate supplier identity and contacts
       delete it.supplierId;
       delete it.supplierName;
@@ -859,12 +1247,42 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
     delete (clone.pricingSnapshot as any).totalAgentAdditionalMarkupAmount;
     delete (clone.pricingSnapshot as any).overallMarkupPercent;
     delete (clone.pricingSnapshot as any).adminBasePriceUpdatedNotification;
+    if (clone.pricingSnapshot.currencyConversionSnapshot) {
+      clone.pricingSnapshot.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+        clone.pricingSnapshot.currencyConversionSnapshot,
+        true
+      );
+    }
+  }
+  if ((clone as any).pricing_snapshot?.currencyConversionSnapshot) {
+    (clone as any).pricing_snapshot = {
+      ...(clone as any).pricing_snapshot,
+      currencyConversionSnapshot: sanitizeCurrencyConversionSnapshotForExternal(
+        (clone as any).pricing_snapshot.currencyConversionSnapshot,
+        true
+      )
+    };
+  }
+  if (clone.currencyConversionSnapshot) {
+    clone.currencyConversionSnapshot = sanitizeCurrencyConversionSnapshotForExternal(
+      clone.currencyConversionSnapshot,
+      true
+    );
+  }
+  if (clone.authoritativeSnapshot) {
+    clone.authoritativeSnapshot = sanitizeAuthoritativeSnapshotForExternal(
+      clone.authoritativeSnapshot,
+      true
+    );
+  }
+  if (Array.isArray(clone.routeHubs)) {
+    clone.routeHubs = sanitizeRouteHubsForExternal(clone.routeHubs, true);
   }
 
   // Sanitize items so no item-level pricing or calculations leak
   if (clone.items && Array.isArray(clone.items)) {
     clone.items = clone.items.map(it => {
-      const itClone: QuoteItem = JSON.parse(JSON.stringify(it));
+      const itClone: QuoteItem = { ...it };
       delete (itClone as any).calculation;
       delete (itClone as any).price;
       delete (itClone as any).totalSellingPrice;
@@ -877,6 +1295,7 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
       delete (itClone as any).agentAdditionalMarkupAmount;
       delete (itClone as any).finalCustomerSellingPrice;
       if (itClone.manualHotelDetails) {
+        itClone.manualHotelDetails = { ...itClone.manualHotelDetails };
         delete (itClone.manualHotelDetails as any).costPerNight;
         delete (itClone.manualHotelDetails as any).sellingPrice;
         delete (itClone.manualHotelDetails as any).totalSellingPrice;
@@ -888,10 +1307,10 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
   // Sanitize options if present
   if (clone.options && Array.isArray(clone.options)) {
     clone.options = clone.options.map(option => {
-      const optClone: QuotationOption = JSON.parse(JSON.stringify(option));
+      const optClone: QuotationOption = { ...option };
       if (optClone.items && Array.isArray(optClone.items)) {
         optClone.items = optClone.items.map(it => {
-          const itClone: QuoteItem = JSON.parse(JSON.stringify(it));
+          const itClone: QuoteItem = { ...it };
           delete (itClone as any).calculation;
           delete (itClone as any).price;
           delete (itClone as any).totalSellingPrice;
@@ -919,7 +1338,7 @@ export function sanitizeQuoteDocumentForCustomer(quote: Quotation): Quotation {
  */
 export function sanitizePackageForAgent(pkg: B2BPackage): B2BPackage {
   if (!pkg) return pkg;
-  const clone: B2BPackage = JSON.parse(JSON.stringify(pkg));
+  const clone: B2BPackage = { ...pkg };
 
   // Strip top-level nett costs
   delete (clone as any).baseNetCostUSD;
@@ -928,6 +1347,7 @@ export function sanitizePackageForAgent(pkg: B2BPackage): B2BPackage {
 
   // Sanitize pricingConfiguration to remove manual markups and nett base costs
   if (clone.pricingConfiguration) {
+    clone.pricingConfiguration = { ...clone.pricingConfiguration };
     delete (clone.pricingConfiguration as any).baseNetCostUSD;
     delete (clone.pricingConfiguration as any).b2bMarkupPercent;
     delete (clone.pricingConfiguration as any).buyerMarkupPercent;

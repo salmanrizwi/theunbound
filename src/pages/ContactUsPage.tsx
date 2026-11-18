@@ -40,7 +40,7 @@ export const ContactUsPage: React.FC = () => {
   const [isSubmitted, setIsSubmitted] = useState(false);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['site_pages_config', 'companies'], () => {
       setSiteConfig(db.getSitePagesConfig());
     });
   }, []);

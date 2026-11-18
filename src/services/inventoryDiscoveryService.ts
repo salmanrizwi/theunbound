@@ -1,6 +1,12 @@
 import { Product, Hotel, Destination, CityHub } from '../types';
 import { evaluateInventoryValidity } from './pricingEngine';
 import { AppDatabase } from './db';
+import {
+  buildDestinationVisibilityIndex,
+  isProductActiveForB2B,
+  isHotelActiveForB2B,
+  paginateAfterEligibility
+} from './destinationVisibility';
 
 export interface B2BProductSearchParams {
   destinationId?: string;
@@ -94,8 +100,11 @@ export class InventoryDiscoveryService {
       ? sourceProducts
       : db.getProducts();
 
+    const deletedSet = db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
+
     const canonicalProducts = (rawProducts || []).filter(
-      p => Boolean(p && typeof p === 'object' && p.id)
+      p => Boolean(p && typeof p === 'object' && p.id && isProductActiveForB2B(p, visIndex, deletedSet))
     );
 
     const destFilter = (params.destinationId || '').trim();
@@ -107,81 +116,80 @@ export class InventoryDiscoveryService {
     const page = Math.max(1, params.page || 1);
     const pageSize = Math.max(1, params.pageSize || 20);
 
-    const filtered = canonicalProducts.filter(product => {
-      // 1. Destination filter (matches destinationId, destination, or destinationSlug)
-      if (destFilter && destFilter !== 'ALL') {
-        const pDestId = (product.destinationId || '').toLowerCase();
-        const pDest = (product.destination || '').toLowerCase();
-        const pDestSlug = ((product as any).destinationSlug || '').toLowerCase();
-        const target = destFilter.toLowerCase();
+    const paginated = paginateAfterEligibility(
+      canonicalProducts,
+      product => {
+        // 1. Destination filter (matches destinationId, destination, or destinationSlug)
+        if (destFilter && destFilter !== 'ALL') {
+          const pDestId = (product.destinationId || '').toLowerCase();
+          const pDest = (product.destination || '').toLowerCase();
+          const pDestSlug = ((product as any).destinationSlug || '').toLowerCase();
+          const target = destFilter.toLowerCase();
 
-        const matchesDest =
-          pDestId === target ||
-          pDest === target ||
-          pDestSlug === target;
+          const matchesDest =
+            pDestId === target ||
+            pDest === target ||
+            pDestSlug === target;
 
-        if (!matchesDest) return false;
-      }
-
-      // 2. Hub filter (matches hubId, cityHubId, fromHubId, toHubId, or hubName)
-      if (hubFilter && hubFilter !== 'ALL') {
-        const pHubId = (product.hubId || (product as any).cityHubId || '').toLowerCase();
-        const pFromHub = (product.fromHubId || '').toLowerCase();
-        const pToHub = (product.toHubId || '').toLowerCase();
-        const pHubName = ((product as any).hubName || (product as any).cityHubName || '').toLowerCase();
-        const target = hubFilter.toLowerCase();
-
-        const matchesHub =
-          pHubId === target ||
-          pFromHub === target ||
-          pToHub === target ||
-          pHubName === target;
-
-        if (!matchesHub) return false;
-      }
-
-      // 3. Product Category filter
-      if (categoryFilter && categoryFilter !== 'ALL') {
-        const pCat = (product.category || '').toLowerCase();
-        const target = categoryFilter.toLowerCase();
-        if (pCat !== target) return false;
-      }
-
-      // 4. Date validity check
-      if (dateFilter) {
-        const evalResult = evaluateInventoryValidity(product, dateFilter);
-        if (!evalResult.isValid) return false;
-      }
-
-      // 5. Text search query
-      if (query) {
-        const titleMatch = (product.title || product.name || '').toLowerCase().includes(query);
-        const descMatch = (product.description || '').toLowerCase().includes(query);
-        const codeMatch = (product.sku || (product as any).productCode || (product as any).code || '').toLowerCase().includes(query);
-        const destMatch = (product.destination || '').toLowerCase().includes(query);
-        const hubMatch = ((product as any).hubName || (product as any).cityHubName || '').toLowerCase().includes(query);
-
-        if (!titleMatch && !descMatch && !codeMatch && !destMatch && !hubMatch) {
-          return false;
+          if (!matchesDest) return false;
         }
-      }
 
-      return true;
-    });
+        // 2. Hub filter (matches hubId, cityHubId, fromHubId, toHubId, or hubName)
+        if (hubFilter && hubFilter !== 'ALL') {
+          const pHubId = (product.hubId || (product as any).cityHubId || '').toLowerCase();
+          const pFromHub = (product.fromHubId || '').toLowerCase();
+          const pToHub = (product.toHubId || '').toLowerCase();
+          const pHubName = ((product as any).hubName || (product as any).cityHubName || '').toLowerCase();
+          const target = hubFilter.toLowerCase();
 
-    const totalCount = filtered.length;
-    const totalPages = Math.ceil(totalCount / pageSize) || 1;
-    const startIndex = (page - 1) * pageSize;
-    const items = filtered.slice(startIndex, startIndex + pageSize);
-    const hasMore = startIndex + items.length < totalCount;
+          const matchesHub =
+            pHubId === target ||
+            pFromHub === target ||
+            pToHub === target ||
+            pHubName === target;
+
+          if (!matchesHub) return false;
+        }
+
+        // 3. Product Category filter
+        if (categoryFilter && categoryFilter !== 'ALL') {
+          const pCat = (product.category || '').toLowerCase();
+          const target = categoryFilter.toLowerCase();
+          if (pCat !== target) return false;
+        }
+
+        // 4. Date validity check
+        if (dateFilter) {
+          const evalResult = evaluateInventoryValidity(product, dateFilter);
+          if (!evalResult.isValid) return false;
+        }
+
+        // 5. Text search query
+        if (query) {
+          const titleMatch = (product.title || product.name || '').toLowerCase().includes(query);
+          const descMatch = (product.description || '').toLowerCase().includes(query);
+          const codeMatch = (product.sku || (product as any).productCode || (product as any).code || '').toLowerCase().includes(query);
+          const destMatch = (product.destination || '').toLowerCase().includes(query);
+          const hubMatch = ((product as any).hubName || (product as any).cityHubName || '').toLowerCase().includes(query);
+
+          if (!titleMatch && !descMatch && !codeMatch && !destMatch && !hubMatch) {
+            return false;
+          }
+        }
+
+        return true;
+      },
+      page,
+      pageSize
+    );
 
     return {
-      items,
-      totalCount,
-      page,
-      pageSize,
-      totalPages,
-      hasMore,
+      items: paginated.items,
+      totalCount: paginated.totalCount,
+      page: paginated.page,
+      pageSize: paginated.pageSize,
+      totalPages: paginated.totalPages,
+      hasMore: paginated.hasMore,
       filtersApplied: {
         destinationId: destFilter || undefined,
         hubId: hubFilter || undefined,
@@ -205,8 +213,11 @@ export class InventoryDiscoveryService {
       ? sourceHotels
       : db.getHotels();
 
+    const deletedSet = db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
+
     const canonicalHotels = (rawHotels || []).filter(
-      h => Boolean(h && typeof h === 'object' && h.id)
+      h => Boolean(h && typeof h === 'object' && h.id && isHotelActiveForB2B(h, visIndex, deletedSet))
     );
 
     // Validate stay dates
@@ -242,76 +253,73 @@ export class InventoryDiscoveryService {
     const page = Math.max(1, params.page || 1);
     const pageSize = Math.max(1, params.pageSize || 12);
 
-    const filtered = canonicalHotels.filter(hotel => {
-      // 1. Destination filter
-      if (destFilter && destFilter !== 'ALL') {
-        const hDestId = (hotel.destinationId || '').toLowerCase();
-        const hDest = ((hotel as any).destination || '').toLowerCase();
-        const target = destFilter.toLowerCase();
-        if (hDestId !== target && hDest !== target) return false;
-      }
-
-      // 2. Hub/City filter
-      if (hubFilter && hubFilter !== 'ALL') {
-        const hHubId = (hotel.hubId || hotel.cityId || '').toLowerCase();
-        const hCity = (hotel.cityName || hotel.city || '').toLowerCase();
-        const target = hubFilter.toLowerCase();
-        if (hHubId !== target && hCity !== target) return false;
-      }
-
-      // 3. Star Rating filter
-      if (starFilter && starFilter !== 'ALL') {
-        const hStar = String(hotel.starRating || '');
-        if (hStar !== starFilter) return false;
-      }
-
-      // 4. Stay date inventory validity check
-      const hotelValidity = evaluateInventoryValidity(hotel, checkIn, checkOut);
-      if (!hotelValidity.isValid) return false;
-
-      // 5. Room capacity check (if roomTypes exist)
-      if (hotel.roomTypes && hotel.roomTypes.length > 0) {
-        const reqAdultsPerRoom = Math.ceil(adults / roomsCount);
-        // Find if at least one room can fit required occupancy or has capacity
-        const hasSuitableRoom = hotel.roomTypes.some(room => {
-          const maxOcc = room.maxOccupancy || (room as any).capacity || 2;
-          return maxOcc >= reqAdultsPerRoom;
-        });
-        if (!hasSuitableRoom) {
-          // If total capacity across all rooms is less than guests, filter out
-          const totalMaxOcc = hotel.roomTypes.reduce((acc, r) => Math.max(acc, r.maxOccupancy || (r as any).capacity || 2), 0);
-          if (totalMaxOcc < reqAdultsPerRoom) return false;
+    const paginated = paginateAfterEligibility(
+      canonicalHotels,
+      hotel => {
+        // 1. Destination filter
+        if (destFilter && destFilter !== 'ALL') {
+          const hDestId = (hotel.destinationId || '').toLowerCase();
+          const hDest = ((hotel as any).destination || '').toLowerCase();
+          const target = destFilter.toLowerCase();
+          if (hDestId !== target && hDest !== target) return false;
         }
-      }
 
-      // 6. Text query search
-      if (query) {
-        const nameMatch = (hotel.name || '').toLowerCase().includes(query);
-        const cityMatch = (hotel.cityName || hotel.city || '').toLowerCase().includes(query);
-        const descMatch = (hotel.description || '').toLowerCase().includes(query);
-        const addressMatch = (hotel.address || '').toLowerCase().includes(query);
-
-        if (!nameMatch && !cityMatch && !descMatch && !addressMatch) {
-          return false;
+        // 2. Hub/City filter
+        if (hubFilter && hubFilter !== 'ALL') {
+          const hHubId = (hotel.hubId || hotel.cityId || '').toLowerCase();
+          const hCity = (hotel.cityName || hotel.city || '').toLowerCase();
+          const target = hubFilter.toLowerCase();
+          if (hHubId !== target && hCity !== target) return false;
         }
-      }
 
-      return true;
-    });
+        // 3. Star Rating filter
+        if (starFilter && starFilter !== 'ALL') {
+          const hStar = String(hotel.starRating || '');
+          if (hStar !== starFilter) return false;
+        }
 
-    const totalCount = filtered.length;
-    const totalPages = Math.ceil(totalCount / pageSize) || 1;
-    const startIndex = (page - 1) * pageSize;
-    const items = filtered.slice(startIndex, startIndex + pageSize);
-    const hasMore = startIndex + items.length < totalCount;
+        // 4. Stay date inventory validity check
+        const hotelValidity = evaluateInventoryValidity(hotel, checkIn, checkOut);
+        if (!hotelValidity.isValid) return false;
+
+        // 5. Room capacity check (if roomTypes exist)
+        if (hotel.roomTypes && hotel.roomTypes.length > 0) {
+          const reqAdultsPerRoom = Math.ceil(adults / roomsCount);
+          const hasSuitableRoom = hotel.roomTypes.some(room => {
+            const maxOcc = room.maxOccupancy || (room as any).capacity || 2;
+            return maxOcc >= reqAdultsPerRoom;
+          });
+          if (!hasSuitableRoom) {
+            const totalMaxOcc = hotel.roomTypes.reduce((acc, r) => Math.max(acc, r.maxOccupancy || (r as any).capacity || 2), 0);
+            if (totalMaxOcc < reqAdultsPerRoom) return false;
+          }
+        }
+
+        // 6. Text query search
+        if (query) {
+          const nameMatch = (hotel.name || '').toLowerCase().includes(query);
+          const cityMatch = (hotel.cityName || hotel.city || '').toLowerCase().includes(query);
+          const descMatch = (hotel.description || '').toLowerCase().includes(query);
+          const addressMatch = (hotel.address || '').toLowerCase().includes(query);
+
+          if (!nameMatch && !cityMatch && !descMatch && !addressMatch) {
+            return false;
+          }
+        }
+
+        return true;
+      },
+      page,
+      pageSize
+    );
 
     return {
-      items,
-      totalCount,
-      page,
-      pageSize,
-      totalPages,
-      hasMore,
+      items: paginated.items,
+      totalCount: paginated.totalCount,
+      page: paginated.page,
+      pageSize: paginated.pageSize,
+      totalPages: paginated.totalPages,
+      hasMore: paginated.hasMore,
       stayDetails: {
         checkInDate: checkIn,
         checkOutDate: checkOut,

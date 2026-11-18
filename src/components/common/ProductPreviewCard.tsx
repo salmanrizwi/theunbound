@@ -83,6 +83,8 @@ export const ProductPreviewCard: React.FC<ProductPreviewCardProps> = ({
           <img
             src={cleanPreviewUrl}
             alt={name || 'Product Preview'}
+            loading="lazy"
+            decoding="async"
             onLoad={() => setImgError(false)}
             onError={() => setImgError(true)}
             referrerPolicy="no-referrer"

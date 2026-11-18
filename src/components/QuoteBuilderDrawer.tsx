@@ -64,7 +64,8 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     totalNetCost,
     totalSellingPrice,
     travelStartDate,
-    travelEndDate
+    travelEndDate,
+    draftDestinationReview
   } = useQuotation();
 
   const { role, user, openAuthModal } = useAuth();
@@ -815,6 +816,17 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
             {/* Drawer Footer (Fixed at bottom) */}
             {items.length > 0 && (
               <div className="bg-slate-900 p-4 sm:p-5 border-t border-slate-800 shrink-0 space-y-4 pb-safe">
+                {draftDestinationReview?.requiresReview && (
+                  <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-400/40 text-amber-100 text-xs flex items-start gap-2">
+                    <AlertOctagon className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold block">Destination Inactive — Review Required</span>
+                      <span className="text-[11px] text-amber-200/90">
+                        Remove unavailable items ({draftDestinationReview.affectedDestinations.join(', ') || 'non-active destination'}) before submitting a new booking.
+                      </span>
+                    </div>
+                  </div>
+                )}
                 
                 {/* Price Breakdown */}
                 <div className="flex items-baseline justify-between">
@@ -851,10 +863,10 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                 ) : (
                   <button
                     id="btn-submit-cart-booking"
-                    disabled={hasRosterConflict || items.length === 0}
+                    disabled={hasRosterConflict || items.length === 0 || Boolean(draftDestinationReview?.requiresReview)}
                     onClick={handleOpenBookingSubmission}
                     className={`w-full py-3.5 px-4 rounded-xl text-sm font-black transition-all flex items-center justify-center space-x-2 shadow-lg ${
-                      hasRosterConflict || items.length === 0
+                      hasRosterConflict || items.length === 0 || Boolean(draftDestinationReview?.requiresReview)
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                         : 'bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 shadow-[#00C6A6]/20 cursor-pointer hover:scale-[1.01]'
                     }`}

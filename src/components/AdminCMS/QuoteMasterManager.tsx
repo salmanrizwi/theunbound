@@ -37,17 +37,20 @@ import {
   X,
   Compass,
   Briefcase,
-  MessageCircle
+  MessageCircle,
+  History
 } from 'lucide-react';
 import { ShareWhatsAppModal } from '../B2BAgentPortal/ShareWhatsAppModal';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { CalendarTask } from '../../types';
+import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
+import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
 
 export interface QuoteMasterManagerProps {
   initialQuoteId?: string | null;
   onLoadQuote?: (quote: Quotation) => void;
   onNavigateToLeads?: (leadId?: string) => void;
-  onNavigateToBuilder?: (quoteId?: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }) => void;
+  onNavigateToBuilder?: (quoteId?: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly' | 'restore'; leadId?: string }) => void;
   onOpenActionCenter?: (task: CalendarTask) => void;
 }
 
@@ -75,6 +78,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
 
   // Modals & Drawers
   const [viewingQuote, setViewingQuote] = useState<Quotation | null>(null);
+  const [versionHistoryQuote, setVersionHistoryQuote] = useState<Quotation | null>(null);
   const [leadLinkModalQuote, setLeadLinkModalQuote] = useState<Quotation | null>(null);
   const [selectedLeadIdToLink, setSelectedLeadIdToLink] = useState<string>('');
   const [customLeadIdInput, setCustomLeadIdInput] = useState<string>('');
@@ -86,9 +90,10 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
 
   const isB2BAgent = role === 'B2B_AGENT';
   const isAdminOrStaff = role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF';
+  const canViewInternalCosts = useMemo(() => canUserViewInternalCostBreakdown(user), [user]);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['saved_quotes', 'leads', 'bookings'], () => {
       setQuotes(db.getQuotesForUser(user));
       setAllLeads(db.getLeadsAuthorized(user));
     });
@@ -152,21 +157,17 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
     }
   };
 
-  // 3. New Version Branching
-  const handleCreateNewVersion = (quoteId: string) => {
-    const newQuote = db.createQuotationVersion(quoteId, user);
-    if (newQuote) {
-      showSuccess(`Created new draft version v${newQuote.version || 2} of quote #${newQuote.quoteNumber}`);
-      refresh();
-      if (onNavigateToBuilder) {
-        onNavigateToBuilder(newQuote.id, {
-          version: newQuote.version,
-          mode: 'edit',
-          leadId: newQuote.leadId
-        });
-      } else if (onLoadQuote) {
-        onLoadQuote(newQuote);
-      }
+  // 3. Open Restore Draft Workflow in Builder (Save Draft creates the actual saved version)
+  const handleRestoreInBuilder = (q: Quotation) => {
+    const targetVer = q.latestVersion || q.version || 1;
+    if (onNavigateToBuilder) {
+      onNavigateToBuilder(q.id, {
+        version: targetVer,
+        mode: 'restore',
+        leadId: q.leadId
+      });
+    } else if (onLoadQuote) {
+      onLoadQuote(q);
     }
   };
 
@@ -532,29 +533,33 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
             <div className="text-xl sm:text-2xl font-black text-[#008972] font-mono">
               ${Math.round(metrics.totalPipelineGross).toLocaleString()}
             </div>
-            <div className="text-[10px] text-slate-500 font-medium mt-0.5">
-              Net Cost: ${Math.round(metrics.totalNetCost).toLocaleString()}
-            </div>
+            {canViewInternalCosts && (
+              <div className="text-[10px] text-slate-500 font-medium mt-0.5">
+                Net Cost: ${Math.round(metrics.totalNetCost).toLocaleString()}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Margin Yield Card */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Avg Margin</span>
-            <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
-              <TrendingUp className="w-4 h-4" />
+        {/* Margin Yield Card (Internal Cost Governance Restricted) */}
+        {canViewInternalCosts && (
+          <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Avg Margin</span>
+              <div className="w-7 h-7 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+                <TrendingUp className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <div className="text-xl sm:text-2xl font-black text-purple-700 font-mono">
+                {metrics.avgMarginPercent.toFixed(1)}%
+              </div>
+              <div className="text-[10px] text-purple-600 font-bold mt-0.5">
+                +${Math.round(metrics.totalMargin).toLocaleString()} Gross Margin
+              </div>
             </div>
           </div>
-          <div className="mt-3">
-            <div className="text-xl sm:text-2xl font-black text-purple-700 font-mono">
-              {metrics.avgMarginPercent.toFixed(1)}%
-            </div>
-            <div className="text-[10px] text-purple-600 font-bold mt-0.5">
-              +${Math.round(metrics.totalMargin).toLocaleString()} Gross Margin
-            </div>
-          </div>
-        </div>
+        )}
 
         {/* CRM Lead Linkage Card */}
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
@@ -625,7 +630,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               <option value="NEWEST">Sort: Newest First</option>
               <option value="OLDEST">Sort: Oldest First</option>
               <option value="PRICE_HIGH">Sort: Highest Value</option>
-              <option value="MARGIN_HIGH">Sort: Highest Margin</option>
+              {canViewInternalCosts && (
+                <option value="MARGIN_HIGH">Sort: Highest Margin</option>
+              )}
             </select>
           </div>
         </div>
@@ -768,7 +775,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 <th className="py-3.5 px-4">Client & Travelers</th>
                 <th className="py-3.5 px-4">CRM Lead Link</th>
                 <th className="py-3.5 px-4">Gross Selling</th>
-                <th className="py-3.5 px-4">Net / Margin</th>
+                {canViewInternalCosts && <th className="py-3.5 px-4">Net / Margin</th>}
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
@@ -779,6 +786,8 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 const creatorRole = q.createdByUserType || (q.agentAgency ? 'B2B_AGENT' : 'ADMIN');
                 const agencyName = q.agentAgency || q.agentCompany;
                 const marginPercent = q.totalSellingPrice > 0 ? Math.round(((q.totalMargin || 0) / q.totalSellingPrice) * 100) : 0;
+                const versionsList = db.getQuotationVersions(q.id, user);
+                const versionCount = Math.max(q.versionCount || 0, q.latestVersion || q.version || 1, versionsList.length);
                 const rowKey = q.id ? `${q.id}-${q.version || 1}-${idx}` : `quote-row-${q.quoteNumber || 'unnumbered'}-${idx}`;
 
                 return (
@@ -801,10 +810,16 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                           variant="badge"
                           onOpenActionCenter={onOpenActionCenter}
                         />
-                        {q.version && (
-                          <span className="text-[10px] font-bold bg-[#00C6A6]/20 text-[#008972] px-1.5 py-0.5 rounded">
-                            v{q.version}
-                          </span>
+                        {(q.latestVersion || q.version) && (
+                          <button
+                            type="button"
+                            onClick={() => setVersionHistoryQuote(q)}
+                            className="text-[10px] font-bold bg-[#00C6A6]/20 hover:bg-[#00C6A6]/35 text-[#008972] px-1.5 py-0.5 rounded inline-flex items-center space-x-1 cursor-pointer transition-colors"
+                            title="Open Version History & Compare"
+                          >
+                            <span>v{q.latestVersion || q.version}</span>
+                            {versionCount > 1 && <span className="text-[9px] opacity-80">({versionCount})</span>}
+                          </button>
                         )}
                         {q.isLocked && (
                           <span className="inline-flex items-center space-x-0.5 text-[9px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded" title="Locked snapshot version">
@@ -938,18 +953,20 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                       </div>
                     </td>
 
-                    {/* 6. Net Cost / Margin */}
-                    <td className="py-4 px-4 min-w-[130px]">
-                      <div className="font-mono text-slate-700 text-xs">
-                        Net: {formatCurrency(q.totalNetCost || 0, q.currency)}
-                      </div>
-                      <div className="text-[10px] text-emerald-700 font-bold flex items-center space-x-1">
-                        <span>+{formatCurrency(q.totalMargin || 0, q.currency)}</span>
-                        <span className="bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-extrabold text-[9px]">
-                          {marginPercent}%
-                        </span>
-                      </div>
-                    </td>
+                    {/* 6. Net Cost / Margin (Admin / Internal Only) */}
+                    {canViewInternalCosts && (
+                      <td className="py-4 px-4 min-w-[130px]">
+                        <div className="font-mono text-slate-700 text-xs">
+                          Net: {formatCurrency(q.totalNetCost || 0, q.currency)}
+                        </div>
+                        <div className="text-[10px] text-emerald-700 font-bold flex items-center space-x-1">
+                          <span>+{formatCurrency(q.totalMargin || 0, q.currency)}</span>
+                          <span className="bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-extrabold text-[9px]">
+                            {marginPercent}%
+                          </span>
+                        </div>
+                      </td>
+                    )}
 
                     {/* 7. Status */}
                     <td className="py-4 px-4">
@@ -997,11 +1014,21 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                           <Download className="w-3.5 h-3.5" />
                         </button>
 
-                        {/* Version Branching */}
+                        {/* Version History */}
                         <button
-                          onClick={() => handleCreateNewVersion(q.id)}
+                          onClick={() => setVersionHistoryQuote(q)}
+                          className="px-2 py-1 text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-colors cursor-pointer inline-flex items-center space-x-1 text-[10px] font-bold border border-indigo-200"
+                          title="Inspect Version History, Compare & Restore"
+                        >
+                          <History className="w-3 h-3" />
+                          <span>Versions ({versionCount})</span>
+                        </button>
+
+                        {/* Load as Editable Working Draft */}
+                        <button
+                          onClick={() => handleRestoreInBuilder(q)}
                           className="p-1.5 text-purple-700 hover:text-purple-900 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors cursor-pointer"
-                          title="Branch New Version (v2, v3...)"
+                          title="Load Latest Version into Builder as Unsaved Draft (Save Draft creates new version)"
                         >
                           <Copy className="w-3.5 h-3.5" />
                         </button>
@@ -1010,7 +1037,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                         <button
                           onClick={() => setViewingQuote(q)}
                           className="p-1.5 text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
-                          title="View Itinerary & Margin Breakdown"
+                          title={canViewInternalCosts ? 'View Itinerary & Margin Breakdown' : 'View Itinerary Details'}
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
@@ -1186,32 +1213,34 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-slate-800 text-xs">
-                <div>
-                  <span className="text-slate-400 block text-[10px]">Net Ground Cost</span>
-                  <span className="font-mono font-bold text-white text-sm">
-                    {formatCurrency(viewingQuote.totalNetCost || 0, viewingQuote.currency)}
-                  </span>
+              {canViewInternalCosts && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 border-t border-slate-800 text-xs">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Net Ground Cost</span>
+                    <span className="font-mono font-bold text-white text-sm">
+                      {formatCurrency(viewingQuote.totalNetCost || 0, viewingQuote.currency)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Markup Margin</span>
+                    <span className="font-mono font-bold text-emerald-400 text-sm">
+                      +{formatCurrency(viewingQuote.totalMargin || 0, viewingQuote.currency)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Margin %</span>
+                    <span className="font-mono font-bold text-white text-sm">
+                      {viewingQuote.overallMarkupPercent || 15}%
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">Taxes & Levies</span>
+                    <span className="font-mono font-bold text-white text-sm">
+                      {formatCurrency(viewingQuote.totalTaxes || 0, viewingQuote.currency)}
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px]">Markup Margin</span>
-                  <span className="font-mono font-bold text-emerald-400 text-sm">
-                    +{formatCurrency(viewingQuote.totalMargin || 0, viewingQuote.currency)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px]">Margin %</span>
-                  <span className="font-mono font-bold text-white text-sm">
-                    {viewingQuote.overallMarkupPercent || 15}%
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px]">Taxes & Levies</span>
-                  <span className="font-mono font-bold text-white text-sm">
-                    {formatCurrency(viewingQuote.totalTaxes || 0, viewingQuote.currency)}
-                  </span>
-                </div>
-              </div>
+              )}
             </div>
 
             {/* Line Items List */}
@@ -1233,9 +1262,11 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                       <div className="font-bold text-slate-900 text-xs">
                         {formatCurrency(item.calculation?.totalSellingPrice || 0, viewingQuote.currency)}
                       </div>
-                      <div className="text-[10px] text-slate-400">
-                        Net: {formatCurrency(item.calculation?.totalNetCost || 0, viewingQuote.currency)}
-                      </div>
+                      {canViewInternalCosts && (
+                        <div className="text-[10px] text-slate-400">
+                          Net: {formatCurrency(item.calculation?.totalNetCost || 0, viewingQuote.currency)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1402,6 +1433,35 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
           onSuccess={() => {
             setQuotes(db.getQuotesForUser(user));
             setAllLeads(db.getLeadsAuthorized(user));
+          }}
+        />
+      )}
+
+      {/* QUOTATION VERSION HISTORY MODAL */}
+      {versionHistoryQuote && (
+        <QuotationVersionHistoryModal
+          isOpen={!!versionHistoryQuote}
+          onClose={() => setVersionHistoryQuote(null)}
+          quoteId={versionHistoryQuote.id}
+          initialQuote={versionHistoryQuote}
+          currentUser={user}
+          onOpenVersion={(qId, ver, mode) => {
+            setVersionHistoryQuote(null);
+            if (onNavigateToBuilder) {
+              onNavigateToBuilder(qId, { version: ver, mode });
+            } else if (onLoadQuote) {
+              const target = db.getQuoteByIdAuthorized(qId, user);
+              if (target) onLoadQuote(target);
+            }
+          }}
+          onRestoreVersion={(qId, ver) => {
+            setVersionHistoryQuote(null);
+            if (onNavigateToBuilder) {
+              onNavigateToBuilder(qId, { version: ver, mode: 'restore' });
+            } else if (onLoadQuote) {
+              const target = db.getQuoteByIdAuthorized(qId, user);
+              if (target) onLoadQuote(target);
+            }
           }}
         />
       )}

@@ -70,11 +70,19 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
       setActiveModalPackage(prev => {
         if (!prev) return null;
         const updated = latest.find(p => p.id === prev.id);
-        return updated || prev;
+        return updated || null;
       });
     };
     refreshPackages();
-    const unsubscribe = db.subscribe(refreshPackages);
+    const unsubscribe = db.subscribeToCollections([
+      'b2b_packages',
+      'package_items',
+      'destinations',
+      'city_hubs',
+      'wishlist_items',
+      'wishlist_folders',
+      'inventory_tombstones'
+    ], refreshPackages);
     const unsubImg = canonicalImageService.subscribe(refreshPackages);
     return () => {
       unsubscribe();
@@ -112,6 +120,7 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
   const handleViewPackage = (pkg: B2BPackage) => {
     const fresh = db.getPackageById(pkg.id);
     const normalized = normalizePackageRecord(fresh || pkg);
+    if (!isPackageVisibleToB2BAgent(normalized)) return;
     setActiveModalPackage(normalized);
     if (onViewItemDetails) {
       onViewItemDetails(normalized, 'PACKAGE');
@@ -287,6 +296,8 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                   <img
                     src={canonicalImageService.resolvePackageImage(pkg)}
                     alt={pkg.title}
+                    loading="lazy"
+                    decoding="async"
                     referrerPolicy="no-referrer"
                     onError={e => {
                       (e.currentTarget as HTMLImageElement).src =
@@ -508,7 +519,9 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                         onClick={e => {
                           e.stopPropagation();
                           const fresh = db.getPackageById(pkg.id);
-                          onCustomizePackage(normalizePackageRecord(fresh || pkg));
+                          const normalized = normalizePackageRecord(fresh || pkg);
+                          if (!isPackageVisibleToB2BAgent(normalized)) return;
+                          onCustomizePackage(normalized);
                         }}
                         className="px-4 py-2.5 bg-[#008972] hover:bg-[#00705d] text-white rounded-xl text-xs font-bold transition-all shadow-sm hover:shadow flex items-center space-x-1.5 cursor-pointer"
                       >

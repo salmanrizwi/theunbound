@@ -153,6 +153,13 @@
         "supplierId": { "type": "string", "required": true },
         "supplierName": { "type": "string", "required": true },
         "images": { "type": "array", "required": true },
+        "defaultMarkupPercent": { "type": "number", "required": false },
+        "b2bAgentMarkupPercent": { "type": "number", "required": false },
+        "marginType": { "type": "string", "required": false, "enum": ["PERCENTAGE", "FIXED"] },
+        "marginFixed": { "type": "number", "required": false },
+        "commissionPercent": { "type": "number", "required": false },
+        "marginStatus": { "type": "string", "required": false, "enum": ["ACTIVE", "INACTIVE"] },
+        "marginConfigVersion": { "type": "number", "required": false },
         "status": { "type": "string", "required": true, "enum": ["ACTIVE", "DRAFT", "ARCHIVED"] }
       }
     },
@@ -178,6 +185,8 @@
         "totalDiscounts": { "type": "number", "required": true },
         "finalTotal": { "type": "number", "required": true },
         "status": { "type": "string", "required": true },
+        "termsStatus": { "type": "string", "required": false },
+        "commercialTermsSnapshot": { "type": "object", "required": false },
         "createdAt": { "type": "string", "required": true }
       }
     },
@@ -481,6 +490,10 @@
         "totalSellingPrice": { "type": "number", "required": true },
         "currency": { "type": "string", "required": true },
         "requiredDocuments": { "type": "array", "required": true },
+        "inclusions": { "type": "array", "required": false },
+        "exclusions": { "type": "array", "required": false },
+        "inclusionsExclusionsVersion": { "type": "number", "required": false },
+        "updatedAt": { "type": "string", "required": false },
         "status": { "type": "string", "required": true }
       }
     },
@@ -866,6 +879,391 @@
         "updatedAt": { "type": "string", "required": false },
         "createdBy": { "type": "string", "required": false },
         "updatedBy": { "type": "string", "required": false }
+      }
+    },
+    "DestinationCommercialTerms": {
+      "collection": "destination_commercial_terms",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "targetId": { "type": "string", "required": true },
+        "targetType": { "type": "string", "required": true, "enum": ["DESTINATION", "REGION", "HUB"] },
+        "targetName": { "type": "string", "required": true },
+        "parentDestinationId": { "type": "string", "required": false },
+        "parentDestinationName": { "type": "string", "required": false },
+        "version": { "type": "number", "required": true },
+        "status": { "type": "string", "required": true, "enum": ["DRAFT", "PUBLISHED", "ARCHIVED"] },
+        "isActive": { "type": "boolean", "required": true },
+        "allowParentInheritance": { "type": "boolean", "required": true },
+        "sections": { "type": "array", "required": true },
+        "draftSections": { "type": "array", "required": false },
+        "hasUnpublishedDraft": { "type": "boolean", "required": false },
+        "sourceTemplateType": { "type": "string", "required": false },
+        "copiedFromTargetId": { "type": "string", "required": false },
+        "contentHash": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true },
+        "updatedBy": { "type": "string", "required": false },
+        "publishedAt": { "type": "string", "required": false },
+        "publishedBy": { "type": "string", "required": false }
+      }
+    },
+    "DestinationCommercialTermsVersion": {
+      "collection": "destination_commercial_terms_history",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "termsConfigId": { "type": "string", "required": true },
+        "targetId": { "type": "string", "required": true },
+        "targetName": { "type": "string", "required": true },
+        "version": { "type": "number", "required": true },
+        "status": { "type": "string", "required": true },
+        "allowParentInheritance": { "type": "boolean", "required": true },
+        "sections": { "type": "array", "required": true },
+        "changeSummary": { "type": "string", "required": true },
+        "createdAt": { "type": "string", "required": true },
+        "createdBy": { "type": "string", "required": true }
+      }
+    },
+    "SurchargeMaster": {
+      "collection": "surcharge_masters",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "code": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "description": { "type": "string", "required": false },
+        "surchargeCategory": { "type": "string", "required": true },
+        "calculationType": { "type": "string", "required": true, "enum": ["FIXED", "PERCENTAGE"] },
+        "amount": { "type": "number", "required": true },
+        "percentage": { "type": "number", "required": false },
+        "currency": { "type": "string", "required": true },
+        "pricingBasis": { "type": "string", "required": true },
+        "validFrom": { "type": "string", "required": true },
+        "validTo": { "type": "string", "required": true },
+        "periods": { "type": "array", "required": false },
+        "linkedProductIds": { "type": "array", "required": true },
+        "applicableCategoryIds": { "type": "array", "required": false },
+        "applicableDestinationIds": { "type": "array", "required": false },
+        "applyToAllCategoryProducts": { "type": "boolean", "required": false },
+        "applyAcrossAllSelectedProducts": { "type": "boolean", "required": true },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE", "DRAFT", "SCHEDULED", "EXPIRED", "ARCHIVED"] },
+        "notes": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "SurchargeProductMapping": {
+      "collection": "surcharge_product_mappings",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "surchargeId": { "type": "string", "required": true },
+        "productId": { "type": "string", "required": true },
+        "productName": { "type": "string", "required": true },
+        "productCategory": { "type": "string", "required": true },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "SurchargeHistoryRecord": {
+      "collection": "surcharge_history",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "surchargeId": { "type": "string", "required": true },
+        "surchargeName": { "type": "string", "required": true },
+        "action": { "type": "string", "required": true },
+        "changesSummary": { "type": "string", "required": true },
+        "performedByUserId": { "type": "string", "required": true },
+        "performedByName": { "type": "string", "required": true },
+        "performedByRole": { "type": "string", "required": true },
+        "timestamp": { "type": "string", "required": true }
+      }
+    },
+    "QuotationVersion": {
+      "collection": "quotations/{quotationId}/versions",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "quoteId": { "type": "string", "required": true },
+        "quoteNumber": { "type": "string", "required": true },
+        "leadId": { "type": "string", "required": false },
+        "version": { "type": "number", "required": true },
+        "versionNumber": { "type": "number", "required": true },
+        "previousVersionId": { "type": "string", "required": false },
+        "savedByUserId": { "type": "string", "required": false },
+        "savedByName": { "type": "string", "required": false },
+        "savedByRole": { "type": "string", "required": false },
+        "agentId": { "type": "string", "required": false },
+        "userId": { "type": "string", "required": false },
+        "status": { "type": "string", "required": true },
+        "currency": { "type": "string", "required": true },
+        "totalSellingPrice": { "type": "number", "required": true },
+        "theUnboundBaseSellingPrice": { "type": "number", "required": false },
+        "agentMarginAmount": { "type": "number", "required": false },
+        "storageFormat": { "type": "string", "required": false, "enum": ["SINGLE_DOC_V1", "SPLIT_SECTIONS_V2"] },
+        "schemaVersion": { "type": "number", "required": false },
+        "manifestStatus": { "type": "string", "required": false, "enum": ["PREPARING", "COMMITTED", "FAILED"] },
+        "sections": { "type": "array", "required": false },
+        "sectionIds": { "type": "array", "required": false },
+        "sectionCount": { "type": "number", "required": false },
+        "chunkCount": { "type": "number", "required": false },
+        "sectionsIntegrityHash": { "type": "string", "required": false },
+        "totalReconstructedBytes": { "type": "number", "required": false },
+        "committedAt": { "type": "string", "required": false },
+        "failureReason": { "type": "string", "required": false },
+        "migrationStatus": { "type": "string", "required": false, "enum": ["MIGRATED_FROM_V1", "NATIVE_V2"] },
+        "migrationState": { "type": "string", "required": false, "enum": ["PENDING", "IN_PROGRESS", "VERIFICATION_FAILED", "VERIFIED", "COMMITTED"] },
+        "migratedAt": { "type": "string", "required": false },
+        "verifiedAt": { "type": "string", "required": false },
+        "failingFieldPaths": { "type": "array", "required": false },
+        "items": { "type": "array", "required": false },
+        "routeHubs": { "type": "array", "required": false },
+        "pricingSnapshot": { "type": "object", "required": false },
+        "commercialTermsSnapshot": { "type": "object", "required": false },
+        "authoritativeSnapshot": { "type": "object", "required": false },
+        "changesSummary": { "type": "string", "required": true },
+        "clientSaveRequestId": { "type": "string", "required": false },
+        "restoredFromVersion": { "type": "number", "required": false },
+        "isLatest": { "type": "boolean", "required": true },
+        "isImmutable": { "type": "boolean", "required": true },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "QuotationVersionSection": {
+      "collection": "quotations/{quotationId}/versions/{versionId}/sections",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "sectionId": { "type": "string", "required": true },
+        "quoteId": { "type": "string", "required": true },
+        "versionId": { "type": "string", "required": true },
+        "versionNumber": { "type": "number", "required": true },
+        "logicalSection": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "trip_overview",
+            "itinerary",
+            "accommodation",
+            "products_and_services",
+            "pricing",
+            "commercial_terms",
+            "destination_policies",
+            "passenger_details",
+            "branding_and_output_settings"
+          ]
+        },
+        "chunkIndex": { "type": "number", "required": true },
+        "totalChunks": { "type": "number", "required": true },
+        "estimatedBytes": { "type": "number", "required": true },
+        "contentHash": { "type": "string", "required": true },
+        "agentId": { "type": "string", "required": false },
+        "userId": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true },
+        "data": { "type": "object", "required": true }
+      }
+    },
+    "ProductMarginConfig": {
+      "collection": "product_margin_configs",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "productId": { "type": "string", "required": true },
+        "sku": { "type": "string", "required": true },
+        "productName": { "type": "string", "required": true },
+        "category": { "type": "string", "required": true },
+        "destinationId": { "type": "string", "required": true },
+        "destinationName": { "type": "string", "required": true },
+        "currency": { "type": "string", "required": true },
+        "marginType": { "type": "string", "required": true, "enum": ["PERCENTAGE", "FIXED"] },
+        "marginValue": { "type": "number", "required": true },
+        "b2bAgentMarkupPercent": { "type": "number", "required": true },
+        "defaultMarkupPercent": { "type": "number", "required": true },
+        "marginFixed": { "type": "number", "required": true },
+        "commissionPercent": { "type": "number", "required": true },
+        "isActive": { "type": "boolean", "required": true },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE"] },
+        "applicableScope": { "type": "string", "required": true, "enum": ["ALL_B2B", "CATEGORY", "PRODUCT"] },
+        "version": { "type": "number", "required": true },
+        "createdAt": { "type": "string", "required": true },
+        "updatedAt": { "type": "string", "required": true },
+        "updatedByUid": { "type": "string", "required": true },
+        "updatedByEmail": { "type": "string", "required": true },
+        "updatedByName": { "type": "string", "required": true },
+        "updatedByRole": { "type": "string", "required": true },
+        "changeSource": { "type": "string", "required": true },
+        "schemaVersion": { "type": "number", "required": true }
+      }
+    },
+    "ProductMarginAuditLog": {
+      "collection": "product_margin_audit_logs",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "productId": { "type": "string", "required": true },
+        "sku": { "type": "string", "required": true },
+        "productName": { "type": "string", "required": true },
+        "action": { "type": "string", "required": true },
+        "previousMarginType": { "type": "string", "required": true },
+        "newMarginType": { "type": "string", "required": true },
+        "previousMarginValue": { "type": "number", "required": false },
+        "newMarginValue": { "type": "number", "required": true },
+        "previousCommissionPercent": { "type": "number", "required": false },
+        "newCommissionPercent": { "type": "number", "required": true },
+        "previousStatus": { "type": "string", "required": true },
+        "newStatus": { "type": "string", "required": true },
+        "previousVersion": { "type": "number", "required": true },
+        "newVersion": { "type": "number", "required": true },
+        "reason": { "type": "string", "required": false },
+        "changeSource": { "type": "string", "required": true },
+        "batchId": { "type": "string", "required": false },
+        "actorUid": { "type": "string", "required": true },
+        "actorEmail": { "type": "string", "required": true },
+        "actorName": { "type": "string", "required": true },
+        "actorRole": { "type": "string", "required": true },
+        "timestamp": { "type": "string", "required": true }
+      }
+    },
+    "UserCashbackConfiguration": {
+      "collection": "cashback_user_configs",
+      "fields": {
+        "userId": { "type": "string", "required": true },
+        "isEligible": { "type": "boolean", "required": true },
+        "cashbackPercent": { "type": "number", "required": true },
+        "presetType": { "type": "string", "required": true, "enum": ["1_PERCENT", "2_PERCENT", "5_PERCENT", "CUSTOM"] },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE", "SUSPENDED"] },
+        "effectiveFrom": { "type": "string", "required": true },
+        "effectiveTo": { "type": "string", "required": false },
+        "configVersion": { "type": "number", "required": true },
+        "updatedAt": { "type": "string", "required": true },
+        "updatedByUid": { "type": "string", "required": true }
+      }
+    },
+    "CashbackWalletSummary": {
+      "collection": "cashback_wallets",
+      "fields": {
+        "userId": { "type": "string", "required": true },
+        "primaryCurrency": { "type": "string", "required": true },
+        "pendingBalance": { "type": "number", "required": true },
+        "availableBalance": { "type": "number", "required": true },
+        "heldInWithdrawals": { "type": "number", "required": true },
+        "totalCredited": { "type": "number", "required": true },
+        "totalWithdrawn": { "type": "number", "required": true },
+        "totalReversed": { "type": "number", "required": true },
+        "lastReconciledAt": { "type": "string", "required": true }
+      }
+    },
+    "CashbackLedgerTransaction": {
+      "collection": "cashback_ledger_transactions",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "userId": { "type": "string", "required": true },
+        "type": {
+          "type": "string",
+          "required": true,
+          "enum": [
+            "CASHBACK_CREDIT",
+            "WITHDRAWAL_HOLD",
+            "WITHDRAWAL_RELEASE",
+            "WITHDRAWAL_DEBIT",
+            "ADMIN_CREDIT_ADJUSTMENT",
+            "ADMIN_DEBIT_ADJUSTMENT",
+            "CASHBACK_REVERSAL"
+          ]
+        },
+        "direction": { "type": "string", "required": true, "enum": ["CREDIT", "DEBIT", "HOLD", "RELEASE", "REVERSAL"] },
+        "amount": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "idempotencyKey": { "type": "string", "required": false },
+        "createdAt": { "type": "string", "required": true }
+      }
+    },
+    "BookingCashbackRecord": {
+      "collection": "booking_cashback_records",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "bookingId": { "type": "string", "required": true },
+        "bookingReference": { "type": "string", "required": true },
+        "userId": { "type": "string", "required": true },
+        "bookingTotalSnapshot": { "type": "number", "required": false },
+        "hotelAccommodationTotal": { "type": "number", "required": false },
+        "landPartTotal": { "type": "number", "required": false },
+        "eligibleAmount": { "type": "number", "required": true },
+        "cashbackPercent": { "type": "number", "required": true },
+        "cashbackAmount": { "type": "number", "required": true },
+        "remainingCashbackAmount": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "travelEndDate": { "type": "string", "required": true },
+        "destinationTimezone": { "type": "string", "required": true },
+        "scheduledCreditDate": { "type": "string", "required": true },
+        "scheduledCreditAtUtc": { "type": "string", "required": true },
+        "verificationStatus": {
+          "type": "string",
+          "required": false,
+          "enum": ["VERIFIED", "UNVERIFIED_HOLD"]
+        },
+        "pricingSnapshotVersion": { "type": "number", "required": false },
+        "calculatedAt": { "type": "string", "required": false },
+        "status": {
+          "type": "string",
+          "required": true,
+          "enum": ["PENDING", "HELD", "CREDITED", "CANCELLED", "REVERSED", "PARTIALLY_REVERSED", "NOT_ELIGIBLE"]
+        },
+        "createdAt": { "type": "string", "required": true }
+      }
+    },
+    "UserBankAccount": {
+      "collection": "user_bank_accounts",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "userId": { "type": "string", "required": true },
+        "accountHolderName": { "type": "string", "required": true },
+        "bankName": { "type": "string", "required": true },
+        "accountNumberMasked": { "type": "string", "required": true },
+        "accountNumberLast4": { "type": "string", "required": true },
+        "ifscCode": { "type": "string", "required": false, "pattern": "^[A-Z]{4}0[A-Z0-9]{6}$" },
+        "country": { "type": "string", "required": true },
+        "currency": { "type": "string", "required": true },
+        "isDefault": { "type": "boolean", "required": true },
+        "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "CashbackWithdrawalRequest": {
+      "collection": "cashbackWithdrawalRequests",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "userId": { "type": "string", "required": true },
+        "requestedAmount": { "type": "number", "required": true },
+        "currency": { "type": "string", "required": true },
+        "bankAccountId": { "type": "string", "required": true },
+        "status": {
+          "type": "string",
+          "required": true,
+          "enum": ["SUBMITTED", "UNDER_REVIEW", "APPROVED", "PROCESSING", "PAID", "REJECTED", "CANCELLED"]
+        },
+        "submittedAt": { "type": "string", "required": true }
+      }
+    },
+    "QuotationOperation": {
+      "collection": "quotation_operations",
+      "fields": {
+        "operationId": { "type": "string", "required": true },
+        "idempotencyKey": { "type": "string", "required": true },
+        "quoteId": { "type": "string", "required": true },
+        "versionId": { "type": "string", "required": false },
+        "uid": { "type": "string", "required": true },
+        "operationType": {
+          "type": "string",
+          "required": true,
+          "enum": ["SAVE_DRAFT", "SNAPSHOT_CREATE", "PDF_GENERATE", "EMAIL_SEND", "WHATSAPP_SHARE"]
+        },
+        "status": {
+          "type": "string",
+          "required": true,
+          "enum": ["IDLE", "PREPARING", "IN_PROGRESS", "VERIFYING", "SUCCEEDED", "FAILED", "TIMED_OUT", "RETRY_AVAILABLE"]
+        },
+        "createdAt": { "type": "string", "required": true },
+        "startedAt": { "type": "string", "required": true },
+        "completedAt": { "type": "string", "required": false },
+        "errorCode": { "type": "string", "required": false },
+        "errorMessage": { "type": "string", "required": false },
+        "safeUserMessage": { "type": "string", "required": false },
+        "retryCount": { "type": "number", "required": true },
+        "resultRef": { "type": "string", "required": false }
       }
     }
   }

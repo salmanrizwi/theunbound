@@ -33,7 +33,7 @@ export const GlobalRemindersBar: React.FC<GlobalRemindersBarProps> = ({
   const [dataVersion, setDataVersion] = useState(0);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['calendar_tasks', 'bookings', 'saved_quotes', 'leads'], () => {
       setDataVersion(v => v + 1);
     });
   }, [db]);

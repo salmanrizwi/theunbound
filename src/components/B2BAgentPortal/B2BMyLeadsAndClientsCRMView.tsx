@@ -36,16 +36,22 @@ import {
   UserCheck,
   RefreshCw,
   Eye,
-  UserPlus
+  UserPlus,
+  GitCompare,
+  RotateCcw
 } from 'lucide-react';
-import { TravelLead, B2BCustomer, User } from '../../types';
+import { TravelLead, B2BCustomer, User, GroupedLeadQuotationVersions } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { formatCurrency } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
+import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
 
 interface B2BMyLeadsAndClientsCRMViewProps {
   initialSubView?: 'assigned-leads' | 'clients';
   onCreateQuoteFromLead: (lead: TravelLead) => void;
   onCreateQuoteForCustomer?: (customer: B2BCustomer) => void;
+  onOpenQuoteVersion?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly' | 'restore'; leadId?: string }) => void;
+  onRestoreQuoteVersion?: (quoteId: string, version: number) => void;
   onNavigateToBooking?: (bookingReference: string) => void;
 }
 
@@ -55,6 +61,8 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
   initialSubView = 'assigned-leads',
   onCreateQuoteFromLead,
   onCreateQuoteForCustomer,
+  onOpenQuoteVersion,
+  onRestoreQuoteVersion,
   onNavigateToBooking
 }) => {
   const { user } = useAuth();
@@ -70,7 +78,19 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
   const [leads, setLeads] = useState<TravelLead[]>(() => db.getLeadsAuthorized(user));
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ASSIGNED' | 'QUOTED' | 'CONVERTED'>('ALL');
+  const [leadPage, setLeadPage] = useState<number>(1);
+  const LEADS_PAGE_SIZE = 20;
   const [selectedLead, setSelectedLead] = useState<TravelLead | null>(null);
+  const [versionModalTarget, setVersionModalTarget] = useState<{
+    quoteId: string;
+    initialTab: 'HISTORY' | 'INSPECT' | 'COMPARE';
+    initialVersion?: number;
+  } | null>(null);
+
+  const groupedLeadQuotes = useMemo<GroupedLeadQuotationVersions[]>(() => {
+    if (!selectedLead) return [];
+    return db.getQuoteVersionsGroupedByQuoteForLead(selectedLead.id, user);
+  }, [db, selectedLead, user, leads]);
 
   // Client Directory State
   const [refreshClientsTrigger, setRefreshClientsTrigger] = useState(0);
@@ -78,6 +98,8 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
     return db.getB2BCustomers(user?.id);
   }, [db, user, refreshClientsTrigger]);
   const [clientSearchQuery, setClientSearchQuery] = useState('');
+  const [clientPage, setClientPage] = useState<number>(1);
+  const CLIENTS_PAGE_SIZE = 24;
   const [isAddClientModalOpen, setIsAddClientModalOpen] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<B2BCustomer | null>(null);
   const [clientFormData, setClientFormData] = useState({
@@ -101,8 +123,9 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
 
   // Real-time synchronization
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['leads', 'b2b_customers', 'saved_quotes', 'bookings'], () => {
       setLeads(db.getLeadsAuthorized(user));
+      setRefreshClientsTrigger(t => t + 1);
     });
     return unsub;
   }, [user, db]);
@@ -156,6 +179,28 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
       );
     });
   }, [customers, clientSearchQuery]);
+
+  useEffect(() => {
+    setLeadPage(1);
+  }, [searchQuery, statusFilter, leadViewMode]);
+
+  useEffect(() => {
+    setClientPage(1);
+  }, [clientSearchQuery]);
+
+  const totalLeadPages = Math.max(1, Math.ceil(filteredLeads.length / LEADS_PAGE_SIZE));
+  const safeLeadPage = Math.min(leadPage, totalLeadPages);
+  const paginatedLeads = useMemo(() => {
+    const start = (safeLeadPage - 1) * LEADS_PAGE_SIZE;
+    return filteredLeads.slice(start, start + LEADS_PAGE_SIZE);
+  }, [filteredLeads, safeLeadPage]);
+
+  const totalClientPages = Math.max(1, Math.ceil(filteredCustomers.length / CLIENTS_PAGE_SIZE));
+  const safeClientPage = Math.min(clientPage, totalClientPages);
+  const paginatedCustomers = useMemo(() => {
+    const start = (safeClientPage - 1) * CLIENTS_PAGE_SIZE;
+    return filteredCustomers.slice(start, start + CLIENTS_PAGE_SIZE);
+  }, [filteredCustomers, safeClientPage]);
 
   // Stats
   const stats = useMemo(() => {
@@ -530,7 +575,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
               {/* =============================================================== */}
               {leadViewMode === 'card' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredLeads.map(lead => {
+                  {paginatedLeads.map(lead => {
                     const isBooked = !!lead.bookingReference || lead.status === 'BOOKED';
                     const isQuoted = !!lead.quoteNumber || lead.status === 'QUOTED';
 
@@ -699,7 +744,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 text-slate-700">
-                        {filteredLeads.map(lead => {
+                        {paginatedLeads.map(lead => {
                           const isBooked = !!lead.bookingReference || lead.status === 'BOOKED';
                           const isQuoted = !!lead.quoteNumber || lead.status === 'QUOTED';
 
@@ -770,6 +815,36 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                         })}
                       </tbody>
                     </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Lead Pagination Bar (Card & List views) */}
+              {leadViewMode !== 'kanban' && totalLeadPages > 1 && (
+                <div className="flex items-center justify-between px-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs text-slate-600">
+                  <span>
+                    Showing {(safeLeadPage - 1) * LEADS_PAGE_SIZE + 1}–{Math.min(safeLeadPage * LEADS_PAGE_SIZE, filteredLeads.length)} of {filteredLeads.length} leads
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={safeLeadPage <= 1}
+                      onClick={() => setLeadPage(p => Math.max(1, p - 1))}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      Prev
+                    </button>
+                    <span className="font-mono font-bold text-slate-900">
+                      {safeLeadPage} / {totalLeadPages}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeLeadPage >= totalLeadPages}
+                      onClick={() => setLeadPage(p => Math.min(totalLeadPages, p + 1))}
+                      className="px-3 py-1.5 rounded-xl border border-slate-200 font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      Next
+                    </button>
                   </div>
                 </div>
               )}
@@ -951,7 +1026,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredCustomers.map(customer => (
+              {paginatedCustomers.map(customer => (
                 <div
                   key={customer.id}
                   className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs hover:shadow-md transition-all flex flex-col justify-between space-y-4"
@@ -1046,6 +1121,35 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {totalClientPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 bg-white border border-slate-200 rounded-2xl text-xs text-slate-600">
+              <span>
+                Showing {(safeClientPage - 1) * CLIENTS_PAGE_SIZE + 1}–{Math.min(safeClientPage * CLIENTS_PAGE_SIZE, filteredCustomers.length)} of {filteredCustomers.length} clients
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={safeClientPage <= 1}
+                  onClick={() => setClientPage(p => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  Prev
+                </button>
+                <span className="font-mono font-bold text-slate-900">
+                  {safeClientPage} / {totalClientPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={safeClientPage >= totalClientPages}
+                  onClick={() => setClientPage(p => Math.min(totalClientPages, p + 1))}
+                  className="px-3 py-1.5 rounded-xl border border-slate-200 font-bold text-slate-700 disabled:opacity-40 hover:bg-slate-50 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1236,24 +1340,196 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                 </div>
               )}
 
-              {/* TAB 2: ASSIGNED QUOTES */}
+              {/* TAB 2: ASSIGNED QUOTES (STRICT PER-QUOTATION ISOLATED VERSION HISTORY) */}
               {detailTab === 'quotes' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-slate-900">Linked Quotations</span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="font-bold text-slate-900">
+                        Linked Quotations &amp; Version History ({groupedLeadQuotes.length})
+                      </span>
+                      <p className="text-[11px] text-slate-500">
+                        Each quotation preserves its own isolated saved versions. Never autosaves on view or restore.
+                      </p>
+                    </div>
                     <button
                       onClick={() => {
                         const leadToQuote = selectedLead;
                         setSelectedLead(null);
                         onCreateQuoteFromLead(leadToQuote);
                       }}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold flex items-center cursor-pointer"
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold flex items-center cursor-pointer text-xs"
                     >
-                      <span>Create New Quote Version</span>
+                      <span>Create New Quote</span>
                     </button>
                   </div>
 
-                  {selectedLead.quoteNumber ? (
+                  {groupedLeadQuotes.length > 0 ? (
+                    <div className="space-y-4">
+                      {groupedLeadQuotes.map(group => {
+                        const quoteOnlyVersions = group.versions.filter(v => v.quoteId === group.quoteId);
+                        const latestVer =
+                          quoteOnlyVersions.find(v => v.version === group.latestVersionNumber) || quoteOnlyVersions[0];
+
+                        return (
+                          <div
+                            key={group.quoteId}
+                            className="p-4 rounded-2xl bg-slate-50/80 border-2 border-slate-200 space-y-3"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono font-black text-sm text-slate-900 bg-white px-2.5 py-0.5 rounded-lg border border-slate-200">
+                                  #{group.quoteNumber}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-[#008f77]">
+                                  Latest v{group.latestVersionNumber}
+                                </span>
+                                <span className="text-xs font-bold text-slate-700">{group.title}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-black text-sm text-slate-900">
+                                  {formatCurrency(group.latestTotalSellingPrice || 0, group.currency || 'USD')}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white border border-slate-200 text-slate-700">
+                                  {group.status}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500 bg-white p-2.5 rounded-xl border border-slate-200/80">
+                              <span>
+                                {group.destination} • {latestVer?.totalItems ?? group.quote?.items?.length ?? 0} Services •{' '}
+                                {latestVer?.changesSummary || 'Saved quotation snapshot'}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {quoteOnlyVersions.length >= 2 && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setVersionModalTarget({
+                                        quoteId: group.quoteId,
+                                        initialTab: 'COMPARE'
+                                      })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 font-bold cursor-pointer inline-flex items-center gap-1"
+                                  >
+                                    <GitCompare className="w-3 h-3" />
+                                    <span>Compare Versions</span>
+                                  </button>
+                                )}
+                                {onOpenQuoteVersion && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedLead(null);
+                                      onOpenQuoteVersion(group.quoteId, {
+                                        version: group.latestVersionNumber,
+                                        mode: group.quote?.isLocked ? 'inspect' : 'edit',
+                                        leadId: selectedLead.id
+                                      });
+                                    }}
+                                    className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold cursor-pointer inline-flex items-center gap-1"
+                                  >
+                                    <FileText className="w-3 h-3 text-[#00E5C0]" />
+                                    <span>Open Builder</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Isolated per-quote saved versions */}
+                            <div className="space-y-2">
+                              {quoteOnlyVersions.map(v => {
+                                const isLatest = v.version === group.latestVersionNumber;
+                                return (
+                                  <div
+                                    key={v.id || `${v.quoteId}__v${v.version}`}
+                                    className={`p-3 rounded-xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
+                                      isLatest ? 'bg-white border-teal-300' : 'bg-white/75 border-slate-200'
+                                    }`}
+                                  >
+                                    <div className="space-y-0.5">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-mono font-black text-slate-900">v{v.version}</span>
+                                        {isLatest && (
+                                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black bg-teal-100 text-[#008f77]">
+                                            LATEST
+                                          </span>
+                                        )}
+                                        <span className="text-[11px] text-slate-500">
+                                          {new Date(v.updatedAt || v.createdAt).toLocaleString()}
+                                        </span>
+                                        <span className="text-[11px] font-bold text-slate-800 font-mono">
+                                          {formatCurrency(v.totalSellingPrice || 0, v.currency || 'USD')}
+                                        </span>
+                                      </div>
+                                      <p className="text-[11px] text-slate-500">
+                                        {v.createdByName || 'Agent'} • {v.totalItems ?? v.items?.length ?? 0} services
+                                        {v.changesSummary ? ` • ${v.changesSummary}` : ''}
+                                      </p>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setVersionModalTarget({
+                                            quoteId: group.quoteId,
+                                            initialTab: 'INSPECT',
+                                            initialVersion: v.version
+                                          })
+                                        }
+                                        className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] cursor-pointer inline-flex items-center gap-1"
+                                      >
+                                        <Eye className="w-3 h-3" />
+                                        <span>View Version</span>
+                                      </button>
+                                      {onOpenQuoteVersion && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedLead(null);
+                                            onOpenQuoteVersion(group.quoteId, {
+                                              version: v.version,
+                                              mode: isLatest ? 'inspect' : 'readonly',
+                                              leadId: selectedLead.id
+                                            });
+                                          }}
+                                          className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] cursor-pointer inline-flex items-center gap-1"
+                                        >
+                                          <FileText className="w-3 h-3 text-[#00E5C0]" />
+                                          <span>Open Version</span>
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedLead(null);
+                                          if (onRestoreQuoteVersion) {
+                                            onRestoreQuoteVersion(group.quoteId, v.version);
+                                          } else if (onOpenQuoteVersion) {
+                                            onOpenQuoteVersion(group.quoteId, {
+                                              version: v.version,
+                                              mode: 'restore',
+                                              leadId: selectedLead.id
+                                            });
+                                          }
+                                        }}
+                                        className="px-2 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 font-bold text-[11px] cursor-pointer inline-flex items-center gap-1"
+                                      >
+                                        <RotateCcw className="w-3 h-3" />
+                                        <span>Restore</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : selectedLead.quoteNumber ? (
                     <div className="p-4 rounded-2xl bg-teal-50/60 border border-teal-200 space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="font-mono font-bold text-base text-slate-900">
@@ -1280,7 +1556,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                     </div>
                   ) : (
                     <div className="p-8 text-center text-slate-400 bg-slate-50 rounded-2xl border border-slate-200">
-                      No proposal created yet for this lead. Click "Create New Quote Version" above.
+                      No proposal created yet for this lead. Click "Create New Quote" above.
                     </div>
                   )}
                 </div>
@@ -1601,6 +1877,31 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
             </form>
           </div>
         </div>
+      )}
+      {/* QUOTATION VERSION HISTORY MODAL (PER-QUOTE ISOLATED) */}
+      {versionModalTarget && (
+        <QuotationVersionHistoryModal
+          isOpen={!!versionModalTarget}
+          onClose={() => setVersionModalTarget(null)}
+          quoteId={versionModalTarget.quoteId}
+          currentUser={user}
+          initialTab={versionModalTarget.initialTab}
+          initialVersion={versionModalTarget.initialVersion}
+          onOpenVersion={(qId, ver, mode) => {
+            setVersionModalTarget(null);
+            setSelectedLead(null);
+            onOpenQuoteVersion?.(qId, { version: ver, mode, leadId: selectedLead?.id });
+          }}
+          onRestoreVersion={(qId, ver) => {
+            setVersionModalTarget(null);
+            setSelectedLead(null);
+            if (onRestoreQuoteVersion) {
+              onRestoreQuoteVersion(qId, ver);
+            } else {
+              onOpenQuoteVersion?.(qId, { version: ver, mode: 'restore', leadId: selectedLead?.id });
+            }
+          }}
+        />
       )}
     </div>
   );

@@ -162,6 +162,7 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
               alt={product.name}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               loading="lazy"
+              decoding="async"
             />
             <span className="absolute bottom-1 left-1 bg-slate-950/80 text-[#00E5C0] font-mono text-[9px] font-bold px-1.5 py-0.5 rounded">
               {product.sku}

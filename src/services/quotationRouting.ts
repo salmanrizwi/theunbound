@@ -5,7 +5,7 @@ export interface OpenQuoteOptions {
   leadId?: string;
   quoteId: string;
   quoteVersion?: number;
-  mode?: 'inspect' | 'edit' | 'readonly';
+  mode?: 'inspect' | 'edit' | 'readonly' | 'restore';
 }
 
 export interface ResolvedQuoteState {
@@ -13,7 +13,7 @@ export interface ResolvedQuoteState {
   errorMessage?: string;
   quote?: Quotation;
   targetVersion?: number;
-  mode: 'inspect' | 'edit' | 'readonly';
+  mode: 'inspect' | 'edit' | 'readonly' | 'restore';
   isVersionSpecific: boolean;
   versionRecord?: QuoteVersionRecord;
 }
@@ -25,8 +25,8 @@ export interface ResolvedQuoteState {
  * 1. Confirm quote exists in database by ID or quote number.
  * 2. Confirm user authorization and access control (admin vs b2b agent vs buyer).
  * 3. Confirm quote belongs to selected lead if leadId is specified.
- * 4. Confirm selected version exists (either as branched quotation document or versionHistory snapshot).
- * 5. Determine correct operational mode (Inspection, Edit, or Read-Only) based on user permissions and lock status.
+ * 4. Confirm selected version exists (either as canonical version snapshot, branched document, or versionHistory).
+ * 5. Determine correct operational mode (Inspection, Edit, Read-Only, or Restore) based on user permissions and lock status.
  * 6. Return validated quote state for Quote Builder hydration without losing or altering original data.
  */
 export function resolveAndValidateQuoteForBuilder(
@@ -86,18 +86,23 @@ export function resolveAndValidateQuoteForBuilder(
     console.warn(`Quote #${candidateQuote.quoteNumber} has leadId ${candidateQuote.leadId}, differing from requested lead ${options.leadId}`);
   }
 
-  // 4. Confirm Selected Version Exists
-  let targetVersion = options.quoteVersion || candidateQuote.version || 1;
-  let isVersionSpecific = Boolean(options.quoteVersion && options.quoteVersion !== candidateQuote.version);
-  let matchedVersionRecord: QuoteVersionRecord | undefined;
+  // 4. Confirm Selected Version Exists (using canonical version repository)
+  const canonicalVersions = db.getQuotationVersions(candidateQuote.id, user);
+  const highestCanonicalVersion =
+    canonicalVersions[0]?.version || candidateQuote.latestVersion || candidateQuote.version || 1;
+  let targetVersion = options.quoteVersion || highestCanonicalVersion;
+  let isVersionSpecific = Boolean(options.quoteVersion && options.quoteVersion !== highestCanonicalVersion);
+  let matchedVersionRecord: QuoteVersionRecord | undefined = canonicalVersions.find(
+    v => v.version === targetVersion || v.versionNumber === targetVersion
+  );
 
-  if (options.quoteVersion && candidateQuote.version !== options.quoteVersion) {
+  if (options.quoteVersion && candidateQuote.version !== options.quoteVersion && !matchedVersionRecord) {
     // Check if there is a separate quotation document for this version in the branch tree
     const baseNumber = candidateQuote.quoteNumber ? candidateQuote.quoteNumber.split('-v')[0] : '';
-    const specificVersionDoc = allQuotes.find(q => 
+    const specificVersionDoc = allQuotes.find(q =>
       (q.version === options.quoteVersion || q.versionNumber === options.quoteVersion) &&
-      (q.parentQuoteId === candidateQuote!.id || 
-       candidateQuote!.parentQuoteId === q.id || 
+      (q.parentQuoteId === candidateQuote!.id ||
+       candidateQuote!.parentQuoteId === q.id ||
        (baseNumber && q.quoteNumber?.startsWith(baseNumber)) ||
        (options.leadId && (q.leadId === options.leadId || q.linkedLeadId === options.leadId)))
     );
@@ -109,13 +114,10 @@ export function resolveAndValidateQuoteForBuilder(
         targetVersion = candidateQuote.version || options.quoteVersion;
         isVersionSpecific = true;
       }
-    } else {
-      // Check versionHistory snapshots on candidateQuote
-      if (candidateQuote.versionHistory && Array.isArray(candidateQuote.versionHistory)) {
-        matchedVersionRecord = candidateQuote.versionHistory.find(
-          v => v.version === options.quoteVersion || v.versionNumber === options.quoteVersion
-        );
-      }
+    } else if (candidateQuote.versionHistory && Array.isArray(candidateQuote.versionHistory)) {
+      matchedVersionRecord = candidateQuote.versionHistory.find(
+        v => v.version === options.quoteVersion || v.versionNumber === options.quoteVersion
+      );
     }
   }
 
@@ -125,15 +127,18 @@ export function resolveAndValidateQuoteForBuilder(
   const isLocked = Boolean(candidateQuote.isLocked);
   const isBooked = candidateQuote.status === 'BOOKED' || candidateQuote.status === 'BOOKING_SUBMITTED';
 
-  let effectiveMode: 'inspect' | 'edit' | 'readonly' = options.mode || 'inspect';
+  let effectiveMode: 'inspect' | 'edit' | 'readonly' | 'restore' = options.mode || 'inspect';
 
   // Read-only enforcement for buyers or users without edit permission
   if (!isInternal && !isB2BAgent) {
     effectiveMode = 'readonly';
-  } else if (isLocked || isBooked) {
-    // Locked or Booked quotes must default to inspection to protect original proposal data
+  } else if (effectiveMode === 'restore') {
+    // Restoring loads the historical snapshot as a NEW unsaved working draft; never unlocks historical snapshots.
+    effectiveMode = 'restore';
+  } else if (isLocked || isBooked || (isVersionSpecific && targetVersion < highestCanonicalVersion)) {
+    // Locked, booked, or non-latest historical versions default to read-only/inspection to protect original snapshots
     if (effectiveMode === 'edit') {
-      effectiveMode = 'inspect';
+      effectiveMode = isVersionSpecific && targetVersion < highestCanonicalVersion ? 'readonly' : 'inspect';
     }
   }
 

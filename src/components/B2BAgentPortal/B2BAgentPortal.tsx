@@ -1,32 +1,34 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import { B2BPortalSidebar, B2BPortalHeader, B2BTabType } from './B2BPortalNavbar';
-import { B2BHomeDiscoveryView } from './B2BHomeDiscoveryView';
-import { B2BDashboardView } from './B2BDashboardView';
-import { B2BWishlistManagerView } from './B2BWishlistManagerView';
-import { UnifiedB2BQuotationBuilder } from './UnifiedB2BQuotationBuilder';
-import { B2BPackagesView } from './B2BPackagesView';
-import { B2BProductsCatalogView } from './B2BProductsCatalogView';
-import { B2BHotelsCatalogView } from './B2BHotelsCatalogView';
-import { B2BVisaView } from './B2BVisaView';
-import { B2BQuotesManagerView } from './B2BQuotesManagerView';
-import { B2BBookingsManagerView } from './B2BBookingsManagerView';
-import { B2BLeadsManagerView } from './B2BLeadsManagerView';
-import { B2BCustomersCRMView } from './B2BCustomersCRMView';
-import { B2BMyLeadsAndClientsCRMView } from './B2BMyLeadsAndClientsCRMView';
-import { B2BTasksManagerView } from './B2BTasksManagerView';
-import { B2BAccountView } from './B2BAccountView';
-import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
-import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
-import { RailJourneyModal } from '../RailJourneyModal';
-import { PricingCalculatorModal } from '../PricingCalculatorModal';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
 import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
-import { BookingModal } from '../BookingModal';
-import { BookingConfirmationModal } from '../BookingConfirmationModal';
-import { QuoteBuilderDrawer } from '../QuoteBuilderDrawer';
+
+const B2BHomeDiscoveryView = lazyWithRetry(() => import('./B2BHomeDiscoveryView').then(m => ({ default: m.B2BHomeDiscoveryView })));
+const B2BDashboardView = lazyWithRetry(() => import('./B2BDashboardView').then(m => ({ default: m.B2BDashboardView })));
+const B2BWishlistManagerView = lazyWithRetry(() => import('./B2BWishlistManagerView').then(m => ({ default: m.B2BWishlistManagerView })));
+const UnifiedB2BQuotationBuilder = lazyWithRetry(() => import('./UnifiedB2BQuotationBuilder').then(m => ({ default: m.UnifiedB2BQuotationBuilder })));
+const B2BPackagesView = lazyWithRetry(() => import('./B2BPackagesView').then(m => ({ default: m.B2BPackagesView })));
+const B2BProductsCatalogView = lazyWithRetry(() => import('./B2BProductsCatalogView').then(m => ({ default: m.B2BProductsCatalogView })));
+const B2BHotelsCatalogView = lazyWithRetry(() => import('./B2BHotelsCatalogView').then(m => ({ default: m.B2BHotelsCatalogView })));
+const B2BVisaView = lazyWithRetry(() => import('./B2BVisaView').then(m => ({ default: m.B2BVisaView })));
+const B2BQuotesManagerView = lazyWithRetry(() => import('./B2BQuotesManagerView').then(m => ({ default: m.B2BQuotesManagerView })));
+const B2BBookingsManagerView = lazyWithRetry(() => import('./B2BBookingsManagerView').then(m => ({ default: m.B2BBookingsManagerView })));
+const B2BMyLeadsAndClientsCRMView = lazyWithRetry(() => import('./B2BMyLeadsAndClientsCRMView').then(m => ({ default: m.B2BMyLeadsAndClientsCRMView })));
+const B2BTasksManagerView = lazyWithRetry(() => import('./B2BTasksManagerView').then(m => ({ default: m.B2BTasksManagerView })));
+const B2BAccountView = lazyWithRetry(() => import('./B2BAccountView').then(m => ({ default: m.B2BAccountView })));
+const B2BViewDetailsModal = lazyWithRetry(() => import('../B2BViewDetailsModal').then(m => ({ default: m.B2BViewDetailsModal })));
+const AddHotelToQuoteModal = lazyWithRetry(() => import('./AddHotelToQuoteModal').then(m => ({ default: m.AddHotelToQuoteModal })));
+const RailJourneyModal = lazyWithRetry(() => import('../RailJourneyModal').then(m => ({ default: m.RailJourneyModal })));
+const PricingCalculatorModal = lazyWithRetry(() => import('../PricingCalculatorModal').then(m => ({ default: m.PricingCalculatorModal })));
+const BookingModal = lazyWithRetry(() => import('../BookingModal').then(m => ({ default: m.BookingModal })));
+const BookingConfirmationModal = lazyWithRetry(() => import('../BookingConfirmationModal').then(m => ({ default: m.BookingConfirmationModal })));
+const QuoteBuilderDrawer = lazyWithRetry(() => import('../QuoteBuilderDrawer').then(m => ({ default: m.QuoteBuilderDrawer })));
+const MyCashbackWalletView = lazyWithRetry(() => import('./MyCashbackWalletView').then(m => ({ default: m.MyCashbackWalletView })));
 import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHub, Booking, HotelRoomType, HotelRate, TravelLead } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { AppDatabase } from '../../services/db';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 import { canonicalImageService } from '../../services/imageService';
 import { hotelToProduct } from '../../utils/hotelHelpers';
 import { canUserAccessQuoteBuilder } from '../../services/permissionEngine';
@@ -61,12 +63,15 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     }
   }, [initialTab]);
 
-  const handleTabSelect = (tab: B2BTabType) => {
+  const activeTabRef = useRef<B2BTabType>(activeTab);
+  activeTabRef.current = activeTab;
+
+  const handleTabSelect = useCallback((tab: B2BTabType) => {
     setActiveTab(tab);
     if (onTabChange) {
       onTabChange(tab);
     }
-  };
+  }, [onTabChange]);
 
   // Global Modals State
   const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
@@ -87,31 +92,60 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   // Toast Notification State
   const [toastMessage, setToastMessage] = useState<{ title: string; subtitle?: string } | null>(null);
 
-  const showToast = (title: string, subtitle?: string) => {
+  const showToast = useCallback((title: string, subtitle?: string) => {
     setToastMessage({ title, subtitle });
     setTimeout(() => {
       setToastMessage(null);
     }, 3500);
-  };
+  }, []);
 
-  const [portalTick, setPortalTick] = useState(0);
+  const [hubsTick, setHubsTick] = useState(0);
+  const [, setPortalTick] = useState(0);
 
   useEffect(() => {
-    const unsubDb = db.subscribe(() => setPortalTick(t => t + 1));
-    const unsubImg = canonicalImageService.subscribe(() => setPortalTick(t => t + 1));
+    const unsubDb = db.subscribeToCollections([
+      'destinations',
+      'regions',
+      'city_hubs',
+      'products',
+      'hotels',
+      'visas',
+      'b2b_packages',
+      'transfer_routes',
+      'travel_protection_plans',
+      'vip_ground_services',
+      'connectivity_plans',
+      'inventory_tombstones'
+    ], () => setHubsTick(t => t + 1));
+    const unsubImg = canonicalImageService.subscribe(() => {
+      if (activeTabRef.current === 'create-quote') return;
+      setPortalTick(t => t + 1);
+    });
     return () => {
       unsubDb();
       unsubImg();
     };
   }, [db]);
 
+  const b2bDestinations: Destination[] = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveDestinations();
+  }, [destinations, hubsTick]);
+
+  const b2bHotels: Hotel[] = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveHotels();
+  }, [hotels, destinations, hubsTick]);
+
+  const b2bProducts: Product[] = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveProducts();
+  }, [products, destinations, hubsTick]);
+
   const cityHubs: CityHub[] = useMemo(() => {
-    return db.getCityHubs() || [];
-  }, [db, portalTick]);
+    return inventoryVisibilityService.getB2BActiveHubs();
+  }, [destinations, hubsTick]);
 
   const [targetQuoteIdForBuilder, setTargetQuoteIdForBuilder] = useState<string | null>(null);
   const [targetQuoteVersionForBuilder, setTargetQuoteVersionForBuilder] = useState<number | undefined>(undefined);
-  const [targetQuoteModeForBuilder, setTargetQuoteModeForBuilder] = useState<'inspect' | 'edit' | 'readonly'>('inspect');
+  const [targetQuoteModeForBuilder, setTargetQuoteModeForBuilder] = useState<'inspect' | 'edit' | 'readonly' | 'restore'>('inspect');
 
   const { 
     items, 
@@ -130,11 +164,12 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     currency
   } = useQuotation();
 
-  // Scroll to top when tab changes & ensure Cart Drawer closes on entering Quote Builder
+  // Scroll to top when switching non-builder tabs & ensure Cart Drawer closes on entering Quote Builder
   useEffect(() => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
     if (activeTab === 'create-quote') {
       setIsQuoteDrawerOpen(false);
+    } else {
+      window.scrollTo({ top: 0, behavior: 'auto' });
     }
   }, [activeTab, setIsQuoteDrawerOpen]);
 
@@ -173,6 +208,8 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
       'customers': 'crm',
       'TASKS': 'tasks',
       'tasks': 'tasks',
+      'MY_CASHBACK': 'my-cashback',
+      'my-cashback': 'my-cashback',
       'ACCOUNT': 'account',
       'account': 'account'
     };
@@ -211,10 +248,39 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   const handleEditQuote = (quote: Quotation) => {
     loadSavedQuote(quote);
     setTargetQuoteIdForBuilder(quote.id);
-    setTargetQuoteVersionForBuilder(quote.version);
+    setTargetQuoteVersionForBuilder(quote.latestVersion || quote.version);
     setTargetQuoteModeForBuilder(quote.isLocked ? 'inspect' : 'edit');
     setActiveTab('create-quote');
   };
+
+  const handleOpenQuoteVersion = (
+    quoteId: string,
+    options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly' | 'restore'; leadId?: string }
+  ) => {
+    const targetQuote = db.getQuoteByIdAuthorized(quoteId, user);
+    if (targetQuote) {
+      loadSavedQuote(targetQuote);
+    }
+    setTargetQuoteIdForBuilder(quoteId);
+    setTargetQuoteVersionForBuilder(options?.version);
+    setTargetQuoteModeForBuilder(options?.mode || 'inspect');
+    if (options?.leadId) {
+      setLeadId(options.leadId);
+    }
+    setActiveTab('create-quote');
+  };
+
+  const handleRestoreQuoteVersion = (quoteId: string, version: number) => {
+    handleOpenQuoteVersion(quoteId, { version, mode: 'restore' });
+    showToast(`Restoring v${version} as Unsaved Draft`, 'Review and click Save Draft to create a new saved version.');
+  };
+
+  const handleQuoteSaved = useCallback((savedQuote: Quotation) => {
+    if (!savedQuote?.id) return;
+    setTargetQuoteIdForBuilder(savedQuote.id);
+    setTargetQuoteVersionForBuilder(savedQuote.latestVersion || savedQuote.version || 1);
+    setTargetQuoteModeForBuilder('edit');
+  }, []);
 
   const handleCreateQuoteForCustomer = (customer: B2BCustomer) => {
     setClientDetails(
@@ -246,18 +312,63 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     setActiveTab('create-quote');
   };
 
-  const handleConvertToBooking = (quote: Quotation) => {
+  const handleConvertToBooking = useCallback((quote: Quotation) => {
     setBookingItem({ quotation: quote });
-  };
+  }, []);
+
+  const handleBackToDashboardFromBuilder = useCallback(() => {
+    handleTabSelect('dashboard');
+  }, [handleTabSelect]);
+
+  const handleViewMyQuotesFromBuilder = useCallback(() => {
+    handleTabSelect('my-quotes');
+  }, [handleTabSelect]);
+
+  const handleNavigateToPackagesFromBuilder = useCallback(() => {
+    handleTabSelect('packages');
+  }, [handleTabSelect]);
+
+  // Guarded modal & booking openers (fail-closed for non-active destinations)
+  const openProductDetailsGuarded = useCallback((prod: Product) => {
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', prod)) {
+      showToast('Unavailable in B2B Portal', `"${prod.name}" belongs to a non-active destination.`);
+      return;
+    }
+    setInspectingProduct(prod);
+  }, [showToast]);
+
+  const openHotelDetailsGuarded = useCallback((hotel: Hotel) => {
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', hotel)) {
+      showToast('Unavailable in B2B Portal', `"${hotel.name}" belongs to a non-active destination.`);
+      return;
+    }
+    setInspectingHotel(hotel);
+  }, [showToast]);
+
+  const openPackageDetailsGuarded = useCallback((pkg: B2BPackage) => {
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', pkg)) {
+      showToast('Unavailable in B2B Portal', `"${pkg.title}" includes a non-active destination.`);
+      return;
+    }
+    setInspectingPackage(pkg);
+  }, [showToast]);
 
   // Instant booking handlers
   const handleBookProductDirect = (prod: Product) => {
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', prod)) {
+      showToast('Booking Blocked', `"${prod.name}" is unavailable because its destination is not Active.`);
+      return;
+    }
     setInspectingProduct(null);
     setCalculatorProduct(null);
     setBookingItem({ product: prod });
   };
 
   const handleBookHotelDirect = (hotel: Hotel, roomType?: HotelRoomType, rate?: HotelRate, nights?: number) => {
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', hotel)) {
+      showToast('Booking Blocked', `"${hotel.name}" is unavailable because its destination is not Active.`);
+      return;
+    }
     setInspectingHotel(null);
     const room = roomType || hotel.roomTypes?.[0];
     const roomRate = rate || room?.rates?.[0];
@@ -268,6 +379,10 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
   };
 
   const handleBookPackageDirect = (pkg: B2BPackage) => {
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', pkg)) {
+      showToast('Booking Blocked', `"${pkg.title}" is unavailable because a mapped destination is not Active.`);
+      return;
+    }
     setInspectingPackage(null);
     setBookingItem({ packageItem: pkg });
   };
@@ -331,19 +446,31 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
 
         {/* Main Content Area */}
         <main className="flex-1 w-full min-w-0 max-w-full pb-16">
+        <Suspense
+          fallback={
+            <div className="w-full min-h-[360px] flex flex-col items-center justify-center p-10 text-slate-400 gap-3">
+              <div className="w-8 h-8 rounded-full border-2 border-[#00C6A6] border-t-transparent animate-spin" />
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Loading workspace module...</span>
+            </div>
+          }
+        >
         {activeTab === 'home' && (
           <B2BHomeDiscoveryView
-            destinations={destinations}
-            hotels={hotels}
-            products={products}
+            destinations={b2bDestinations}
+            hotels={b2bHotels}
+            products={b2bProducts}
             cityHubs={cityHubs}
             onNavigate={handleNavigate}
             onOpenCreateQuoteWithDestination={handleOpenCreateQuote}
             onOpenPackageCustomizer={handleCustomizePackage}
-            onViewProductDetails={(prod) => setInspectingProduct(prod)}
-            onViewHotelDetails={(hotel) => setInspectingHotel(hotel)}
-            onViewPackageDetails={(pkg) => setInspectingPackage(pkg)}
+            onViewProductDetails={openProductDetailsGuarded}
+            onViewHotelDetails={openHotelDetailsGuarded}
+            onViewPackageDetails={openPackageDetailsGuarded}
             onOpenCalculator={(prod) => {
+              if (!inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', prod)) {
+                showToast('Unavailable in B2B Portal', `"${prod.name}" belongs to a non-active destination.`);
+                return;
+              }
               if (isRailProduct(prod)) {
                 setInspectingProduct(prod);
               } else {
@@ -415,10 +542,11 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
               targetQuoteVersion={targetQuoteVersionForBuilder}
               initialMode={targetQuoteModeForBuilder}
               isNewQuoteMode={!targetQuoteIdForBuilder && quoteSource !== 'PACKAGE' && !sourcePackageId}
-              onBackToDashboard={() => handleTabSelect('dashboard')}
-              onViewMyQuotes={() => handleTabSelect('my-quotes')}
-              onNavigateToPackages={() => handleTabSelect('packages')}
+              onBackToDashboard={handleBackToDashboardFromBuilder}
+              onViewMyQuotes={handleViewMyQuotesFromBuilder}
+              onNavigateToPackages={handleNavigateToPackagesFromBuilder}
               onConvertToBooking={handleConvertToBooking}
+              onQuoteSaved={handleQuoteSaved}
             />
           )
         )}
@@ -427,25 +555,25 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
           <B2BPackagesView
             onCustomizePackage={handleCustomizePackage}
             onOpenCreateQuote={() => handleOpenCreateQuote()}
-            onViewPackageDetails={(pkg) => setInspectingPackage(pkg)}
+            onViewPackageDetails={openPackageDetailsGuarded}
           />
         )}
 
         {activeTab === 'products' && (
           <B2BProductsCatalogView
-            products={products}
-            destinations={destinations}
+            products={b2bProducts}
+            destinations={b2bDestinations}
             onOpenCreateQuote={() => handleOpenCreateQuote()}
-            onViewProductDetails={(prod) => setInspectingProduct(prod)}
+            onViewProductDetails={openProductDetailsGuarded}
           />
         )}
 
         {activeTab === 'hotels' && (
           <B2BHotelsCatalogView
-            hotels={hotels}
-            destinations={destinations}
+            hotels={b2bHotels}
+            destinations={b2bDestinations}
             onOpenCreateQuote={() => handleOpenCreateQuote()}
-            onViewHotelDetails={(hotel) => setInspectingHotel(hotel)}
+            onViewHotelDetails={openHotelDetailsGuarded}
           />
         )}
 
@@ -459,6 +587,8 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
           <B2BQuotesManagerView
             onOpenCreateQuote={() => handleOpenCreateQuote()}
             onEditQuote={handleEditQuote}
+            onOpenQuoteVersion={handleOpenQuoteVersion}
+            onRestoreQuoteVersion={handleRestoreQuoteVersion}
             onConvertToBooking={handleConvertToBooking}
           />
         )}
@@ -474,6 +604,8 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
             initialSubView={activeTab === 'customers' ? 'clients' : 'assigned-leads'}
             onCreateQuoteFromLead={handleCreateQuoteForLead}
             onCreateQuoteForCustomer={handleCreateQuoteForCustomer}
+            onOpenQuoteVersion={handleOpenQuoteVersion}
+            onRestoreQuoteVersion={handleRestoreQuoteVersion}
             onNavigateToBooking={() => {
               setActiveTab('bookings');
             }}
@@ -487,8 +619,14 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         {activeTab === 'account' && (
           <B2BAccountView />
         )}
+
+        {activeTab === 'my-cashback' && (
+          <MyCashbackWalletView />
+        )}
+        </Suspense>
       </main>
 
+      <Suspense fallback={null}>
       {/* Global Hotel Details & Stay Modal */}
       {inspectingHotel && (
         <B2BViewDetailsModal
@@ -608,6 +746,7 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
         onNavigateToQuoteBuilder={() => setActiveTab('create-quote')}
         onNavigateToCatalog={(tab) => setActiveTab(tab as B2BTabType)}
       />
+      </Suspense>
       </div>
     </div>
   );

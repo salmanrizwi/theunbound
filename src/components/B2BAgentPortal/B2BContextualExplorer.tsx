@@ -34,6 +34,7 @@ import {
 import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
 import { canonicalImageService } from '../../services/imageService';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 interface DestinationHubsViewProps {
   destination: Destination;
@@ -85,40 +86,65 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
 
   // Filter hubs for this destination
   const hubs = useMemo(() => {
-    if (!destination) return [];
+    if (!destination || !inventoryVisibilityService.isDestinationActiveForB2B(destination)) return [];
     const destNameLower = (destination.name || '').toLowerCase();
     return allHubs.filter(h => 
-      h.destinationId === destination.id ||
-      (h.destinationName && h.destinationName.toLowerCase() === destNameLower) ||
-      (h.destinationName && destNameLower.includes(h.destinationName.toLowerCase()))
+      inventoryVisibilityService.isEntityAccessibleInB2B('HUB', h) && (
+        h.destinationId === destination.id ||
+        (h.destinationName && h.destinationName.toLowerCase() === destNameLower) ||
+        (h.destinationName && destNameLower.includes(h.destinationName.toLowerCase()))
+      )
     );
   }, [allHubs, destination]);
 
   // Filter products for this destination
   const destinationProducts = useMemo(() => {
-    if (!destination) return [];
+    if (!destination || !inventoryVisibilityService.isDestinationActiveForB2B(destination)) return [];
     const destNameLower = (destination.name || '').toLowerCase();
     const destCountryLower = (destination.country || '').toLowerCase();
     return allProducts.filter(p => 
-      (p.destinationName || '').toLowerCase().includes(destNameLower) ||
-      (p.country || '').toLowerCase().includes(destCountryLower)
+      inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p) && (
+        p.destinationId === destination.id ||
+        (p.destinationName || '').toLowerCase().includes(destNameLower) ||
+        (p.country || '').toLowerCase().includes(destCountryLower)
+      )
     );
   }, [allProducts, destination]);
 
   // Filter hotels for this destination
   const destinationHotels = useMemo(() => {
-    if (!destination) return [];
+    if (!destination || !inventoryVisibilityService.isDestinationActiveForB2B(destination)) return [];
     const destNameLower = (destination.name || '').toLowerCase();
     const destCountryLower = (destination.country || '').toLowerCase();
     return allHotels.filter(h => 
-      (h.cityName && destNameLower.includes(h.cityName.toLowerCase())) ||
-      (h.city && destNameLower.includes(h.city.toLowerCase())) ||
-      (h.country && h.country.toLowerCase().includes(destCountryLower))
+      inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', h) && (
+        h.destinationId === destination.id ||
+        (h.cityName && destNameLower.includes(h.cityName.toLowerCase())) ||
+        (h.city && destNameLower.includes(h.city.toLowerCase())) ||
+        (h.country && h.country.toLowerCase().includes(destCountryLower))
+      )
     );
   }, [allHotels, destination]);
 
   const isProductInQuote = (sku: string) => items.some(item => item.product.sku === sku);
   const isHotelInQuote = (hotelId: string) => items.some(item => item.product.supplierProductCode === `SUP-HTL-${hotelId}` || item.product.id === hotelId);
+
+  if (!destination || !inventoryVisibilityService.isDestinationActiveForB2B(destination)) {
+    return (
+      <div className="max-w-2xl mx-auto my-12 p-8 bg-white rounded-3xl border border-slate-200 shadow-xs text-center space-y-4">
+        <h3 className="text-lg font-black text-slate-900">Destination Unavailable</h3>
+        <p className="text-xs text-slate-600">
+          This destination is not currently Active in the B2B Agent Portal.
+        </p>
+        <button
+          onClick={onBackToHome}
+          className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold cursor-pointer hover:bg-slate-800"
+        >
+          Back to Discovery Home
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 xl:px-10 py-6 animate-in fade-in duration-300">
@@ -153,6 +179,9 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
           <img
             src={canonicalImageService.resolveDestinationImage(destination)}
             alt={destination.name}
+            loading="eager"
+            decoding="async"
+            fetchPriority="high"
             className="w-full h-full object-cover opacity-60"
             referrerPolicy="no-referrer"
           />
@@ -319,6 +348,8 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                     <img
                       src={canonicalImageService.resolveProductImage(product)}
                       alt={product.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       referrerPolicy="no-referrer"
                     />
@@ -414,6 +445,8 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
                     <img
                       src={canonicalImageService.resolveHotelImage(hotel)}
                       alt={hotel.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       referrerPolicy="no-referrer"
                     />
@@ -561,21 +594,29 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
 
   // Hub Products
   const hubProducts = useMemo(() => {
-    if (!hub) return [];
+    if (!hub || !inventoryVisibilityService.isEntityAccessibleInB2B('HUB', hub)) return [];
     const hubNameLower = (hub.name || '').toLowerCase();
     return allProducts.filter(p => 
-      (p.city || '').toLowerCase().includes(hubNameLower) ||
-      (p.destinationName && p.destinationName.toLowerCase().includes(hubNameLower))
+      inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p) && (
+        (p as any).hubId === hub.id ||
+        (Array.isArray(p.hubIds) && p.hubIds.includes(hub.id)) ||
+        (p.city || '').toLowerCase().includes(hubNameLower) ||
+        (p.destinationName && p.destinationName.toLowerCase().includes(hubNameLower))
+      )
     );
   }, [allProducts, hub]);
 
   // Hub Hotels
   const hubHotels = useMemo(() => {
-    if (!hub) return [];
+    if (!hub || !inventoryVisibilityService.isEntityAccessibleInB2B('HUB', hub)) return [];
     const hubNameLower = (hub.name || '').toLowerCase();
     return allHotels.filter(h => 
-      (h.cityName && h.cityName.toLowerCase().includes(hubNameLower)) ||
-      (h.city && h.city.toLowerCase().includes(hubNameLower))
+      inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', h) && (
+        h.hubId === hub.id ||
+        h.cityId === hub.id ||
+        (h.cityName && h.cityName.toLowerCase().includes(hubNameLower)) ||
+        (h.city && h.city.toLowerCase().includes(hubNameLower))
+      )
     );
   }, [allHotels, hub]);
 
@@ -836,6 +877,8 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                       <img
                         src={canonicalImageService.resolveProductImage(product)}
                         alt={product.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
                       />
@@ -924,6 +967,8 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
                       <img
                         src={canonicalImageService.resolveHotelImage(hotel)}
                         alt={hotel.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
                       />

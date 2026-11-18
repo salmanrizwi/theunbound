@@ -50,8 +50,8 @@ class ActionCenterReminderService {
     this.db = AppDatabase.getInstance();
     this.rebuildIndex();
 
-    // Subscribe to DB updates
-    this.db.subscribe(() => {
+    // Subscribe strictly to task and operational entity updates
+    this.db.subscribeToCollections(['calendar_tasks', 'bookings', 'saved_quotes', 'leads'], () => {
       this.rebuildIndex();
       this.notifyListeners();
     });

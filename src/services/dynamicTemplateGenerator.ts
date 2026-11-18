@@ -1,16 +1,16 @@
-import * as XLSX from 'xlsx';
 import { DynamicModulePresetId } from '../types';
-import { CanonicalSchemaRegistry, CanonicalModuleSchema } from './canonicalSchemaRegistry';
+import { CanonicalSchemaRegistry } from './canonicalSchemaRegistry';
 import { ModulePresetRegistry } from './modulePresetRegistry';
 
 export class DynamicTemplateGenerator {
   /**
-   * Generates a valid .xlsx Excel workbook Blob for a given preset.
+   * Generates a valid .xlsx Excel workbook Blob for a given preset (dynamically loads xlsx).
    */
-  public static generateWorkbookForPreset(
-    presetId: DynamicModulePresetId, 
+  public static async generateWorkbookForPreset(
+    presetId: DynamicModulePresetId,
     includeDemoData: boolean = false
-  ): Blob {
+  ): Promise<Blob> {
+    const XLSX = await import('xlsx');
     const wb = XLSX.utils.book_new();
     const schemas = ModulePresetRegistry.getSchemasForPreset(presetId, true);
 

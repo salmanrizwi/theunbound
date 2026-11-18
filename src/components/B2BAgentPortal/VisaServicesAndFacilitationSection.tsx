@@ -39,8 +39,17 @@ import {
 } from '../../types';
 import { formatCurrency, convertCurrency, calculateProductPrice, evaluateInventoryValidity, evaluateApplicableSurcharges } from '../../services/pricingEngine';
 import { AppDatabase } from '../../services/db';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 import { VisaServiceAndFacilitationConfigurator } from '../Configurators/VisaServiceAndFacilitationConfigurator';
 import { canonicalImageService } from '../../services/imageService';
+import { 
+  getActiveOrderedVisaEntries,
+  getAuthoritativeVisaUnitSellingPrice
+} from '../../services/visaRequirementService';
+import {
+  resolveQuoteItemInclusions,
+  resolveQuoteItemExclusions
+} from '../../utils/b2bQuotationHelpers';
 
 export interface VisaServicesAndFacilitationSectionProps {
   currentDestination: Destination;
@@ -97,7 +106,10 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   const [dbTick, setDbTick] = useState<number>(0);
 
   useEffect(() => {
-    return db.subscribe(() => setDbTick(t => t + 1));
+    return db.subscribeToCollections(
+      ['visas', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans', 'products', 'destinations', 'deleted_entities'],
+      () => setDbTick(t => t + 1)
+    );
   }, [db]);
 
   // -------------------------------------------------------------------------
@@ -207,8 +219,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
   // -------------------------------------------------------------------------
   const realVisas = useMemo(() => {
     try {
-      const all = db.getVisas() || [];
-      return all.filter(v => v.status === 'ACTIVE' || !v.status);
+      return inventoryVisibilityService.getB2BActiveVisas();
     } catch (e) {
       console.error('Error loading visas from database:', e);
       return [];
@@ -217,8 +228,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
   const realProtectionPlans = useMemo(() => {
     try {
-      const all = db.getTravelProtectionPlans() || [];
-      return all.filter(p => p.status === 'ACTIVE');
+      return inventoryVisibilityService.getB2BActiveTravelProtectionPlans();
     } catch (e) {
       console.error('Error loading travel protection plans from database:', e);
       return [];
@@ -227,8 +237,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
   const realVipServices = useMemo(() => {
     try {
-      const all = db.getVipGroundServices() || [];
-      return all.filter(s => s.status === 'ACTIVE');
+      return inventoryVisibilityService.getB2BActiveVipGroundServices();
     } catch (e) {
       console.error('Error loading VIP ground services from database:', e);
       return [];
@@ -237,8 +246,7 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
   const realConnectivityPlans = useMemo(() => {
     try {
-      const all = db.getConnectivityPlans() || [];
-      return all.filter(c => c.status === 'ACTIVE');
+      return inventoryVisibilityService.getB2BActiveConnectivityPlans();
     } catch (e) {
       console.error('Error loading connectivity plans from database:', e);
       return [];
@@ -334,9 +342,8 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
   const realOtherAncillaries = useMemo(() => {
     try {
-      const all = db.getProducts() || [];
+      const all = inventoryVisibilityService.getB2BActiveProducts();
       return all.filter(p => {
-        if (p.status !== 'ACTIVE' && p.status !== undefined) return false;
         const cat = (p.category || '').toLowerCase();
         const sub = (p.subcategory || '').toLowerCase();
         const type = (p.productType || '').toLowerCase();
@@ -377,11 +384,11 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     // Check if it's a Visa
     const visa = db.getVisas().find(v => v.id === masterId || v.id === (item.metadata as any)?.visaProductId);
     if (visa) {
-      if (visa.status === 'ACTIVE' || !visa.status) {
+      if (inventoryVisibilityService.isEntityAccessibleInB2B('VISA', visa)) {
         setActiveConfiguringVisa(visa);
         return;
       } else {
-        setDeactivatedServiceNotice(`The visa product "${visa.country} ${visa.visaType}" is no longer active in master inventory. Historical quotation configuration has been preserved.`);
+        setDeactivatedServiceNotice(`The visa product "${visa.country} ${visa.visaType}" or its destination is not active in master inventory. Historical quotation configuration has been preserved.`);
         return;
       }
     }
@@ -389,11 +396,11 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     // Check if it's Travel Protection
     const protection = db.getTravelProtectionPlans().find(p => p.id === masterId);
     if (protection) {
-      if (protection.status === 'ACTIVE') {
+      if (inventoryVisibilityService.isEntityAccessibleInB2B('PROTECTION', protection)) {
         setActiveConfiguringProtection(protection);
         return;
       } else {
-        setDeactivatedServiceNotice(`The travel protection plan "${protection.serviceName}" is no longer active. Historical quotation configuration has been preserved.`);
+        setDeactivatedServiceNotice(`The travel protection plan "${protection.serviceName}" or its destination is not active. Historical quotation configuration has been preserved.`);
         return;
       }
     }
@@ -401,11 +408,11 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     // Check if it's VIP Ground Service
     const vip = db.getVipGroundServices().find(s => s.id === masterId);
     if (vip) {
-      if (vip.status === 'ACTIVE') {
+      if (inventoryVisibilityService.isEntityAccessibleInB2B('VIP_GROUND', vip)) {
         setActiveConfiguringVip(vip);
         return;
       } else {
-        setDeactivatedServiceNotice(`The VIP ground service "${vip.name}" is no longer active. Historical quotation configuration has been preserved.`);
+        setDeactivatedServiceNotice(`The VIP ground service "${vip.name}" or its destination is not active. Historical quotation configuration has been preserved.`);
         return;
       }
     }
@@ -413,11 +420,11 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
     // Check if it's Connectivity Plan
     const conn = db.getConnectivityPlans().find(c => c.id === masterId);
     if (conn) {
-      if (conn.status === 'ACTIVE') {
+      if (inventoryVisibilityService.isEntityAccessibleInB2B('CONNECTIVITY', conn)) {
         setActiveConfiguringConnectivity(conn);
         return;
       } else {
-        setDeactivatedServiceNotice(`The connectivity plan "${conn.name}" is no longer active. Historical quotation configuration has been preserved.`);
+        setDeactivatedServiceNotice(`The connectivity plan "${conn.name}" or its destination is not active. Historical quotation configuration has been preserved.`);
         return;
       }
     }
@@ -443,6 +450,13 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: plan.surcharges,
+      productId: plan.id,
+      productName: plan.serviceName,
+      category: 'Visa & Ancillary Services',
+      productType: 'Travel Protection',
+      destinationId: currentDestination?.id,
+      destinationName: currentDestination?.name || plan.coverageArea,
+      country: currentDestination?.name || plan.coverageArea,
       serviceDate: effectiveDate,
       coverageDays,
       baseNativeAmount: baseSellingNative,
@@ -558,6 +572,13 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: service.surcharges,
+      productId: service.id,
+      productName: service.name,
+      category: 'Visa & Ancillary Services',
+      productType: service.serviceType || 'Ground VIP Service',
+      destinationId: service.destinationId || currentDestination?.id,
+      destinationName: currentDestination?.name,
+      country: currentDestination?.name,
       serviceDate: effectiveDate,
       baseNativeAmount: baseSellingNative,
       nativeCurrency,
@@ -665,6 +686,13 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
 
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: plan.surcharges,
+      productId: plan.id,
+      productName: `${plan.name} (${plan.dataAllowance})`,
+      category: 'Visa & Ancillary Services',
+      productType: '5G Connectivity',
+      destinationId: currentDestination?.id,
+      destinationName: currentDestination?.name || plan.coverageZone,
+      country: currentDestination?.name || plan.coverageZone,
       serviceDate: effectiveDate,
       coverageDays: plan.validityDays || 1,
       baseNativeAmount: baseSellingNative,
@@ -1067,6 +1095,46 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                         </div>
                       </div>
 
+                      {(() => {
+                        const itemInclusions = resolveQuoteItemInclusions(item);
+                        const itemExclusions = resolveQuoteItemExclusions(item);
+                        if (itemInclusions.length === 0 && itemExclusions.length === 0) return null;
+                        return (
+                          <div className="pt-2 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                            {itemInclusions.length > 0 && (
+                              <div className="space-y-1">
+                                <span className="text-[9px] font-black uppercase tracking-wider text-emerald-700 block">
+                                  Inclusions ({itemInclusions.length})
+                                </span>
+                                <ul className="space-y-0.5 text-slate-700">
+                                  {itemInclusions.map((inc, idx) => (
+                                    <li key={idx} className="flex items-start gap-1">
+                                      <Check className="w-3 h-3 text-emerald-600 shrink-0 mt-0.5" />
+                                      <span>{inc}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {itemExclusions.length > 0 && (
+                              <div className="space-y-1">
+                                <span className="text-[9px] font-black uppercase tracking-wider text-rose-700 block">
+                                  Exclusions ({itemExclusions.length})
+                                </span>
+                                <ul className="space-y-0.5 text-slate-700">
+                                  {itemExclusions.map((exc, idx) => (
+                                    <li key={idx} className="flex items-start gap-1">
+                                      <span className="text-rose-500 font-bold shrink-0">✕</span>
+                                      <span>{exc}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+
                       <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
                         <span className="text-slate-500 font-medium">
                           Coverage: <strong className="text-slate-800">{item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Children` : ''}</strong>
@@ -1127,9 +1195,11 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredVisas.map((visa) => {
                     const isInQuote = items.some(it => it.master_product_id === visa.id || it.product.id === visa.id || it.product.sku?.includes(visa.id));
-                    const totalFeeUSD = (visa.embassyFee || 0) + (visa.serviceFee || 0);
+                    const totalFeeUSD = getAuthoritativeVisaUnitSellingPrice(visa);
                     const hasValidPrice = totalFeeUSD > 0;
                     const estimatedTotalQuoteCurrency = convertCurrency(totalFeeUSD * totalPayingPax, visa.currency || 'USD', currency);
+                    const activeInclusions = getActiveOrderedVisaEntries(visa.inclusions);
+                    const activeExclusions = getActiveOrderedVisaEntries(visa.exclusions);
 
                     return (
                       <div
@@ -1150,26 +1220,52 @@ export const VisaServicesAndFacilitationSection: React.FC<VisaServicesAndFacilit
                               <h4 className="text-sm font-black text-slate-900 mt-1.5">
                                 {visa.country} {visa.visaType}
                               </h4>
-                              <p className="text-xs text-slate-600 mt-1 line-clamp-2">
-                                {visa.description || 'Comprehensive consular visa support including full document audit, appointment scheduling, and biometrics preparation.'}
-                              </p>
+                              {visa.description && (
+                                <p className="text-xs text-slate-600 mt-1 line-clamp-2">
+                                  {visa.description}
+                                </p>
+                              )}
                             </div>
                           </div>
 
-                          {/* Inclusions list */}
-                          <div className="mt-3 space-y-1 text-xs text-slate-600">
+                          {/* Visa metadata & Admin-configured Inclusions / Exclusions */}
+                          <div className="mt-3 space-y-2 text-xs text-slate-600">
                             <div className="flex items-center space-x-1.5">
                               <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span>Validity: <strong>{visa.validityDays} Days ({visa.entryType?.replace('_', ' ') || 'Single Entry'})</strong></span>
+                              <span>Validity: <strong>{visa.validityDays} Days ({visa.entryType?.replace('_', ' ') || 'Single Entry'})</strong> • Stay: <strong>{visa.stayDurationDays} Days</strong></span>
                             </div>
-                            <div className="flex items-center space-x-1.5">
-                              <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                              <span>Stay Duration: <strong>{visa.stayDurationDays} Days</strong></span>
-                            </div>
-                            {visa.assistanceServices && visa.assistanceServices.length > 0 && (
-                              <div className="flex items-center space-x-1.5 text-emerald-800">
-                                <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span>{visa.assistanceServices.length} Application Assistance Options Available</span>
+
+                            {activeInclusions.length > 0 && (
+                              <div className="pt-1 space-y-1">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 block">
+                                  Inclusions ({activeInclusions.length})
+                                </span>
+                                {activeInclusions.map((inc) => (
+                                  <div key={inc.id} className="flex items-start space-x-1.5 text-[11px] text-slate-700">
+                                    <Check className="w-3 h-3 text-emerald-600 shrink-0 mt-0.5" />
+                                    <div>
+                                      <span className="font-semibold text-slate-900">{inc.title}</span>
+                                      {inc.description && <span className="text-slate-500"> — {inc.description}</span>}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {activeExclusions.length > 0 && (
+                              <div className="pt-1 space-y-1">
+                                <span className="text-[10px] font-black uppercase tracking-wider text-rose-700 block">
+                                  Exclusions ({activeExclusions.length})
+                                </span>
+                                {activeExclusions.map((exc) => (
+                                  <div key={exc.id} className="flex items-start space-x-1.5 text-[11px] text-slate-700">
+                                    <span className="text-rose-600 font-bold shrink-0">✕</span>
+                                    <div>
+                                      <span className="font-semibold text-slate-900">{exc.title}</span>
+                                      {exc.description && <span className="text-slate-500"> — {exc.description}</span>}
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             )}
                           </div>
@@ -1746,6 +1842,12 @@ const TravelProtectionConfigModal: React.FC<TravelProtectionConfigModalProps> = 
   const validityCheck = evaluateInventoryValidity(plan, coverageDate);
   const surchargeEval = evaluateApplicableSurcharges({
     surcharges: plan.surcharges,
+    productId: plan.id,
+    productName: plan.serviceName,
+    category: 'Visa & Ancillary Services',
+    productType: 'Travel Protection',
+    destinationName: plan.coverageArea,
+    country: plan.coverageArea,
     serviceDate: coverageDate,
     coverageDays,
     baseNativeAmount: baseSellingNative,
@@ -1963,6 +2065,11 @@ const VipGroundConfigModal: React.FC<VipGroundConfigModalProps> = ({
   const validityCheck = evaluateInventoryValidity(service, date);
   const surchargeEval = evaluateApplicableSurcharges({
     surcharges: service.surcharges,
+    productId: service.id,
+    productName: service.name,
+    category: 'Visa & Ancillary Services',
+    productType: service.serviceType || 'Ground VIP Service',
+    destinationId: service.destinationId,
     serviceDate: date,
     baseNativeAmount: baseSellingNative,
     nativeCurrency,
@@ -2133,6 +2240,12 @@ const ConnectivityConfigModal: React.FC<ConnectivityConfigModalProps> = ({
   const validityCheck = evaluateInventoryValidity(plan, activationDate);
   const surchargeEval = evaluateApplicableSurcharges({
     surcharges: plan.surcharges,
+    productId: plan.id,
+    productName: plan.name,
+    category: 'Visa & Ancillary Services',
+    productType: '5G Connectivity',
+    destinationName: plan.coverageZone,
+    country: plan.coverageZone,
     serviceDate: activationDate,
     coverageDays: plan.validityDays || 1,
     baseNativeAmount: baseSellingNative,

@@ -6,6 +6,8 @@ import { useQuotation } from '../context/QuotationContext';
 import { formatCurrency, calculateProductPrice, convertCurrency, calculatePackagePrice } from '../services/pricingEngine';
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
 import { googleCalendarAutomation } from '../services/googleCalendarAutomationService';
+import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
+import { analyzeQuotationDestinationEligibility } from '../services/destinationVisibility';
 import { 
   X, 
   ShieldCheck, 
@@ -196,6 +198,30 @@ export const BookingModal: React.FC<BookingModalProps> = ({
   const handleSubmitBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+
+    if (product && !inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', product)) {
+      setErrorMessage('This product belongs to a non-active destination and cannot be booked.');
+      return;
+    }
+    if (packageItem && !inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', packageItem)) {
+      setErrorMessage('This package references a non-active destination and cannot be booked.');
+      return;
+    }
+    if (quotation) {
+      const isAlreadyFinalizedOrApproved = ['APPROVED', 'ACCEPTED', 'CONFIRMED', 'CONVERTED', 'BOOKING_SUBMITTED'].includes(
+        String(quotation.status || '').toUpperCase()
+      );
+      if (!isAlreadyFinalizedOrApproved) {
+        const index = inventoryVisibilityService.getVisibilityIndex();
+        const review = analyzeQuotationDestinationEligibility(quotation, index);
+        if (review.requiresReview) {
+          setErrorMessage(
+            `This draft quotation references non-active destination(s) (${review.affectedDestinations.join(', ')}). Please remove unavailable items before booking.`
+          );
+          return;
+        }
+      }
+    }
 
     if (!leadTravelerName.trim()) {
       setErrorMessage('Please enter the Lead Traveler name.');

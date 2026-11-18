@@ -1,6 +1,6 @@
-import { Quotation, QuoteItem, TripRouteHub, QuoteBrandingMode, AgencyBrandingSnapshot, User } from '../types';
-import { formatCurrency, calculateQuoteTotal, convertCurrency, roundCurrencyAmount } from './pricingEngine';
-import { THEUNBOUND_REGISTERED_ADDRESS, THEUNBOUND_CURRENT_ADDRESS } from './db';
+import { Quotation, QuoteItem, TripRouteHub, QuoteBrandingMode, AgencyBrandingSnapshot, User, QuotationCommercialTermsSnapshot } from '../types';
+import { formatCurrency, calculateQuoteTotal, convertCurrency, resolveQuoteAgencyPricingContext, roundCurrencyAmount } from './pricingEngine';
+import { THEUNBOUND_REGISTERED_ADDRESS, THEUNBOUND_CURRENT_ADDRESS, AppDatabase } from './db';
 import { getInventoryDisplayName, getInventoryConfigurationSummary } from '../utils/inventoryDisplayHelpers';
 import { isRailQuoteItem } from './rail/JapanRailJourneyDataService';
 import { 
@@ -17,6 +17,11 @@ import {
   resolveQuoteItemCategory 
 } from '../utils/b2bQuotationHelpers';
 import { resolveAuthoritativeCategory } from './configuratorRegistry';
+import {
+  doesHotelItemBelongToHubOccurrence,
+  shouldExcludeHotelItemByNoAccommodation,
+  computeStayDatesForHub
+} from '../utils/hubStayMatching';
 import {
   COMMERCIAL_QUOTATION_TERMS_HEADING,
   COMMERCIAL_QUOTATION_TERMS_ITEMS,
@@ -304,6 +309,13 @@ export interface QuotePresentationModel {
   quoteNumber: string;
   version: number;
   status: string;
+  title: string;
+  sourcePackageId?: string;
+  sourcePackageName?: string;
+  quotationScope: 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY' | 'FULL_PACKAGE';
+  selectedOptionId?: string;
+  snapshotHash?: string;
+  authoritativeSnapshotId?: string;
   createdDateFormatted: string;
   validUntilFormatted: string;
   currency: string;
@@ -314,6 +326,12 @@ export interface QuotePresentationModel {
   baseSellingPriceFormatted: string;
   agentMarginAmountNumeric: number;
   agentMarginAmountFormatted: string;
+  surchargesTotalNumeric: number;
+  surchargesTotalFormatted: string;
+  appliedSurchargesCount: number;
+  taxesTotalNumeric: number;
+  serviceFeesTotalNumeric: number;
+  discountsTotalNumeric: number;
   
   // Separate Primary Totals: Hotel Accommodation Total & Land Part Total (Excludes Accommodation)
   hasHotelAccommodation: boolean;
@@ -390,7 +408,7 @@ export interface QuotePresentationModel {
   itineraryOverview?: string;
   narrative?: string;
   
-  // General Inclusions
+  // General Inclusions & Package Notes
   additionalServices: Array<{
     name: string;
     summary: string;
@@ -401,6 +419,10 @@ export interface QuotePresentationModel {
     exclusions?: string[];
     specialInstructions?: string;
   }>;
+  inclusions: string[];
+  exclusions: string[];
+  importantInformation?: string;
+  cancellationPolicy?: string;
   
   // Operational Standards
   operationalStandards: OperationalStandardCard[];
@@ -420,7 +442,10 @@ export interface QuotePresentationModel {
   commercialTermsHtml: string;
   commercialTermsWhatsApp: string;
   isCustomHistoricalCommercialTerms?: boolean;
+  isDestinationWiseCommercialTerms?: boolean;
+  commercialTermsSnapshot?: QuotationCommercialTermsSnapshot;
   footerContactLine: string;
+  customFooterText?: string;
 }
 
 export function isVisaQuoteItem(it: QuoteItem): boolean {
@@ -558,6 +583,69 @@ export function getCategoryStyleMeta(category?: string, productType?: string, it
   };
 }
 
+function sanitizePresentationRawItem(item: QuoteItem): QuoteItem {
+  if (!item || typeof item !== 'object') return item;
+  const clean: any = { ...item };
+  delete clean.totalNetCost;
+  delete clean.netCost;
+  delete clean.internalNettCost;
+  delete clean.supplierCost;
+  delete clean.internalMarkup;
+  delete clean.internalMargin;
+  delete clean.internalProfit;
+  if (clean.product && typeof clean.product === 'object') {
+    const cleanProd: any = { ...clean.product };
+    delete cleanProd.adultNetPrice;
+    delete cleanProd.childNetPrice;
+    delete cleanProd.infantNetPrice;
+    delete cleanProd.netPrice;
+    delete cleanProd.nettPrice;
+    delete cleanProd.supplierNetRate;
+    delete cleanProd.supplierCost;
+    delete cleanProd.defaultMarkupPercent;
+    delete cleanProd.markupPercent;
+    delete cleanProd.profitMargin;
+    clean.product = cleanProd;
+  }
+  if (clean.calculation && typeof clean.calculation === 'object') {
+    const cleanCalc: any = { ...clean.calculation };
+    delete cleanCalc.totalNetCost;
+    delete cleanCalc.unitNettPrice;
+    delete cleanCalc.totalNettPrice;
+    delete cleanCalc.nativeTotalNetCost;
+    delete cleanCalc.markupAmount;
+    delete cleanCalc.markupRate;
+    delete cleanCalc.internalMargin;
+    delete cleanCalc.marginAmount;
+    delete cleanCalc.profit;
+    clean.calculation = cleanCalc;
+  }
+  if (clean.manualHotelDetails && typeof clean.manualHotelDetails === 'object') {
+    const cleanMh: any = { ...clean.manualHotelDetails };
+    delete cleanMh.ratePerNight;
+    delete cleanMh.totalNetCost;
+    delete cleanMh.netCost;
+    delete cleanMh.markupPercent;
+    delete cleanMh.markupAmount;
+    delete cleanMh.internalMargin;
+    clean.manualHotelDetails = cleanMh;
+  }
+  if (clean.pricing_snapshot && typeof clean.pricing_snapshot === 'object') {
+    const cleanPs: any = { ...clean.pricing_snapshot };
+    delete cleanPs.totalNetCost;
+    delete cleanPs.unitNettPrice;
+    delete cleanPs.totalNettPrice;
+    delete cleanPs.nativeTotalNetCost;
+    delete cleanPs.markupAmount;
+    delete cleanPs.markupRate;
+    delete cleanPs.internalMargin;
+    delete cleanPs.marginAmount;
+    delete cleanPs.profit;
+    clean.pricing_snapshot = cleanPs;
+  }
+  return clean as QuoteItem;
+}
+
 export function transformQuoteItemToPresentation(item: QuoteItem, currency: string): ServicePresentationItem {
   const isRail = isRailQuoteItem(item) || (item.category === 'Rail') || (item as any).service_type === 'RAIL' || Boolean(item.railJourneyDetails);
   const rawCategory = item.product?.category || item.category || (item.contentSnapshot as any)?.category || (item.contentSnapshot as any)?.categoryLabel;
@@ -620,7 +708,7 @@ export function transformQuoteItemToPresentation(item: QuoteItem, currency: stri
     priceFormatted: '',
     paxText: `${adultsCount} Adults${childrenCount ? `, ${childrenCount} Ch` : ''}`,
     statusText: 'Confirmed Allotment',
-    rawItem: item
+    rawItem: sanitizePresentationRawItem(item)
   };
 }
 
@@ -691,12 +779,6 @@ export function buildQuotePresentationModel(
     return isLandOnlyQuote || h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
   };
 
-  const noAccommodationHubIds = new Set(
-    sortedHubs.filter(h => isHubNoAccommodation(h)).map(h => h.id)
-  );
-  const noAccommodationHubNames = new Set(
-    sortedHubs.filter(h => isHubNoAccommodation(h)).map(h => (h.hubName || '').toLowerCase()).filter(Boolean)
-  );
 
   const isHotelQuoteItem = (it: QuoteItem): boolean => {
     const cat = (it.product?.category || it.category || it.product?.productType || '').toLowerCase();
@@ -709,14 +791,8 @@ export function buildQuotePresentationModel(
     if (it.isNoAccommodation || (it as any).accommodationType === 'NO_ACCOMMODATION' || (it as any).accommodationType === 'none') {
       return false;
     }
-    if (isHotelQuoteItem(it)) {
-      if (isLandOnlyQuote) return false;
-      const itemHubId = it.hubId || it.manualHotelDetails?.hubId || (it.metadata as any)?.hubId;
-      if (itemHubId && noAccommodationHubIds.has(itemHubId)) return false;
-      if (!itemHubId) {
-        const itemCity = (it.manualHotelDetails?.city || it.product?.city || '').toLowerCase();
-        if (itemCity && noAccommodationHubNames.has(itemCity)) return false;
-      }
+    if (shouldExcludeHotelItemByNoAccommodation(it, sortedHubs, isLandOnlyQuote)) {
+      return false;
     }
     return true;
   });
@@ -781,6 +857,18 @@ export function buildQuotePresentationModel(
     ? undefined
     : (rawWebsiteCandidate.trim() || undefined);
 
+  let centralProfile: { registeredAddress?: string; currentAddress?: string; salesEmail?: string; phone?: string } = {};
+  if (!isWhiteLabel) {
+    try {
+      centralProfile = AppDatabase.getInstance().getCentralCompanyProfile() || {};
+    } catch {
+      centralProfile = {};
+    }
+  }
+
+  const rawRegisteredFallback = centralProfile.registeredAddress || THEUNBOUND_REGISTERED_ADDRESS;
+  const rawCurrentFallback = (centralProfile.currentAddress || THEUNBOUND_CURRENT_ADDRESS).replace(/\r?\n/g, ', ');
+
   const rawAddressCandidate = agentOverride?.address ?? snap?.address ?? '';
   const effectiveAgencyAddress = (isWhiteLabel && isTheUnboundBrandString(rawAddressCandidate))
     ? undefined
@@ -788,13 +876,13 @@ export function buildQuotePresentationModel(
 
   const rawRegisteredCandidate = agentOverride?.registeredAddress ?? snap?.registeredAddress ?? rawAddressCandidate;
   const effectiveAgencyRegisteredAddress = isWhiteLabel
-    ? (isTheUnboundBrandString(rawRegisteredCandidate) ? undefined : (rawRegisteredCandidate.trim() || undefined))
-    : (rawRegisteredCandidate.trim() || THEUNBOUND_REGISTERED_ADDRESS);
+    ? (isTheUnboundBrandString(rawRegisteredCandidate) ? undefined : (rawRegisteredCandidate.trim().replace(/\r?\n/g, ', ') || undefined))
+    : ((rawRegisteredCandidate.trim() || rawRegisteredFallback).replace(/\r?\n/g, ', '));
 
   const rawCurrentCandidate = agentOverride?.currentAddress ?? snap?.currentAddress ?? '';
   const effectiveAgencyCurrentAddress = isWhiteLabel
-    ? (isTheUnboundBrandString(rawCurrentCandidate) ? undefined : (rawCurrentCandidate.trim() || undefined))
-    : (rawCurrentCandidate.trim() || THEUNBOUND_CURRENT_ADDRESS);
+    ? (isTheUnboundBrandString(rawCurrentCandidate) ? undefined : (rawCurrentCandidate.trim().replace(/\r?\n/g, ', ') || undefined))
+    : ((rawCurrentCandidate.trim() || rawCurrentFallback).replace(/\r?\n/g, ', '));
 
   const effectivePrimaryColor = agentOverride?.primaryColor || snap?.primaryColor || '#0f172a';
   const effectiveAccentColor = agentOverride?.accentColor || snap?.accentColor || '#4f46e5';
@@ -873,52 +961,55 @@ export function buildQuotePresentationModel(
   const childrenDisplay = quote.childrenCount || (quote as any).children || 0;
   const infantsDisplay = quote.infantsCount || (quote as any).infants || 0;
 
-  // Build curated hotels list from routeHubs and hotel QuoteItems
+  // Build curated hotels list strictly per itinerary hub occurrence (supporting repeated hubs & same/different hotels)
   const hotels: HotelPresentationItem[] = [];
-  const seenHotelKeys = new Set<string>();
+  const seenHotelItemIds = new Set<string>();
 
   if (sortedHubs.length > 0) {
-    let checkInOffset = 0;
     sortedHubs.forEach((h, hIdx) => {
       const city = h.hubName || h.destinationName || quote.destination || 'City Hub';
       const nights = h.nights || 1;
-      let checkInDate = quote.travelStartDate || `Day ${checkInOffset + 1}`;
-      let checkOutDate = quote.travelEndDate || `Day ${checkInOffset + nights + 1}`;
+      const computedDates = computeStayDatesForHub(sortedHubs, h.id || (hIdx + 1), quote.travelStartDate, nights);
+      let checkInDate = computedDates.checkInIso
+        ? new Date(computedDates.checkInIso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+        : (quote.travelStartDate || `Day ${hIdx + 1}`);
+      let checkOutDate = computedDates.checkOutIso
+        ? new Date(computedDates.checkOutIso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+        : (quote.travelEndDate || `Day ${hIdx + nights + 1}`);
 
-      if (quote.travelStartDate) {
-        const s = new Date(quote.travelStartDate);
-        if (!isNaN(s.getTime())) {
-          s.setDate(s.getDate() + checkInOffset);
-          checkInDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-          s.setDate(s.getDate() + nights);
-          checkOutDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-        }
-      }
-      checkInOffset += nights;
+      const matchedHotelItem = nonVisaItems.find(it =>
+        doesHotelItemBelongToHubOccurrence(it, h, sortedHubs)
+      );
 
-      if (!isHubNoAccommodation(h) && (h.hotelId || h.manualHotel?.hotelName)) {
-        const matchedHotelItem = nonVisaItems.find(it => {
-          const cat = (it.product?.category || it.category || '').toLowerCase();
-          const isHtl = cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') || Boolean(it.isManualHotel);
-          if (!isHtl) return false;
-          return (h.hotelId && it.product?.id?.includes(h.hotelId)) ||
-                 (h.manualHotel?.hotelName && it.product?.name?.toLowerCase().includes(h.manualHotel.hotelName.toLowerCase())) ||
-                 (it.notes && it.notes.toLowerCase().includes(city.toLowerCase()));
-        });
-
-        const hotelName = h.manualHotel?.hotelName || (matchedHotelItem ? getInventoryDisplayName(matchedHotelItem) : h.hotelId) || 'Selected Luxury Hotel';
-        const roomType = h.manualHotel?.roomType || matchedHotelItem?.selected_options?.roomType || 'Deluxe Luxury Room';
-        const mealPlan = h.manualHotel?.mealPlanName || h.manualHotel?.mealPlan || 'Daily Breakfast Included';
+      if (!isHubNoAccommodation(h) && (h.hotelId || h.manualHotel?.hotelName || matchedHotelItem)) {
+        const hotelName =
+          h.manualHotel?.hotelName ||
+          (matchedHotelItem ? getInventoryDisplayName(matchedHotelItem) : h.hotelId) ||
+          'Selected Luxury Hotel';
+        const roomType =
+          h.roomConfiguration?.roomTypeName ||
+          h.manualHotel?.roomType ||
+          matchedHotelItem?.selected_options?.roomType ||
+          matchedHotelItem?.configuration_snapshot?.roomTypeName ||
+          'Deluxe Luxury Room';
+        const mealPlan =
+          h.roomConfiguration?.mealPlanName ||
+          h.manualHotel?.mealPlanName ||
+          h.manualHotel?.mealPlan ||
+          'Daily Breakfast Included';
         const starRating = h.manualHotel?.starRating || (h.manualHotel as any)?.category || '4 Star / 5 Star';
-        const roomsCount = h.roomsCount || h.manualHotel?.numberOfRooms || quote.roomingConfig?.roomsCount || 1;
-        const itemPrice = matchedHotelItem ? (matchedHotelItem.calculation?.finalTotalSellingPrice || matchedHotelItem.calculation?.totalSellingPrice || 0) : 0;
+        const roomsCount =
+          h.roomConfiguration?.roomsCount ||
+          h.roomsCount ||
+          matchedHotelItem?.roomsCount ||
+          h.manualHotel?.numberOfRooms ||
+          quote.roomingConfig?.roomsCount ||
+          1;
 
-        const key = `${hotelName.toLowerCase()}-${city.toLowerCase()}`;
-        seenHotelKeys.add(key);
-        if (matchedHotelItem?.id) seenHotelKeys.add(matchedHotelItem.id);
+        if (matchedHotelItem?.id) seenHotelItemIds.add(matchedHotelItem.id);
 
         hotels.push({
-          id: h.id || `hotel-hub-${hIdx}`,
+          id: h.accommodationStayId || h.id || `hotel-hub-${hIdx}`,
           hotelName,
           cityHub: city,
           starRating: String(starRating),
@@ -942,26 +1033,23 @@ export function buildQuotePresentationModel(
   // Also include any standalone Hotel QuoteItems that were not matched via routeHubs
   nonVisaItems.forEach((it, idx) => {
     const cat = (it.product?.category || it.category || it.product?.productType || '').toLowerCase();
-    const isHtl = cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') || Boolean(it.isManualHotel);
+    const isHtl = cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') || Boolean(it.isManualHotel) || Boolean(it.hotelId);
     if (!isHtl) return;
-    if (seenHotelKeys.has(it.id)) return;
+    if (seenHotelItemIds.has(it.id)) return;
+    seenHotelItemIds.add(it.id);
+
     const hotelName = getInventoryDisplayName(it);
     const city = it.product?.city || quote.destination || 'Destination Hub';
-    const key = `${hotelName.toLowerCase()}-${city.toLowerCase()}`;
-    if (seenHotelKeys.has(key)) return;
-    seenHotelKeys.add(key);
-
-    const itemPrice = it.calculation?.finalTotalSellingPrice || it.calculation?.totalSellingPrice || 0;
     hotels.push({
-      id: it.id || `hotel-item-${idx}`,
+      id: it.accommodationStayId || it.id || `hotel-item-${idx}`,
       hotelName,
       cityHub: city,
       starRating: '4 Star / 5 Star',
-      checkInDate: it.travelDate || quote.travelStartDate || 'Day 1',
-      checkOutDate: quote.travelEndDate || 'As per itinerary',
-      nightsCount: (it as any).quantity || 1,
+      checkInDate: it.checkInDate || it.travelDate || quote.travelStartDate || 'Day 1',
+      checkOutDate: it.checkOutDate || quote.travelEndDate || 'As per itinerary',
+      nightsCount: it.nights || (it as any).quantity || 1,
       roomType: getInventoryConfigurationSummary(it) || 'Luxury Room',
-      roomsCount: quote.roomingConfig?.roomsCount || 1,
+      roomsCount: it.roomsCount || quote.roomingConfig?.roomsCount || 1,
       occupancy: `${it.pax?.adults || adultsDisplay} Adults${it.pax?.children ? ` + ${it.pax.children} Ch` : ''}`,
       mealPlan: 'Daily Breakfast Included',
       overview: it.contentSnapshot?.overviewSpecifications || it.product?.longDescription || it.product?.shortDescription,
@@ -972,26 +1060,19 @@ export function buildQuotePresentationModel(
     });
   });
 
-  // Build accommodations summary list for all route hubs (including NO_ACCOMMODATION)
+  // Build accommodations summary list for all route hubs in exact sequence (including repeated hubs & NO_ACCOMMODATION)
   const accommodations: AccommodationStaySummaryItem[] = [];
   if (sortedHubs.length > 0) {
-    let checkInOffset = 0;
     sortedHubs.forEach((h, hIdx) => {
       const city = h.hubName || h.destinationName || quote.destination || `Hub ${hIdx + 1}`;
       const nights = h.nights || 1;
-      let checkInDate = quote.travelStartDate || `Day ${checkInOffset + 1}`;
-      let checkOutDate = quote.travelEndDate || `Day ${checkInOffset + nights + 1}`;
-
-      if (quote.travelStartDate) {
-        const s = new Date(quote.travelStartDate);
-        if (!isNaN(s.getTime())) {
-          s.setDate(s.getDate() + checkInOffset);
-          checkInDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-          s.setDate(s.getDate() + nights);
-          checkOutDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-        }
-      }
-      checkInOffset += nights;
+      const computedDates = computeStayDatesForHub(sortedHubs, h.id || (hIdx + 1), quote.travelStartDate, nights);
+      const checkInDate = computedDates.checkInIso
+        ? new Date(computedDates.checkInIso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+        : (quote.travelStartDate || `Day ${hIdx + 1}`);
+      const checkOutDate = computedDates.checkOutIso
+        ? new Date(computedDates.checkOutIso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+        : (quote.travelEndDate || `Day ${hIdx + nights + 1}`);
 
       const isNoAcc = isHubNoAccommodation(h);
       if (isNoAcc) {
@@ -1006,19 +1087,32 @@ export function buildQuotePresentationModel(
           isNoAccommodation: true
         });
       } else {
-        const matchedHotelItem = nonVisaItems.find(it => {
-          const cat = (it.product?.category || it.category || '').toLowerCase();
-          const isHtl = cat.includes('hotel') || cat.includes('accommodation') || cat.includes('resort') || cat.includes('ryokan') || Boolean(it.isManualHotel);
-          if (!isHtl) return false;
-          return (h.hotelId && it.product?.id?.includes(h.hotelId)) ||
-                 (h.manualHotel?.hotelName && it.product?.name?.toLowerCase().includes(h.manualHotel.hotelName.toLowerCase())) ||
-                 (it.notes && it.notes.toLowerCase().includes(city.toLowerCase()));
-        });
+        const matchedHotelItem = nonVisaItems.find(it =>
+          doesHotelItemBelongToHubOccurrence(it, h, sortedHubs)
+        );
 
-        const hotelName = h.manualHotel?.hotelName || (matchedHotelItem ? getInventoryDisplayName(matchedHotelItem) : h.hotelId) || 'Selected Luxury Hotel';
-        const roomType = h.manualHotel?.roomType || matchedHotelItem?.selected_options?.roomType || 'Standard Room';
-        const mealPlan = h.manualHotel?.mealPlanName || h.manualHotel?.mealPlan || 'Daily Breakfast Included';
-        const roomsCount = h.roomsCount || h.manualHotel?.numberOfRooms || quote.roomingConfig?.roomsCount || 1;
+        const hotelName =
+          h.manualHotel?.hotelName ||
+          (matchedHotelItem ? getInventoryDisplayName(matchedHotelItem) : h.hotelId) ||
+          'Selected Luxury Hotel';
+        const roomType =
+          h.roomConfiguration?.roomTypeName ||
+          h.manualHotel?.roomType ||
+          matchedHotelItem?.selected_options?.roomType ||
+          matchedHotelItem?.configuration_snapshot?.roomTypeName ||
+          'Standard Room';
+        const mealPlan =
+          h.roomConfiguration?.mealPlanName ||
+          h.manualHotel?.mealPlanName ||
+          h.manualHotel?.mealPlan ||
+          'Daily Breakfast Included';
+        const roomsCount =
+          h.roomConfiguration?.roomsCount ||
+          h.roomsCount ||
+          matchedHotelItem?.roomsCount ||
+          h.manualHotel?.numberOfRooms ||
+          quote.roomingConfig?.roomsCount ||
+          1;
 
         accommodations.push({
           hubId: h.id,
@@ -1094,9 +1188,11 @@ export function buildQuotePresentationModel(
     // If this day is a hub check-in and the hub has a manualHotel/hotelId that wasn't already in dayItems, synthesize a hotel service card so all channels show it
     if (isHubCheckIn && activeHub && !isHubNoAccommodation(activeHub) && (activeHub.manualHotel?.hotelName || activeHub.hotelId)) {
       const targetHotelName = (activeHub.manualHotel?.hotelName || activeHub.hotelId || '').toLowerCase();
-      const alreadyHasHotelInDay = dayServices.some(s =>
+      const alreadyHasHotelInDay = dayItems.some(it =>
+        isHotelQuoteItem(it) && doesHotelItemBelongToHubOccurrence(it, activeHub!, sortedHubs)
+      ) || dayServices.some(s =>
         s.categoryLabel === 'Luxury Accommodation' ||
-        s.listingName.toLowerCase().includes(targetHotelName)
+        (Boolean(targetHotelName) && s.category === 'Accommodation' && s.listingName.toLowerCase().includes(targetHotelName))
       );
       if (!alreadyHasHotelInDay) {
         const hubName = activeHub.hubName || quote.destination || 'Japan';
@@ -1146,15 +1242,15 @@ export function buildQuotePresentationModel(
               category: 'Accommodation'
             } as any,
             travelDate: calDay.dateString,
+            itineraryHubOccurrenceId: activeHub.itineraryHubOccurrenceId || activeHub.id,
+            accommodationStayId: activeHub.accommodationStayId,
             pax: { adults: adultsDisplay, children: childrenDisplay, infants: infantsDisplay },
             selectedAddonIds: [],
             calculation: {
-              totalNetCost: 0,
               totalSellingPrice: manualPrice,
               finalTotalSellingPrice: manualPrice,
               currency: effectiveCurrency
             } as any,
-            totalNetCost: 0,
             totalSellingPrice: manualPrice,
             currency: effectiveCurrency as any
           } as any
@@ -1211,17 +1307,104 @@ export function buildQuotePresentationModel(
   const totalNights = hubs.reduce((sum, h) => sum + (h.nights || 0), 0) || Math.max(1, days.length - 1);
 
   // --------------------------------------------------------------------------
-  // Single Authoritative Pricing Calculation via Central Pricing Engine
+  // Single Authoritative Pricing Source: Authoritative Snapshot (if matching) -> Central Pricing Engine
   // --------------------------------------------------------------------------
+  const authSnap = quote.authoritativeSnapshot;
+  const effectiveAgentMarginType = quote.agentMarginType || (quote as any).agent_margin_type || 'PERCENTAGE';
+  const effectiveAgentMarginVal = Math.max(
+    0,
+    Number(quote.agentMarginValue ?? (quote as any).agent_margin_value ?? quote.overallMarkupPercent ?? 0)
+  );
+  const effectiveDiscountPct = Number(quote.overallDiscountPercent || 0);
+  const reqRawAdminVal = (quote as any).adminManualMarginValue ?? (quote as any).admin_manual_margin_value;
+  const hasReqAdminConfig =
+    reqRawAdminVal !== undefined ||
+    (quote as any).adminMarginMode !== undefined ||
+    (quote as any).admin_margin_mode !== undefined;
+  const reqAdminMode = ((quote as any).adminMarginMode ?? (quote as any).admin_margin_mode) === 'REPLACE' ? 'REPLACE' : 'ADD';
+  const reqAdminType = ((quote as any).adminManualMarginType ?? (quote as any).admin_manual_margin_type) === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+  const reqAdminVal = Math.max(0, Number.isFinite(Number(reqRawAdminVal)) ? Number(reqRawAdminVal) : 0);
+
+  const authSnapAdminMatches =
+    !hasReqAdminConfig ||
+    (
+      (authSnap?.pricing?.adminMarginMode ??
+        (authSnap?.pricing?.currencyConversionSnapshot?.totals as any)?.manualMarginAdjustmentMode ??
+        'ADD') === reqAdminMode &&
+      (authSnap?.pricing?.adminManualMarginType ??
+        (authSnap?.pricing?.currencyConversionSnapshot?.totals as any)?.manualMarginAdjustmentType ??
+        'PERCENTAGE') === reqAdminType &&
+      Math.abs(
+        Number(
+          authSnap?.pricing?.adminManualMarginValue ??
+          (authSnap?.pricing?.currencyConversionSnapshot?.totals as any)?.manualMarginAdjustmentValue ??
+          0
+        ) - reqAdminVal
+      ) < 0.0001
+    );
+
+  const quoteAgencyCtxForAuth = resolveQuoteAgencyPricingContext(quote);
+  const authSnapMarginMode =
+    authSnap?.pricing?.activeMarginMode ??
+    (authSnap?.pricing?.productLevelMarginEnabled !== undefined
+      ? (authSnap.pricing.productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL')
+      : undefined);
+  const authSnapAgencyMatches =
+    !authSnapMarginMode ||
+    (authSnapMarginMode === quoteAgencyCtxForAuth.activeMarginMode &&
+      (quoteAgencyCtxForAuth.productLevelMarginEnabled ||
+        authSnap?.pricing?.agentLevelMarginPercent === undefined ||
+        Math.abs(Number(authSnap.pricing.agentLevelMarginPercent) - quoteAgencyCtxForAuth.agentLevelMarginPercent) < 0.001));
+
+  const isWorkingQuoteLocked = Boolean(
+    quote.isLocked ||
+    ['ISSUED', 'SENT', 'APPROVED', 'ACCEPTED', 'CONVERTED', 'BOOKED'].includes(String(quote.status || '').toUpperCase())
+  );
+  const quoteVerForAuth = Number(quote.version || quote.latestVersion || 0);
+  const authVerForAuth = Number(authSnap?.versionNumber || 0);
+  const authSnapVersionMatches = !quoteVerForAuth || !authVerForAuth || quoteVerForAuth === authVerForAuth;
+  const authSnapOverridesMatch =
+    JSON.stringify((quote as any).surchargeOverrides || []) ===
+    JSON.stringify(authSnap?.pricing?.surchargeOverrides || []);
+  const itemsHaveProductMarkup = items.some(it => Number(it.agentAdditionalMarkupValue || 0) > 0);
+  const authSnapHasProductMarkup = Number(authSnap?.pricing?.productLevelAgentMarkupTotal || 0) > 0;
+  const authSnapItemMarkupsMatch = itemsHaveProductMarkup === authSnapHasProductMarkup;
+
+  const useAuthSnapPricing = Boolean(
+    authSnap &&
+    authSnap.pricing &&
+    authSnap.pricing.currency === effectiveCurrency &&
+    (!activeOption?.id || !authSnap.selectedOptionId || authSnap.selectedOptionId === activeOption.id) &&
+    (
+      (isWorkingQuoteLocked && authSnapVersionMatches && authSnapAdminMatches && authSnapOverridesMatch) ||
+      (
+        !isWorkingQuoteLocked &&
+        authSnapVersionMatches &&
+        authSnap.itinerary.itemsCount === items.length &&
+        (authSnap.pricing.agentMarginType || 'PERCENTAGE') === effectiveAgentMarginType &&
+        Math.abs(Number(authSnap.pricing.agentMarginValue || 0) - effectiveAgentMarginVal) < 0.0001 &&
+        Math.abs(Number(authSnap.pricing.overallDiscountPercent || 0) - effectiveDiscountPct) < 0.0001 &&
+        authSnapAdminMatches &&
+        authSnapAgencyMatches &&
+        authSnapOverridesMatch &&
+        authSnapItemMarkupsMatch
+      )
+    )
+  );
+
   const centralTotals = calculateQuoteTotal(quote, activeOption?.id, undefined, effectiveCurrency);
 
-  let hotelAccommodationTotalNumeric = centralTotals.hotelTotalSellingPrice;
-  let landPartTotalNumeric = centralTotals.landPartTotalSellingPrice;
+  let hotelAccommodationTotalNumeric = useAuthSnapPricing
+    ? roundCurrencyAmount(isLandOnlyQuote ? 0 : (authSnap!.pricing.hotelAccommodationTotal || 0), effectiveCurrency)
+    : centralTotals.hotelTotalSellingPrice;
+  let landPartTotalNumeric = useAuthSnapPricing
+    ? roundCurrencyAmount(authSnap!.pricing.landPartTotal || 0, effectiveCurrency)
+    : centralTotals.landPartTotalSellingPrice;
   const hotelItemsCount = centralTotals.hotelItemsIncludedCount;
   const landItemsCount = centralTotals.landItemsIncludedCount;
 
   // Fallback to pre-calculated quote / activeOption fields only if no items exist
-  if (!isLandOnlyQuote && hotelAccommodationTotalNumeric === 0 && hotelItemsCount === 0) {
+  if (!useAuthSnapPricing && !isLandOnlyQuote && hotelAccommodationTotalNumeric === 0 && hotelItemsCount === 0) {
     if (typeof (activeOption as any)?.hotelAccommodationTotal === 'number' && (activeOption as any).hotelAccommodationTotal > 0) {
       hotelAccommodationTotalNumeric = (activeOption as any).hotelAccommodationTotal;
     } else if (typeof (quote as any).hotelAccommodationTotal === 'number' && (quote as any).hotelAccommodationTotal > 0) {
@@ -1242,21 +1425,57 @@ export function buildQuotePresentationModel(
 
   // Authoritative Final Customer Selling Price (Hotel Accommodation Total + Land Part Total)
   const finalCustomerSellingPriceNumeric = roundCurrencyAmount(
-    centralTotals.finalCustomerSellingPrice > 0
-      ? centralTotals.finalCustomerSellingPrice
-      : ((hasHotelAccommodation ? hotelAccommodationTotalNumeric : 0) + landPartTotalNumeric),
+    useAuthSnapPricing
+      ? (isLandOnlyQuote ? landPartTotalNumeric : authSnap!.pricing.finalCustomerSellingPrice)
+      : (centralTotals.finalCustomerSellingPrice > 0
+          ? centralTotals.finalCustomerSellingPrice
+          : ((hasHotelAccommodation ? hotelAccommodationTotalNumeric : 0) + landPartTotalNumeric)),
     effectiveCurrency
   );
   const finalCustomerSellingPriceFormatted = formatCurrency(finalCustomerSellingPriceNumeric, effectiveCurrency);
   const baseSellingPriceNumeric = roundCurrencyAmount(
-    centralTotals.theUnboundBaseSellingPrice > 0
-      ? centralTotals.theUnboundBaseSellingPrice
-      : finalCustomerSellingPriceNumeric,
+    useAuthSnapPricing
+      ? (authSnap!.pricing.theUnboundBaseSellingPrice || authSnap!.pricing.baseFinalSellingPrice || finalCustomerSellingPriceNumeric)
+      : (centralTotals.theUnboundBaseSellingPrice > 0
+          ? centralTotals.theUnboundBaseSellingPrice
+          : finalCustomerSellingPriceNumeric),
     effectiveCurrency
   );
   const baseSellingPriceFormatted = formatCurrency(baseSellingPriceNumeric, effectiveCurrency);
-  const agentMarginAmountNumeric = roundCurrencyAmount(centralTotals.markupAmount || 0, effectiveCurrency);
+  const agentMarginAmountNumeric = roundCurrencyAmount(
+    useAuthSnapPricing ? (authSnap!.pricing.agentMarginAmount || 0) : (centralTotals.markupAmount || 0),
+    effectiveCurrency
+  );
   const agentMarginAmountFormatted = formatCurrency(agentMarginAmountNumeric, effectiveCurrency);
+
+  const surchargesTotalNumeric = roundCurrencyAmount(
+    useAuthSnapPricing
+      ? (authSnap!.pricing.surchargesTotal || 0)
+      : (quote.surchargesTotal ?? quote.pricingSnapshot?.surchargesTotal ?? quote.currencyConversionSnapshot?.surchargesTotal ?? 0),
+    effectiveCurrency
+  );
+  const surchargesTotalFormatted = formatCurrency(surchargesTotalNumeric, effectiveCurrency);
+  const appliedSurchargesCount = useAuthSnapPricing
+    ? (authSnap!.pricing.appliedSurcharges?.length || 0)
+    : ((quote.appliedSurcharges || quote.pricingSnapshot?.appliedSurcharges || quote.currencyConversionSnapshot?.appliedSurcharges || []).length);
+  const taxesTotalNumeric = roundCurrencyAmount(
+    useAuthSnapPricing
+      ? (authSnap!.pricing.taxesTotal || 0)
+      : (quote.pricingSnapshot?.taxesTotal ?? quote.currencyConversionSnapshot?.totals?.taxesTotal ?? quote.totalTaxes ?? 0),
+    effectiveCurrency
+  );
+  const serviceFeesTotalNumeric = roundCurrencyAmount(
+    useAuthSnapPricing
+      ? (authSnap!.pricing.serviceFeesTotal || 0)
+      : (quote.pricingSnapshot?.serviceFeesTotal ?? quote.currencyConversionSnapshot?.totals?.serviceFeesTotal ?? 0),
+    effectiveCurrency
+  );
+  const discountsTotalNumeric = roundCurrencyAmount(
+    useAuthSnapPricing
+      ? (authSnap!.pricing.discountsTotal || 0)
+      : (centralTotals.discountAmount || 0),
+    effectiveCurrency
+  );
 
   // Authoritative total selling price across all channels
   const effectiveSellingPrice = finalCustomerSellingPriceNumeric;
@@ -1333,14 +1552,24 @@ export function buildQuotePresentationModel(
         ? 'Authorized Travel Partner • In Association with TheUnbound Luxury DMC Network'
         : 'Destination Management Operations • Direct Ground Logistics & Destination Operations Hub');
 
-  const resolvedTermsObj = resolveAuthoritativeCommercialTerms(quote);
-  const resolvedCommercialTerms = isWhiteLabel && resolvedTermsObj.isCustomHistoricalSnapshot
+  const termsSourceQuote: Quotation = (authSnap?.commercialTerms?.snapshot || authSnap?.commercialTerms?.plainText)
+    ? {
+        ...quote,
+        commercialTermsSnapshot: quote.commercialTermsSnapshot || authSnap.commercialTerms.snapshot,
+        termsAndConditions: quote.termsAndConditions || authSnap.commercialTerms.plainText
+      }
+    : quote;
+
+  const resolvedTermsObj = resolveAuthoritativeCommercialTerms(termsSourceQuote);
+  const shouldSanitizeTermsWhiteLabel =
+    isWhiteLabel && (resolvedTermsObj.isCustomHistoricalSnapshot || resolvedTermsObj.isDestinationWiseSnapshot);
+  const resolvedCommercialTerms = shouldSanitizeTermsWhiteLabel
     ? sanitizeWhiteLabelString(resolvedTermsObj.plainText, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
     : resolvedTermsObj.plainText;
-  const resolvedCommercialTermsHtml = isWhiteLabel && resolvedTermsObj.isCustomHistoricalSnapshot
+  const resolvedCommercialTermsHtml = shouldSanitizeTermsWhiteLabel
     ? sanitizeWhiteLabelString(resolvedTermsObj.htmlText, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
     : resolvedTermsObj.htmlText;
-  const resolvedCommercialTermsWhatsApp = isWhiteLabel && resolvedTermsObj.isCustomHistoricalSnapshot
+  const resolvedCommercialTermsWhatsApp = shouldSanitizeTermsWhiteLabel
     ? sanitizeWhiteLabelString(resolvedTermsObj.whatsAppText, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
     : resolvedTermsObj.whatsAppText;
 
@@ -1356,14 +1585,44 @@ export function buildQuotePresentationModel(
             effectiveAgencyAddress,
             'Official Contracted Quotation Document'
           ].filter(Boolean).join(' • '))
-    : `TheUnbound DMC Global Ground Logistics • Reg: ${THEUNBOUND_REGISTERED_ADDRESS} • Current: ${THEUNBOUND_CURRENT_ADDRESS.replace(/\n/g, ', ')} • sales@theunbound.in • Official Contracted Quotation Document`;
+    : `TheUnbound DMC Global Ground Logistics • Reg: ${effectiveAgencyRegisteredAddress || THEUNBOUND_REGISTERED_ADDRESS} • Current: ${effectiveAgencyCurrentAddress || THEUNBOUND_CURRENT_ADDRESS.replace(/\r?\n/g, ', ')} • ${centralProfile.salesEmail || 'sales@theunbound.in'} • Official Contracted Quotation Document`;
+
+  const resolvedInclusions = (authSnap?.itinerary?.inclusions && authSnap.itinerary.inclusions.length > 0)
+    ? authSnap.itinerary.inclusions
+    : (Array.isArray(quote.inclusions) ? quote.inclusions.filter(Boolean) : []);
+  const resolvedExclusions = (authSnap?.itinerary?.exclusions && authSnap.itinerary.exclusions.length > 0)
+    ? authSnap.itinerary.exclusions
+    : (Array.isArray(quote.exclusions) ? quote.exclusions.filter(Boolean) : []);
+  const rawImportantInfo = authSnap?.itinerary?.importantInformation ?? quote.importantInformation;
+  const rawCancellationPolicy = authSnap?.itinerary?.cancellationPolicy ?? quote.cancellationPolicy;
+  const resolvedImportantInfo = isWhiteLabel && rawImportantInfo
+    ? sanitizeWhiteLabelString(rawImportantInfo, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+    : rawImportantInfo;
+  const resolvedCancellationPolicy = isWhiteLabel && rawCancellationPolicy
+    ? sanitizeWhiteLabelString(rawCancellationPolicy, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+    : rawCancellationPolicy;
+
+  const resolvedTitle =
+    authSnap?.trip?.title ||
+    quote.title ||
+    quote.sourcePackageName ||
+    `${quote.destination || 'Japan'} Bespoke Travel Itinerary`;
 
   return {
     quoteId: quote.id || quote.quoteNumber || 'UBQ-2026',
     quoteNumber: quote.quoteNumber || quote.id || 'UBQ-2026',
-    version: quote.version || 1,
-    status: quote.status || 'DRAFT',
-    createdDateFormatted: formatCreatedDate(quote.createdAt),
+    version: authSnap?.versionNumber || quote.version || 1,
+    status: authSnap?.status || quote.status || 'DRAFT',
+    title: isWhiteLabel
+      ? sanitizeWhiteLabelString(resolvedTitle, effectiveAgency, effectiveAgentEmail, effectiveAgentPhone)
+      : resolvedTitle,
+    sourcePackageId: authSnap?.sourcePackageId ?? quote.sourcePackageId,
+    sourcePackageName: authSnap?.sourcePackageName ?? quote.sourcePackageName,
+    quotationScope: effectiveScope,
+    selectedOptionId: activeOption?.id || authSnap?.selectedOptionId || quote.activeOptionId,
+    snapshotHash: quote.snapshotHash || authSnap?.snapshotHash,
+    authoritativeSnapshotId: authSnap?.snapshotId,
+    createdDateFormatted: formatCreatedDate(authSnap?.createdAt || quote.createdAt),
     validUntilFormatted: formatValidUntil(quote.validUntil),
     currency: effectiveCurrency,
     totalSellingPriceNumeric: effectiveSellingPrice,
@@ -1373,6 +1632,12 @@ export function buildQuotePresentationModel(
     baseSellingPriceFormatted,
     agentMarginAmountNumeric,
     agentMarginAmountFormatted,
+    surchargesTotalNumeric,
+    surchargesTotalFormatted,
+    appliedSurchargesCount,
+    taxesTotalNumeric,
+    serviceFeesTotalNumeric,
+    discountsTotalNumeric,
     brandingMode: effectiveBrandingMode,
     isWhiteLabel,
     agencyName: effectiveAgency,
@@ -1412,7 +1677,7 @@ export function buildQuotePresentationModel(
     dateSpanText,
     travelStartDate: quote.travelStartDate,
     travelEndDate: quote.travelEndDate,
-    selectedOptionTitle,
+    selectedOptionTitle: selectedOptionTitle || authSnap?.selectedOptionTitle,
     selectedOptionNumber,
     pricePerPersonFormatted: formatCurrency(pricePerPerson, effectiveCurrency),
     routeHubs: sortedHubs.map(h => ({ hubName: h.hubName || h.destinationName || quote.destination || 'Hub', nights: h.nights || 1 })),
@@ -1428,9 +1693,13 @@ export function buildQuotePresentationModel(
     landItemsCount,
     visaServices: visaItems.map(it => transformQuoteItemToPresentation(it, effectiveCurrency)),
     days,
-    itineraryOverview: quote.itineraryOverview || (quote as any).narrative || undefined,
-    narrative: quote.itineraryOverview || (quote as any).narrative || undefined,
+    itineraryOverview: authSnap?.itinerary?.itineraryOverview || quote.itineraryOverview || (quote as any).narrative || undefined,
+    narrative: authSnap?.itinerary?.itineraryOverview || quote.itineraryOverview || (quote as any).narrative || undefined,
     additionalServices: generalInclusions,
+    inclusions: resolvedInclusions,
+    exclusions: resolvedExclusions,
+    importantInformation: resolvedImportantInfo,
+    cancellationPolicy: resolvedCancellationPolicy,
     operationalStandards,
     totalItineraryValueFormatted: finalCustomerSellingPriceFormatted,
     pricePerTravelerFormatted: `${formatCurrency(pricePerPerson, effectiveCurrency)} / Traveler (${effectivePax} Guests)`,
@@ -1442,7 +1711,10 @@ export function buildQuotePresentationModel(
     commercialTermsHtml: resolvedCommercialTermsHtml,
     commercialTermsWhatsApp: resolvedCommercialTermsWhatsApp,
     isCustomHistoricalCommercialTerms: resolvedTermsObj.isCustomHistoricalSnapshot,
-    footerContactLine: resolvedFooterContactLine
+    isDestinationWiseCommercialTerms: resolvedTermsObj.isDestinationWiseSnapshot,
+    commercialTermsSnapshot: termsSourceQuote.commercialTermsSnapshot,
+    footerContactLine: resolvedFooterContactLine,
+    customFooterText: customFooterText && !isTheUnboundBrandString(customFooterText) ? customFooterText : undefined
   };
 }
 
@@ -1662,13 +1934,37 @@ export function renderQuoteEmailFromPresentationModel(
     `Quotation Valid Until            : ${model.validUntilFormatted}`
   ].join('\n'));
 
+  if (
+    model.inclusions.length > 0 ||
+    model.exclusions.length > 0 ||
+    model.importantInformation ||
+    model.cancellationPolicy
+  ) {
+    const pkgPolicyLines: string[] = [`8B. PACKAGE INCLUSIONS, EXCLUSIONS & POLICY NOTES`];
+    if (model.inclusions.length > 0) {
+      pkgPolicyLines.push(`Package Inclusions:`);
+      model.inclusions.forEach((inc) => pkgPolicyLines.push(`  ✓ ${inc}`));
+    }
+    if (model.exclusions.length > 0) {
+      pkgPolicyLines.push(`Package Exclusions:`);
+      model.exclusions.forEach((exc) => pkgPolicyLines.push(`  ✕ ${exc}`));
+    }
+    if (model.importantInformation) {
+      pkgPolicyLines.push(`Important Information: ${convertHtmlToCleanPlainText(model.importantInformation)}`);
+    }
+    if (model.cancellationPolicy) {
+      pkgPolicyLines.push(`Cancellation Policy: ${convertHtmlToCleanPlainText(model.cancellationPolicy)}`);
+    }
+    textSections.push(pkgPolicyLines.join('\n'));
+  }
+
   textSections.push([
     `9. OPERATIONAL GUIDELINES & CHILD / ATTRACTION POLICY`,
     ...model.childAndAttractionPolicies.map(p => `  • ${p}`)
   ].join('\n'));
 
   textSections.push([
-    `10. ${COMMERCIAL_QUOTATION_TERMS_HEADING.toUpperCase()}`,
+    `10. ${(model.commercialTermsHeading || COMMERCIAL_QUOTATION_TERMS_HEADING).toUpperCase()}`,
     model.commercialTerms,
     ``,
     convertHtmlToCleanPlainText(model.footerContactLine)
@@ -1972,6 +2268,33 @@ export function renderQuoteWhatsAppFromPresentationModel(
     stdLines.push(`• *${op.title}:* ${op.desc}`);
   });
   sections.push(stdLines.join('\n'));
+
+  // 6B. Package-Level Inclusions, Exclusions & Policy Notes
+  if (
+    model.inclusions.length > 0 ||
+    model.exclusions.length > 0 ||
+    model.importantInformation ||
+    model.cancellationPolicy
+  ) {
+    const pkgLines: string[] = [
+      useEmojis ? `📋 *PACKAGE INCLUSIONS & EXCLUSIONS*` : `*PACKAGE INCLUSIONS & EXCLUSIONS*`
+    ];
+    if (model.inclusions.length > 0) {
+      pkgLines.push(useEmojis ? `✅ *Inclusions:*` : `*Inclusions:*`);
+      model.inclusions.forEach((inc) => pkgLines.push(`  • ${inc}`));
+    }
+    if (model.exclusions.length > 0) {
+      pkgLines.push(useEmojis ? `❌ *Exclusions:*` : `*Exclusions:*`);
+      model.exclusions.forEach((exc) => pkgLines.push(`  • ${exc}`));
+    }
+    if (model.importantInformation) {
+      pkgLines.push(`${useEmojis ? 'ℹ️ ' : ''}*Important Information:* ${richTextToWhatsApp(model.importantInformation)}`);
+    }
+    if (model.cancellationPolicy) {
+      pkgLines.push(`${useEmojis ? '⚖️ ' : ''}*Cancellation Policy:* ${richTextToWhatsApp(model.cancellationPolicy)}`);
+    }
+    sections.push(pkgLines.join('\n'));
+  }
 
   // 7. Operational Guidelines & Child / Attraction Policies
   if (model.childAndAttractionPolicies.length > 0) {

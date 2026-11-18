@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import { B2BPackage, CurrencyCode, Booking } from '../types';
 import { AppDatabase } from '../services/db';
 import { formatCurrency, convertCurrency, calculatePackagePrice } from '../services/pricingEngine';
 import { useAuth } from '../context/AuthContext';
+import { lazyWithRetry } from '../utils/lazyWithRetry';
 import { 
   Package, 
   MapPin, 
@@ -20,9 +21,9 @@ import {
   ShieldCheck,
   MessageSquare
 } from 'lucide-react';
-import { PackageDetailModal } from './PackageDetailModal';
-import { PackageEnquiryModal } from './PackageEnquiryModal';
-import { BookingModal } from './BookingModal';
+const PackageDetailModal = lazyWithRetry(() => import('./PackageDetailModal').then(m => ({ default: m.PackageDetailModal })));
+const PackageEnquiryModal = lazyWithRetry(() => import('./PackageEnquiryModal').then(m => ({ default: m.PackageEnquiryModal })));
+const BookingModal = lazyWithRetry(() => import('./BookingModal').then(m => ({ default: m.BookingModal })));
 
 interface ReadyMadePackagesSectionProps {
   destinationId?: string;
@@ -136,6 +137,8 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
                   <img
                     src={pkg.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800'}
                     alt={pkg.title}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     referrerPolicy="no-referrer"
                   />
@@ -265,50 +268,52 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
         })}
       </div>
 
-      {/* Package Detail Modal */}
-      {selectedPackage && (
-        <PackageDetailModal
-          packageItem={selectedPackage}
-          onClose={() => setSelectedPackage(null)}
-          onCustomizePackage={isB2BAgent ? (pkg) => {
-            setSelectedPackage(null);
-            if (onCustomizePackage) {
-              onCustomizePackage(pkg);
-            }
-          } : undefined}
-          onInstantBook={(pkg) => {
-            setSelectedPackage(null);
-            handleBook(pkg);
-          }}
-          onEnquirePackage={(pkg) => {
-            setSelectedPackage(null);
-            handleEnquire(pkg);
-          }}
-        />
-      )}
+      <Suspense fallback={null}>
+        {/* Package Detail Modal */}
+        {selectedPackage && (
+          <PackageDetailModal
+            packageItem={selectedPackage}
+            onClose={() => setSelectedPackage(null)}
+            onCustomizePackage={isB2BAgent ? (pkg) => {
+              setSelectedPackage(null);
+              if (onCustomizePackage) {
+                onCustomizePackage(pkg);
+              }
+            } : undefined}
+            onInstantBook={(pkg) => {
+              setSelectedPackage(null);
+              handleBook(pkg);
+            }}
+            onEnquirePackage={(pkg) => {
+              setSelectedPackage(null);
+              handleEnquire(pkg);
+            }}
+          />
+        )}
 
-      {/* Package Enquiry Modal */}
-      {enquiryPackage && (
-        <PackageEnquiryModal
-          packageItem={enquiryPackage}
-          onClose={() => setEnquiryPackage(null)}
-          currency={currency}
-        />
-      )}
+        {/* Package Enquiry Modal */}
+        {enquiryPackage && (
+          <PackageEnquiryModal
+            packageItem={enquiryPackage}
+            onClose={() => setEnquiryPackage(null)}
+            currency={currency}
+          />
+        )}
 
-      {/* Booking Modal */}
-      {bookingPackage && (
-        <BookingModal
-          isOpen={true}
-          onClose={() => setBookingPackage(null)}
-          packageItem={bookingPackage}
-          currency={currency}
-          onBookingComplete={(booking) => {
-            setBookingPackage(null);
-            setConfirmedBooking(booking);
-          }}
-        />
-      )}
+        {/* Booking Modal */}
+        {bookingPackage && (
+          <BookingModal
+            isOpen={true}
+            onClose={() => setBookingPackage(null)}
+            packageItem={bookingPackage}
+            currency={currency}
+            onBookingComplete={(booking) => {
+              setBookingPackage(null);
+              setConfirmedBooking(booking);
+            }}
+          />
+        )}
+      </Suspense>
     </div>
   );
 };

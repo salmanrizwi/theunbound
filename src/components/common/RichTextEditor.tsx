@@ -25,7 +25,8 @@ import {
   Indent,
   Outdent,
   Minus,
-  Palette
+  Palette,
+  Table2
 } from 'lucide-react';
 import { sanitizeRichText, isHtmlContent, convertPlainTextToSemanticHtml } from '../../utils/richTextFormatter';
 import { RichTextRenderer } from './RichTextRenderer';
@@ -39,6 +40,7 @@ export interface RichTextEditorProps {
   label?: string;
   helperText?: string;
   compact?: boolean;
+  debounceMs?: number;
 }
 
 interface ActiveFormatState {
@@ -68,7 +70,7 @@ const COLOR_PALETTE = [
  * Professional Travel Product & Quotation Content Editor
  * ============================================================================
  */
-export const RichTextEditor: React.FC<RichTextEditorProps> = ({
+const RichTextEditorBase: React.FC<RichTextEditorProps> = ({
   value = '',
   onChange,
   placeholder = 'Write a structured description with headings, paragraphs, and lists...',
@@ -76,14 +78,20 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
   disabled = false,
   label,
   helperText,
-  compact = false
+  compact = false,
+  debounceMs = 180
 }) => {
   const editorRef = useRef<HTMLDivElement>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeTab, setActiveTab] = useState<'EDIT' | 'PREVIEW'>('EDIT');
   const [isFocused, setIsFocused] = useState(false);
   const [isLinkModalOpen, setIsLinkModalOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
+  const [isTableModalOpen, setIsTableModalOpen] = useState(false);
+  const [tableRows, setTableRows] = useState(3);
+  const [tableCols, setTableCols] = useState(2);
+  const [tableIncludeHeader, setTableIncludeHeader] = useState(true);
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const savedSelectionRangeRef = useRef<Range | null>(null);
 
@@ -100,6 +108,21 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
   // Track the last emitted HTML to avoid cursor jumping loops
   const lastHtmlEmittedRef = useRef<string>('');
+  const pendingHtmlRef = useRef<string | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        if (pendingHtmlRef.current !== null) {
+          onChangeRef.current(pendingHtmlRef.current);
+          pendingHtmlRef.current = null;
+        }
+      }
+    };
+  }, []);
 
   // Format initial or externally changed value into semantic HTML
   const formatInputToHtml = useCallback((raw: string): string => {
@@ -118,8 +141,8 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       const normalizedProp = formatInputToHtml(value || '');
       const currentHtml = editorRef.current.innerHTML;
 
-      // Only update DOM if the content has meaningfully changed
-      if (normalizedProp !== lastHtmlEmittedRef.current && normalizedProp !== currentHtml) {
+      // Only update DOM if the content has meaningfully changed and user is not mid-debounce
+      if (pendingHtmlRef.current === null && normalizedProp !== lastHtmlEmittedRef.current && normalizedProp !== currentHtml) {
         editorRef.current.innerHTML = normalizedProp;
         lastHtmlEmittedRef.current = normalizedProp;
       }
@@ -165,13 +188,38 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
     }
   }, []);
 
-  const handleInput = () => {
+  const flushPendingChange = useCallback((immediateHtml?: string) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    const htmlToEmit = immediateHtml !== undefined ? immediateHtml : pendingHtmlRef.current;
+    pendingHtmlRef.current = null;
+    if (htmlToEmit !== null && htmlToEmit !== undefined) {
+      lastHtmlEmittedRef.current = htmlToEmit;
+      onChangeRef.current(htmlToEmit);
+    }
+  }, []);
+
+  const handleInput = (immediate = false) => {
     if (!editorRef.current) return;
     const rawHtml = editorRef.current.innerHTML;
     const cleanHtml = sanitizeRichText(rawHtml);
     lastHtmlEmittedRef.current = cleanHtml;
-    onChange(cleanHtml);
     checkActiveFormats();
+
+    if (immediate || debounceMs <= 0) {
+      flushPendingChange(cleanHtml);
+      return;
+    }
+
+    pendingHtmlRef.current = cleanHtml;
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = setTimeout(() => {
+      flushPendingChange();
+    }, debounceMs);
   };
 
   const handleBlur = () => {
@@ -179,8 +227,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
     if (!editorRef.current) return;
     const rawHtml = editorRef.current.innerHTML;
     const cleanHtml = sanitizeRichText(rawHtml);
-    lastHtmlEmittedRef.current = cleanHtml;
-    onChange(cleanHtml);
+    flushPendingChange(cleanHtml);
   };
 
   const executeCommand = (command: string, cmdValue: string | undefined = undefined) => {
@@ -188,7 +235,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
 
     editorRef.current?.focus();
     document.execCommand(command, false, cmdValue);
-    handleInput();
+    handleInput(true);
   };
 
   // Block Formatting (Paragraph, H1, H2, H3)
@@ -244,8 +291,64 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
       } else {
         document.execCommand('createLink', false, safeUrl);
       }
-      handleInput();
+      handleInput(true);
     }
+  };
+
+  // Table Insertion
+  const handleOpenTableModal = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      savedSelectionRangeRef.current = sel.getRangeAt(0).cloneRange();
+    } else {
+      savedSelectionRangeRef.current = null;
+    }
+    setTableRows(3);
+    setTableCols(2);
+    setTableIncludeHeader(true);
+    setIsTableModalOpen(true);
+  };
+
+  const handleConfirmTable = () => {
+    setIsTableModalOpen(false);
+    editorRef.current?.focus();
+
+    if (savedSelectionRangeRef.current) {
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(savedSelectionRangeRef.current);
+    }
+
+    const rCount = Math.min(12, Math.max(1, Number(tableRows) || 3));
+    const cCount = Math.min(8, Math.max(1, Number(tableCols) || 2));
+
+    let theadHtml = '';
+    if (tableIncludeHeader) {
+      const ths = Array.from({ length: cCount })
+        .map(
+          (_, ci) =>
+            `<th style="border: 1px solid #cbd5e1; padding: 6px 8px; background-color: #f1f5f9; font-weight: 700; text-align: left;">Column ${ci + 1}</th>`
+        )
+        .join('');
+      theadHtml = `<thead><tr>${ths}</tr></thead>`;
+    }
+
+    const bodyRowsCount = tableIncludeHeader ? Math.max(1, rCount - 1) : rCount;
+    const tbodyRows = Array.from({ length: bodyRowsCount })
+      .map((_, ri) => {
+        const tds = Array.from({ length: cCount })
+          .map(
+            (__, ci) =>
+              `<td style="border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left;">Row ${ri + 1} Cell ${ci + 1}</td>`
+          )
+          .join('');
+        return `<tr>${tds}</tr>`;
+      })
+      .join('');
+
+    const tableHtml = `<table class="theunbound-terms-table" style="width: 100%; border-collapse: collapse; margin: 8px 0;">${theadHtml}<tbody>${tbodyRows}</tbody></table><p></p>`;
+    document.execCommand('insertHTML', false, tableHtml);
+    handleInput(true);
   };
 
   // Keyboard Shortcuts (Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+Z, Ctrl+Y)
@@ -605,6 +708,16 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
               <Unlink className="w-3.5 h-3.5" />
             </button>
 
+            {/* Insert Table */}
+            <button
+              type="button"
+              onClick={handleOpenTableModal}
+              title="Insert Table"
+              className="p-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-all cursor-pointer"
+            >
+              <Table2 className="w-3.5 h-3.5" />
+            </button>
+
             {/* Remove Format */}
             <button
               type="button"
@@ -670,7 +783,7 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
           <div
             ref={editorRef}
             contentEditable={!disabled}
-            onInput={handleInput}
+            onInput={() => handleInput(false)}
             onFocus={() => {
               setIsFocused(true);
               checkActiveFormats();
@@ -777,6 +890,89 @@ export const RichTextEditor: React.FC<RichTextEditorProps> = ({
           </div>
         </div>
       )}
+
+      {/* Table Insertion Modal */}
+      {isTableModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-2xs flex items-center justify-center p-3">
+          <div className="bg-white rounded-2xl p-5 max-w-sm w-full border border-slate-200 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center space-x-2">
+                <Table2 className="w-4 h-4 text-[#00C6A6]" />
+                <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                  Insert Structured Table
+                </h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTableModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                  Rows (1–12)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={tableRows}
+                  onChange={e => setTableRows(Number(e.target.value) || 3)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:border-[#00C6A6] focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                  Columns (1–8)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={8}
+                  value={tableCols}
+                  onChange={e => setTableCols(Number(e.target.value) || 2)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:border-[#00C6A6] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <label className="flex items-center space-x-2 text-xs text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={tableIncludeHeader}
+                onChange={e => setTableIncludeHeader(e.target.checked)}
+                className="rounded text-teal-600 focus:ring-teal-500"
+              />
+              <span className="font-semibold">Include styled header row</span>
+            </label>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsTableModalOpen(false)}
+                className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmTable}
+                className="px-4 py-1.5 text-xs font-bold bg-[#00C6A6] hover:bg-[#00a88c] text-slate-950 rounded-xl transition-all shadow-xs cursor-pointer flex items-center space-x-1"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Insert Table</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+export const RichTextEditor = React.memo(RichTextEditorBase);
+

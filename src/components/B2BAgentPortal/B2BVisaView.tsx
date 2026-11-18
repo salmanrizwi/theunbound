@@ -47,6 +47,7 @@ import {
 } from './VisaServicesAndFacilitationSection';
 import { AppDatabase } from '../../services/db';
 import { canonicalImageService } from '../../services/imageService';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 export interface VisaProduct {
   id: string;
@@ -111,7 +112,15 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   const [dbTick, setDbTick] = useState<number>(0);
 
   useEffect(() => {
-    const unsubDb = db.subscribe(() => {
+    const unsubDb = db.subscribeToCollections([
+      'visas',
+      'visa_rates',
+      'travel_protection_plans',
+      'vip_ground_services',
+      'connectivity_plans',
+      'destinations',
+      'inventory_tombstones'
+    ], () => {
       setDbTick(t => t + 1);
     });
     const unsubImg = canonicalImageService.subscribe(() => {
@@ -123,11 +132,10 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
     };
   }, [db]);
 
-  // 1. Authoritative Master Data Queries
+  // 1. Authoritative Master Data Queries strictly scoped to ACTIVE destinations
   const realVisas = useMemo(() => {
     try {
-      const all = db.getVisas() || [];
-      return all.filter(v => v.status === 'ACTIVE' || !v.status);
+      return inventoryVisibilityService.getB2BActiveVisas();
     } catch (e) {
       console.error('Error loading visas from DB:', e);
       return [];
@@ -136,8 +144,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
   const realProtectionPlans = useMemo(() => {
     try {
-      const all = db.getTravelProtectionPlans() || [];
-      return all.filter(p => p.status === 'ACTIVE' || !p.status);
+      return inventoryVisibilityService.getB2BActiveTravelProtectionPlans();
     } catch (e) {
       console.error('Error loading travel protection from DB:', e);
       return [];
@@ -146,8 +153,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
   const realVipServices = useMemo(() => {
     try {
-      const all = db.getVipGroundServices() || [];
-      return all.filter(s => s.status === 'ACTIVE' || !s.status);
+      return inventoryVisibilityService.getB2BActiveVipGroundServices();
     } catch (e) {
       console.error('Error loading VIP ground services from DB:', e);
       return [];
@@ -156,8 +162,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
   const realConnectivityPlans = useMemo(() => {
     try {
-      const all = db.getConnectivityPlans() || [];
-      return all.filter(c => c.status === 'ACTIVE' || !c.status);
+      return inventoryVisibilityService.getB2BActiveConnectivityPlans();
     } catch (e) {
       console.error('Error loading connectivity plans from DB:', e);
       return [];
@@ -167,15 +172,21 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   // Map Visas to consistent interface
   const formattedVisas = useMemo<VisaProduct[]>(() => {
     return realVisas.map(v => {
-      const embassy = typeof v.embassyFee === 'number' ? v.embassyFee : (typeof v.embassyFeeUSD === 'number' ? v.embassyFeeUSD : 50);
-      const service = typeof v.serviceFee === 'number' ? v.serviceFee : (typeof v.wholesaleNetUSD === 'number' ? v.wholesaleNetUSD : 35);
-      const suggested = typeof v.suggestedSellingUSD === 'number' ? v.suggestedSellingUSD : (embassy + service);
+      const embassy = typeof v.embassyFee === 'number' ? v.embassyFee : (typeof v.embassyFeeUSD === 'number' ? v.embassyFeeUSD : 0);
+      const service = typeof v.serviceFee === 'number' ? v.serviceFee : (typeof v.wholesaleNetUSD === 'number' ? v.wholesaleNetUSD : 0);
+      const suggested = typeof v.pricing?.finalPrice === 'number'
+        ? v.pricing.finalPrice
+        : typeof v.sellingPrice === 'number'
+          ? v.sellingPrice
+          : typeof v.suggestedSellingUSD === 'number'
+            ? v.suggestedSellingUSD
+            : (embassy + service);
 
       return {
         id: v.id,
         country: v.country || 'International',
         countryCode: v.countryCode || 'INTL',
-        visaType: v.visaType || 'Official Visa Facilitation',
+        visaType: v.visaType || 'Visa Service',
         category: v.category || 'TOURIST',
         processingTimeDays: typeof v.processingTimeDays === 'number' 
           ? `${v.processingTimeDays} Business Days` 
@@ -329,6 +340,12 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: plan.surcharges,
+      productId: plan.id,
+      productName: plan.serviceName,
+      category: 'Visa & Ancillary Services',
+      productType: 'Travel Protection',
+      destinationName: plan.coverageArea,
+      country: plan.coverageArea,
       serviceDate: effectiveDate,
       coverageDays,
       baseNativeAmount: baseSellingNative,
@@ -445,6 +462,11 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: service.surcharges,
+      productId: service.id,
+      productName: service.name,
+      category: 'Visa & Ancillary Services',
+      productType: service.serviceType || 'Ground VIP Service',
+      destinationId: service.destinationId,
       serviceDate: effectiveDate,
       baseNativeAmount: baseSellingNative,
       nativeCurrency,
@@ -553,6 +575,12 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: plan.surcharges,
+      productId: plan.id,
+      productName: `${plan.name} (${quantity} Profiles)`,
+      category: 'Visa & Ancillary Services',
+      productType: '5G Connectivity',
+      destinationName: plan.coverageZone,
+      country: plan.coverageZone,
       serviceDate: effectiveDate,
       coverageDays: plan.validityDays || 1,
       baseNativeAmount: baseSellingNative,
@@ -910,6 +938,8 @@ Support: visa-operations@theunbound.in
                       <img
                         src={canonicalImageService.resolveVisaImage(visa)}
                         alt={visa.country}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
                         onError={(e) => {

@@ -1,8 +1,5 @@
 import { VisaProduct } from '../types';
-import { 
-  createDefaultRequirementsForVisa, 
-  createDefaultAssistanceServices 
-} from '../services/visaRequirementService';
+import { createDefaultRequirementsForVisa } from '../services/visaRequirementService';
 
 const RAW_VISAS: VisaProduct[] = [
   {
@@ -314,7 +311,9 @@ const RAW_VISAS: VisaProduct[] = [
 export const INITIAL_VISAS: VisaProduct[] = RAW_VISAS.map(v => ({
   ...v,
   structuredRequirements: v.structuredRequirements || createDefaultRequirementsForVisa(v.id, v.country, v.visaType),
-  assistanceServices: v.assistanceServices || createDefaultAssistanceServices(v.id),
+  inclusions: v.inclusions || [],
+  exclusions: v.exclusions || [],
+  inclusionsExclusionsVersion: v.inclusionsExclusionsVersion || 1,
   requirementVersion: v.requirementVersion || 1
 }));
 

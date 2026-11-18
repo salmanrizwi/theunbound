@@ -43,11 +43,11 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['bookings'], () => {
       setBookings(db.getBookingsForUser(currentUser));
     });
     return unsub;
-  }, [currentUser]);
+  }, [currentUser, db]);
 
   if (!isOpen) return null;
 

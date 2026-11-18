@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server/main.ts --bundle --platform=node --format=cjs --external:vite --minify --outfile=dist/server.cjs",
+    "build": "node scripts/build.mjs",
     "start": "node server.ts",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "tsx src/tests/masterSystemAuditCertification.ts",
-    "test:all": "tsx src/tests/masterSystemAuditCertification.ts && tsx src/tests/shinkansenDynamicPricingFxAudit.ts && tsx src/tests/masterPricingEngineAudit.ts && tsx src/tests/internalPricingBreakdownAudit.ts && tsx src/tests/capacityTieredPricingInputAudit.ts && tsx src/tests/homepageDataSyncAudit.ts && tsx src/tests/japanRailCommercialProductsAudit.ts && tsx src/tests/homepageSequenceAudit.ts && tsx src/tests/pdfPaginationEngineAudit.ts && tsx src/tests/quoteCommunicationChannelParityAudit.ts"
+    "test:all": "tsx src/tests/masterSystemAuditCertification.ts && tsx src/tests/shinkansenDynamicPricingFxAudit.ts && tsx src/tests/masterPricingEngineAudit.ts && tsx src/tests/internalPricingBreakdownAudit.ts && tsx src/tests/capacityTieredPricingInputAudit.ts && tsx src/tests/homepageDataSyncAudit.ts && tsx src/tests/japanRailCommercialProductsAudit.ts && tsx src/tests/homepageSequenceAudit.ts && tsx src/tests/pdfPaginationEngineAudit.ts && tsx src/tests/quoteCommunicationChannelParityAudit.ts && tsx src/tests/quotationVersioningAndHubStabilityAudit.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

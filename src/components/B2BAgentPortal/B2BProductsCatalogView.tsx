@@ -35,6 +35,7 @@ import { canonicalImageService } from '../../services/imageService';
 import { sanitizeImageUrl } from '../../utils/imageUtils';
 import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { inventoryDiscoveryService } from '../../services/inventoryDiscoveryService';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 // Safely normalize any value to a lowercase trimmed string
 const safeStr = (val: any): string => {
@@ -123,7 +124,17 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
   const [dbTick, setDbTick] = useState(0);
 
   useEffect(() => {
-    const unsubDb = db.subscribe(() => setDbTick(t => t + 1));
+    const unsubDb = db.subscribeToCollections([
+      'products',
+      'destinations',
+      'city_hubs',
+      'regions',
+      'master_regions',
+      'product_margin_configs',
+      'surcharge_masters',
+      'surcharge_product_mappings',
+      'inventory_tombstones'
+    ], () => setDbTick(t => t + 1));
     const unsubImg = canonicalImageService.subscribe(() => setDbTick(t => t + 1));
     return () => {
       unsubDb();
@@ -131,25 +142,21 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
     };
   }, [db]);
 
-  // Canonical Master Data Collections
-  const canonicalProducts = useMemo(() => {
-    const freshDbProducts = db.getProducts();
-    const raw = (freshDbProducts && freshDbProducts.length > 0) ? freshDbProducts : products;
-    return (raw || []).filter(p => Boolean(p && typeof p === 'object' && p.id));
-  }, [products, db, dbTick]);
-
+  // Canonical Master Data Collections strictly scoped to ACTIVE destinations
   const canonicalDestinations = useMemo(() => {
-    const freshDbDests = db.getDestinations();
-    const raw = (freshDbDests && freshDbDests.length > 0) ? freshDbDests : destinations;
-    return (raw || []).filter(d => Boolean(d && typeof d === 'object' && d.id));
+    return inventoryVisibilityService.getB2BActiveDestinations();
   }, [destinations, db, dbTick]);
 
+  const canonicalProducts = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveProducts();
+  }, [products, db, dbTick]);
+
   const regions = useMemo(() => {
-    return (db.getRegions() || []).filter(r => Boolean(r && typeof r === 'object' && r.id));
+    return inventoryVisibilityService.getB2BActiveDestinationRegions();
   }, [db, dbTick]);
 
   const cityHubs = useMemo(() => {
-    return (db.getCityHubs() || []).filter(h => Boolean(h && typeof h === 'object' && h.id));
+    return inventoryVisibilityService.getB2BActiveHubs();
   }, [db, dbTick]);
 
   // Search-First State Management
@@ -713,6 +720,7 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                     <div className="relative h-44 overflow-hidden bg-slate-100 shrink-0">
                       <img
                         loading="lazy"
+                        decoding="async"
                         src={canonicalImageService.resolveProductImage(prod)}
                         alt={prod.name || 'Product Image'}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"

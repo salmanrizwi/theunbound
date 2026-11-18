@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AppDatabase } from '../../services/db';
 import { TravelLead, LeadStatus, LeadPriority, LeadSource, LeadStageConfig } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -46,7 +46,7 @@ export interface LeadManagerProps {
   initialLeadId?: string | null;
   onOpenActionCenter?: (task: CalendarTask) => void;
   onOpenBooking?: (bookingId: string) => void;
-  onOpenQuote?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly'; leadId?: string }) => void;
+  onOpenQuote?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly' | 'restore'; leadId?: string }) => void;
 }
 
 export const LeadManager: React.FC<LeadManagerProps> = ({
@@ -68,6 +68,9 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   const [ownershipFilter, setOwnershipFilter] = useState<'all' | 'assigned' | 'needs_assignment' | 'pending_internal' | 'pending_agent'>('all');
   const [teamMemberFilter, setTeamMemberFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const leadsPageSize = 25;
   const [viewMode, setViewMode] = useState<'table' | 'cards' | 'kanban'>(() => {
     try {
       const saved = localStorage.getItem('unbound_lead_manager_view');
@@ -77,6 +80,18 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     } catch {}
     return 'kanban';
   });
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [stageFilter, statusFilter, priorityFilter, sourceFilter, ownershipFilter, teamMemberFilter]);
 
   const handleSelectViewMode = (mode: 'table' | 'cards' | 'kanban') => {
     setViewMode(mode);
@@ -96,10 +111,10 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['leads', 'saved_quotes', 'bookings'], () => {
       setLeads(db.getLeadsAuthorized(user));
     });
-  }, [user]);
+  }, [user, db]);
 
   useEffect(() => {
     if (initialLeadId && leads.length > 0) {
@@ -181,50 +196,59 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
 
   const totalPipelineValue = leads.reduce((acc, l) => acc + Number(l.estimatedBudget || l.bookingValue || 0), 0);
 
-  // Filtering
-  const filteredLeads = leads.filter(l => {
-    const matchesStage = stageFilter === 'all' || l.stageId === stageFilter;
-    const matchesStatus = statusFilter === 'all' || l.status === statusFilter;
-    const matchesPriority = priorityFilter === 'all' || l.priority === priorityFilter;
-    const matchesSource = sourceFilter === 'all' || l.source === sourceFilter;
-    
-    // Dual Ownership Filter
-    const hasAgent = Boolean(l.responsibleAgentId || l.assignedAgentId);
-    const hasTeamMember = Boolean(l.assignedTeamMemberId || l.assignedStaffId);
-    let matchesOwnership = true;
-    if (ownershipFilter === 'assigned') {
-      matchesOwnership = hasAgent && hasTeamMember;
-    } else if (ownershipFilter === 'needs_assignment') {
-      matchesOwnership = !hasAgent || !hasTeamMember;
-    } else if (ownershipFilter === 'pending_internal') {
-      matchesOwnership = !hasTeamMember;
-    } else if (ownershipFilter === 'pending_agent') {
-      matchesOwnership = !hasAgent;
-    }
+  // Filtering (memoized)
+  const filteredLeads = useMemo(() => {
+    const query = (debouncedSearchQuery || '').toLowerCase().trim();
+    return leads.filter(l => {
+      const matchesStage = stageFilter === 'all' || l.stageId === stageFilter;
+      const matchesStatus = statusFilter === 'all' || l.status === statusFilter;
+      const matchesPriority = priorityFilter === 'all' || l.priority === priorityFilter;
+      const matchesSource = sourceFilter === 'all' || l.source === sourceFilter;
+      
+      // Dual Ownership Filter
+      const hasAgent = Boolean(l.responsibleAgentId || l.assignedAgentId);
+      const hasTeamMember = Boolean(l.assignedTeamMemberId || l.assignedStaffId);
+      let matchesOwnership = true;
+      if (ownershipFilter === 'assigned') {
+        matchesOwnership = hasAgent && hasTeamMember;
+      } else if (ownershipFilter === 'needs_assignment') {
+        matchesOwnership = !hasAgent || !hasTeamMember;
+      } else if (ownershipFilter === 'pending_internal') {
+        matchesOwnership = !hasTeamMember;
+      } else if (ownershipFilter === 'pending_agent') {
+        matchesOwnership = !hasAgent;
+      }
 
-    // Assigned Internal Team Member Filter
-    const assignedMemberId = l.assignedTeamMemberId || l.assignedStaffId || '';
-    let matchesTeamMember = true;
-    if (teamMemberFilter === 'unassigned') {
-      matchesTeamMember = !assignedMemberId;
-    } else if (teamMemberFilter !== 'all') {
-      matchesTeamMember = assignedMemberId === teamMemberFilter;
-    }
+      // Assigned Internal Team Member Filter
+      const assignedMemberId = l.assignedTeamMemberId || l.assignedStaffId || '';
+      let matchesTeamMember = true;
+      if (teamMemberFilter === 'unassigned') {
+        matchesTeamMember = !assignedMemberId;
+      } else if (teamMemberFilter !== 'all') {
+        matchesTeamMember = assignedMemberId === teamMemberFilter;
+      }
 
-    const query = (searchQuery || '').toLowerCase().trim();
-    const matchesSearch = !query || 
-      (l.contactName || '').toLowerCase().includes(query) ||
-      (l.email || '').toLowerCase().includes(query) ||
-      (l.leadNumber || '').toLowerCase().includes(query) ||
-      (l.agencyName && l.agencyName.toLowerCase().includes(query)) ||
-      (l.destinationName && l.destinationName.toLowerCase().includes(query)) ||
-      (l.responsibleAgentNameSnapshot && l.responsibleAgentNameSnapshot.toLowerCase().includes(query)) ||
-      (l.assignedTeamMemberNameSnapshot && l.assignedTeamMemberNameSnapshot.toLowerCase().includes(query)) ||
-      (l.quoteNumber && l.quoteNumber.toLowerCase().includes(query)) ||
-      (l.bookingReference && l.bookingReference.toLowerCase().includes(query));
+      const matchesSearch = !query || 
+        (l.contactName || '').toLowerCase().includes(query) ||
+        (l.email || '').toLowerCase().includes(query) ||
+        (l.leadNumber || '').toLowerCase().includes(query) ||
+        (l.agencyName && l.agencyName.toLowerCase().includes(query)) ||
+        (l.destinationName && l.destinationName.toLowerCase().includes(query)) ||
+        (l.responsibleAgentNameSnapshot && l.responsibleAgentNameSnapshot.toLowerCase().includes(query)) ||
+        (l.assignedTeamMemberNameSnapshot && l.assignedTeamMemberNameSnapshot.toLowerCase().includes(query)) ||
+        (l.quoteNumber && l.quoteNumber.toLowerCase().includes(query)) ||
+        (l.bookingReference && l.bookingReference.toLowerCase().includes(query));
 
-    return matchesStage && matchesStatus && matchesPriority && matchesSource && matchesOwnership && matchesTeamMember && matchesSearch;
-  });
+      return matchesStage && matchesStatus && matchesPriority && matchesSource && matchesOwnership && matchesTeamMember && matchesSearch;
+    });
+  }, [leads, stageFilter, statusFilter, priorityFilter, sourceFilter, ownershipFilter, teamMemberFilter, debouncedSearchQuery]);
+
+  const totalLeadPages = Math.max(1, Math.ceil(filteredLeads.length / leadsPageSize));
+  const paginatedLeads = useMemo(() => {
+    const safePage = Math.min(currentPage, totalLeadPages);
+    const start = (safePage - 1) * leadsPageSize;
+    return filteredLeads.slice(start, start + leadsPageSize);
+  }, [filteredLeads, currentPage, totalLeadPages]);
 
   const handleStageChange = (leadId: string, stageId: string) => {
     const res = db.updateLeadStage(leadId, stageId, user);
@@ -907,7 +931,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredLeads.map(lead => {
+                  paginatedLeads.map(lead => {
                     const isSelected = selectedLeadIds.includes(lead.id);
                     const leadStage = stages.find(s => s.id === lead.stageId);
                     return (
@@ -1132,6 +1156,36 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
               </tbody>
             </table>
           </div>
+          {filteredLeads.length > leadsPageSize && (
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-50/70 border-t border-slate-200 text-xs text-slate-600">
+              <span>
+                Showing <strong>{((Math.min(currentPage, totalLeadPages) - 1) * leadsPageSize) + 1}</strong> to{' '}
+                <strong>{Math.min(Math.min(currentPage, totalLeadPages) * leadsPageSize, filteredLeads.length)}</strong> of{' '}
+                <strong>{filteredLeads.length}</strong> leads
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="px-3 py-1 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                >
+                  Prev
+                </button>
+                <span className="font-mono font-bold px-2">
+                  Page {Math.min(currentPage, totalLeadPages)} of {totalLeadPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalLeadPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalLeadPages, p + 1))}
+                  className="px-3 py-1 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1160,7 +1214,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filteredLeads.map(lead => {
+              {paginatedLeads.map(lead => {
                 const isSelected = selectedLeadIds.includes(lead.id);
                 const leadStage = stages.find(s => s.id === lead.stageId);
                 return (
@@ -1335,6 +1389,36 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                   </div>
                 );
               })}
+            </div>
+          )}
+          {filteredLeads.length > leadsPageSize && (
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4 mt-4 border-t border-slate-200 text-xs text-slate-600">
+              <span>
+                Showing <strong>{((Math.min(currentPage, totalLeadPages) - 1) * leadsPageSize) + 1}</strong> to{' '}
+                <strong>{Math.min(Math.min(currentPage, totalLeadPages) * leadsPageSize, filteredLeads.length)}</strong> of{' '}
+                <strong>{filteredLeads.length}</strong> leads
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="px-3 py-1 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                >
+                  Prev
+                </button>
+                <span className="font-mono font-bold px-2">
+                  Page {Math.min(currentPage, totalLeadPages)} of {totalLeadPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalLeadPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalLeadPages, p + 1))}
+                  className="px-3 py-1 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           )}
         </div>

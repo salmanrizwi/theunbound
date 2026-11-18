@@ -1,6 +1,13 @@
 import { AppDatabase } from './db';
 import { MasterDataService } from './masterDataService';
 import { Product, Hotel, CityHub, Destination, DestinationRegionItem, MasterRegion, ProductCategory } from '../types';
+import {
+  buildDestinationVisibilityIndex,
+  isProductActiveForB2B,
+  isHotelActiveForB2B,
+  isCityHubActiveForB2B,
+  isRegionActiveForB2B
+} from './destinationVisibility';
 
 /**
  * Universal Filter Options for counting and inventory querying
@@ -92,7 +99,9 @@ export class GlobalCountingEngine {
     const onlyPublished = filter.onlyPublished !== false;
     if (onlyPublished) {
       if ((product as any).isPublished === false) return false;
-      if (product.status && product.status !== 'ACTIVE') return false;
+      const deletedSet = this.db.getDeletedEntityIds();
+      const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+      if (!isProductActiveForB2B(product, visIndex, deletedSet)) return false;
     }
 
     // 1. Macro Master Region filter (if specified)
@@ -184,7 +193,9 @@ export class GlobalCountingEngine {
     const onlyPublished = filter.onlyPublished !== false;
     if (onlyPublished) {
       if ((hotel as any).isPublished === false) return false;
-      if ((hotel as any).status === 'ARCHIVED' || (hotel as any).status === 'DRAFT' || (hotel as any).status === 'INACTIVE') return false;
+      const deletedSet = this.db.getDeletedEntityIds();
+      const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+      if (!isHotelActiveForB2B(hotel, visIndex, deletedSet)) return false;
     }
 
     // 1. Macro Master Region
@@ -241,7 +252,9 @@ export class GlobalCountingEngine {
 
     const onlyPublished = filter.onlyPublished !== false;
     if (onlyPublished) {
-      if (hub.status === 'ARCHIVED' || hub.status === 'INACTIVE' || hub.isActive === false) return false;
+      const deletedSet = this.db.getDeletedEntityIds();
+      const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+      if (!isCityHubActiveForB2B(hub, visIndex, deletedSet)) return false;
     }
 
     const masterData = MasterDataService.getInstance();
@@ -314,9 +327,11 @@ export class GlobalCountingEngine {
   public getFilteredRegions(filter: UniversalCountFilter = {}): DestinationRegionItem[] {
     const allRegions = this.db.getRegions();
     const onlyPublished = filter.onlyPublished !== false;
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
     return allRegions.filter(r => {
       if (!r || !r.id || (r as any).status === 'DELETED') return false;
-      if (onlyPublished && (r.status === 'INACTIVE' || r.isActive === false)) return false;
+      if (onlyPublished && !isRegionActiveForB2B(r, visIndex, deletedSet)) return false;
       if (filter.destinationId && filter.destinationId !== 'all') {
         const dest = this.resolveDestination(filter.destinationId);
         if (!dest || r.destinationId !== dest.id) return false;

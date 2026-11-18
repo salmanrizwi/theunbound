@@ -551,7 +551,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
       validityFrom: effectiveValidFrom,
       validityTo: effectiveValidTo,
-      surcharges: formData.surcharges || [],
+      surcharges: [],
       requireValidity,
       nativeCurrency: chosenCurrency
     });
@@ -699,17 +699,6 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       validatedHub = hierarchy.hub;
     }
 
-    const normalizedSurcharges = (formData.surcharges || []).map(s => ({
-      ...s,
-      name: (s.name || '').trim(),
-      validFrom: (s.validFrom || '').trim(),
-      validTo: (s.validTo || '').trim(),
-      value: Number(s.value) || 0,
-      currency: s.type === 'FIXED' ? ((s.currency || chosenCurrency) as CurrencyCode) : (s.currency || chosenCurrency),
-      applicationBasis: s.applicationBasis || defaultSurchargeBasis,
-      status: s.status || 'ACTIVE'
-    }));
-
     // Direct alignment to prevent zero net cost mapping bugs
     const syncedNet = isCap && sortedTiers.length > 0 
       ? (sortedTiers[0].supplierNett ?? sortedTiers[0].nettPrice ?? sortedTiers[0].netCostPerPax ?? 0) 
@@ -847,7 +836,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
         validFrom: effectiveValidFrom,
         validTo: effectiveValidTo
       },
-      surcharges: normalizedSurcharges,
+      surcharges: product?.surcharges || formData.surcharges || [],
       sellingPriceStartingFrom: currentAdultSellingPrice,
       lastUpdated: nowIso.split('T')[0],
       updatedAt: nowIso
@@ -906,7 +895,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
       validityFrom: effectiveValidFrom,
       validityTo: effectiveValidTo,
-      surcharges: formData.surcharges || [],
+      surcharges: [],
       requireValidity: false,
       nativeCurrency: chosenCurrency
     });
@@ -957,17 +946,6 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       validatedHub = hierarchy.hub;
     }
 
-    const draftNormalizedSurcharges = (formData.surcharges || []).map(s => ({
-      ...s,
-      name: (s.name || '').trim(),
-      validFrom: (s.validFrom || '').trim(),
-      validTo: (s.validTo || '').trim(),
-      value: Number(s.value) || 0,
-      currency: s.type === 'FIXED' ? ((s.currency || chosenCurrency) as CurrencyCode) : (s.currency || chosenCurrency),
-      applicationBasis: s.applicationBasis || defaultSurchargeBasis,
-      status: s.status || 'ACTIVE'
-    }));
-
     const effectiveId = product?.id || `prod-${Date.now()}`;
     const canonicalPrimaryUrl = cleanedImages[0] || null;
     const nowIso = new Date().toISOString();
@@ -1007,7 +985,7 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
         validFrom: effectiveValidFrom,
         validTo: effectiveValidTo
       },
-      surcharges: draftNormalizedSurcharges,
+      surcharges: product?.surcharges || formData.surcharges || [],
       status: 'DRAFT',
       sellingPriceStartingFrom: currentAdultSellingPrice,
       lastUpdated: nowIso.split('T')[0],
@@ -1705,11 +1683,15 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
               description="Configure commercial sellable validity dates (Valid From / Valid To) and view centralized surcharge periods linked from Finance & Administration → Surcharges."
             >
               <InventoryValidityAndSurchargesSection
-                productId={formData.id}
-                productName={formData.name}
+                productId={formData.id || product?.id}
+                productName={formData.name || product?.name}
+                category={activeCategory}
+                productType={formData.productType || product?.productType}
+                destinationId={formData.destinationId || product?.destinationId}
+                destinationName={formData.destinationName || product?.destinationName}
+                country={formData.country || product?.country}
                 validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
                 validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
-                surcharges={formData.surcharges || []}
                 nativeCurrency={(formData.nativeCurrency || formData.currency || 'USD') as CurrencyCode}
                 defaultApplicationBasis={defaultSurchargeBasis}
                 categoryLabel={CATEGORIES_MAPPING.find(c => c.value === activeCategory)?.label || activeCategory}

@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import {
   CurrencyCode,
-  InventorySurcharge,
   InventoryValidity,
   SurchargeApplicationBasis
 } from '../../../types';
@@ -24,23 +23,30 @@ import { resolveEffectiveSurchargeStatus } from '../../../services/surchargeEngi
 export interface InventoryValidityAndSurchargesSectionProps {
   productId?: string;
   productName?: string;
+  category?: string;
+  productType?: string;
+  destinationId?: string;
+  destinationName?: string;
+  country?: string;
   validFrom?: string;
   validTo?: string;
-  surcharges?: InventorySurcharge[];
   nativeCurrency?: CurrencyCode | string;
   defaultApplicationBasis?: SurchargeApplicationBasis;
   categoryLabel?: string;
   requireValidity?: boolean;
   onChangeValidity: (next: { validFrom: string; validTo: string; validity: InventoryValidity }) => void;
-  onChangeSurcharges?: (next: InventorySurcharge[]) => void;
 }
 
 export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAndSurchargesSectionProps> = ({
   productId,
   productName,
+  category,
+  productType,
+  destinationId,
+  destinationName,
+  country,
   validFrom = '',
   validTo = '',
-  surcharges = [],
   nativeCurrency = 'USD',
   categoryLabel = 'Inventory Record',
   requireValidity = true,
@@ -58,14 +64,20 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
     [validFrom, validTo, requireValidity, nativeCurrency]
   );
 
-  // Fetch linked centralized surcharges from Finance & Administration -> Surcharges
+  // Fetch linked and category/destination-matched centralized surcharges from Finance & Administration -> Surcharge Management
   const linkedCentralizedSurcharges = useMemo(() => {
     const db = AppDatabase.getInstance();
-    if (productId) {
-      return db.getSurchargesForProduct(productId);
+    if (productId || category || productType || destinationId || destinationName || country) {
+      return db.getSurchargesForProduct(productId || '', {
+        category: category || categoryLabel,
+        productType,
+        destinationId,
+        destinationName,
+        country
+      });
     }
     return [];
-  }, [productId, surcharges]);
+  }, [productId, category, categoryLabel, productType, destinationId, destinationName, country]);
 
   const handleValidFromChange = (val: string) => {
     onChangeValidity({
@@ -83,14 +95,19 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
     });
   };
 
-  const handleNavigateToCentralizedSurcharges = () => {
+  const handleNavigateToCentralizedSurcharges = (
+    surchargeId?: string,
+    action: 'view' | 'edit' = 'edit'
+  ) => {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('admin-cms-navigate', {
           detail: {
             section: 'SURCHARGE_MANAGEMENT',
             filterProductId: productId || '',
-            filterProductName: productName || ''
+            filterProductName: productName || '',
+            selectedSurchargeId: surchargeId || '',
+            action: surchargeId ? action : undefined
           }
         })
       );
@@ -177,7 +194,7 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
         )}
       </div>
 
-      {/* 2. CENTRALIZED SURCHARGE REFERENCE PANEL (Read-Only in Product Management) */}
+      {/* 2. CENTRALIZED SURCHARGE REFERENCE PANEL (Read-Only Governance) */}
       <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-2.5">
           <div className="flex items-center gap-2">
@@ -186,20 +203,20 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
             </div>
             <div>
               <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                Centralized Surcharge Governance ({linkedCentralizedSurcharges.length} Linked)
+                Centralized Surcharge Governance ({linkedCentralizedSurcharges.length} Applicable)
               </h4>
               <p className="text-[11px] text-slate-500">
-                Surcharge periods are managed centrally under <strong>Finance &amp; Administration → Surcharges</strong>. Individual product-level surcharge editing is disabled.
+                All surcharges are governed centrally under <strong>Finance &amp; Administration → Surcharge Management</strong>. Product-level surcharge editing is disabled.
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={handleNavigateToCentralizedSurcharges}
+            onClick={() => handleNavigateToCentralizedSurcharges()}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer shrink-0 shadow-2xs"
           >
-            <span>Manage in Finance &amp; Administration → Surcharges</span>
+            <span>Manage in Finance &amp; Administration → Surcharge Management</span>
             <ExternalLink className="w-3.5 h-3.5 text-[#00E5C0]" />
           </button>
         </div>
@@ -209,12 +226,16 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
             <div className="flex items-center gap-2.5 text-xs text-slate-600">
               <ShieldCheck className="w-4 h-4 text-slate-400 shrink-0" />
               <span>
-                No centralized surcharge periods are currently mapped to this product. Standard contracted tariff applies across all valid travel dates.
+                No centralized surcharge rules currently match this inventory item. Standard contracted tariff applies across all valid travel dates.
               </span>
             </div>
-            <span className="text-[11px] text-slate-400 shrink-0">
-              Map this product in Finance &amp; Administration → Surcharges
-            </span>
+            <button
+              type="button"
+              onClick={() => handleNavigateToCentralizedSurcharges()}
+              className="text-[11px] font-bold text-[#008972] hover:text-slate-900 underline shrink-0 cursor-pointer"
+            >
+              Configure in Surcharge Management →
+            </button>
           </div>
         ) : (
           <div className="overflow-x-auto bg-white rounded-xl border border-slate-200">
@@ -222,23 +243,37 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/80 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                   <th className="py-2.5 px-3">Surcharge Name &amp; ID</th>
+                  <th className="py-2.5 px-3">Match Scope</th>
                   <th className="py-2.5 px-3">Travel Period</th>
-                  <th className="py-2.5 px-3">Booking Window</th>
                   <th className="py-2.5 px-3">Pricing Basis</th>
                   <th className="py-2.5 px-3">Rate / Amount</th>
                   <th className="py-2.5 px-3">Status</th>
+                  <th className="py-2.5 px-3 text-right">Governance</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {linkedCentralizedSurcharges.map(sur => {
                   const effStatus = resolveEffectiveSurchargeStatus(sur);
+                  const isDirectLink = productId && Array.isArray(sur.linkedProductIds) && sur.linkedProductIds.includes(productId);
                   return (
-                    <tr key={sur.id} className="hover:bg-slate-50/70">
+                    <tr
+                      key={sur.id}
+                      onClick={() => handleNavigateToCentralizedSurcharges(sur.id, 'view')}
+                      className="hover:bg-slate-50/90 cursor-pointer transition-colors"
+                      title="Open in Finance & Administration → Surcharge Management"
+                    >
                       <td className="py-2.5 px-3">
                         <div className="font-bold text-slate-900">{sur.name}</div>
                         <div className="text-[11px] text-slate-500 font-mono">
                           {sur.code} · {sur.surchargeCategory.replace(/_/g, ' ')}
                         </div>
+                      </td>
+                      <td className="py-2.5 px-3 text-[11px] text-slate-600">
+                        {isDirectLink
+                          ? 'Direct Product Link'
+                          : sur.applyToAllCategoryProducts
+                            ? 'Category / Destination Rule'
+                            : 'Scope Match'}
                       </td>
                       <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700">
                         {sur.validFrom} → {sur.validTo}
@@ -247,11 +282,6 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
                             +{sur.periods.length - 1} additional window(s)
                           </span>
                         )}
-                      </td>
-                      <td className="py-2.5 px-3 text-[11px] text-slate-600">
-                        {sur.bookingValidFrom || sur.bookingValidTo
-                          ? `${sur.bookingValidFrom || 'Any'} → ${sur.bookingValidTo || 'Any'}`
-                          : 'All Booking Dates'}
                       </td>
                       <td className="py-2.5 px-3 text-[11px] text-slate-700 font-medium">
                         {sur.pricingBasis.replace(/_/g, ' ')}
@@ -283,6 +313,19 @@ export const InventoryValidityAndSurchargesSection: React.FC<InventoryValidityAn
                         >
                           {effStatus}
                         </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right">
+                        <button
+                          type="button"
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleNavigateToCentralizedSurcharges(sur.id, 'edit');
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold cursor-pointer"
+                        >
+                          <span>Edit Rule</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
                       </td>
                     </tr>
                   );

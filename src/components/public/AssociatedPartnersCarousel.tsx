@@ -39,7 +39,7 @@ export const AssociatedPartnersCarousel: React.FC<AssociatedPartnersCarouselProp
     const update = () => {
       setLivePartners(db.getAssociatedPartners(true));
     };
-    const unsub = db.subscribe(update);
+    const unsub = db.subscribeToCollections(['associated_partners', 'homepage_config'], update);
     return () => unsub();
   }, [previewPartners, db]);
 
@@ -308,6 +308,7 @@ export const AssociatedPartnersCarousel: React.FC<AssociatedPartnersCarouselProp
                         className="max-h-full max-w-full object-contain filter grayscale group-hover/card:grayscale-0 contrast-125 opacity-75 group-hover/card:opacity-100 transition-all duration-300"
                         onError={() => handleImageError(partner.id)}
                         loading="lazy"
+                        decoding="async"
                         referrerPolicy="no-referrer"
                       />
                     ) : (

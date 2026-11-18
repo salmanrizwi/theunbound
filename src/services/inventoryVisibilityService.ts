@@ -11,7 +11,27 @@ import {
 import { AppDatabase } from './db';
 import { matchesDestination, matchesHub } from './destinationRelevanceService';
 import { evaluateInventoryValidity } from './pricingEngine';
-import { InventoryValidityEvaluation } from '../types';
+import {
+  InventoryValidityEvaluation,
+  DestinationRegionItem,
+  MasterRegion,
+  TravelProtectionPlan,
+  VipGroundService,
+  ConnectivityPlan
+} from '../types';
+import {
+  buildDestinationVisibilityIndex,
+  isDestinationActive as checkDestActiveStrict,
+  isCityHubActiveForB2B,
+  isRegionActiveForB2B,
+  isProductActiveForB2B,
+  isHotelActiveForB2B,
+  isPackageActiveForB2B,
+  isTransferRouteActiveForB2B,
+  isVisaOrAncillaryActiveForB2B,
+  resolveDestinationIdToken,
+  DestinationVisibilityIndex
+} from './destinationVisibility';
 
 export type ComputedEntityVisibilityStatus = 'LIVE' | 'COMING_SOON' | 'HIDDEN';
 
@@ -55,8 +75,24 @@ export class InventoryVisibilityService {
 
   private constructor() {
     this.db = AppDatabase.getInstance();
-    // Subscribe to underlying database updates to re-evaluate visibility
-    this.db.subscribe(() => {
+    // Subscribe strictly to catalog & visibility-affecting collections
+    this.db.subscribeToCollections([
+      'destinations',
+      'city_hubs',
+      'regions',
+      'master_regions',
+      'products',
+      'hotels',
+      'b2b_packages',
+      'visas',
+      'travel_protection_plans',
+      'vip_ground_services',
+      'connectivity_plans',
+      'transfer_routes',
+      'inventory_tombstones',
+      'product_margin_configs',
+      'japan_rail_commercial_products'
+    ], () => {
       this.notifyInventoryChanged();
     });
   }
@@ -116,63 +152,196 @@ export class InventoryVisibilityService {
     return evaluateInventoryValidity(entity, serviceDate, serviceEndDate).isValid;
   }
 
-  public getActiveProducts(serviceDate?: string): Product[] {
+  // ==========================================
+  // CENTRALISED STRICT B2B DESTINATION VISIBILITY
+  // ==========================================
+
+  public getVisibilityIndex(): DestinationVisibilityIndex {
     const deletedSet = this.db.getDeletedEntityIds();
+    return buildDestinationVisibilityIndex(
+      this.db.getDestinations(),
+      this.db.getCityHubs(),
+      deletedSet
+    );
+  }
+
+  /**
+   * Returns destinations visible in the B2B Agent Portal.
+   * STRICT RULE: Only destinations with authoritative status === 'ACTIVE' are included.
+   * COMING_SOON, INACTIVE, DRAFT, ARCHIVED, DISABLED, missing/deleted are completely excluded.
+   */
+  public getB2BActiveDestinations(): Destination[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    return this.db.getDestinations().filter(
+      d => d && d.slug !== 'all' && checkDestActiveStrict(d, deletedSet)
+    );
+  }
+
+  public isDestinationActiveForB2B(destOrIdOrSlug?: Destination | string | null): boolean {
+    if (!destOrIdOrSlug) return false;
+    const deletedSet = this.db.getDeletedEntityIds();
+    if (typeof destOrIdOrSlug !== 'string') {
+      return checkDestActiveStrict(destOrIdOrSlug, deletedSet);
+    }
+    const index = this.getVisibilityIndex();
+    const resolvedId = resolveDestinationIdToken(destOrIdOrSlug, index);
+    return Boolean(resolvedId && index.activeDestinationIds.has(resolvedId));
+  }
+
+  public getB2BActiveHubs(destinationIdOrSlug?: string): CityHub[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    let hubs = this.db.getCityHubs().filter(h => isCityHubActiveForB2B(h, index, deletedSet));
+    if (destinationIdOrSlug && destinationIdOrSlug !== 'all') {
+      const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, index);
+      if (!targetDestId || !index.activeDestinationIds.has(targetDestId)) {
+        return [];
+      }
+      hubs = hubs.filter(h => {
+        const pDestId = resolveDestinationIdToken(h.destinationId || h.destinationName, index);
+        return pDestId === targetDestId;
+      });
+    }
+    return hubs;
+  }
+
+  public getB2BActiveDestinationRegions(destinationIdOrSlug?: string): DestinationRegionItem[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    let regions = this.db.getRegions().filter(r => isRegionActiveForB2B(r, index, deletedSet));
+    if (destinationIdOrSlug && destinationIdOrSlug !== 'all') {
+      const targetDestId = resolveDestinationIdToken(destinationIdOrSlug, index);
+      if (!targetDestId || !index.activeDestinationIds.has(targetDestId)) {
+        return [];
+      }
+      regions = regions.filter(r => resolveDestinationIdToken(r.destinationId, index) === targetDestId);
+    }
+    return regions;
+  }
+
+  public getB2BActiveMasterRegions(): MasterRegion[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getMasterRegions().filter(r => isRegionActiveForB2B(r, index, deletedSet));
+  }
+
+  public getB2BActiveProducts(serviceDate?: string): Product[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
     return this.db.getProducts().filter(p => {
-      if (!p || !p.id) return false;
-      if (deletedSet.has(p.id) || (p.sku && deletedSet.has(p.sku))) return false;
-      if ((p as any).isDeleted === true || (p as any).status === 'DELETED') return false;
-      // Active product statuses
-      const status = (p.status || 'ACTIVE').toUpperCase();
-      if (!(status === 'ACTIVE' || status === 'PUBLISHED' || status === 'LIVE')) return false;
-      return this.isInventoryValidForDate(p, serviceDate);
+      if (!isProductActiveForB2B(p, index, deletedSet)) return false;
+      return serviceDate ? this.isInventoryValidForDate(p, serviceDate) : true;
     });
+  }
+
+  public getB2BActiveHotels(serviceDate?: string): Hotel[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getHotels().filter(h => {
+      if (!isHotelActiveForB2B(h, index, deletedSet)) return false;
+      return serviceDate ? this.isInventoryValidForDate(h, serviceDate) : true;
+    });
+  }
+
+  public getB2BActivePackages(): B2BPackage[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getB2BPackages().filter(pkg => isPackageActiveForB2B(pkg, index, deletedSet));
+  }
+
+  public getB2BActiveTransferRoutes(): TransferRoute[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getTransferRoutes().filter(tr => isTransferRouteActiveForB2B(tr, index, deletedSet));
+  }
+
+  public getB2BActiveVisas(serviceDate?: string): VisaProduct[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getVisas().filter(v => {
+      if (!isVisaOrAncillaryActiveForB2B(v, index, deletedSet)) return false;
+      return serviceDate ? this.isInventoryValidForDate(v, serviceDate) : true;
+    });
+  }
+
+  public getB2BActiveTravelProtectionPlans(): TravelProtectionPlan[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getTravelProtectionPlans().filter(p => isVisaOrAncillaryActiveForB2B(p, index, deletedSet));
+  }
+
+  public getB2BActiveVipGroundServices(): VipGroundService[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getVipGroundServices().filter(s => isVisaOrAncillaryActiveForB2B(s, index, deletedSet));
+  }
+
+  public getB2BActiveConnectivityPlans(): ConnectivityPlan[] {
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    return this.db.getConnectivityPlans().filter(c => isVisaOrAncillaryActiveForB2B(c, index, deletedSet));
+  }
+
+  public isEntityAccessibleInB2B(
+    entityType:
+      | 'DESTINATION'
+      | 'HUB'
+      | 'PRODUCT'
+      | 'HOTEL'
+      | 'PACKAGE'
+      | 'TRANSFER'
+      | 'VISA'
+      | 'ANCILLARY'
+      | 'PROTECTION'
+      | 'VIP_GROUND'
+      | 'CONNECTIVITY',
+    entity: any
+  ): boolean {
+    if (!entity) return false;
+    const deletedSet = this.db.getDeletedEntityIds();
+    const index = this.getVisibilityIndex();
+    switch (entityType) {
+      case 'DESTINATION':
+        return checkDestActiveStrict(entity, deletedSet);
+      case 'HUB':
+        return isCityHubActiveForB2B(entity, index, deletedSet);
+      case 'PRODUCT':
+        return isProductActiveForB2B(entity, index, deletedSet);
+      case 'HOTEL':
+        return isHotelActiveForB2B(entity, index, deletedSet);
+      case 'PACKAGE':
+        return isPackageActiveForB2B(entity, index, deletedSet);
+      case 'TRANSFER':
+        return isTransferRouteActiveForB2B(entity, index, deletedSet);
+      case 'VISA':
+      case 'ANCILLARY':
+      case 'PROTECTION':
+      case 'VIP_GROUND':
+      case 'CONNECTIVITY':
+        return isVisaOrAncillaryActiveForB2B(entity, index, deletedSet);
+      default:
+        return false;
+    }
+  }
+
+  public getActiveProducts(serviceDate?: string): Product[] {
+    return this.getB2BActiveProducts(serviceDate);
   }
 
   public getActiveHotels(serviceDate?: string): Hotel[] {
-    const deletedSet = this.db.getDeletedEntityIds();
-    return this.db.getHotels().filter(h => {
-      if (!h || !h.id) return false;
-      if (deletedSet.has(h.id) || (h.code && deletedSet.has(h.code))) return false;
-      if ((h as any).isDeleted === true || (h as any).status === 'DELETED') return false;
-      const status = (h.status || 'ACTIVE').toUpperCase();
-      if (!(status === 'ACTIVE' || status === 'PUBLISHED' || status === 'LIVE')) return false;
-      return this.isInventoryValidForDate(h, serviceDate);
-    });
+    return this.getB2BActiveHotels(serviceDate);
   }
 
   public getActivePackages(): B2BPackage[] {
-    const deletedSet = this.db.getDeletedEntityIds();
-    return this.db.getB2BPackages().filter(pkg => {
-      if (!pkg || !pkg.id) return false;
-      if (deletedSet.has(pkg.id)) return false;
-      if ((pkg as any).isDeleted === true || (pkg as any).status === 'DELETED') return false;
-      const status = (pkg.status || 'PUBLISHED').toUpperCase();
-      return status === 'PUBLISHED' || status === 'ACTIVE' || status === 'LIVE' || pkg.isPublished === true;
-    });
+    return this.getB2BActivePackages();
   }
 
   public getActiveTransferRoutes(): TransferRoute[] {
-    const deletedSet = this.db.getDeletedEntityIds();
-    return this.db.getTransferRoutes().filter(tr => {
-      if (!tr || !tr.id) return false;
-      if (deletedSet.has(tr.id)) return false;
-      if ((tr as any).isDeleted === true || (tr as any).status === 'DELETED') return false;
-      const status = (tr.status || 'ACTIVE').toUpperCase();
-      return status !== 'INACTIVE' && status !== 'ARCHIVED';
-    });
+    return this.getB2BActiveTransferRoutes();
   }
 
   public getActiveVisas(serviceDate?: string): VisaProduct[] {
-    const deletedSet = this.db.getDeletedEntityIds();
-    return this.db.getVisas().filter(v => {
-      if (!v || !v.id) return false;
-      if (deletedSet.has(v.id)) return false;
-      if ((v as any).isDeleted === true || (v as any).status === 'DELETED') return false;
-      const status = (v.status || 'ACTIVE').toUpperCase();
-      if (!(status !== 'INACTIVE' && status !== 'ARCHIVED')) return false;
-      return this.isInventoryValidForDate(v, serviceDate);
-    });
+    return this.getB2BActiveVisas(serviceDate);
   }
 
   // ==========================================
@@ -407,12 +576,23 @@ export class InventoryVisibilityService {
     return r === 'ADMIN' || r === 'SUPER_ADMIN' || r === 'MASTER_ADMIN' || r === 'TEAM_MEMBER' || r === 'DMC_STAFF';
   }
 
+  private isB2BAgentRole(role?: string): boolean {
+    if (!role) return false;
+    const r = role.toUpperCase();
+    return r === 'B2B_AGENT' || r === 'AGENT' || r === 'AGENCY_ADMIN' || r === 'AGENCY_USER';
+  }
+
   /**
    * Returns destinations eligible for display.
-   * - Public / Buyer / Agent: only LIVE and COMING_SOON destinations with inventory backing.
+   * - B2B Agent roles: strictly ACTIVE status destinations only (excludes COMING_SOON).
+   * - Public / Buyer: LIVE and COMING_SOON destinations with inventory backing.
    * - Admin: all non-deleted destinations (for internal management).
    */
   public getVisibleDestinations(userRole?: string): Destination[] {
+    if (this.isB2BAgentRole(userRole)) {
+      return this.getB2BActiveDestinations();
+    }
+
     const deletedSet = this.db.getDeletedEntityIds();
     const all = this.db.getDestinations().filter(d => 
       !deletedSet.has(d.id) && 
@@ -442,8 +622,12 @@ export class InventoryVisibilityService {
 
   /**
    * Returns only COMING SOON destinations (explicitly marked).
+   * B2B Agents never receive COMING SOON destinations.
    */
   public getComingSoonDestinations(userRole?: string): Destination[] {
+    if (this.isB2BAgentRole(userRole)) {
+      return [];
+    }
     return this.getVisibleDestinations(userRole).filter(d => 
       this.getDestinationComputedStatus(d) === 'COMING_SOON'
     );
@@ -451,9 +635,13 @@ export class InventoryVisibilityService {
 
   /**
    * Returns eligible hubs for a destination (or across all destinations).
-   * Excludes orphan hubs, hubs of hidden destinations, and zero-inventory hubs.
+   * Excludes orphan hubs, hubs of hidden destinations, and non-active destination hubs for B2B Agents.
    */
   public getVisibleHubs(destinationIdOrSlug?: string, userRole?: string): CityHub[] {
+    if (this.isB2BAgentRole(userRole)) {
+      return this.getB2BActiveHubs(destinationIdOrSlug);
+    }
+
     const deletedSet = this.db.getDeletedEntityIds();
     const allHubs = this.db.getCityHubs().filter(h => 
       !deletedSet.has(h.id) && 
@@ -497,6 +685,9 @@ export class InventoryVisibilityService {
    */
   public isDestinationEligible(destination: Destination, userRole?: string): boolean {
     if (this.isAdminRole(userRole)) return true;
+    if (this.isB2BAgentRole(userRole)) {
+      return this.isDestinationActiveForB2B(destination);
+    }
     const status = this.getDestinationComputedStatus(destination);
     return status === 'LIVE' || status === 'COMING_SOON';
   }
@@ -506,6 +697,9 @@ export class InventoryVisibilityService {
    */
   public isHubEligible(hub: CityHub, parentDest?: Destination, userRole?: string): boolean {
     if (this.isAdminRole(userRole)) return true;
+    if (this.isB2BAgentRole(userRole)) {
+      return this.isEntityAccessibleInB2B('HUB', hub);
+    }
     const status = this.getHubComputedStatus(hub, parentDest);
     return status === 'LIVE' || status === 'COMING_SOON';
   }

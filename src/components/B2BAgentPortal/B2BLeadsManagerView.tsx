@@ -22,19 +22,26 @@ import {
   ExternalLink,
   HelpCircle,
   UserCheck,
+  History,
   X
 } from 'lucide-react';
 import { TravelLead, User } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { formatCurrency } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
+import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
 
 interface B2BLeadsManagerViewProps {
   onCreateQuoteFromLead: (lead: TravelLead) => void;
+  onOpenQuoteVersion?: (quoteId: string, options?: { version?: number; mode?: 'inspect' | 'edit' | 'readonly' | 'restore'; leadId?: string }) => void;
+  onRestoreQuoteVersion?: (quoteId: string, version: number) => void;
   onNavigateToBooking?: (bookingReference: string) => void;
 }
 
 export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
   onCreateQuoteFromLead,
+  onOpenQuoteVersion,
+  onRestoreQuoteVersion,
   onNavigateToBooking
 }) => {
   const { user } = useAuth();
@@ -44,13 +51,14 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'ASSIGNED' | 'QUOTED' | 'CONVERTED'>('ALL');
   const [selectedLead, setSelectedLead] = useState<TravelLead | null>(null);
+  const [versionHistoryQuoteId, setVersionHistoryQuoteId] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['leads', 'saved_quotes', 'bookings'], () => {
       setLeads(db.getLeadsAuthorized(user));
     });
     return unsub;
-  }, [user]);
+  }, [user, db]);
 
   // Filtered leads
   const filteredLeads = useMemo(() => {
@@ -439,26 +447,61 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
                 )}
               </div>
 
-              {/* Linked Records */}
-              {(selectedLead.quoteNumber || selectedLead.bookingReference) && (
-                <div className="p-4 rounded-2xl bg-teal-50/60 border border-teal-100 space-y-2 text-xs">
-                  <span className="font-bold text-[#008f77] uppercase tracking-wider text-[10px] block">
-                    Linked Quotations & Bookings
-                  </span>
-                  {selectedLead.quoteNumber && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-600">Active Proposal:</span>
-                      <span className="font-mono font-bold text-slate-900">#{selectedLead.quoteNumber}</span>
-                    </div>
-                  )}
-                  {selectedLead.bookingReference && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-600">Confirmed Booking:</span>
-                      <span className="font-mono font-bold text-emerald-800">#{selectedLead.bookingReference}</span>
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Linked Records (Strict Per-Quote Isolated) */}
+              {(() => {
+                const groupedQuotes = db.getQuoteVersionsGroupedByQuoteForLead(selectedLead.id, user);
+                if (groupedQuotes.length === 0 && !selectedLead.quoteNumber && !selectedLead.bookingReference) {
+                  return null;
+                }
+                return (
+                  <div className="p-4 rounded-2xl bg-teal-50/60 border border-teal-100 space-y-2.5 text-xs">
+                    <span className="font-bold text-[#008f77] uppercase tracking-wider text-[10px] block">
+                      Linked Quotations &amp; Bookings
+                    </span>
+                    {groupedQuotes.length > 0 ? (
+                      <div className="space-y-2">
+                        {groupedQuotes.map(group => (
+                          <div
+                            key={group.quoteId}
+                            className="p-2.5 rounded-xl bg-white border border-teal-200 flex items-center justify-between gap-2"
+                          >
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-bold text-slate-900">#{group.quoteNumber}</span>
+                                <span className="px-1.5 py-0.5 rounded bg-teal-100 text-[#008f77] text-[10px] font-bold">
+                                  Latest v{group.latestVersionNumber} ({group.versions.length})
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {group.quotation.title || 'Bespoke Proposal'} • {formatCurrency(group.quotation.finalCustomerSellingPrice ?? group.quotation.totalSellingPrice ?? 0, group.quotation.currency || 'USD')}
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setVersionHistoryQuoteId(group.quoteId)}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[11px] font-bold cursor-pointer inline-flex items-center gap-1"
+                            >
+                              <History className="w-3 h-3" />
+                              <span>Versions</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : selectedLead.quoteNumber ? (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-600">Active Proposal:</span>
+                        <span className="font-mono font-bold text-slate-900">#{selectedLead.quoteNumber}</span>
+                      </div>
+                    ) : null}
+                    {selectedLead.bookingReference && (
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="text-slate-600">Confirmed Booking:</span>
+                        <span className="font-mono font-bold text-emerald-800">#{selectedLead.bookingReference}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Modal Footer */}
@@ -485,6 +528,37 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {versionHistoryQuoteId && (
+        <QuotationVersionHistoryModal
+          isOpen={!!versionHistoryQuoteId}
+          onClose={() => setVersionHistoryQuoteId(null)}
+          quoteId={versionHistoryQuoteId}
+          currentUser={user}
+          onOpenVersion={
+            onOpenQuoteVersion
+              ? (qId, ver, mode) => {
+                  setVersionHistoryQuoteId(null);
+                  setSelectedLead(null);
+                  onOpenQuoteVersion(qId, { version: ver, mode, leadId: selectedLead?.id });
+                }
+              : undefined
+          }
+          onRestoreVersion={
+            onRestoreQuoteVersion || onOpenQuoteVersion
+              ? (qId, ver) => {
+                  setVersionHistoryQuoteId(null);
+                  setSelectedLead(null);
+                  if (onRestoreQuoteVersion) {
+                    onRestoreQuoteVersion(qId, ver);
+                  } else {
+                    onOpenQuoteVersion?.(qId, { version: ver, mode: 'restore', leadId: selectedLead?.id });
+                  }
+                }
+              : undefined
+          }
+        />
       )}
     </div>
   );

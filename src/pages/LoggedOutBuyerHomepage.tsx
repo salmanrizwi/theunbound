@@ -59,12 +59,12 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
   const [expandedFaqIdx, setExpandedFaqIdx] = useState<number | null>(null);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['homepage_config', 'city_hubs', 'master_regions'], () => {
       setConfig(db.getHomepageConfig());
       setCityHubs(db.getCityHubs());
       setRegions(db.getMasterRegions());
     });
-  }, []);
+  }, [db]);
 
   // Authoritative real-time destination inventory derivation (excluding virtual 'all')
   const baseDestinations = useMemo(() => {
@@ -384,6 +384,8 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                           <img
                             src={image}
                             alt={title}
+                            loading="lazy"
+                            decoding="async"
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90"
                             referrerPolicy="no-referrer"
                           />
@@ -529,6 +531,8 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                     <img
                       src={dest.heroImage}
                       alt={dest.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 opacity-90"
                       referrerPolicy="no-referrer"
                     />
@@ -737,6 +741,8 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                   <img
                     src={config.affiliationsSectionImage}
                     alt={config.affiliationsSectionImageAlt || config.affiliationsSectionTitle || 'Regulatory Verification & Recognized Trade Affiliations'}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-auto max-h-64 object-cover object-center"
                     onError={(e) => {
                       (e.target as HTMLElement).style.display = 'none';
@@ -764,6 +770,8 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
                                 <img
                                   src={aff.logo}
                                   alt={`${aff.name} - ${aff.fullName} Official Logo`}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="max-w-full max-h-full object-contain"
                                   onError={(e) => {
                                     (e.target as HTMLElement).style.display = 'none';

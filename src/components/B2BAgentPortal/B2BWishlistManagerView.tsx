@@ -29,6 +29,7 @@ import { formatCurrency, calculatePackagePrice } from '../../services/pricingEng
 import { hotelToProduct } from '../../utils/hotelHelpers';
 import { getInventoryDisplayName } from '../../utils/inventoryDisplayHelpers';
 import { canonicalImageService } from '../../services/imageService';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 interface B2BWishlistManagerViewProps {
   onNavigate: (tab: B2BTabType) => void;
@@ -136,7 +137,16 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
   const [sortBy, setSorting] = useState<string>('recent');
 
   useEffect(() => {
-    const unsubDb = db.subscribe(() => {
+    const unsubDb = db.subscribeToCollections([
+      'wishlist_items',
+      'wishlist_folders',
+      'products',
+      'hotels',
+      'b2b_packages',
+      'visas',
+      'destinations',
+      'inventory_tombstones'
+    ], () => {
       setDbTick(tick => tick + 1);
     });
     const unsubImg = canonicalImageService.subscribe(() => {
@@ -181,15 +191,16 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
         let rawPackage: B2BPackage | null = null;
         let rawVisa: any = null;
 
-        // Try product catalog
-        const prod = products.find(p => p.id === item.productId);
+        // Try product catalog (resolve full db record for historical wishlist label, validate B2B eligibility strictly)
+        const allProducts = db.getProducts();
+        const prod = products.find(p => p.id === item.productId) || allProducts.find(p => p.id === item.productId);
         if (prod) {
           rawProduct = prod;
           name = getInventoryDisplayName(prod);
           category = prod.category || 'Product';
-          destination = prod.destinationName || prod.country || 'Japan';
+          destination = prod.destinationName || prod.country || 'Unknown Destination';
           image = canonicalImageService.resolveProductImage(prod);
-          isAvailable = prod.status !== 'INACTIVE' && prod.status !== 'ARCHIVED';
+          isAvailable = inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', prod);
 
           // Pricing
           if (prod.priceRules && prod.priceRules.length > 0) {
@@ -200,14 +211,15 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
           }
         } else {
           // Try hotel catalog
-          const hot = hotels.find(h => h.id === item.productId);
+          const allHotels = db.getHotels();
+          const hot = hotels.find(h => h.id === item.productId) || allHotels.find(h => h.id === item.productId);
           if (hot) {
             rawHotel = hot;
             name = getInventoryDisplayName(hot);
             category = 'Hotel & Ryokan';
-            destination = hot.destinationName || 'Japan';
+            destination = hot.destinationName || 'Unknown Destination';
             image = canonicalImageService.resolveHotelImage(hot);
-            isAvailable = hot.status !== 'INACTIVE' && hot.status !== 'ARCHIVED';
+            isAvailable = inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', hot);
 
             // Resolve cheapest rate
             const cheapRoom = hot.roomTypes?.[0];
@@ -225,9 +237,9 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
               rawPackage = pkg;
               name = getInventoryDisplayName(pkg);
               category = 'Tour Package';
-              destination = pkg.destinationName || 'Japan';
+              destination = pkg.destinationName || 'Unknown Destination';
               image = canonicalImageService.resolvePackageImage(pkg);
-              isAvailable = pkg.status !== 'UNPUBLISHED' && pkg.status !== 'ARCHIVED' && pkg.status !== 'DRAFT';
+              isAvailable = inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', pkg);
  
               // Calculate package price
               try {
@@ -244,9 +256,9 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                 rawVisa = visa;
                 name = (visa as any).listingName || (visa as any).name || (`${visa.visaType} Assistance (${visa.country})`);
                 category = 'Visa Service';
-                destination = visa.country || 'Japan';
+                destination = visa.country || 'Unknown Destination';
                 image = canonicalImageService.resolveVisaImage(visa);
-                isAvailable = visa.status === 'ACTIVE';
+                isAvailable = inventoryVisibilityService.isEntityAccessibleInB2B('VISA', visa);
 
                 const feePrice = visa.sellingPrice || (visa.embassyFee + visa.serviceFee);
                 if (feePrice) {
@@ -261,9 +273,9 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                 if (protection) {
                   name = protection.serviceName;
                   category = 'Travel Protection';
-                  destination = 'Japan Coverage';
+                  destination = protection.coverageArea || 'Coverage';
                   image = canonicalImageService.resolveAncillaryImage(protection, 'CUSTOM');
-                  isAvailable = protection.status !== 'INACTIVE' && protection.status !== 'ARCHIVED';
+                  isAvailable = inventoryVisibilityService.isEntityAccessibleInB2B('PROTECTION', protection);
                   if (protection.sellingPricePerTrip) {
                     exactPrice = protection.sellingPricePerTrip;
                     basePriceLabel = formatCurrency(exactPrice, currency);
@@ -273,9 +285,9 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                   if (ground) {
                     name = ground.name;
                     category = 'Ground & Connectivity';
-                    destination = ground.destinationId || 'Japan';
+                    destination = ground.destinationId || 'Ground Service';
                     image = canonicalImageService.resolveAncillaryImage(ground, 'CUSTOM');
-                    isAvailable = ground.status !== 'INACTIVE' && ground.status !== 'ARCHIVED';
+                    isAvailable = inventoryVisibilityService.isEntityAccessibleInB2B('VIP_GROUND', ground);
                     if (ground.sellingPrice) {
                       exactPrice = ground.sellingPrice;
                       basePriceLabel = formatCurrency(exactPrice, currency);
@@ -285,9 +297,9 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                     if (conn) {
                       name = conn.name;
                       category = 'Ground & Connectivity';
-                      destination = 'Japan Connectivity';
+                      destination = conn.coverageZone || 'Connectivity';
                       image = canonicalImageService.resolveAncillaryImage(conn, 'CUSTOM');
-                      isAvailable = conn.status !== 'INACTIVE' && conn.status !== 'ARCHIVED';
+                      isAvailable = inventoryVisibilityService.isEntityAccessibleInB2B('CONNECTIVITY', conn);
                       if (conn.sellingPrice) {
                         exactPrice = conn.sellingPrice;
                         basePriceLabel = formatCurrency(exactPrice, currency);
@@ -569,6 +581,8 @@ const WishlistManagerViewContent: React.FC<B2BWishlistManagerViewProps> = ({
                     <img 
                       src={item.image} 
                       alt={item.name} 
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500" 
                     />
                   ) : (

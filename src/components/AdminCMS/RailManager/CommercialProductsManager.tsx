@@ -127,7 +127,7 @@ export const CommercialProductsManager: React.FC<CommercialProductsManagerProps>
         validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
         validityFrom: effectiveValidFrom,
         validityTo: effectiveValidTo,
-        surcharges: formData.surcharges || [],
+        surcharges: [],
         requireValidity: formData.status === 'ACTIVE',
         nativeCurrency: formData.currency || 'JPY'
       });
@@ -1008,12 +1008,18 @@ export const CommercialProductsManager: React.FC<CommercialProductsManagerProps>
                   </p>
                 </div>
 
-                {/* Validity Period & Repeatable Surcharges for Rail Commercial Product */}
+                {/* Validity Period & Centralized Surcharges Reference for Rail Commercial Product */}
                 <div className="pt-2">
                   <InventoryValidityAndSurchargesSection
+                    productId={formData.id}
+                    productName={formData.productName || formData.productCode}
+                    category="Rail / Shinkansen"
+                    productType="Rail & Transportation"
+                    destinationId="dest-japan"
+                    destinationName="Japan"
+                    country="Japan"
                     validFrom={formData.validity?.validFrom ?? formData.validityFrom ?? ''}
                     validTo={formData.validity?.validTo ?? formData.validityTo ?? ''}
-                    surcharges={formData.surcharges || []}
                     nativeCurrency={formData.currency || 'JPY'}
                     defaultApplicationBasis="PER_PERSON"
                     categoryLabel={`Rail — ${formData.productName || formData.productCode}`}
@@ -1024,12 +1030,6 @@ export const CommercialProductsManager: React.FC<CommercialProductsManagerProps>
                         validityFrom: validFrom,
                         validityTo: validTo,
                         validity
-                      }))
-                    }
-                    onChangeSurcharges={nextSurcharges =>
-                      setFormData(prev => ({
-                        ...prev,
-                        surcharges: nextSurcharges
                       }))
                     }
                   />

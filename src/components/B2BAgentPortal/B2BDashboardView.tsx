@@ -40,6 +40,7 @@ import {
   normalizePackageRecord,
   resolvePackageOrderedHubs
 } from '../../services/packageToQuoteTransformer';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 interface B2BDashboardViewProps {
   onNavigate: (tab: B2BNavTab) => void;
@@ -66,7 +67,20 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
   const [dbTick, setDbTick] = useState(0);
 
   useEffect(() => {
-    const unsubDb = db.subscribe(() => {
+    const unsubDb = db.subscribeToCollections([
+      'b2b_packages',
+      'b2b_customers',
+      'b2b_tasks',
+      'bookings',
+      'saved_quotes',
+      'wishlist_items',
+      'products',
+      'hotels',
+      'visas',
+      'destinations',
+      'city_hubs',
+      'inventory_tombstones'
+    ], () => {
       setDbTick(t => t + 1);
     });
     const unsubImg = canonicalImageService.subscribe(() => {
@@ -155,37 +169,57 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
     return user ? db.getWishlistItems(user.id) : [];
   }, [user, db, dbTick]);
 
+  const wishlistEntityMaps = useMemo(() => {
+    const productMap = new Map<string, Product>();
+    db.getProducts().forEach((p) => { if (p?.id) productMap.set(p.id, p); });
+    products.forEach((p) => { if (p?.id) productMap.set(p.id, p); });
+
+    const hotelMap = new Map<string, Hotel>();
+    db.getHotels().forEach((h) => { if (h?.id) hotelMap.set(h.id, h); });
+    hotels.forEach((h) => { if (h?.id) hotelMap.set(h.id, h); });
+
+    const packageMap = new Map<string, B2BPackage>();
+    db.getPackages().forEach((pk) => { if (pk?.id) packageMap.set(pk.id, pk); });
+
+    const visaMap = new Map<string, any>();
+    db.getVisas().forEach((v) => { if (v?.id) visaMap.set(v.id, v); });
+
+    return { productMap, hotelMap, packageMap, visaMap };
+  }, [db, products, hotels, dbTick]);
+
   const availableWishlistCount = useMemo(() => {
     let available = 0;
+    const { productMap, hotelMap, packageMap, visaMap } = wishlistEntityMaps;
     wishlistItems.forEach(item => {
-      const product = products.find(p => p.id === item.productId);
-      if (product && product.status !== 'INACTIVE' && product.status !== 'ARCHIVED') {
+      const product = productMap.get(item.productId);
+      if (product && inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', product)) {
         available++;
         return;
       }
-      const hotel = hotels.find(h => h.id === item.productId);
-      if (hotel && hotel.status !== 'INACTIVE' && hotel.status !== 'ARCHIVED') {
+      const hotel = hotelMap.get(item.productId);
+      if (hotel && inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', hotel)) {
         available++;
         return;
       }
-      const pkg = db.getPackages().find(pk => pk.id === item.productId);
-      if (pkg && pkg.status === 'PUBLISHED') {
+      const pkg = packageMap.get(item.productId);
+      if (pkg && inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', pkg)) {
         available++;
         return;
       }
-      const visa = db.getVisas().find(v => v.id === item.productId);
-      if (visa && visa.status === 'ACTIVE') {
+      const visa = visaMap.get(item.productId);
+      if (visa && inventoryVisibilityService.isEntityAccessibleInB2B('VISA', visa)) {
         available++;
         return;
       }
     });
     return available;
-  }, [wishlistItems, products, hotels, dbTick]);
+  }, [wishlistItems, wishlistEntityMaps]);
 
   const recentWishlistPreviews = useMemo(() => {
     const sorted = [...wishlistItems].sort((a, b) => new Date(b.addedAt).getTime() - new Date(a.addedAt).getTime());
+    const { productMap, hotelMap, packageMap, visaMap } = wishlistEntityMaps;
     return sorted.slice(0, 3).map(item => {
-      const p = products.find(prod => prod.id === item.productId);
+      const p = productMap.get(item.productId);
       if (p) {
         return {
           id: item.id,
@@ -193,10 +227,10 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           category: p.category || 'Product',
           destination: p.destinationName,
           image: canonicalImageService.resolveProductImage(p),
-          status: p.status === 'INACTIVE' || p.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
+          status: inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p) ? 'AVAILABLE' : 'UNAVAILABLE'
         };
       }
-      const h = hotels.find(hot => hot.id === item.productId);
+      const h = hotelMap.get(item.productId);
       if (h) {
         return {
           id: item.id,
@@ -204,10 +238,10 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           category: 'Hotel',
           destination: h.destinationName,
           image: canonicalImageService.resolveHotelImage(h),
-          status: h.status === 'INACTIVE' || h.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
+          status: inventoryVisibilityService.isEntityAccessibleInB2B('HOTEL', h) ? 'AVAILABLE' : 'UNAVAILABLE'
         };
       }
-      const pkg = db.getPackages().find(pack => pack.id === item.productId);
+      const pkg = packageMap.get(item.productId);
       if (pkg) {
         return {
           id: item.id,
@@ -215,27 +249,27 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
           category: 'Package',
           destination: pkg.destinationName,
           image: canonicalImageService.resolvePackageImage(pkg),
-          status: pkg.status === 'UNPUBLISHED' || pkg.status === 'ARCHIVED' ? 'UNAVAILABLE' : 'AVAILABLE'
+          status: inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', pkg) ? 'AVAILABLE' : 'UNAVAILABLE'
         };
       }
-      const visa = db.getVisas().find(v => v.id === item.productId);
+      const visa = visaMap.get(item.productId);
       if (visa) {
         return {
           id: item.id,
           name: visa.visaType + ' for ' + visa.country,
           category: 'Visa Service',
-          destination: visa.country || 'Japan',
+          destination: visa.country || 'Destination',
           image: canonicalImageService.resolveVisaImage(visa),
-          status: visa.status !== 'ACTIVE' ? 'UNAVAILABLE' : 'AVAILABLE'
+          status: inventoryVisibilityService.isEntityAccessibleInB2B('VISA', visa) ? 'AVAILABLE' : 'UNAVAILABLE'
         };
       }
       return {
         id: item.id,
         name: 'Saved Item',
         category: 'Travel Service',
-        destination: 'Japan',
+        destination: 'Destination',
         image: '',
-        status: 'AVAILABLE' as const
+        status: 'UNAVAILABLE' as const
       };
     });
   }, [wishlistItems, products, hotels, dbTick]);
@@ -576,6 +610,8 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                     <img
                       src={canonicalImageService.resolvePackageImage(pkg)}
                       alt={pkg.title}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolvePackageImage(pkg);
@@ -730,6 +766,8 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                           <img 
                             src={canonicalImageService.resolveImageUrl(item.image)} 
                             alt={item.name} 
+                            loading="lazy"
+                            decoding="async"
                             className="w-8 h-8 rounded-lg object-cover shrink-0" 
                             onError={(e) => {
                               (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveImageUrl(item.image);
@@ -784,7 +822,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
             </p>
 
             <div className="space-y-2">
-              {(destinations || []).map(d => (
+              {inventoryVisibilityService.getB2BActiveDestinations().map(d => (
                 <button
                   key={d.id}
                   onClick={() => {
@@ -800,6 +838,8 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                     <img
                       src={canonicalImageService.resolveDestinationImage(d)}
                       alt={d.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-10 h-10 rounded-xl object-cover"
                       onError={(e) => {
                         (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveDestinationImage(d);

@@ -25,7 +25,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Info,
-  Sliders
+  Sliders,
+  Power
 } from 'lucide-react';
 import {
   SurchargeMaster,
@@ -47,6 +48,7 @@ import {
   generateSurchargeCode,
   validateSurchargeMaster,
   detectCentralizedSurchargeConflicts,
+  doesSurchargeMatchProductScope,
   inspectSurchargeUsage,
   SurchargeUsageInspection
 } from '../../services/surchargeEngine';
@@ -55,6 +57,9 @@ import { formatCurrency } from '../../services/pricingEngine';
 interface SurchargeManagementModuleProps {
   user?: User | null;
   initialFilterProductId?: string;
+  initialSelectedSurchargeId?: string;
+  initialAction?: 'view' | 'edit';
+  deepLinkNonce?: number;
 }
 
 const SURCHARGE_CATEGORIES: Array<{ value: SurchargeCategoryType; label: string }> = [
@@ -116,12 +121,15 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps> = ({
   user,
-  initialFilterProductId = ''
+  initialFilterProductId = '',
+  initialSelectedSurchargeId,
+  initialAction,
+  deepLinkNonce
 }) => {
   const db = AppDatabase.getInstance();
 
   const [surcharges, setSurcharges] = useState<SurchargeMaster[]>(() => db.getSurchargeMasters(true));
-  const [products, setProducts] = useState<Product[]>(() => db.getProducts());
+  const [products, setProducts] = useState<Product[]>(() => db.getUnifiedSurchargeInventoryCatalog());
   const [destinations] = useState<Destination[]>(() => db.getDestinations());
   const [regions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [cityHubs] = useState<CityHub[]>(() => db.getCityHubs());
@@ -161,6 +169,7 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [formWarnings, setFormWarnings] = useState<string[]>([]);
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
+  const [actionErrorBanner, setActionErrorBanner] = useState<string | null>(null);
 
   // Product Selector inside Form (Section C)
   const [prodSearch, setProdSearch] = useState('');
@@ -179,16 +188,14 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
   useEffect(() => {
     const refresh = () => {
       setSurcharges(db.getSurchargeMasters(true));
-      setProducts(db.getProducts());
+      setProducts(db.getUnifiedSurchargeInventoryCatalog());
     };
     const unsubscribe = db.subscribe(refresh);
     return () => unsubscribe();
   }, [db]);
 
   useEffect(() => {
-    if (initialFilterProductId) {
-      setLinkedProductFilter(initialFilterProductId);
-    }
+    setLinkedProductFilter(initialFilterProductId || '');
   }, [initialFilterProductId]);
 
   const productMap = useMemo(() => {
@@ -235,13 +242,24 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
         return false;
       }
 
-      if (linkedProductFilter && !(s.linkedProductIds || []).includes(linkedProductFilter)) {
-        return false;
+      if (linkedProductFilter) {
+        const linkedProd = productMap.get(linkedProductFilter);
+        const directMatch = (s.linkedProductIds || []).includes(linkedProductFilter);
+        const scopeMatch = linkedProd ? doesSurchargeMatchProductScope(s, linkedProd) : false;
+        if (!directMatch && !scopeMatch) {
+          return false;
+        }
       }
 
       if (destinationFilter !== 'ALL') {
+        const destObj = destinations.find(d => d.id === destinationFilter);
+        const destNameLower = (destObj?.name || '').toLowerCase();
         const matchesDest =
           s.destinationId === destinationFilter ||
+          (s.applicableDestinationIds || []).includes(destinationFilter) ||
+          (destNameLower &&
+            ((s.destinationName || '').toLowerCase() === destNameLower ||
+              (s.applicableDestinations || []).some(d => d.toLowerCase() === destNameLower))) ||
           (s.linkedProductIds || []).some(pid => productMap.get(pid)?.destinationId === destinationFilter);
         if (!matchesDest) return false;
       }
@@ -265,8 +283,12 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
       }
 
       if (categoryFilter !== 'ALL') {
-        const matchesCat = (s.linkedProductIds || []).some(pid => productMap.get(pid)?.category === categoryFilter);
-        if (!matchesCat) return false;
+        const catLower = categoryFilter.toLowerCase();
+        const matchesScopeCat =
+          (s.applicableCategories || []).some(c => c.toLowerCase() === catLower) ||
+          (s.applicableCategoryIds || []).some(c => c.toLowerCase() === catLower);
+        const matchesLinkedCat = (s.linkedProductIds || []).some(pid => productMap.get(pid)?.category === categoryFilter);
+        if (!matchesScopeCat && !matchesLinkedCat) return false;
       }
 
       if (surchargeTypeFilter !== 'ALL') {
@@ -439,6 +461,11 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
       allowStacking: false,
       priority: 1,
       linkedProductIds: linkedProductFilter ? [linkedProductFilter] : [],
+      applicableCategories: [],
+      applicableCategoryIds: [],
+      applicableDestinations: [],
+      applicableDestinationIds: [],
+      applyToAllCategoryProducts: false,
       calculationType: 'FIXED',
       pricingBasis: 'PER_PERSON',
       amount: 0,
@@ -472,6 +499,7 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
       internalPricingNotes: '',
       version: 1
     });
+    setActionErrorBanner(null);
     setViewMode('FORM');
   };
 
@@ -480,6 +508,7 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
     setFormErrors([]);
     setFormWarnings([]);
     setSaveBanner(null);
+    setActionErrorBanner(null);
     setFormData({
       ...surcharge,
       periods:
@@ -497,6 +526,11 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
               }
             ],
       linkedProductIds: [...(surcharge.linkedProductIds || [])],
+      applicableCategories: [...(surcharge.applicableCategories || [])],
+      applicableCategoryIds: [...(surcharge.applicableCategoryIds || [])],
+      applicableDestinations: [...(surcharge.applicableDestinations || [])],
+      applicableDestinationIds: [...(surcharge.applicableDestinationIds || [])],
+      applyToAllCategoryProducts: Boolean(surcharge.applyToAllCategoryProducts),
       inclusions: [...(surcharge.inclusions || [])],
       exclusions: [...(surcharge.exclusions || [])],
       blackoutDates: [...(surcharge.blackoutDates || [])],
@@ -505,25 +539,65 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
     setViewMode('FORM');
   };
 
+  useEffect(() => {
+    if (!initialSelectedSurchargeId) return;
+    const match = surcharges.find(
+      s => s.id === initialSelectedSurchargeId || s.code === initialSelectedSurchargeId || s.surchargeCode === initialSelectedSurchargeId
+    );
+    if (!match) return;
+    if (initialAction === 'edit') {
+      handleOpenEdit(match);
+    } else {
+      setInspectingSurcharge(match);
+    }
+  }, [initialSelectedSurchargeId, initialAction, deepLinkNonce, surcharges]);
+
+  const handleToggleStatus = (surcharge: SurchargeMaster) => {
+    try {
+      setActionErrorBanner(null);
+      const nextStatus: 'ACTIVE' | 'INACTIVE' = surcharge.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+      const updated = db.toggleSurchargeMasterStatus(surcharge.id, nextStatus, user);
+      if (updated) {
+        setSurcharges(db.getSurchargeMasters(true));
+        setSaveBanner(
+          `${nextStatus === 'ACTIVE' ? 'Activated' : 'Deactivated'} surcharge "${surcharge.name}" (${surcharge.code || surcharge.id}).`
+        );
+        setTimeout(() => setSaveBanner(null), 4000);
+      }
+    } catch (err: any) {
+      setActionErrorBanner(err?.message || 'Unable to update surcharge status.');
+    }
+  };
+
   const handleDuplicate = (surcharge: SurchargeMaster) => {
-    const duplicated = db.duplicateSurchargeMaster(surcharge.id, user);
-    if (duplicated) {
-      setSurcharges(db.getSurchargeMasters(true));
-      setSaveBanner(`Duplicated "${surcharge.name}" as Draft (${duplicated.code}).`);
-      setTimeout(() => setSaveBanner(null), 4000);
+    try {
+      setActionErrorBanner(null);
+      const duplicated = db.duplicateSurchargeMaster(surcharge.id, user);
+      if (duplicated) {
+        setSurcharges(db.getSurchargeMasters(true));
+        setSaveBanner(`Duplicated "${surcharge.name}" as Draft (${duplicated.code}).`);
+        setTimeout(() => setSaveBanner(null), 4000);
+      }
+    } catch (err: any) {
+      setActionErrorBanner(err?.message || 'Unable to duplicate surcharge.');
     }
   };
 
   const handleArchive = (surcharge: SurchargeMaster) => {
-    const archived = db.archiveSurchargeMaster(
-      surcharge.id,
-      user,
-      `Archived centralized surcharge "${surcharge.name}" (${surcharge.code}) via Surcharge Management.`
-    );
-    if (archived) {
-      setSurcharges(db.getSurchargeMasters(true));
-      setSaveBanner(`Archived "${surcharge.name}" (${surcharge.code}). Historical quotation snapshots preserved.`);
-      setTimeout(() => setSaveBanner(null), 4000);
+    try {
+      setActionErrorBanner(null);
+      const archived = db.archiveSurchargeMaster(
+        surcharge.id,
+        user,
+        `Archived centralized surcharge "${surcharge.name}" (${surcharge.code}) via Surcharge Management.`
+      );
+      if (archived) {
+        setSurcharges(db.getSurchargeMasters(true));
+        setSaveBanner(`Archived "${surcharge.name}" (${surcharge.code}). Historical quotation snapshots preserved.`);
+        setTimeout(() => setSaveBanner(null), 4000);
+      }
+    } catch (err: any) {
+      setActionErrorBanner(err?.message || 'Unable to archive surcharge.');
     }
   };
 
@@ -590,16 +664,23 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
       return;
     }
 
-    const saved = db.saveSurchargeMaster(candidate as SurchargeMaster, user);
-    setSurcharges(db.getSurchargeMasters(true));
-    const dispCode = saved.surchargeCode || saved.code || saved.id;
-    setSaveBanner(
-      editingSurcharge
-        ? `Updated centralized surcharge "${saved.name}" (${dispCode} · v${saved.version}).`
-        : `Created centralized surcharge "${saved.name}" (${dispCode}) mapped to ${saved.linkedProductIds.length} product(s).`
-    );
-    setViewMode('LIST');
-    setTimeout(() => setSaveBanner(null), 5000);
+    try {
+      const saved = db.saveSurchargeMaster(candidate as SurchargeMaster, user);
+      setSurcharges(db.getSurchargeMasters(true));
+      const dispCode = saved.surchargeCode || saved.code || saved.id;
+      const scopeDesc = saved.applyToAllCategoryProducts
+        ? `rule scope (${(saved.applicableCategories || []).length || 'all'} categories)`
+        : `${saved.linkedProductIds.length} product(s)`;
+      setSaveBanner(
+        editingSurcharge
+          ? `Updated centralized surcharge "${saved.name}" (${dispCode} · v${saved.version}).`
+          : `Created centralized surcharge "${saved.name}" (${dispCode}) for ${scopeDesc}.`
+      );
+      setViewMode('LIST');
+      setTimeout(() => setSaveBanner(null), 5000);
+    } catch (err: any) {
+      setFormErrors([err?.message || 'Authorization or persistence error saving surcharge configuration.']);
+    }
   };
 
   // Product Selection Helpers
@@ -990,6 +1071,96 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900"
               />
             </div>
+
+            {/* Applicable Product Categories Multi-Select */}
+            <div className="md:col-span-3 space-y-2 pt-2 border-t border-slate-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <label className="font-bold text-slate-700 block">
+                    Applicable Product Categories
+                  </label>
+                  <span className="text-[11px] text-slate-500">
+                    Choose one or more categories, or combine with specific inventory items in Section C below.
+                  </span>
+                </div>
+                <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-teal-50 border border-teal-200 text-[11px] font-bold text-[#008972] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(formData.applyToAllCategoryProducts)}
+                    onChange={e => setFormData({ ...formData, applyToAllCategoryProducts: e.target.checked })}
+                    className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                  />
+                  <span>Auto-apply to all eligible products in selected categories / destinations</span>
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {productCategories.map(cat => {
+                  const selected = (formData.applicableCategories || []).includes(cat);
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => {
+                        const curr = formData.applicableCategories || [];
+                        const next = selected ? curr.filter(c => c !== cat) : [...curr, cat];
+                        setFormData({
+                          ...formData,
+                          applicableCategories: next,
+                          applicableCategoryIds: next
+                        });
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                        selected
+                          ? 'bg-[#00C6A6]/20 border-[#008972] text-[#006957]'
+                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Applicable Destinations Multi-Select */}
+            <div className="md:col-span-3 space-y-2 pt-2 border-t border-slate-100">
+              <label className="font-bold text-slate-700 block">
+                Applicable Destinations (Leave unselected for All Destinations)
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {destinations.map(dest => {
+                  const selectedIds = formData.applicableDestinationIds || [];
+                  const selectedNames = formData.applicableDestinations || [];
+                  const isSel = selectedIds.includes(dest.id) || selectedNames.includes(dest.name);
+                  return (
+                    <button
+                      key={dest.id}
+                      type="button"
+                      onClick={() => {
+                        const nextIds = isSel
+                          ? selectedIds.filter(id => id !== dest.id)
+                          : Array.from(new Set([...selectedIds, dest.id]));
+                        const nextNames = isSel
+                          ? selectedNames.filter(n => n !== dest.name)
+                          : Array.from(new Set([...selectedNames, dest.name]));
+                        setFormData({
+                          ...formData,
+                          applicableDestinationIds: nextIds,
+                          applicableDestinations: nextNames
+                        });
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                        isSel
+                          ? 'bg-slate-900 border-slate-900 text-white'
+                          : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                      }`}
+                    >
+                      {dest.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1304,7 +1475,32 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
               </p>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              {(formData.applicableCategories || []).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const catSet = new Set((formData.applicableCategories || []).map(c => c.toLowerCase()));
+                    const destIds = new Set(formData.applicableDestinationIds || []);
+                    const destNames = new Set((formData.applicableDestinations || []).map(d => d.toLowerCase()));
+                    const next = new Set(selectedProductIdsSet);
+                    products.forEach(p => {
+                      const matchesCat = catSet.has((p.category || '').toLowerCase());
+                      const hasDestFilter = destIds.size > 0 || destNames.size > 0;
+                      const matchesDest =
+                        !hasDestFilter ||
+                        (p.destinationId && destIds.has(p.destinationId)) ||
+                        (p.destinationName && destNames.has(p.destinationName.toLowerCase())) ||
+                        (p.country && destNames.has(p.country.toLowerCase()));
+                      if (matchesCat && matchesDest) next.add(p.id);
+                    });
+                    setFormData(prev => ({ ...prev, linkedProductIds: Array.from(next) }));
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold cursor-pointer"
+                >
+                  Select All in Selected Categories
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleSelectAllFilteredProducts}
@@ -2083,11 +2279,23 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
         </div>
       )}
 
+      {actionErrorBanner && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-900 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{actionErrorBanner}</span>
+          </div>
+          <button type="button" onClick={() => setActionErrorBanner(null)} className="text-rose-700 hover:text-rose-950">
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Surcharge Dashboard — 7 Real Operational Metrics from Firestore */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-1 shadow-2xs">
           <span className="text-[11px] font-semibold text-slate-500 block">Total Configurations</span>
-          <span className="text-2xl font-black font-mono text-slate-900">
+          <span className="text-2xl font-black font-mono tabular-nums text-slate-900">
             {dashboardMetrics.totalConfigurations}
           </span>
           <span className="text-[10px] text-slate-400 block">Central master records</span>
@@ -2095,39 +2303,39 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-1 shadow-2xs">
           <span className="text-[11px] font-semibold text-emerald-700 block">Active Periods</span>
-          <span className="text-2xl font-black font-mono text-emerald-700">
-            {dashboardMetrics.activePeriods}
+          <span className="text-2xl font-black font-mono tabular-nums text-emerald-700">
+            {dashboardMetrics.activePeriodsCount}
           </span>
           <span className="text-[10px] text-slate-400 block">Currently in effect</span>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-1 shadow-2xs">
           <span className="text-[11px] font-semibold text-blue-700 block">Upcoming Periods</span>
-          <span className="text-2xl font-black font-mono text-blue-700">
-            {dashboardMetrics.upcomingPeriods}
+          <span className="text-2xl font-black font-mono tabular-nums text-blue-700">
+            {dashboardMetrics.upcomingPeriodsCount}
           </span>
           <span className="text-[10px] text-slate-400 block">Scheduled future windows</span>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-1 shadow-2xs">
           <span className="text-[11px] font-semibold text-slate-600 block">Expired Periods</span>
-          <span className="text-2xl font-black font-mono text-slate-600">
-            {dashboardMetrics.expiredPeriods}
+          <span className="text-2xl font-black font-mono tabular-nums text-slate-600">
+            {dashboardMetrics.expiredPeriodsCount}
           </span>
           <span className="text-[10px] text-slate-400 block">Historical preserved</span>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-1 shadow-2xs">
           <span className="text-[11px] font-semibold text-amber-700 block">Draft Configs</span>
-          <span className="text-2xl font-black font-mono text-amber-700">
-            {dashboardMetrics.draftConfigurations}
+          <span className="text-2xl font-black font-mono tabular-nums text-amber-700">
+            {dashboardMetrics.draftConfigurationsCount}
           </span>
           <span className="text-[10px] text-slate-400 block">Not applied to quotes</span>
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-1 shadow-2xs">
           <span className="text-[11px] font-semibold text-[#008972] block">Affected Products</span>
-          <span className="text-2xl font-black font-mono text-[#008972]">
+          <span className="text-2xl font-black font-mono tabular-nums text-[#008972]">
             {dashboardMetrics.affectedProductsCount}
           </span>
           <span className="text-[10px] text-slate-400 block">Mapped to surcharges</span>
@@ -2135,8 +2343,8 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-1 shadow-2xs">
           <span className="text-[11px] font-semibold text-slate-600 block">Products w/o Surcharge</span>
-          <span className="text-2xl font-black font-mono text-slate-800">
-            {dashboardMetrics.productsWithoutSurchargesCount}
+          <span className="text-2xl font-black font-mono tabular-nums text-slate-800">
+            {dashboardMetrics.productsWithoutApplicableSurchargesCount}
           </span>
           <span className="text-[10px] text-slate-400 block">Standard base tariff only</span>
         </div>
@@ -2331,23 +2539,25 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                <th className="py-3.5 px-4">Surcharge Name</th>
-                <th className="py-3.5 px-4">Surcharge ID</th>
-                <th className="py-3.5 px-4">Period Start</th>
-                <th className="py-3.5 px-4">Period End</th>
-                <th className="py-3.5 px-4">Affected Products</th>
-                <th className="py-3.5 px-4">Surcharge Type</th>
-                <th className="py-3.5 px-4">Amount</th>
-                <th className="py-3.5 px-4">Currency</th>
-                <th className="py-3.5 px-4">Status</th>
-                <th className="py-3.5 px-4">Last Updated</th>
-                <th className="py-3.5 px-4 text-right">Actions</th>
+                <th className="py-3.5 px-3">Surcharge Name &amp; Description</th>
+                <th className="py-3.5 px-3">Surcharge ID</th>
+                <th className="py-3.5 px-3">Applicable Categories</th>
+                <th className="py-3.5 px-3">Selected Products</th>
+                <th className="py-3.5 px-3">Destinations</th>
+                <th className="py-3.5 px-3">Start Date</th>
+                <th className="py-3.5 px-3">End Date</th>
+                <th className="py-3.5 px-3">Surcharge Type</th>
+                <th className="py-3.5 px-3">Value</th>
+                <th className="py-3.5 px-3">Currency</th>
+                <th className="py-3.5 px-3">Status</th>
+                <th className="py-3.5 px-3">Created / Updated</th>
+                <th className="py-3.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {paginatedSurcharges.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="py-12 text-center text-slate-400">
+                  <td colSpan={13} className="py-12 text-center text-slate-400">
                     No surcharge configurations match the current filters.
                   </td>
                 </tr>
@@ -2358,23 +2568,60 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                   const sampleProducts = (s.linkedProductIds || [])
                     .slice(0, 2)
                     .map(pid => productMap.get(pid)?.name || pid);
+                  const categoriesDisplay =
+                    (s.applicableCategories || []).length > 0
+                      ? s.applicableCategories!.join(', ')
+                      : Array.from(
+                          new Set((s.linkedProductIds || []).map(pid => productMap.get(pid)?.category).filter(Boolean))
+                        ).join(', ') || 'All Eligible';
+                  const destinationsDisplay =
+                    (s.applicableDestinations || []).length > 0
+                      ? s.applicableDestinations!.join(', ')
+                      : s.destinationName || 'All Destinations';
 
                   return (
                     <tr key={s.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900">{s.name}</div>
-                        <div className="text-[11px] text-slate-500">
-                          {s.destinationName || 'Multi-Destination'}
-                          {s.prefecture ? ` · ${s.prefecture}` : ''}
-                          {s.supplierName ? ` · ${s.supplierName}` : ''}
+                      <td className="py-3.5 px-3 max-w-[210px]">
+                        <div className="font-bold text-slate-900 truncate">{s.name}</div>
+                        <div className="text-[11px] text-slate-500 line-clamp-1">
+                          {s.internalDescription || s.surchargeCategory.replace(/_/g, ' ')}
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
-                        {s.code}
+                      <td className="py-3.5 px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
+                        {s.surchargeCode || s.code}
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono text-slate-700">
+                      <td className="py-3.5 px-3 text-[11px] text-slate-700 max-w-[150px]">
+                        <div className="truncate font-medium" title={categoriesDisplay}>
+                          {categoriesDisplay}
+                        </div>
+                        {s.applyToAllCategoryProducts && (
+                          <span className="text-[10px] font-bold text-[#008972]">All Category Products</span>
+                        )}
+                      </td>
+
+                      <td className="py-3.5 px-3 max-w-[180px]">
+                        <div className="font-bold text-slate-900">
+                          {linkedCount > 0
+                            ? `${linkedCount} ${linkedCount === 1 ? 'Product' : 'Products'}`
+                            : s.applyToAllCategoryProducts
+                              ? 'Category-Wide Rule'
+                              : '0 Products'}
+                        </div>
+                        {sampleProducts.length > 0 && (
+                          <div className="text-[11px] text-slate-500 truncate">
+                            {sampleProducts.join(', ')}
+                            {linkedCount > 2 ? ` +${linkedCount - 2} more` : ''}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="py-3.5 px-3 text-[11px] text-slate-700 max-w-[130px] truncate" title={destinationsDisplay}>
+                        {destinationsDisplay}
+                      </td>
+
+                      <td className="py-3.5 px-3 font-mono tabular-nums text-slate-700 whitespace-nowrap">
                         {s.validFrom}
                         {s.bookingValidFrom && (
                           <span className="block text-[10px] text-slate-400">
@@ -2383,7 +2630,7 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono text-slate-700">
+                      <td className="py-3.5 px-3 font-mono tabular-nums text-slate-700 whitespace-nowrap">
                         {s.validTo}
                         {s.bookingValidTo && (
                           <span className="block text-[10px] text-slate-400">
@@ -2392,39 +2639,27 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4">
-                        <div className="font-bold text-slate-900">
-                          {linkedCount} {linkedCount === 1 ? 'Product' : 'Products'}
-                        </div>
-                        {sampleProducts.length > 0 && (
-                          <div className="text-[11px] text-slate-500 truncate max-w-[200px]">
-                            {sampleProducts.join(', ')}
-                            {linkedCount > 2 ? ` +${linkedCount - 2} more` : ''}
-                          </div>
-                        )}
-                      </td>
-
-                      <td className="py-3.5 px-4">
+                      <td className="py-3.5 px-3 whitespace-nowrap">
                         <div className="font-semibold text-slate-800">
                           {s.calculationType === 'PERCENTAGE' ? 'Percentage' : 'Fixed'} ·{' '}
                           {s.pricingBasis.replace(/_/g, ' ')}
                         </div>
-                        <div className="text-[11px] text-slate-500">
+                        <div className="text-[10px] text-slate-500">
                           {s.surchargeCategory.replace(/_/g, ' ')}
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                      <td className="py-3.5 px-3 font-mono tabular-nums font-bold text-slate-900 whitespace-nowrap">
                         {s.calculationType === 'PERCENTAGE'
                           ? `${s.percentage ?? s.amount}%`
                           : Number(s.amount || 0).toLocaleString()}
                       </td>
 
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
-                        {s.currency}
+                      <td className="py-3.5 px-3 font-mono font-bold text-slate-700 whitespace-nowrap">
+                        {s.calculationType === 'PERCENTAGE' ? '—' : s.currency}
                       </td>
 
-                      <td className="py-3.5 px-4">
+                      <td className="py-3.5 px-3 whitespace-nowrap">
                         <span
                           className={`font-bold text-xs ${
                             effStatus === 'ACTIVE'
@@ -2442,12 +2677,14 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                         </span>
                       </td>
 
-                      <td className="py-3.5 px-4 text-[11px] text-slate-500">
-                        {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : '—'}
-                        <span className="block text-[10px] text-slate-400">v{s.version || 1}</span>
+                      <td className="py-3.5 px-3 text-[11px] text-slate-500 whitespace-nowrap">
+                        <div>Upd: {s.updatedAt ? new Date(s.updatedAt).toLocaleDateString() : '—'}</div>
+                        <span className="block text-[10px] text-slate-400">
+                          Cr: {s.createdAt ? new Date(s.createdAt).toLocaleDateString() : '—'} · v{s.version || 1}
+                        </span>
                       </td>
 
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="py-3.5 px-3 text-right whitespace-nowrap">
                         <div className="inline-flex items-center gap-1">
                           <button
                             type="button"
@@ -2457,6 +2694,20 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
+                          {s.status !== 'ARCHIVED' && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleStatus(s)}
+                              className={`p-1.5 rounded-lg cursor-pointer ${
+                                s.status === 'ACTIVE'
+                                  ? 'text-emerald-700 hover:text-rose-700 hover:bg-rose-50'
+                                  : 'text-slate-500 hover:text-emerald-700 hover:bg-emerald-50'
+                              }`}
+                              title={s.status === 'ACTIVE' ? 'Deactivate Surcharge' : 'Activate Surcharge'}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => handleOpenEdit(s)}
@@ -2601,10 +2852,41 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Applicable Product Categories</span>
+                  <strong className="text-slate-900">
+                    {(inspectingSurcharge.applicableCategories || []).length > 0
+                      ? inspectingSurcharge.applicableCategories!.join(', ')
+                      : 'Linked Products Only'}
+                  </strong>
+                  {inspectingSurcharge.applyToAllCategoryProducts && (
+                    <span className="block text-[10px] font-bold text-[#008972] mt-0.5">
+                      Auto-applies to all matching category/destination items
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Applicable Destinations</span>
+                  <strong className="text-slate-900">
+                    {(inspectingSurcharge.applicableDestinations || []).length > 0
+                      ? inspectingSurcharge.applicableDestinations!.join(', ')
+                      : inspectingSurcharge.destinationName || 'All Destinations'}
+                  </strong>
+                </div>
+              </div>
+
               {inspectingSurcharge.internalDescription && (
                 <div>
                   <span className="font-bold text-slate-700 block mb-1">Description</span>
                   <p className="text-slate-600">{inspectingSurcharge.internalDescription}</p>
+                </div>
+              )}
+
+              {inspectingSurcharge.internalAdminNotes && (
+                <div>
+                  <span className="font-bold text-slate-700 block mb-1">Internal Admin Notes</span>
+                  <p className="text-slate-600">{inspectingSurcharge.internalAdminNotes}</p>
                 </div>
               )}
 
@@ -2613,22 +2895,28 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                   Affected Products ({inspectingSurcharge.linkedProductIds.length})
                 </span>
                 <div className="border border-slate-200 rounded-xl divide-y divide-slate-100">
-                  {inspectingSurcharge.linkedProductIds.map(pid => {
-                    const p = productMap.get(pid);
-                    return (
-                      <div key={pid} className="p-2.5 flex items-center justify-between">
-                        <div>
-                          <div className="font-bold text-slate-900">{p?.name || pid}</div>
-                          <div className="text-[11px] text-slate-500">
-                            {p?.sku || pid} · {p?.category || 'Product'} · {p?.city || p?.destinationName || ''}
+                  {inspectingSurcharge.linkedProductIds.length === 0 ? (
+                    <div className="p-3 text-slate-500">
+                      Evaluated dynamically via category/destination rule scope.
+                    </div>
+                  ) : (
+                    inspectingSurcharge.linkedProductIds.map(pid => {
+                      const p = productMap.get(pid);
+                      return (
+                        <div key={pid} className="p-2.5 flex items-center justify-between">
+                          <div>
+                            <div className="font-bold text-slate-900">{p?.name || pid}</div>
+                            <div className="text-[11px] text-slate-500">
+                              {p?.sku || pid} · {p?.category || 'Product'} · {p?.city || p?.destinationName || ''}
+                            </div>
                           </div>
+                          <span className="font-mono font-bold text-slate-700">
+                            {p?.currency || inspectingSurcharge.currency}
+                          </span>
                         </div>
-                        <span className="font-mono font-bold text-slate-700">
-                          {p?.currency || inspectingSurcharge.currency}
-                        </span>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>
@@ -2712,9 +3000,9 @@ export const SurchargeManagementModule: React.FC<SurchargeManagementModuleProps>
                         {new Date(rec.timestamp).toLocaleString()}
                       </span>
                     </div>
-                    <p className="text-slate-600">{rec.changeSummary}</p>
+                    <p className="text-slate-600">{rec.changesSummary || (rec as any).changeSummary || 'Configuration updated'}</p>
                     <div className="text-[11px] text-slate-400">
-                      Actor: {rec.actorName} ({rec.actorRole})
+                      Actor: {rec.performedByName || (rec as any).actorName || 'Administrator'} ({rec.performedByRole || (rec as any).actorRole || 'ADMIN'})
                     </div>
                   </div>
                 ))

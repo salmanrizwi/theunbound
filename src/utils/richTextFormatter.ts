@@ -15,7 +15,8 @@
 
 const ALLOWED_TAGS = new Set([
   'p', 'h1', 'h2', 'h3', 'h4', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'strike',
-  'ul', 'ol', 'li', 'a', 'br', 'span', 'hr', 'blockquote', 'div', 'font'
+  'ul', 'ol', 'li', 'a', 'br', 'span', 'hr', 'blockquote', 'div', 'font',
+  'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'
 ]);
 
 /**
@@ -278,6 +279,8 @@ function sanitizeDomNode(node: Node): void {
               safeRules.push(`text-align: ${val}`);
             } else if (pLower === 'color' && /^#[0-9a-f]{3,8}$|^rgb\([^)]+\)$|^[a-z]+$/i.test(val)) {
               safeRules.push(`color: ${val}`);
+            } else if (pLower === 'background-color' && /^#[0-9a-f]{3,8}$|^rgb\([^)]+\)$|^[a-z]+$/i.test(val)) {
+              safeRules.push(`background-color: ${val}`);
             } else if (pLower === 'font-size' && /^[0-9.]+(?:px|em|rem|pt|%)?$/i.test(val)) {
               safeRules.push(`font-size: ${val}`);
             } else if (pLower === 'font-weight' && /^(normal|bold|bolder|[1-9]00)$/i.test(val)) {
@@ -286,12 +289,36 @@ function sanitizeDomNode(node: Node): void {
               safeRules.push(`font-style: ${val}`);
             } else if (pLower === 'text-decoration' && /^(none|underline|line-through)$/i.test(val)) {
               safeRules.push(`text-decoration: ${val}`);
+            } else if (pLower === 'width' && /^[0-9.]+(?:px|em|rem|%)?$/i.test(val)) {
+              safeRules.push(`width: ${val}`);
+            } else if (pLower === 'padding' && /^[0-9.\s]+(?:px|em|rem)?$/i.test(val)) {
+              safeRules.push(`padding: ${val}`);
+            } else if (pLower === 'border' && /^[0-9.\s\w#(),%-]+$/i.test(val) && !/url|expression/i.test(val)) {
+              safeRules.push(`border: ${val}`);
+            } else if (pLower === 'border-collapse' && /^(collapse|separate)$/i.test(val)) {
+              safeRules.push(`border-collapse: ${val}`);
+            } else if (pLower === 'vertical-align' && /^(top|middle|bottom|baseline)$/i.test(val)) {
+              safeRules.push(`vertical-align: ${val}`);
             }
           }
           if (safeRules.length > 0) {
             elem.setAttribute('style', safeRules.join('; '));
           } else {
             elem.removeAttribute('style');
+          }
+        } else if ((tagName === 'th' || tagName === 'td') && (attr === 'colspan' || attr === 'rowspan')) {
+          const spanNum = parseInt(elem.getAttribute(attr) || '1', 10);
+          if (!isNaN(spanNum) && spanNum > 0 && spanNum <= 20) {
+            elem.setAttribute(attr, String(spanNum));
+          } else {
+            elem.removeAttribute(attr);
+          }
+        } else if (tagName === 'th' && attr === 'scope') {
+          const sc = (elem.getAttribute('scope') || '').toLowerCase();
+          if (sc === 'col' || sc === 'row' || sc === 'colgroup' || sc === 'rowgroup') {
+            elem.setAttribute('scope', sc);
+          } else {
+            elem.removeAttribute(attr);
           }
         } else if (attr === 'align' && /^(left|center|right|justify)$/i.test(elem.getAttribute('align') || '')) {
           // Keep standard alignment
@@ -301,7 +328,7 @@ function sanitizeDomNode(node: Node): void {
         } else if (attr === 'class') {
           // Only allow safe CSS classes (e.g., text alignment)
           const cls = elem.getAttribute('class') || '';
-          if (/^(?:text-(?:left|center|right|justify)|theunbound-rich-text)\b/.test(cls)) {
+          if (/^(?:text-(?:left|center|right|justify)|theunbound-rich-text|theunbound-terms-table)\b/.test(cls)) {
             // keep
           } else {
             elem.removeAttribute('class');
@@ -345,8 +372,27 @@ export function richTextToPlainText(htmlOrText: string): string {
     return trimmed;
   }
 
-  // Replace block tags with newline breaks
+  // Convert links to readable "label (url)" and table rows into pipe-delimited lines
   let processed = trimmed
+    .replace(/<a\b[^>]*href=(['"])([^'"]+)\1[^>]*>([\s\S]*?)<\/a>/gi, (_m, _q, href, label) => {
+      const cleanLabel = String(label || '').replace(/<[^>]+>/g, '').trim();
+      const cleanHref = String(href || '').trim();
+      if (!cleanHref || cleanHref === '#' || cleanLabel === cleanHref) return cleanLabel || cleanHref;
+      return cleanLabel ? `${cleanLabel} (${cleanHref})` : cleanHref;
+    })
+    .replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (_m, tableInner) => {
+      const rows: string[] = [];
+      const rowMatches = String(tableInner || '').match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+      rowMatches.forEach((rowHtml) => {
+        const cells = (rowHtml.match(/<(?:th|td)[^>]*>[\s\S]*?<\/(?:th|td)>/gi) || [])
+          .map((c) => c.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        if (cells.length > 0) {
+          rows.push(cells.join(' | '));
+        }
+      });
+      return rows.length > 0 ? `\n${rows.join('\n')}\n\n` : '\n';
+    })
     .replace(/<\/h[1-6]>/gi, '\n\n')
     .replace(/<\/p>/gi, '\n\n')
     .replace(/<br\s*\/?>/gi, '\n')
@@ -362,6 +408,7 @@ export function richTextToPlainText(htmlOrText: string): string {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
@@ -379,7 +426,7 @@ export function richTextToWhatsApp(htmlOrText: string): string {
   if (!text) return '';
 
   // 0. Pre-normalize: unescape any encoded HTML tags (&lt;p&gt; -> <p>, &lt;br/&gt; -> <br/>) and normalize malformed tags
-  text = text.replace(/&lt;(\/?(?:p|br|div|h[1-6]|strong|b|em|i|u|s|del|strike|ul|ol|li|table|tr|td|th|tbody|thead|span|a|hr|pre|code)(?:\s+[^&>]*)?\/?)\s*&gt;/gi, '<$1>');
+  text = text.replace(/&lt;(\/?(?:p|br|div|h[1-6]|strong|b|em|i|u|s|del|strike|ul|ol|li|table|tr|td|th|tbody|thead|tfoot|span|a|hr|pre|code)(?:\s+[^&>]*)?\/?)\s*&gt;/gi, '<$1>');
   text = text.replace(/<\s*\/\s*br\s*>/gi, '<br/>');
   text = text.replace(/<br\s*\/?>/gi, '<br/>');
   text = text.replace(/&nbsp;/gi, ' ');
@@ -387,6 +434,31 @@ export function richTextToWhatsApp(htmlOrText: string): string {
   // 1. Monospace preformatted code
   text = text.replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '```$1```\n\n');
   text = text.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '```$1```');
+
+  // 1.5 Hyperlinks -> Label (url)
+  text = text.replace(/<a\b[^>]*href=(['"])([^'"]+)\1[^>]*>([\s\S]*?)<\/a>/gi, (_m, _q, href, label) => {
+    const cleanLabel = String(label || '').replace(/<[^>]+>/g, '').trim();
+    const cleanHref = String(href || '').trim();
+    if (!cleanHref || cleanHref === '#' || cleanLabel === cleanHref) return cleanLabel || cleanHref;
+    return cleanLabel ? `${cleanLabel} (${cleanHref})` : cleanHref;
+  });
+
+  // 1.6 Tables -> readable pipe-delimited WhatsApp lines (header rows bolded)
+  text = text.replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (_m, tableInner) => {
+    const lines: string[] = [];
+    const rowMatches = String(tableInner || '').match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+    rowMatches.forEach((rowHtml, rIdx) => {
+      const isHeaderRow = /<th\b/i.test(rowHtml) && rIdx === 0;
+      const cells = (rowHtml.match(/<(?:th|td)[^>]*>[\s\S]*?<\/(?:th|td)>/gi) || [])
+        .map((c) => c.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      if (cells.length > 0) {
+        const line = cells.join(' | ');
+        lines.push(isHeaderRow ? `*${line}*` : `• ${line}`);
+      }
+    });
+    return lines.length > 0 ? `\n${lines.join('\n')}\n\n` : '\n';
+  });
 
   // 2. Headings to bold lines with spacing
   text = text.replace(/<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/gi, (_m, content) => {

@@ -90,6 +90,7 @@ export function getDefaultPermissionsForRole(role: UserRole): UserPermissionAcce
           generateVoucher: true,
           pricingManagement: true,
           marginManagement: true,
+          cashbackManagement: true,
           commercialConfiguration: true,
           surchargeManagement: true,
           canOverrideQuoteSurcharges: true,
@@ -794,6 +795,19 @@ export function canUserAccessCMSModule(
       }
       return user?.role === 'ADMIN' || perms?.canAccessFinancials === true;
 
+    case 'PRICING_MANAGEMENT':
+      if (!canUserAccessTopSection(user, 'FINANCE')) return false;
+      if (perms?.cmsFinance?.pricingManagement !== undefined) {
+        return perms.cmsFinance.pricingManagement;
+      }
+      if (perms?.cmsFinance?.marginManagement !== undefined) {
+        return perms.cmsFinance.marginManagement;
+      }
+      if (perms?.cmsFinance?.financials !== undefined) {
+        return perms.cmsFinance.financials;
+      }
+      return user?.role === 'ADMIN' || perms?.canAccessFinancials === true;
+
     case 'SURCHARGE_MANAGEMENT':
       if (!canUserAccessTopSection(user, 'FINANCE')) return false;
       if (perms?.cmsFinance?.surchargeManagement !== undefined) {
@@ -803,6 +817,16 @@ export function canUserAccessCMSModule(
         return perms.cmsFinance.financials;
       }
       return user?.role === 'ADMIN' || perms?.canAccessFinancials === true;
+
+    case 'CASHBACK_MANAGEMENT':
+      if (!canUserAccessTopSection(user, 'FINANCE')) return false;
+      if (perms?.cmsFinance?.cashbackManagement !== undefined) {
+        return perms.cmsFinance.cashbackManagement;
+      }
+      if (perms?.cmsFinance?.financials !== undefined) {
+        return perms.cmsFinance.financials;
+      }
+      return user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN' || perms?.canAccessFinancials === true;
 
     // System modules (blocked if cmsSystem.enabled === false)
     case 'CALENDAR_SLAS':

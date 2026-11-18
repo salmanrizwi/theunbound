@@ -21,8 +21,10 @@ import {
   COMMERCIAL_QUOTATION_TERMS_HEADING,
   COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
   COMMERCIAL_QUOTATION_TERMS_HTML,
-  COMMERCIAL_QUOTATION_TERMS_WHATSAPP
+  COMMERCIAL_QUOTATION_TERMS_WHATSAPP,
+  resolveAuthoritativeCommercialTerms
 } from '../constants/commercialQuotationTerms';
+import { computeStayDatesForHub, doesHotelItemBelongToHubOccurrence } from '../utils/hubStayMatching';
 
 // ----------------------------------------------------
 // AUTHORITATIVE COMMUNICATION PAYLOAD DATA STRUCTURES
@@ -229,6 +231,12 @@ export interface QuoteCommunicationPayload {
   selectedOptionNumber?: number;
   selectedOptionTitle?: string;
   importantNotes: string[];
+  commercialTerms?: {
+    heading: string;
+    plainText: string;
+    htmlText: string;
+    whatsAppText: string;
+  };
   proposalViewUrl?: string;
 }
 
@@ -605,13 +613,26 @@ export function buildQuoteCommunicationPayload(
 
   const effectiveItems = activeOption?.items || quote.items || [];
   const effectiveHubs = activeOption?.routeHubs || quote.routeHubs || [];
-  const effectiveScope = activeOption?.scope || quote.scope || 'FULL_PACKAGE';
+  const effectiveScope = activeOption?.scope || quote.quotationScope || quote.scope || 'FULL_PACKAGE';
   const isLandOnly = effectiveScope === 'LAND_ONLY';
-  const centralTotals = calculateQuoteTotal(quote, activeOption?.id);
-  const hotelAccommodationTotal = isLandOnly ? 0 : centralTotals.hotelTotalSellingPrice;
-  const hasHotelAccommodation = !isLandOnly && hotelAccommodationTotal > 0 && centralTotals.hotelItemsIncludedCount > 0;
-  const landPartTotal = centralTotals.landPartTotalSellingPrice;
-  const effectiveSellingPrice = landPartTotal;
+  const resolvedOptionId = activeOption?.id || quote.activeOptionId;
+  const authPricing =
+    quote.authoritativeSnapshot?.pricing &&
+    quote.authoritativeSnapshot.pricing.currency === (quote.currency || 'USD') &&
+    (!resolvedOptionId || !quote.authoritativeSnapshot.selectedOptionId || quote.authoritativeSnapshot.selectedOptionId === resolvedOptionId)
+      ? quote.authoritativeSnapshot.pricing
+      : undefined;
+  const centralTotals = calculateQuoteTotal(quote, resolvedOptionId, undefined, quote.currency);
+  const hotelAccommodationTotal = isLandOnly
+    ? 0
+    : (authPricing ? authPricing.hotelAccommodationTotal : centralTotals.hotelTotalSellingPrice);
+  const hasHotelAccommodation = !isLandOnly && hotelAccommodationTotal > 0;
+  const landPartTotal = authPricing ? authPricing.landPartTotal : centralTotals.landPartTotalSellingPrice;
+  const effectiveSellingPrice = authPricing
+    ? authPricing.finalCustomerSellingPrice
+    : (centralTotals.finalCustomerSellingPrice > 0
+        ? centralTotals.finalCustomerSellingPrice
+        : (hasHotelAccommodation ? hotelAccommodationTotal + landPartTotal : landPartTotal));
 
   // 2. Passenger info
   const adultsCount = quote.adultsCount || quote.passengerBreakdown?.adults || 2;
@@ -657,34 +678,31 @@ export function buildQuoteCommunicationPayload(
     isLandOnly
   );
 
-  // 5. Itemized Accommodation
+  // 5. Itemized Accommodation (per itinerary hub occurrence, preserving repeated hubs)
   const hotels: CommunicationHotelDetail[] = [];
   if (effectiveHubs.length > 0 && !isLandOnly) {
-    let checkInCounter = 0;
-    effectiveHubs.forEach(h => {
+    const sortedEffectiveHubs = [...effectiveHubs].sort((a, b) => (a.order || 0) - (b.order || 0));
+    sortedEffectiveHubs.forEach((h, hIdx) => {
       const isHubNoAcc = h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
-      if (!isHubNoAcc && (h.hotelId || h.manualHotel?.hotelName)) {
+      const nights = h.nights || 1;
+      const computed = computeStayDatesForHub(sortedEffectiveHubs, h.id || (hIdx + 1), quote.travelStartDate, nights);
+      const matchedItem = effectiveItems.find(it => doesHotelItemBelongToHubOccurrence(it, h, sortedEffectiveHubs));
+      if (!isHubNoAcc && (h.hotelId || h.manualHotel?.hotelName || matchedItem)) {
         const city = h.hubName || h.destinationName || 'City Hub';
-        const hotelName = h.manualHotel?.hotelName || h.hotelId || 'Premium Curated Hotel';
-        const nights = h.nights || 1;
-        const roomType = h.manualHotel?.roomType || 'Standard Luxury Room';
-        const mealPlan = h.manualHotel?.mealPlan || 'Daily Breakfast Included';
+        const hotelName = h.manualHotel?.hotelName || matchedItem?.product?.name || h.hotelId || 'Premium Curated Hotel';
+        const roomType = h.roomConfiguration?.roomTypeName || h.manualHotel?.roomType || matchedItem?.selected_options?.roomType || 'Standard Luxury Room';
+        const mealPlan = h.roomConfiguration?.mealPlanName || h.manualHotel?.mealPlanName || h.manualHotel?.mealPlan || 'Daily Breakfast Included';
         const starRating = h.manualHotel?.starRating || (h.manualHotel as any)?.category || '4 Star / 5 Star';
 
-        let checkInDate = quote.travelStartDate || 'Day 1';
-        let checkOutDate = quote.travelEndDate || `Day ${nights + 1}`;
-
-        if (quote.travelStartDate) {
-          const s = new Date(quote.travelStartDate);
-          s.setDate(s.getDate() + checkInCounter);
-          checkInDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-          s.setDate(s.getDate() + nights);
-          checkOutDate = s.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-        }
-        checkInCounter += nights;
+        const checkInDate = computed.checkInIso
+          ? new Date(computed.checkInIso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+          : (quote.travelStartDate || `Day ${hIdx + 1}`);
+        const checkOutDate = computed.checkOutIso
+          ? new Date(computed.checkOutIso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+          : (quote.travelEndDate || `Day ${nights + 1}`);
 
         hotels.push({
-          id: h.id,
+          id: h.accommodationStayId || h.id,
           hotelName,
           cityHub: city,
           starRating,
@@ -692,7 +710,7 @@ export function buildQuoteCommunicationPayload(
           checkOutDate,
           nightsCount: nights,
           roomType,
-          roomsCount: quote.roomingConfig?.roomsCount || 1,
+          roomsCount: h.roomsCount || h.roomConfiguration?.roomsCount || matchedItem?.roomsCount || quote.roomingConfig?.roomsCount || 1,
           occupancy: `${adultsCount} Adults${childrenCount ? ` + ${childrenCount} Ch` : ''}`,
           mealPlan,
           notes: h.manualHotel?.internalNotes || (h.manualHotel as any)?.notes
@@ -810,19 +828,28 @@ export function buildQuoteCommunicationPayload(
       const optHotels: CommunicationHotelDetail[] = [];
       const optIsLandOnly = (opt.scope || quote.scope) === 'LAND_ONLY';
       if (!optIsLandOnly) {
-        (opt.routeHubs || []).forEach(h => {
+        const sortedOptHubs = [...(opt.routeHubs || [])].sort((a, b) => a.order - b.order);
+        const optItems = opt.items || [];
+        sortedOptHubs.forEach(h => {
           const isHubNoAcc = h.accommodationType === 'NO_ACCOMMODATION' || h.accommodationType === 'none';
-          if (!isHubNoAcc && (h.hotelId || h.manualHotel?.hotelName)) {
+          if (isHubNoAcc) return;
+          const matchedItem = optItems.find(it =>
+            doesHotelItemBelongToHubOccurrence(it, h, sortedOptHubs)
+          );
+          if (matchedItem || h.hotelId || h.manualHotel?.hotelName) {
+            const stayDates = computeStayDatesForHub(sortedOptHubs, h.id || h.order, quote.travelStartDate);
+            const nights = stayDates.nights || h.nights || 1;
+            const roomsCount = h.roomsCount || h.roomConfiguration?.roomsCount || h.manualHotel?.numberOfRooms || matchedItem?.pax?.rooms || 1;
             optHotels.push({
-              hotelName: h.manualHotel?.hotelName || h.hotelId || 'Premium Hotel',
+              hotelName: matchedItem?.manualHotelDetails?.hotelName || matchedItem?.product?.name || h.manualHotel?.hotelName || h.hotelId || 'Premium Hotel',
               cityHub: h.hubName || h.destinationName || 'Hub',
-              checkInDate: quote.travelStartDate || 'TBD',
-              checkOutDate: quote.travelEndDate || 'TBD',
-              nightsCount: h.nights || 1,
-              roomType: h.manualHotel?.roomType || 'Standard Room',
-              roomsCount: 1,
+              checkInDate: stayDates.checkInDate || h.checkInDate || quote.travelStartDate || 'TBD',
+              checkOutDate: stayDates.checkOutDate || h.checkOutDate || quote.travelEndDate || 'TBD',
+              nightsCount: nights,
+              roomType: matchedItem?.manualHotelDetails?.roomType || h.roomConfiguration?.roomTypeName || h.manualHotel?.roomType || 'Standard Room',
+              roomsCount,
               occupancy: `${adultsCount} Adults`,
-              mealPlan: h.manualHotel?.mealPlan || 'Breakfast'
+              mealPlan: matchedItem?.manualHotelDetails?.mealPlanName || h.roomConfiguration?.mealPlanName || h.manualHotel?.mealPlan || 'Breakfast'
             });
           }
         });
@@ -898,7 +925,7 @@ export function buildQuoteCommunicationPayload(
       formattedLandPartTotal: formatCurrency(landPartTotal, quote.currency || 'USD'),
       currency: quote.currency || 'USD',
       taxesIncluded: true,
-      paymentTerms: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+      paymentTerms: resolveAuthoritativeCommercialTerms(quote).plainText,
       cancellationTerms: 'Cancellations up to 30 days prior: 90% refundable. 15-29 days: 50% refundable. Within 14 days: 100% cancellation charge.',
       validUntilText: 'Subject to Availability at Booking',
       commercialDetails
@@ -910,7 +937,16 @@ export function buildQuoteCommunicationPayload(
       'Rooms and chauffeur allocations are held on provisional basis until deposit clearance.',
       'Check-in standard time is 15:00 hrs; check-out is 11:00 hrs across partner hotels.',
       'All listed transfers provide meet & greet with dedicated name-board service.'
-    ]
+    ],
+    commercialTerms: (() => {
+      const resolved = resolveAuthoritativeCommercialTerms(quote);
+      return {
+        heading: resolved.heading,
+        plainText: resolved.plainText,
+        htmlText: resolved.htmlText,
+        whatsAppText: resolved.whatsAppText
+      };
+    })()
   };
 }
 
@@ -1402,9 +1438,9 @@ export function formatWhatsAppQuoteFromPayload(
       `👥 *Travelers:* ${payload.tripSummary.travelers.displayText}`,
       `🔒 *Taxes & Fees:* Fully Included — Zero Hidden Surcharges`,
       ``,
-      `📜 *${COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
+      `📜 *${payload.commercialTerms?.heading || COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
       ``,
-      COMMERCIAL_QUOTATION_TERMS_WHATSAPP
+      payload.commercialTerms?.whatsAppText || COMMERCIAL_QUOTATION_TERMS_WHATSAPP
     );
   } else {
     priceLines.push(
@@ -1421,9 +1457,9 @@ export function formatWhatsAppQuoteFromPayload(
       `Travelers: ${payload.tripSummary.travelers.displayText}`,
       `Taxes & Fees: Included`,
       ``,
-      `*${COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
+      `*${payload.commercialTerms?.heading || COMMERCIAL_QUOTATION_TERMS_HEADING}*`,
       ``,
-      COMMERCIAL_QUOTATION_TERMS_WHATSAPP
+      payload.commercialTerms?.whatsAppText || COMMERCIAL_QUOTATION_TERMS_WHATSAPP
     );
   }
   sections.push(priceLines.join('\n'));
@@ -1531,8 +1567,8 @@ QUOTATION PRICING SUMMARY
 ${payload.pricing.hasHotelAccommodation && payload.pricing.formattedHotelAccommodationTotal ? `Hotel Accommodation Total: ${payload.pricing.formattedHotelAccommodationTotal}\n` : ''}Land Part Total: ${payload.pricing.formattedLandPartTotal}
 Final Selling Price: ${payload.pricing.formattedPrice}
 
-${COMMERCIAL_QUOTATION_TERMS_HEADING.toUpperCase()}
-${COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT}
+${(payload.commercialTerms?.heading || COMMERCIAL_QUOTATION_TERMS_HEADING).toUpperCase()}
+${payload.commercialTerms?.plainText || COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT}
 
 Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground Operations Team'})
   `.trim();
@@ -1732,8 +1768,8 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
 
         <!-- Commercial Quotation Terms -->
         <div style="border-top: 1px solid #e2e8f0; padding-top: 14px; margin-bottom: 20px; font-size: 11px; color: #475569;">
-          <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 10.5px; margin-bottom: 8px;">${COMMERCIAL_QUOTATION_TERMS_HEADING}</div>
-          ${COMMERCIAL_QUOTATION_TERMS_HTML}
+          <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 10.5px; margin-bottom: 8px;">${payload.commercialTerms?.heading || COMMERCIAL_QUOTATION_TERMS_HEADING}</div>
+          ${payload.commercialTerms?.htmlText || COMMERCIAL_QUOTATION_TERMS_HTML}
         </div>
 
         <!-- Prepared By Section -->

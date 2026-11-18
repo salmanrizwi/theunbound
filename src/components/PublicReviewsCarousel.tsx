@@ -139,6 +139,8 @@ export const PublicReviewsCarousel: React.FC<PublicReviewsCarouselProps> = ({ de
                   <img
                     src={rev.authorAvatar}
                     alt={rev.authorName}
+                    loading="lazy"
+                    decoding="async"
                     className="w-9 h-9 rounded-full object-cover border border-slate-200"
                     referrerPolicy="no-referrer"
                   />

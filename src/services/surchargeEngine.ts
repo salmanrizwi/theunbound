@@ -15,6 +15,11 @@ import {
   Booking
 } from '../types';
 import { currencyEngine, roundCurrencyAmount } from './currencyEngine';
+import { pricingCache } from './pricingCache';
+
+export function clearSurchargeEngineCache(): void {
+  pricingCache.bumpSurchargeCatalogVersion();
+}
 
 export const SURCHARGE_CATEGORIES = [
   'Peak Season Surcharge',
@@ -52,276 +57,96 @@ export const SURCHARGE_PRICING_BASIS_OPTIONS: Array<{
   { value: 'PER_DEVICE', label: 'Per Device', description: 'Multiplied by device quantity × eligible days' }
 ];
 
-export const INITIAL_SURCHARGE_MASTERS: SurchargeMaster[] = [
-  {
-    id: 'sur-jp-sakura-2026',
-    surchargeCode: 'SUR-JP-2026-001',
-    name: 'Japan Cherry Blossom (Sakura) Peak Season Surcharge',
-    internalDescription: 'Mandatory high-demand seasonal surcharge across Tokyo & Kyoto private tours, group tours, and cultural experiences during peak Sakura bloom.',
-    surchargeCategory: 'Cherry Blossom (Sakura) Peak',
-    regionId: 'mreg-east-asia',
-    regionName: 'East Asia',
-    prefecture: 'Tokyo & Kyoto',
-    destinationId: 'dest-japan',
-    destinationName: 'Japan',
-    touristArea: 'Kanto & Kansai Golden Route',
-    hubId: 'hub-tokyo',
-    hubName: 'Tokyo',
-    supplierId: 'sup-1',
-    supplierName: 'Nippon Cultural Tours & Concierge Co.',
-    internalAdminNotes: 'Applies to all peak spring departures between March 20 and April 20. Do not stack with standard weekend supplements.',
-    status: 'ACTIVE',
-    validFrom: '2026-03-20',
-    validTo: '2026-12-31',
-    bookingValidFrom: '2025-01-01',
-    bookingValidTo: '2026-12-31',
-    periods: [
-      {
-        id: 'win-sakura-spring',
-        label: 'Spring Sakura Peak Window',
-        travelStartDate: '2026-03-20',
-        travelEndDate: '2026-04-20',
-        bookingStartDate: '2025-01-01',
-        bookingEndDate: '2026-04-20'
-      },
-      {
-        id: 'win-autumn-koyo',
-        label: 'Autumn Foliage (Koyo) Peak Window',
-        travelStartDate: '2026-10-15',
-        travelEndDate: '2026-12-10',
-        bookingStartDate: '2025-01-01',
-        bookingEndDate: '2026-12-10'
-      }
-    ],
-    timezone: 'Asia/Tokyo',
-    allowStacking: false,
-    priority: 100,
-    linkedProductIds: ['p-tokyo-01', 'p-kyoto-01'],
-    applicableCategories: ['Private Tours', 'Group Tours', 'Guides'],
-    applicableDestinations: ['Japan'],
-    calculationType: 'FIXED',
-    pricingBasis: 'PER_PERSON',
-    amount: 3500,
-    adultAmount: 3500,
-    childAmount: 2000,
-    infantAmount: 0,
-    currency: 'JPY',
-    supplierNettSurcharge: 2800,
-    buyerMarkupPercent: 25,
-    b2bAgentMarkupPercent: 25,
-    marginType: 'PERCENTAGE',
-    marginValue: 25,
-    taxApplicable: false,
-    taxPercent: 0,
-    taxMethod: 'on_margin',
-    serviceFeeType: 'FIXED',
-    serviceFeeValue: 0,
-    roundingMode: 'INTEGER',
-    passengerType: 'ALL',
-    minPax: 1,
-    maxPax: 50,
-    inclusions: ['Peak Season Priority Guide Dispatch', 'Guaranteed High-Season Slot Allocation'],
-    exclusions: ['Personal expenses'],
-    importantInformation: ['Mandatory peak season supplement applicable during Sakura and Autumn Koyo windows.'],
-    operationalRestrictions: 'Requires 72h advance confirmation during peak bloom.',
-    availability: 'INSTANT',
-    bookingRequiredDays: 3,
-    cancellationPolicy: 'Non-refundable within 7 days of service date during peak season.',
-    refundConditions: '100% refundable if cancelled 8+ days prior to travel.',
-    internalPricingNotes: 'Supplier nett JPY 2,800 + 25% DMC margin = JPY 3,500 selling per adult.',
-    version: 1,
-    createdAt: '2026-01-10T09:00:00.000Z',
-    updatedAt: '2026-01-10T09:00:00.000Z',
-    createdBy: 'usr-admin-business',
-    createdByName: 'Master Admin (business@theunbound.in)'
-  },
-  {
-    id: 'sur-jp-golden-week-2026',
-    surchargeCode: 'SUR-JP-2026-002',
-    name: 'Golden Week National Holiday Transport & Chauffeur Surcharge',
-    internalDescription: 'Golden Week holiday surcharge for private transfers, luxury MPVs, and chauffeur charters across Japan.',
-    surchargeCategory: 'Golden Week Supplement',
-    regionId: 'mreg-east-asia',
-    regionName: 'East Asia',
-    prefecture: 'All Japan Prefectures',
-    destinationId: 'dest-japan',
-    destinationName: 'Japan',
-    touristArea: 'Tokyo, Kyoto, Osaka, Mt Fuji',
-    hubId: 'hub-tokyo',
-    hubName: 'Tokyo',
-    supplierId: 'sup-2',
-    supplierName: 'Tokyo Executive Chauffeur & Fleet Services',
-    internalAdminNotes: 'Applies 15% supplement on base selling price during Golden Week (Apr 28 - May 07).',
-    status: 'ACTIVE',
-    validFrom: '2026-04-28',
-    validTo: '2026-05-07',
-    bookingValidFrom: '2025-01-01',
-    bookingValidTo: '2026-05-07',
-    periods: [
-      {
-        id: 'win-gw-2026',
-        label: 'Golden Week 2026',
-        travelStartDate: '2026-04-28',
-        travelEndDate: '2026-05-07'
-      }
-    ],
-    timezone: 'Asia/Tokyo',
-    allowStacking: false,
-    priority: 120,
-    linkedProductIds: ['p-tokyo-01', 'p-kyoto-01'],
-    applicableCategories: ['Transfers', 'Private Tours'],
-    applicableDestinations: ['Japan'],
-    calculationType: 'PERCENTAGE',
-    pricingBasis: 'PERCENTAGE',
-    amount: 0,
-    percentage: 15,
-    currency: 'JPY',
-    taxApplicable: false,
-    taxPercent: 0,
-    roundingMode: 'INTEGER',
-    passengerType: 'ALL',
-    minPax: 1,
-    maxPax: 45,
-    inclusions: ['Holiday Highway Toll Dispatch Coverage', 'Senior Chauffeur HolidayRoster Guarantee'],
-    exclusions: [],
-    importantInformation: ['Golden Week national holiday 15% supplement applies from Apr 28 to May 7.'],
-    availability: 'ON_REQUEST',
-    bookingRequiredDays: 5,
-    cancellationPolicy: 'Non-refundable within 14 days of Golden Week travel.',
-    version: 1,
-    createdAt: '2026-01-12T10:00:00.000Z',
-    updatedAt: '2026-01-12T10:00:00.000Z',
-    createdBy: 'usr-admin-business',
-    createdByName: 'Master Admin (business@theunbound.in)'
-  },
-  {
-    id: 'sur-global-yearend-2026',
-    surchargeCode: 'SUR-GLB-2026-003',
-    name: 'Festive Year-End & New Year Peak Holiday Surcharge',
-    internalDescription: 'Scheduled year-end festive surcharge for December 20, 2026 to January 5, 2027 departures.',
-    surchargeCategory: 'Year-End & New Year Peak',
-    regionId: 'mreg-europe',
-    regionName: 'Europe & UK',
-    prefecture: 'London & Paris',
-    destinationId: 'dest-uk',
-    destinationName: 'United Kingdom',
-    touristArea: 'Central London & Westminster',
-    hubId: 'hub-london',
-    hubName: 'London',
-    supplierId: 'sup-3',
-    supplierName: 'Britannia Royal Ground Logistics',
-    internalAdminNotes: 'Scheduled festive supplement for late Dec / early Jan.',
-    status: 'SCHEDULED',
-    validFrom: '2026-12-20',
-    validTo: '2027-01-05',
-    bookingValidFrom: '2026-01-01',
-    bookingValidTo: '2027-01-05',
-    periods: [
-      {
-        id: 'win-festive-2026',
-        label: 'Festive Peak 2026/27',
-        travelStartDate: '2026-12-20',
-        travelEndDate: '2027-01-05'
-      }
-    ],
-    timezone: 'Europe/London',
-    allowStacking: false,
-    priority: 110,
-    linkedProductIds: ['p-london-01', 'p-paris-01', 'p-swiss-01'],
-    applicableCategories: ['Private Tours', 'Transfers', 'Hotels'],
-    applicableDestinations: ['United Kingdom', 'France', 'Switzerland'],
-    calculationType: 'FIXED',
-    pricingBasis: 'PER_PERSON',
-    amount: 45,
-    adultAmount: 45,
-    childAmount: 25,
-    infantAmount: 0,
-    currency: 'GBP',
-    supplierNettSurcharge: 35,
-    b2bAgentMarkupPercent: 28.57,
-    marginType: 'FIXED',
-    marginValue: 10,
-    taxApplicable: false,
-    taxPercent: 0,
-    roundingMode: 'STANDARD',
-    passengerType: 'ALL',
-    minPax: 1,
-    maxPax: 30,
-    inclusions: ['Festive Holiday Operations Desk Support'],
-    exclusions: [],
-    importantInformation: ['Festive supplement applies for travel between Dec 20 and Jan 5.'],
-    availability: 'INSTANT',
-    bookingRequiredDays: 7,
-    cancellationPolicy: 'Festive bookings require 14 days notice for cancellation.',
-    version: 1,
-    createdAt: '2026-01-15T11:00:00.000Z',
-    updatedAt: '2026-01-15T11:00:00.000Z',
-    createdBy: 'usr-admin-business',
-    createdByName: 'Master Admin (business@theunbound.in)'
-  },
-  {
-    id: 'sur-jp-winter-2025-expired',
-    surchargeCode: 'SUR-JP-2025-004',
-    name: '2025 Winter Illumination & Snow Charter Supplement',
-    internalDescription: 'Historical winter supplement for Jan-Feb 2025.',
-    surchargeCategory: 'Peak Season Surcharge',
-    regionId: 'mreg-east-asia',
-    regionName: 'East Asia',
-    prefecture: 'Hokkaido & Nagano',
-    destinationId: 'dest-japan',
-    destinationName: 'Japan',
-    hubId: 'hub-tokyo',
-    hubName: 'Tokyo',
-    status: 'EXPIRED',
-    validFrom: '2025-01-05',
-    validTo: '2025-02-28',
-    timezone: 'Asia/Tokyo',
-    allowStacking: false,
-    priority: 80,
-    linkedProductIds: ['p-tokyo-01'],
-    calculationType: 'FIXED',
-    pricingBasis: 'PER_PERSON',
-    amount: 2500,
-    currency: 'JPY',
-    supplierNettSurcharge: 2000,
-    version: 1,
-    createdAt: '2025-01-01T00:00:00.000Z',
-    updatedAt: '2025-03-01T00:00:00.000Z',
-    createdBy: 'usr-admin-business',
-    createdByName: 'Master Admin (business@theunbound.in)'
-  },
-  {
-    id: 'sur-dubai-expo-draft',
-    surchargeCode: 'SUR-UAE-2026-005',
-    name: 'Dubai Winter Trade Summit & Yacht Charter Supplement (Draft)',
-    internalDescription: 'Draft surcharge configuration under commercial review for Dubai yacht & transfer inventory.',
-    surchargeCategory: 'Special Event / Expo Surcharge',
-    regionId: 'mreg-middle-east',
-    regionName: 'Middle East',
-    prefecture: 'Dubai Marina',
-    destinationId: 'dest-uae',
-    destinationName: 'United Arab Emirates',
-    hubId: 'hub-dubai',
-    hubName: 'Dubai',
-    status: 'DRAFT',
-    validFrom: '2026-11-10',
-    validTo: '2026-11-25',
-    timezone: 'Asia/Dubai',
-    allowStacking: false,
-    priority: 90,
-    linkedProductIds: ['p-dubai-01'],
-    calculationType: 'FIXED',
-    pricingBasis: 'PER_BOOKING',
-    amount: 120,
-    currency: 'USD',
-    supplierNettSurcharge: 95,
-    version: 1,
-    createdAt: '2026-02-01T08:30:00.000Z',
-    updatedAt: '2026-02-01T08:30:00.000Z',
-    createdBy: 'usr-admin-business',
-    createdByName: 'Master Admin (business@theunbound.in)'
+/**
+ * Authoritative Surcharge Management Catalog Default:
+ * Strictly empty. No hardcoded, demo, or seeded surcharges are permitted.
+ * Only surcharges explicitly created, saved, and activated in
+ * Admin CMS -> Finance & Administration -> Surcharge Management may exist.
+ */
+export const INITIAL_SURCHARGE_MASTERS: SurchargeMaster[] = [];
+
+export const UNAUTHORIZED_DEMO_OR_LEGACY_SURCHARGE_IDS = new Set<string>([
+  'sur-jp-sakura-2026',
+  'sur-jp-golden-week-2026',
+  'sur-global-yearend-2026',
+  'sur-jp-winter-2025-expired',
+  'sur-dubai-expo-draft',
+  'SUR-MVW9M7GL-3KEUV',
+  'SUR-MVYWY7O7-QHN7W',
+  'SUR-MVW9S8S7-0O2BP',
+  'SUR-MVTVDTUP-FFSRA',
+  'SUR-MVTVEZKZ-2MKF5',
+  'SUR-MVYX90A9-CZPEF',
+  'SUR-MVW9PJP7-R4U9S',
+  'SUR-MVYXCL8J-6WSUL',
+  'SUR-MVW9NNTO-WZQI0',
+  'SUR-MVTNEWDZ-0PCWB',
+  'SUR-MVW9TMRR-IZKQP'
+]);
+
+export function isUnauthorizedLegacyOrDemoSurcharge(s?: Partial<SurchargeMaster> | null): boolean {
+  if (!s) return true;
+  const id = (s.id || '').trim();
+  const code = (s.surchargeCode || s.code || '').trim();
+  if (!id) return true;
+  if (UNAUTHORIZED_DEMO_OR_LEGACY_SURCHARGE_IDS.has(id) || (code && UNAUTHORIZED_DEMO_OR_LEGACY_SURCHARGE_IDS.has(code))) {
+    return true;
   }
-];
+  if (/^SUR-MV[A-Z0-9]+-[A-Z0-9]+$/i.test(id) || /^SUR-MV[A-Z0-9]+-[A-Z0-9]+$/i.test(code)) {
+    return true;
+  }
+  if (id.includes('SUR-MV') && id.startsWith('sur-mig-')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Enforces strict 10-point surcharge eligibility rules on a centralized SurchargeMaster record:
+ * 1. Exists in central Surcharge Management collection (not unauthorized demo/inline legacy).
+ * 2. Valid non-empty surcharge ID and Name.
+ * 3. Status is ACTIVE (and isActive !== false).
+ * 4. Published/approved (not DRAFT, SCHEDULED, INACTIVE, EXPIRED, ARCHIVED).
+ * 8. Valid configuration (dates/periods, currency, calculation type, positive finite value).
+ * 9. Not deleted, archived, or quarantined (!isDeleted).
+ */
+export function isAuthoritativeEligibleSurchargeMaster(s?: SurchargeMaster | null): boolean {
+  if (!s || typeof s !== 'object') return false;
+  if (isUnauthorizedLegacyOrDemoSurcharge(s)) return false;
+  const id = (s.id || '').trim();
+  const name = (s.name || '').trim();
+  if (!id || !name) return false;
+  if (s.isDeleted === true) return false;
+  if (s.status !== 'ACTIVE' || s.isActive === false) return false;
+  if (!s.currency || typeof s.currency !== 'string' || !s.currency.trim()) return false;
+
+  const calcType = s.calculationType === 'PERCENTAGE' || s.pricingBasis === 'PERCENTAGE' ? 'PERCENTAGE' : 'FIXED';
+  if (calcType === 'PERCENTAGE') {
+    const pct = Number(s.percentage ?? s.amount ?? 0);
+    if (!Number.isFinite(pct) || pct <= 0 || pct > 500) return false;
+  } else {
+    const amt = Number(s.amount ?? 0);
+    const adt = Number(s.adultAmount ?? 0);
+    const nett = Number(s.supplierNettSurcharge ?? 0);
+    if ((!Number.isFinite(amt) || amt <= 0) && (!Number.isFinite(adt) || adt <= 0) && (!Number.isFinite(nett) || nett <= 0)) {
+      return false;
+    }
+  }
+
+  const start = normalizeIsoDate(s.validFrom);
+  const end = normalizeIsoDate(s.validTo);
+  const hasValidTopDates = Boolean(start && end && start <= end);
+  const hasValidPeriods =
+    Array.isArray(s.periods) &&
+    s.periods.some(p => {
+      const ps = normalizeIsoDate(p.travelStartDate || p.travelValidFrom);
+      const pe = normalizeIsoDate(p.travelEndDate || p.travelValidTo);
+      return Boolean(ps && pe && ps <= pe);
+    });
+  if (!hasValidTopDates && !hasValidPeriods) return false;
+
+  return true;
+}
 
 function normalizeIsoDate(dateStr?: string | null): string {
   if (!dateStr || typeof dateStr !== 'string') return '';
@@ -332,22 +157,47 @@ function normalizeIsoDate(dateStr?: string | null): string {
   return parsed.toISOString().split('T')[0];
 }
 
-function enumerateStayDates(startIso: string, endIso?: string): string[] {
+function enumerateStayDates(startIso: string, endIso?: string, spanCount?: number): string[] {
   const start = normalizeIsoDate(startIso);
   if (!start) return [];
   const end = normalizeIsoDate(endIso);
-  if (!end || end <= start) return [start];
+  if (end && end > start) {
+    const dates: string[] = [];
+    const curr = new Date(`${start}T00:00:00Z`);
+    const last = new Date(`${end}T00:00:00Z`);
+    let guard = 0;
+    while (curr < last && guard < 366) {
+      dates.push(curr.toISOString().split('T')[0]);
+      curr.setUTCDate(curr.getUTCDate() + 1);
+      guard++;
+    }
+    return dates.length > 0 ? dates : [start];
+  }
+
+  const safeSpan = Math.max(1, Math.min(366, Math.floor(spanCount || 1)));
+  if (safeSpan <= 1) return [start];
 
   const dates: string[] = [];
   const curr = new Date(`${start}T00:00:00Z`);
-  const last = new Date(`${end}T00:00:00Z`);
-  let guard = 0;
-  while (curr < last && guard < 366) {
+  for (let i = 0; i < safeSpan; i++) {
     dates.push(curr.toISOString().split('T')[0]);
     curr.setUTCDate(curr.getUTCDate() + 1);
-    guard++;
   }
-  return dates.length > 0 ? dates : [start];
+  return dates;
+}
+
+function resolveServiceEndDateIso(startIso: string, endIso?: string, spanCount?: number): string | undefined {
+  const start = normalizeIsoDate(startIso);
+  if (!start) return undefined;
+  const end = normalizeIsoDate(endIso);
+  if (end && end > start) return end;
+  const safeSpan = Math.max(1, Math.min(366, Math.floor(spanCount || 1)));
+  if (safeSpan > 1) {
+    const dt = new Date(`${start}T00:00:00Z`);
+    dt.setUTCDate(dt.getUTCDate() + safeSpan);
+    return dt.toISOString().split('T')[0];
+  }
+  return undefined;
 }
 
 function getDayOfWeekName(isoDate: string): string {
@@ -407,25 +257,43 @@ export function resolveEffectiveSurchargeStatus(
  */
 export function getEffectivePeriodWindows(surcharge: SurchargeMaster): SurchargePeriodWindow[] {
   const explicitPeriods = Array.isArray(surcharge.periods)
-    ? surcharge.periods.filter(p => Boolean(normalizeIsoDate(p.travelStartDate) && normalizeIsoDate(p.travelEndDate)))
+    ? surcharge.periods.filter(p =>
+        Boolean(
+          normalizeIsoDate(p.travelStartDate || p.travelValidFrom) &&
+          normalizeIsoDate(p.travelEndDate || p.travelValidTo)
+        )
+      )
     : [];
 
   if (explicitPeriods.length > 0) {
-    return explicitPeriods.map((p, idx) => ({
-      id: p.id || `win-${idx + 1}`,
-      label: p.label || `Period ${idx + 1}`,
-      travelStartDate: normalizeIsoDate(p.travelStartDate),
-      travelEndDate: normalizeIsoDate(p.travelEndDate),
-      bookingStartDate: normalizeIsoDate(p.bookingStartDate || surcharge.bookingValidFrom) || undefined,
-      bookingEndDate: normalizeIsoDate(p.bookingEndDate || surcharge.bookingValidTo) || undefined,
-      applicableDaysOfWeek: p.applicableDaysOfWeek || surcharge.recurringDaysOfWeek,
-      blackoutDates: p.blackoutDates || surcharge.blackoutDates
-    }));
+    return explicitPeriods.map((p, idx) => {
+      const travelStart = normalizeIsoDate(p.travelStartDate || p.travelValidFrom);
+      const travelEnd = normalizeIsoDate(p.travelEndDate || p.travelValidTo);
+      const bookingStart = normalizeIsoDate(p.bookingStartDate || p.bookingValidFrom || surcharge.bookingValidFrom) || undefined;
+      const bookingEnd = normalizeIsoDate(p.bookingEndDate || p.bookingValidTo || surcharge.bookingValidTo) || undefined;
+      return {
+        id: p.id || `win-${idx + 1}`,
+        label: p.label || `Period ${idx + 1}`,
+        travelStartDate: travelStart,
+        travelEndDate: travelEnd,
+        bookingStartDate: bookingStart,
+        bookingEndDate: bookingEnd,
+        travelValidFrom: travelStart,
+        travelValidTo: travelEnd,
+        bookingValidFrom: bookingStart,
+        bookingValidTo: bookingEnd,
+        applicableDaysOfWeek: p.applicableDaysOfWeek || surcharge.recurringDaysOfWeek,
+        blackoutDates: p.blackoutDates || surcharge.blackoutDates
+      };
+    });
   }
 
   const start = normalizeIsoDate(surcharge.validFrom);
   const end = normalizeIsoDate(surcharge.validTo);
   if (!start || !end) return [];
+
+  const bookingStart = normalizeIsoDate(surcharge.bookingValidFrom) || undefined;
+  const bookingEnd = normalizeIsoDate(surcharge.bookingValidTo) || undefined;
 
   return [
     {
@@ -433,8 +301,12 @@ export function getEffectivePeriodWindows(surcharge: SurchargeMaster): Surcharge
       label: 'Primary Surcharge Period',
       travelStartDate: start,
       travelEndDate: end,
-      bookingStartDate: normalizeIsoDate(surcharge.bookingValidFrom) || undefined,
-      bookingEndDate: normalizeIsoDate(surcharge.bookingValidTo) || undefined,
+      bookingStartDate: bookingStart,
+      bookingEndDate: bookingEnd,
+      travelValidFrom: start,
+      travelValidTo: end,
+      bookingValidFrom: bookingStart,
+      bookingValidTo: bookingEnd,
       applicableDaysOfWeek: surcharge.recurringDaysOfWeek,
       blackoutDates: surcharge.blackoutDates
     }
@@ -497,15 +369,15 @@ export function validateSurchargeMaster(
 
   if (Array.isArray(surcharge.periods) && surcharge.periods.length > 0) {
     surcharge.periods.forEach((p, idx) => {
-      const pStart = normalizeIsoDate(p.travelStartDate);
-      const pEnd = normalizeIsoDate(p.travelEndDate);
+      const pStart = normalizeIsoDate(p.travelStartDate || p.travelValidFrom);
+      const pEnd = normalizeIsoDate(p.travelEndDate || p.travelValidTo);
       if (!pStart || !pEnd) {
         errors.push(`Period Window #${idx + 1} (${p.label || 'Unnamed'}) is missing a valid Start Date or End Date.`);
       } else if (pStart > pEnd) {
         errors.push(`Period Window #${idx + 1} (${p.label || 'Unnamed'}): Start Date (${pStart}) must be on or before End Date (${pEnd}).`);
       }
-      const pbStart = normalizeIsoDate(p.bookingStartDate);
-      const pbEnd = normalizeIsoDate(p.bookingEndDate);
+      const pbStart = normalizeIsoDate(p.bookingStartDate || p.bookingValidFrom);
+      const pbEnd = normalizeIsoDate(p.bookingEndDate || p.bookingValidTo);
       if (pbStart && pbEnd && pbStart > pbEnd) {
         errors.push(`Period Window #${idx + 1} (${p.label || 'Unnamed'}): Booking Start Date (${pbStart}) must be on or before Booking End Date (${pbEnd}).`);
       }
@@ -555,9 +427,15 @@ export function validateSurchargeMaster(
   }
 
   const linkedIds = Array.isArray(surcharge.linkedProductIds) ? surcharge.linkedProductIds.filter(Boolean) : [];
+  const hasCategories = Array.isArray(surcharge.applicableCategories) && surcharge.applicableCategories.filter(Boolean).length > 0;
+  const hasDestinations =
+    (Array.isArray(surcharge.applicableDestinations) && surcharge.applicableDestinations.filter(Boolean).length > 0) ||
+    (Array.isArray(surcharge.applicableDestinationIds) && surcharge.applicableDestinationIds.filter(Boolean).length > 0) ||
+    Boolean(surcharge.destinationId);
+
   const isPublishing = surcharge.status === 'ACTIVE' || surcharge.status === 'SCHEDULED';
-  if (isPublishing && linkedIds.length === 0) {
-    errors.push('At least one affected Product must be selected before publishing an Active or Scheduled surcharge.');
+  if (isPublishing && linkedIds.length === 0 && !hasCategories && !hasDestinations && !surcharge.applyToAllCategoryProducts) {
+    errors.push('Select at least one Product, Product Category, or Destination before publishing an Active or Scheduled surcharge.');
   }
 
   // Flag any linked products that are currently ARCHIVED or DRAFT
@@ -591,6 +469,149 @@ export function validateSurchargeMaster(
   };
 }
 
+function normalizeScopeToken(val?: string | null): string {
+  return (val || '').trim().toLowerCase();
+}
+
+function expandCategoryAliases(cat?: string, productType?: string): string[] {
+  const tokens = new Set<string>();
+  const add = (raw?: string) => {
+    const t = normalizeScopeToken(raw);
+    if (!t) return;
+    tokens.add(t);
+    if (t.includes('hotel') || t.includes('accommodation')) {
+      tokens.add('hotels');
+      tokens.add('hotels & accommodation');
+      tokens.add('hotel');
+    }
+    if (t.includes('rail') || t.includes('shinkansen') || t.includes('jr pass')) {
+      tokens.add('rail');
+      tokens.add('rail & transportation');
+      tokens.add('rail / shinkansen');
+    }
+    if (t.includes('visa') || t.includes('ancillary') || t.includes('protection') || t.includes('insurance') || t.includes('connectivity') || t.includes('esim') || t.includes('vip')) {
+      tokens.add('visa');
+      tokens.add('visas');
+      tokens.add('visa & ancillary services');
+    }
+    if (t.includes('transfer')) {
+      tokens.add('transfers');
+      tokens.add('transfers & ground');
+    }
+    if (t.includes('tour') || t.includes('sightseeing')) {
+      tokens.add('tours');
+      tokens.add('private tours');
+      tokens.add('group tours');
+      tokens.add('sightseeing');
+    }
+    if (t.includes('guide')) {
+      tokens.add('guides');
+      tokens.add('guide');
+    }
+    if (t.includes('package')) {
+      tokens.add('b2b packages');
+      tokens.add('packages');
+    }
+  };
+  add(cat);
+  add(productType);
+  return Array.from(tokens);
+}
+
+/**
+ * Authoritative product-to-centralized-surcharge scope matcher.
+ * Matches directly linked product IDs OR category/destination-level rules
+ * when `applyToAllCategoryProducts` is true or no specific product IDs are pinned.
+ */
+export function doesSurchargeMatchProductScope(
+  surcharge: SurchargeMaster,
+  product: {
+    id?: string;
+    hotelId?: string;
+    category?: string;
+    subcategory?: string;
+    productType?: string;
+    destinationId?: string;
+    destinationName?: string;
+    country?: string;
+  }
+): boolean {
+  if (!surcharge || !product) return false;
+
+  const linkedIds = Array.isArray(surcharge.linkedProductIds)
+    ? surcharge.linkedProductIds.filter(Boolean)
+    : [];
+
+  const appCats = (surcharge.applicableCategories || []).map(normalizeScopeToken).filter(Boolean);
+  const appDestNames = (surcharge.applicableDestinations || []).map(normalizeScopeToken).filter(Boolean);
+  const appDestIds = (surcharge.applicableDestinationIds || []).map(normalizeScopeToken).filter(Boolean);
+
+  const hasDestScope =
+    appDestNames.length > 0 ||
+    appDestIds.length > 0 ||
+    Boolean(surcharge.destinationId?.trim()) ||
+    Boolean(surcharge.destinationName?.trim());
+  const hasCatScope = appCats.length > 0;
+
+  const prodDestId = normalizeScopeToken(product.destinationId);
+  const prodDestName = normalizeScopeToken(product.destinationName);
+  const prodCountry = normalizeScopeToken(product.country);
+  const hasExplicitProductDestination = Boolean(prodDestId || prodDestName || prodCountry);
+
+  if (hasDestScope && hasExplicitProductDestination) {
+    const targetDestIds = new Set<string>(appDestIds);
+    if (surcharge.destinationId) targetDestIds.add(normalizeScopeToken(surcharge.destinationId));
+
+    const targetDestNames = new Set<string>(appDestNames);
+    if (surcharge.destinationName) targetDestNames.add(normalizeScopeToken(surcharge.destinationName));
+
+    const matchesDestId = Boolean(prodDestId && targetDestIds.has(prodDestId));
+    const matchesDestName =
+      Boolean(prodDestName && Array.from(targetDestNames).some(d => d === prodDestName || prodDestName.includes(d) || d.includes(prodDestName))) ||
+      Boolean(prodCountry && Array.from(targetDestNames).some(d => d === prodCountry || prodCountry.includes(d) || d.includes(prodCountry)));
+
+    if (!matchesDestId && !matchesDestName) {
+      return false;
+    }
+  }
+
+  const prodId = product.id || '';
+  const prodHotelId = (product as any).hotelId || '';
+  const isDirectlyLinked =
+    (Boolean(prodId) && linkedIds.includes(prodId)) ||
+    (Boolean(prodHotelId) && linkedIds.includes(prodHotelId));
+
+  if (isDirectlyLinked) {
+    return true;
+  }
+
+  const isBroadRule = surcharge.applyToAllCategoryProducts === true || linkedIds.length === 0;
+  if (!isBroadRule) {
+    return false;
+  }
+
+  if (!hasDestScope && !hasCatScope && surcharge.applyToAllCategoryProducts !== true) {
+    return false;
+  }
+
+  if (hasDestScope && !hasExplicitProductDestination) {
+    return false;
+  }
+
+  if (hasCatScope) {
+    const prodAliases = expandCategoryAliases(product.category, product.productType);
+    const catSet = new Set(appCats);
+    const matchesCat =
+      prodAliases.some(alias => catSet.has(alias)) ||
+      appCats.some(c => prodAliases.some(a => a === c || (a.length > 3 && c.length > 3 && (a.includes(c) || c.includes(a)))));
+    if (!matchesCat) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /**
  * Detects overlapping surcharge periods across shared products.
  */
@@ -605,8 +626,6 @@ export function detectCentralizedSurchargeConflicts(
   }
 
   const candidateLinked = new Set(candidate.linkedProductIds || []);
-  if (candidateLinked.size === 0) return warnings;
-
   const candidateWindows = getEffectivePeriodWindows(candidate);
   if (candidateWindows.length === 0) return warnings;
 
@@ -619,8 +638,14 @@ export function detectCentralizedSurchargeConflicts(
       continue;
     }
 
-    const sharedProductIds = (other.linkedProductIds || []).filter(pid => candidateLinked.has(pid));
-    if (sharedProductIds.length === 0) continue;
+    const sharedProductIds = (other.linkedProductIds || []).filter(pid =>
+      candidateLinked.has(pid) || (productMap.has(pid) && doesSurchargeMatchProductScope(candidate, productMap.get(pid)!))
+    );
+    const dynamicSharedProducts = allProducts
+      .filter(p => !sharedProductIds.includes(p.id) && doesSurchargeMatchProductScope(candidate, p) && doesSurchargeMatchProductScope(other, p))
+      .map(p => p.id);
+    const allSharedIds = Array.from(new Set([...sharedProductIds, ...dynamicSharedProducts]));
+    if (allSharedIds.length === 0) continue;
 
     const otherWindows = getEffectivePeriodWindows(other);
     for (const cw of candidateWindows) {
@@ -628,10 +653,10 @@ export function detectCentralizedSurchargeConflicts(
         if (cw.travelStartDate <= ow.travelEndDate && ow.travelStartDate <= cw.travelEndDate) {
           const overlapStart = cw.travelStartDate > ow.travelStartDate ? cw.travelStartDate : ow.travelStartDate;
           const overlapEnd = cw.travelEndDate < ow.travelEndDate ? cw.travelEndDate : ow.travelEndDate;
-          const firstProd = productMap.get(sharedProductIds[0]);
-          const prodLabel = sharedProductIds.length === 1
-            ? (firstProd?.name || sharedProductIds[0])
-            : `${firstProd?.name || sharedProductIds[0]} (+${sharedProductIds.length - 1} more)`;
+          const firstProd = productMap.get(allSharedIds[0]);
+          const prodLabel = allSharedIds.length === 1
+            ? (firstProd?.name || allSharedIds[0])
+            : `${firstProd?.name || allSharedIds[0]} (+${allSharedIds.length - 1} more)`;
           const stackingAllowed = Boolean(candidate.allowStacking && other.allowStacking);
 
           warnings.push({
@@ -641,10 +666,10 @@ export function detectCentralizedSurchargeConflicts(
             secondName: other.name,
             overlapStart,
             overlapEnd,
-            productId: sharedProductIds[0],
+            productId: allSharedIds[0],
             productName: prodLabel,
             allowStacking: stackingAllowed,
-            message: `Overlapping travel period (${overlapStart} to ${overlapEnd}) with "${other.name}" on ${sharedProductIds.length} product(s) [${prodLabel}]. ${
+            message: `Overlapping travel period (${overlapStart} to ${overlapEnd}) with "${other.name}" on ${allSharedIds.length} product(s) [${prodLabel}]. ${
               stackingAllowed
                 ? 'Stacking is enabled — both surcharges will apply.'
                 : 'Stacking is disabled — highest priority surcharge will take precedence to prevent double-charging.'
@@ -728,7 +753,7 @@ export function migrateLegacyProductSurcharges(
 
     for (const legacy of product.surcharges) {
       if (!legacy || !legacy.name) continue;
-      const legacyId = legacy.surchargeId || `leg-${product.id}-${legacy.validFrom}`;
+      const legacyId = legacy.surchargeId || (legacy as any).id || `leg-${product.id}-${legacy.validFrom}`;
       const legacyKey = `${product.id}__${legacyId}`;
       const masterId = legacy.centralizedSurchargeId || `sur-mig-${product.id}-${legacyId}`.replace(/[^a-zA-Z0-9_-]/g, '-');
 
@@ -831,6 +856,57 @@ export function migrateLegacyProductSurcharges(
   };
 }
 
+export interface LegacyInventorySurchargeSource {
+  id: string;
+  name: string;
+  sku?: string;
+  category: string;
+  productType?: string;
+  destinationId?: string;
+  destinationName?: string;
+  country?: string;
+  city?: string;
+  currency?: CurrencyCode | string;
+  validityFrom?: string;
+  validityTo?: string;
+  surcharges?: InventorySurcharge[];
+}
+
+/**
+ * Safely migrates legacy inline `surcharges` from any inventory type (Hotels, Visas,
+ * Travel Protection, VIP Ground, Connectivity, Rail Commercial Products) into centralized
+ * `SurchargeMaster` records without deleting historical data or double-migrating.
+ */
+export function migrateLegacyMultiInventorySurcharges(
+  records: LegacyInventorySurchargeSource[],
+  existingMasters: SurchargeMaster[]
+): {
+  migratedMasters: SurchargeMaster[];
+  historyRecords: SurchargeHistoryRecord[];
+  migratedCount: number;
+} {
+  const pseudoProducts: Product[] = (records || [])
+    .filter(r => r && r.id && Array.isArray(r.surcharges) && r.surcharges.length > 0)
+    .map(r => ({
+      id: r.id,
+      sku: r.sku || r.id,
+      name: r.name,
+      category: r.category,
+      productType: r.productType || r.category,
+      destinationId: r.destinationId || '',
+      destinationName: r.destinationName || r.country || 'Japan',
+      country: r.country || r.destinationName || 'Japan',
+      city: r.city || '',
+      currency: (r.currency as CurrencyCode) || 'JPY',
+      nativeCurrency: (r.currency as CurrencyCode) || 'JPY',
+      validityFrom: r.validityFrom,
+      validityTo: r.validityTo,
+      surcharges: r.surcharges
+    } as unknown as Product));
+
+  return migrateLegacyProductSurcharges(pseudoProducts, existingMasters);
+}
+
 export interface SurchargeDashboardMetrics {
   totalConfigurations: number;
   activePeriodsCount: number;
@@ -878,7 +954,8 @@ export function calculateSurchargeDashboardMetrics(
     else if (effectiveStatus === 'DRAFT') draftConfigurationsCount++;
     else if (effectiveStatus === 'INACTIVE') inactiveConfigurationsCount++;
 
-    (s.linkedProductIds || []).forEach(pid => {
+    const directLinkedIds = new Set<string>(s.linkedProductIds || []);
+    directLinkedIds.forEach(pid => {
       if (!pid) return;
       affectedProductIds.add(pid);
       if (effectiveStatus === 'ACTIVE' || effectiveStatus === 'SCHEDULED') {
@@ -889,6 +966,26 @@ export function calculateSurchargeDashboardMetrics(
         flaggedInactiveProductLinksCount++;
       }
     });
+
+    const isBroadRule =
+      Boolean(s.applyToAllCategoryProducts) ||
+      (s.linkedProductIds || []).length === 0 &&
+        ((s.applicableCategories || []).length > 0 ||
+          (s.applicableCategoryIds || []).length > 0 ||
+          (s.applicableDestinations || []).length > 0 ||
+          (s.applicableDestinationIds || []).length > 0);
+
+    if (isBroadRule) {
+      for (const prod of activeCatalogProducts) {
+        if (directLinkedIds.has(prod.id)) continue;
+        if (doesSurchargeMatchProductScope(s, prod)) {
+          affectedProductIds.add(prod.id);
+          if (effectiveStatus === 'ACTIVE' || effectiveStatus === 'SCHEDULED') {
+            productsWithActiveOrScheduledSurcharge.add(prod.id);
+          }
+        }
+      }
+    }
   }
 
   const productsWithoutApplicableSurchargesCount = activeCatalogProducts.filter(
@@ -986,6 +1083,7 @@ function applyRoundingMode(
 
 export interface EvaluateProductSurchargesInput {
   product: Product;
+  productName?: string;
   centralizedSurcharges?: SurchargeMaster[];
   serviceDate?: string;
   travelDate?: string;
@@ -993,6 +1091,7 @@ export interface EvaluateProductSurchargesInput {
   bookingDate?: string;
   baseSellingPriceInProductNative?: number;
   baseNativeSellingAmount?: number;
+  baseSellingPriceInTargetCurrency?: number;
   productNativeCurrency?: CurrencyCode;
   nativeCurrency?: CurrencyCode;
   targetCurrency?: CurrencyCode;
@@ -1009,9 +1108,173 @@ export interface EvaluateProductSurchargesInput {
   devicesCount?: number;
   quantity?: number;
   itemId?: string;
+  quoteId?: string;
+  quoteVersion?: number;
   surchargeOverrides?: QuotationSurchargeOverride[];
   overrides?: QuotationSurchargeOverride[];
   frozenAppliedSurcharges?: AppliedSurchargeDetail[];
+}
+
+export interface ReconcileAppliedSurchargesInput {
+  appliedSurcharges: AppliedSurchargeDetail[];
+  itemId?: string;
+  product?: Partial<Product> | null;
+  productName?: string;
+  serviceDate?: string;
+  serviceEndDate?: string;
+  nights?: number;
+  targetCurrency: CurrencyCode;
+  baseSellingPriceInTargetCurrency?: number;
+  quoteId?: string;
+  quoteVersion?: number;
+  masterSurcharges?: SurchargeMaster[];
+  preserveHistoricalAmounts?: boolean;
+}
+
+/**
+ * Reconciles metadata and sequential post-surcharge selling prices on AppliedSurchargeDetail[]
+ * for a single product/service line item. Preserves frozen financial amounts when
+ * `preserveHistoricalAmounts` is true while hydrating any missing descriptive metadata
+ * from the product, service dates, or centralized SurchargeMaster records.
+ */
+export function reconcileAppliedSurchargesMetadataAndStacking(
+  input: ReconcileAppliedSurchargesInput
+): AppliedSurchargeDetail[] {
+  const {
+    appliedSurcharges = [],
+    itemId,
+    product,
+    productName,
+    serviceDate,
+    serviceEndDate,
+    nights,
+    targetCurrency,
+    baseSellingPriceInTargetCurrency,
+    quoteId,
+    quoteVersion,
+    masterSurcharges = []
+  } = input;
+
+  if (!Array.isArray(appliedSurcharges) || appliedSurcharges.length === 0) {
+    return [];
+  }
+
+  const masterById = new Map<string, SurchargeMaster>();
+  const masterByCode = new Map<string, SurchargeMaster>();
+  masterSurcharges.forEach(m => {
+    if (m?.id) masterById.set(m.id, m);
+    if (m?.surchargeCode) masterByCode.set(m.surchargeCode, m);
+    if (m?.code) masterByCode.set(m.code, m);
+  });
+
+  const resolvedProdId = product?.id || product?.product_id;
+  const resolvedProdName = (productName || product?.name || (product as any)?.title || '').trim() || undefined;
+  const normStart = normalizeIsoDate(serviceDate) || undefined;
+  const normEnd = resolveServiceEndDateIso(normStart || '', serviceEndDate, nights);
+
+  let runningSelling = baseSellingPriceInTargetCurrency !== undefined && Number.isFinite(baseSellingPriceInTargetCurrency)
+    ? roundCurrencyAmount(baseSellingPriceInTargetCurrency, targetCurrency)
+    : undefined;
+
+  return appliedSurcharges.map(raw => {
+    const master =
+      (raw.surchargeId ? masterById.get(raw.surchargeId) : undefined) ||
+      (raw.surchargeCode ? masterByCode.get(raw.surchargeCode) : undefined);
+
+    const resolvedCalcType: 'FIXED' | 'PERCENTAGE' =
+      raw.calculationType ||
+      raw.type ||
+      master?.calculationType ||
+      (raw.applicationBasis === 'PERCENTAGE' || master?.pricingBasis === 'PERCENTAGE' ? 'PERCENTAGE' : 'FIXED');
+
+    const resolvedName = (raw.surchargeName || raw.name || master?.name || '').trim();
+    const resolvedPeriodStart =
+      normalizeIsoDate(raw.periodStartDate || raw.validFrom || raw.periodSnapshot?.travelStartDate || raw.periodSnapshot?.travelValidFrom || master?.validFrom) || '';
+    const resolvedPeriodEnd =
+      normalizeIsoDate(raw.periodEndDate || raw.validTo || raw.periodSnapshot?.travelEndDate || raw.periodSnapshot?.travelValidTo || master?.validTo) || '';
+    const resolvedCurrency = (raw.currency || master?.currency || targetCurrency) as CurrencyCode;
+
+    let resolvedRate = raw.rateValue ?? raw.value ?? raw.percentageSnapshot ?? raw.amountSnapshot;
+    if ((resolvedRate === undefined || resolvedRate === null || resolvedRate === 0) && master) {
+      if (resolvedCalcType === 'PERCENTAGE') {
+        resolvedRate = (master.percentage && Number(master.percentage) > 0)
+          ? Number(master.percentage)
+          : Number(master.amount || 0);
+      } else {
+        const masterAmt = Number(master.amount || 0);
+        resolvedRate = masterAmt > 0
+          ? masterAmt
+          : computeSurchargeUnitCommercialsInSourceCurrency(master, 'ADULT').sellingUnitAmount;
+      }
+    }
+    const safeRate = resolvedRate !== undefined && resolvedRate !== null ? Number(resolvedRate) : 0;
+
+    const effProductId = raw.productId || raw.affectedProductId || resolvedProdId;
+    const effProductName = (raw.productName || raw.affectedProductName || resolvedProdName || '').trim() || undefined;
+    const effServiceDate = normalizeIsoDate(raw.serviceDate || normStart) || normStart;
+    const effServiceEndDate = normalizeIsoDate(raw.serviceEndDate || normEnd) || normEnd;
+
+    const appliedConverted = roundCurrencyAmount(
+      raw.appliedAmountConverted !== undefined ? raw.appliedAmountConverted : (raw.appliedAmountNative ?? 0),
+      targetCurrency
+    );
+
+    let stepBase = raw.baseSellingPriceInTargetCurrency;
+    let stepAfter = raw.priceAfterSurcharge;
+
+    if (runningSelling !== undefined) {
+      stepBase = runningSelling;
+      runningSelling = roundCurrencyAmount(runningSelling + appliedConverted, targetCurrency);
+      stepAfter = runningSelling;
+    }
+
+    const hasMissingCore =
+      !resolvedName ||
+      !effProductName ||
+      !effServiceDate ||
+      !resolvedPeriodStart ||
+      !resolvedPeriodEnd ||
+      (safeRate <= 0 && appliedConverted > 0);
+
+    const status: AppliedSurchargeDetail['applicationStatus'] = hasMissingCore
+      ? 'MISSING_CONFIG'
+      : (raw.isOverridden ? 'OVERRIDDEN' : (raw.applicationStatus || 'APPLIED'));
+
+    return {
+      ...raw,
+      quoteId: raw.quoteId || quoteId,
+      quoteVersion: raw.quoteVersion ?? quoteVersion,
+      itemId: raw.itemId || itemId,
+      productId: effProductId,
+      affectedProductId: effProductId,
+      productName: effProductName,
+      affectedProductName: effProductName,
+      serviceDate: effServiceDate,
+      serviceEndDate: effServiceEndDate,
+      name: resolvedName,
+      surchargeName: resolvedName,
+      surchargeCode: raw.surchargeCode || master?.surchargeCode || master?.code,
+      surchargeCategory: raw.surchargeCategory || master?.surchargeCategory,
+      validFrom: resolvedPeriodStart,
+      validTo: resolvedPeriodEnd,
+      periodStartDate: resolvedPeriodStart,
+      periodEndDate: resolvedPeriodEnd,
+      periodLabel: raw.periodLabel || raw.periodSnapshot?.label,
+      type: resolvedCalcType,
+      calculationType: resolvedCalcType,
+      value: safeRate,
+      rateValue: safeRate,
+      adultRate: raw.adultRate ?? (master?.adultAmount !== undefined && master.adultAmount > 0 ? Number(master.adultAmount) : undefined),
+      childRate: raw.childRate ?? (master?.childAmount !== undefined && master.childAmount > 0 ? Number(master.childAmount) : undefined),
+      infantRate: raw.infantRate ?? (master?.infantAmount !== undefined && master.infantAmount > 0 ? Number(master.infantAmount) : undefined),
+      currency: resolvedCurrency,
+      targetCurrency,
+      appliedAmountConverted: appliedConverted,
+      baseSellingPriceInTargetCurrency: stepBase,
+      priceAfterSurcharge: stepAfter,
+      applicationStatus: status
+    };
+  });
 }
 
 /**
@@ -1036,6 +1299,7 @@ export function evaluateCentralizedProductSurcharges(
   validationMessage?: string;
 } {
   const product = input.product;
+  const resolvedProductName = (input.productName || product?.name || (product as any)?.title || '').trim();
   const centralizedSurcharges = input.centralizedSurcharges || [];
   const serviceDate = input.serviceDate || input.travelDate || '';
   const serviceEndDate = input.serviceEndDate;
@@ -1054,8 +1318,28 @@ export function evaluateCentralizedProductSurcharges(
   const devicesCount = input.devicesCount ?? 1;
   const quantity = input.quantity ?? 1;
   const itemId = input.itemId;
+  const quoteId = input.quoteId;
+  const quoteVersion = input.quoteVersion;
   const surchargeOverrides = input.surchargeOverrides || input.overrides || [];
   const frozenAppliedSurcharges = input.frozenAppliedSurcharges;
+
+  const normalizedServiceDate = normalizeIsoDate(serviceDate);
+  const effectiveSpanDays = Math.max(1, nightsCount > 1 ? nightsCount : daysCount);
+  const normalizedServiceEndDate = resolveServiceEndDateIso(normalizedServiceDate, serviceEndDate, effectiveSpanDays);
+
+  let initialBaseSellingInTarget = input.baseSellingPriceInTargetCurrency;
+  if (initialBaseSellingInTarget === undefined) {
+    const baseConvMeta = currencyEngine.convertWithMetadata(
+      baseSellingPriceInProductNative,
+      productNativeCurrency,
+      targetCurrency
+    );
+    initialBaseSellingInTarget = baseConvMeta.isValid
+      ? roundCurrencyAmount(baseConvMeta.convertedAmount, targetCurrency)
+      : roundCurrencyAmount(baseSellingPriceInProductNative, targetCurrency);
+  } else {
+    initialBaseSellingInTarget = roundCurrencyAmount(initialBaseSellingInTarget, targetCurrency);
+  }
 
   // If frozen snapshot is explicitly supplied and currency matches, preserve historical snapshot
   if (Array.isArray(frozenAppliedSurcharges) && frozenAppliedSurcharges.length > 0) {
@@ -1066,8 +1350,11 @@ export function evaluateCentralizedProductSurcharges(
 
     const recalibrated = frozenAppliedSurcharges.map(fs => {
       const srcCurr = (fs.currency || productNativeCurrency) as CurrencyCode;
+      const sameTarget = fs.targetCurrency === targetCurrency && fs.appliedAmountConverted !== undefined;
       const convMeta = currencyEngine.convertWithMetadata(fs.appliedAmountNative, srcCurr, targetCurrency);
-      const convertedVal = convMeta.isValid ? convMeta.convertedAmount : fs.appliedAmountConverted;
+      const convertedVal = sameTarget
+        ? roundCurrencyAmount(fs.appliedAmountConverted, targetCurrency)
+        : (convMeta.isValid ? roundCurrencyAmount(convMeta.convertedAmount, targetCurrency) : fs.appliedAmountConverted);
       const nativeMeta = currencyEngine.convertWithMetadata(fs.appliedAmountNative, srcCurr, productNativeCurrency);
       const inProdNative = nativeMeta.isValid ? nativeMeta.convertedAmount : fs.appliedAmountNative;
 
@@ -1083,17 +1370,33 @@ export function evaluateCentralizedProductSurcharges(
       return {
         ...fs,
         targetCurrency,
-        exchangeRate: convMeta.exchangeRate,
-        rateDirection: convMeta.rateDirection,
-        fxSource: convMeta.fxSource,
-        conversionTimestamp: convMeta.conversionTimestamp,
+        exchangeRate: fs.exchangeRate ?? convMeta.exchangeRate,
+        rateDirection: fs.rateDirection ?? convMeta.rateDirection,
+        fxSource: fs.fxSource ?? convMeta.fxSource,
+        conversionTimestamp: fs.conversionTimestamp ?? convMeta.conversionTimestamp,
         appliedAmountConverted: convertedVal,
-        supplierNettConverted: nettConvMeta.isValid ? nettConvMeta.convertedAmount : fs.supplierNettConverted
+        supplierNettConverted: fs.supplierNettConverted ?? (nettConvMeta.isValid ? nettConvMeta.convertedAmount : undefined)
       };
     });
 
-    return {
+    const hydrated = reconcileAppliedSurchargesMetadataAndStacking({
       appliedSurcharges: recalibrated,
+      itemId,
+      product,
+      productName: resolvedProductName,
+      serviceDate: normalizedServiceDate || serviceDate,
+      serviceEndDate: normalizedServiceEndDate,
+      nights: nightsCount,
+      targetCurrency,
+      baseSellingPriceInTargetCurrency: initialBaseSellingInTarget,
+      quoteId,
+      quoteVersion,
+      masterSurcharges: centralizedSurcharges,
+      preserveHistoricalAmounts: true
+    });
+
+    return {
+      appliedSurcharges: hydrated,
       surchargeTotalInProductNative: roundCurrencyAmount(totalNative, productNativeCurrency),
       surchargeTotalConverted: roundCurrencyAmount(totalConverted, targetCurrency),
       surchargeNettTotalInProductNative: roundCurrencyAmount(totalNettNative, productNativeCurrency),
@@ -1123,48 +1426,59 @@ export function evaluateCentralizedProductSurcharges(
     };
   }
 
-  const stayDates = enumerateStayDates(serviceDate, serviceEndDate);
+  const stayDates = enumerateStayDates(serviceDate, serviceEndDate, effectiveSpanDays);
   const totalDatesCount = Math.max(1, stayDates.length);
   const effectiveBookingDate = normalizeIsoDate(bookingDate) || new Date().toISOString().split('T')[0];
   const totalPax = Math.max(1, adults + children + infants);
 
-  // Gather candidate centralized surcharges linked to this product
-  const linkedCentralized = centralizedSurcharges.filter(s => {
-    if (!s || s.isDeleted) return false;
-    if (s.status === 'DRAFT' || s.status === 'INACTIVE' || s.status === 'ARCHIVED') return false;
-    return Array.isArray(s.linkedProductIds) && s.linkedProductIds.includes(product.id);
-  });
-
-  // Also include any unmigrated legacy product.surcharges so historical products never lose surcharges
-  const migratedLegacyIds = new Set(
-    linkedCentralized.map(s => s.migratedFromLegacySurchargeId).filter(Boolean)
+  // Gather candidate centralized surcharges matched by linkedProductIds OR category/destination scope.
+  // CRITICAL: Only centralized Surcharge Management records (surcharge_masters) are evaluated.
+  // Legacy product.surcharges and hardcoded demo surcharges are strictly ignored.
+  const primaryIndexedCandidates = pricingCache.getCandidateSurchargesForProduct(
+    product.id,
+    centralizedSurcharges,
+    undefined,
+    false
   );
-  const legacyCandidates: SurchargeMaster[] = (product.surcharges || [])
-    .filter(leg => leg && leg.status === 'ACTIVE' && !migratedLegacyIds.has(leg.surchargeId))
-    .map(leg => ({
-      id: leg.centralizedSurchargeId || leg.surchargeId,
-      surchargeCode: leg.surchargeId,
-      name: leg.name,
-      surchargeCategory: 'Peak Season Surcharge',
-      status: 'ACTIVE' as SurchargeStatus,
-      validFrom: leg.validFrom,
-      validTo: leg.validTo,
-      timezone: 'Asia/Tokyo',
-      allowStacking: false,
-      priority: 50,
-      linkedProductIds: [product.id],
-      calculationType: leg.type,
-      pricingBasis: leg.type === 'PERCENTAGE' ? 'PERCENTAGE' : (leg.applicationBasis || 'PER_PERSON'),
-      amount: leg.type === 'FIXED' ? Number(leg.value || 0) : 0,
-      percentage: leg.type === 'PERCENTAGE' ? Number(leg.value || 0) : 0,
-      currency: ((leg.currency as CurrencyCode) || productNativeCurrency) as CurrencyCode,
-      version: 1,
-      createdAt: '',
-      updatedAt: ''
-    }));
+  const hotelIdAlias = (product as any).hotelId as string | undefined;
+  const hotelIndexedCandidates =
+    hotelIdAlias && hotelIdAlias !== product.id
+      ? pricingCache.getCandidateSurchargesForProduct(hotelIdAlias, centralizedSurcharges, undefined, false)
+      : [];
 
-  const allCandidates = [...linkedCentralized, ...legacyCandidates];
+  const candidateSeenIds = new Set<string>();
+  const combinedIndexedCandidates: SurchargeMaster[] = [];
+  for (const cand of [...primaryIndexedCandidates, ...hotelIndexedCandidates]) {
+    if (cand && cand.id && !candidateSeenIds.has(cand.id)) {
+      candidateSeenIds.add(cand.id);
+      combinedIndexedCandidates.push(cand);
+    }
+  }
+
+  const allCandidates = combinedIndexedCandidates.filter(
+    s => isAuthoritativeEligibleSurchargeMaster(s) && doesSurchargeMatchProductScope(s, product)
+  );
   const conflictWarnings: string[] = [];
+
+  // Validate surchargeOverrides: reject references to non-existent or inactive surcharge IDs
+  const activeCentralIdSet = new Set<string>(
+    (centralizedSurcharges || [])
+      .filter(s => isAuthoritativeEligibleSurchargeMaster(s))
+      .map(s => s.id)
+  );
+  for (const ov of surchargeOverrides) {
+    if (
+      ov &&
+      (ov.overrideType === 'OVERRIDE_AMOUNT' || ov.overrideType === 'REMOVE_SURCHARGE') &&
+      ov.surchargeId &&
+      !activeCentralIdSet.has(ov.surchargeId) &&
+      (!ov.itemId || ov.itemId === itemId) &&
+      (!ov.productId || ov.productId === product.id)
+    ) {
+      const diagMsg = `Validation warning: Referenced surcharge ID "${ov.surchargeId}" does not exist or is not active in Surcharge Management and was ignored.`;
+      conflictWarnings.push(diagMsg);
+    }
+  }
 
   // Filter candidates that match pax/quantity & booking date & at least 1 travel date
   interface MatchedCandidate {
@@ -1174,8 +1488,12 @@ export function evaluateCentralizedProductSurcharges(
   }
 
   const matchedCandidates: MatchedCandidate[] = [];
+  const seenCandidateIds = new Set<string>();
 
   for (const s of allCandidates) {
+    if (seenCandidateIds.has(s.id)) continue;
+    seenCandidateIds.add(s.id);
+
     // Check if explicitly removed via override
     const isRemoved = surchargeOverrides.some(
       ov =>
@@ -1258,24 +1576,30 @@ export function evaluateCentralizedProductSurcharges(
 
       const winner = sortedNonStackable[0];
       const suppressedNames = sortedNonStackable.slice(1).map(x => x.surcharge.name);
-      const warningText = `Multiple non-stackable surcharges matched ${product.name} on ${serviceDate}. Applied "${winner.surcharge.name}" (highest priority) and suppressed [${suppressedNames.join(', ')}] to prevent double-charging.`;
+      const warningText = `Multiple non-stackable surcharges matched ${resolvedProductName || product.name} on ${serviceDate}. Applied "${winner.surcharge.name}" (highest priority) and suppressed [${suppressedNames.join(', ')}] to prevent double-charging.`;
       conflictWarnings.push(warningText);
       selectedCandidates = [winner, ...stackable];
     }
   }
 
   const appliedSurcharges: AppliedSurchargeDetail[] = [];
+  const appliedSurchargeIdsForComponent = new Set<string>();
   let surchargeTotalInProductNative = 0;
   let surchargeTotalConverted = 0;
   let surchargeNettTotalInProductNative = 0;
   let surchargeNettTotalConverted = 0;
+  let runningSellingInTarget = initialBaseSellingInTarget;
+  let anyFxError: string | undefined;
 
   for (const cand of selectedCandidates) {
     const s = cand.surcharge;
+    if (!s.id || appliedSurchargeIdsForComponent.has(s.id)) continue;
+    appliedSurchargeIdsForComponent.add(s.id);
     const eligibleDaysCount = cand.eligibleDates.length;
     const win = cand.matchedWindow;
     const surchargeCurrency = (s.currency || productNativeCurrency) as CurrencyCode;
-    const calcType = s.calculationType === 'PERCENTAGE' || s.pricingBasis === 'PERCENTAGE' ? 'PERCENTAGE' : 'FIXED';
+    const calcType: 'FIXED' | 'PERCENTAGE' =
+      s.calculationType === 'PERCENTAGE' || s.pricingBasis === 'PERCENTAGE' ? 'PERCENTAGE' : 'FIXED';
     const basis = (s.pricingBasis || (calcType === 'PERCENTAGE' ? 'PERCENTAGE' : 'PER_PERSON')).toUpperCase();
 
     // Check if there is an OVERRIDE_AMOUNT for this surcharge
@@ -1290,13 +1614,19 @@ export function evaluateCentralizedProductSurcharges(
     let sellingInSurchargeCurr = 0;
     let nettInSurchargeCurr = 0;
     let effectiveCurrency = surchargeCurrency;
+    let resolvedRateValue = 0;
+    let adultRate: number | undefined;
+    let childRate: number | undefined;
+    let infantRate: number | undefined;
 
     if (amountOverride && amountOverride.overriddenAmount !== undefined) {
       effectiveCurrency = (amountOverride.overriddenCurrency || surchargeCurrency) as CurrencyCode;
-      sellingInSurchargeCurr = Math.max(0, Number(amountOverride.overriddenAmount));
+      resolvedRateValue = Math.max(0, Number(amountOverride.overriddenAmount));
+      sellingInSurchargeCurr = resolvedRateValue;
       nettInSurchargeCurr = sellingInSurchargeCurr;
     } else if (calcType === 'PERCENTAGE') {
-      const pct = Math.max(0, Number(s.percentage ?? s.amount ?? 0));
+      const pct = Math.max(0, (s.percentage && Number(s.percentage) > 0) ? Number(s.percentage) : Number(s.amount || 0));
+      resolvedRateValue = pct;
       const dayFraction = totalDatesCount > 1 ? eligibleDaysCount / totalDatesCount : 1;
       // Convert baseSellingPriceInProductNative to surchargeCurrency if needed
       const baseInSurchargeCurrMeta = currencyEngine.convertWithMetadata(
@@ -1311,14 +1641,25 @@ export function evaluateCentralizedProductSurcharges(
       nettInSurchargeCurr = sellingInSurchargeCurr;
     } else {
       const defaultUnit = computeSurchargeUnitCommercialsInSourceCurrency(s, 'DEFAULT');
+      const hasSpecificPaxAmounts =
+        (s.adultAmount !== undefined && s.adultAmount > 0) ||
+        (s.childAmount !== undefined && s.childAmount > 0) ||
+        (s.infantAmount !== undefined && s.infantAmount > 0);
+
+      if (hasSpecificPaxAmounts) {
+        const adtUnit = computeSurchargeUnitCommercialsInSourceCurrency(s, 'ADULT');
+        const chdUnit = computeSurchargeUnitCommercialsInSourceCurrency(s, 'CHILD');
+        const infUnit = computeSurchargeUnitCommercialsInSourceCurrency(s, 'INFANT');
+        adultRate = adtUnit.sellingUnitAmount;
+        childRate = chdUnit.sellingUnitAmount;
+        infantRate = infUnit.sellingUnitAmount;
+        resolvedRateValue = Number(s.amount || 0) > 0 ? Number(s.amount) : (adtUnit.sellingUnitAmount || defaultUnit.sellingUnitAmount);
+      } else {
+        resolvedRateValue = Number(s.amount || 0) > 0 ? Number(s.amount) : defaultUnit.sellingUnitAmount;
+      }
 
       switch (basis) {
         case 'PER_PERSON': {
-          const hasSpecificPaxAmounts =
-            (s.adultAmount !== undefined && s.adultAmount > 0) ||
-            (s.childAmount !== undefined && s.childAmount > 0) ||
-            (s.infantAmount !== undefined && s.infantAmount > 0);
-
           if (hasSpecificPaxAmounts) {
             const adtUnit = computeSurchargeUnitCommercialsInSourceCurrency(s, 'ADULT');
             const chdUnit = computeSurchargeUnitCommercialsInSourceCurrency(s, 'CHILD');
@@ -1350,15 +1691,18 @@ export function evaluateCentralizedProductSurcharges(
           break;
         }
         case 'PER_ADULT':
-          sellingInSurchargeCurr = defaultUnit.sellingUnitAmount * Math.max(1, adults);
+          resolvedRateValue = adultRate ?? (Number(s.amount || 0) > 0 ? Number(s.amount) : defaultUnit.sellingUnitAmount);
+          sellingInSurchargeCurr = resolvedRateValue * Math.max(1, adults);
           nettInSurchargeCurr = defaultUnit.supplierNettUnitAmount * Math.max(1, adults);
           break;
         case 'PER_CHILD':
-          sellingInSurchargeCurr = defaultUnit.sellingUnitAmount * Math.max(0, children);
+          resolvedRateValue = childRate ?? (Number(s.amount || 0) > 0 ? Number(s.amount) : defaultUnit.sellingUnitAmount);
+          sellingInSurchargeCurr = resolvedRateValue * Math.max(0, children);
           nettInSurchargeCurr = defaultUnit.supplierNettUnitAmount * Math.max(0, children);
           break;
         case 'PER_INFANT':
-          sellingInSurchargeCurr = defaultUnit.sellingUnitAmount * Math.max(0, infants);
+          resolvedRateValue = infantRate ?? (Number(s.amount || 0) > 0 ? Number(s.amount) : defaultUnit.sellingUnitAmount);
+          sellingInSurchargeCurr = resolvedRateValue * Math.max(0, infants);
           nettInSurchargeCurr = defaultUnit.supplierNettUnitAmount * Math.max(0, infants);
           break;
         case 'PER_ROOM':
@@ -1412,6 +1756,9 @@ export function evaluateCentralizedProductSurcharges(
 
     // Single authoritative conversion: effectiveCurrency -> targetCurrency
     const targetConv = currencyEngine.convertWithMetadata(roundedSourceSelling, effectiveCurrency, targetCurrency);
+    if (!targetConv.isValid && !anyFxError) {
+      anyFxError = targetConv.error || `Missing exchange rate for ${effectiveCurrency} -> ${targetCurrency}`;
+    }
     const convertedSelling = targetConv.isValid
       ? applyRoundingMode(targetConv.convertedAmount, targetCurrency, s.roundingMode)
       : 0;
@@ -1437,19 +1784,45 @@ export function evaluateCentralizedProductSurcharges(
     surchargeNettTotalInProductNative += prodNativeNett;
     surchargeNettTotalConverted += convertedNett;
 
+    const stepBase = runningSellingInTarget;
+    runningSellingInTarget = roundCurrencyAmount(runningSellingInTarget + convertedSelling, targetCurrency);
+    const stepAfter = runningSellingInTarget;
+
+    const periodStart = normalizeIsoDate(win.travelStartDate || win.travelValidFrom || s.validFrom);
+    const periodEnd = normalizeIsoDate(win.travelEndDate || win.travelValidTo || s.validTo);
+    const surchargeTitle = (s.name || '').trim();
+    const hasMissingFields = !surchargeTitle || !resolvedProductName || !normalizedServiceDate || !periodStart || !periodEnd || !targetConv.isValid;
+
     appliedSurcharges.push({
+      quoteId,
+      quoteVersion,
+      itemId,
+      productId: product.id,
+      productName: resolvedProductName || undefined,
+      serviceDate: normalizedServiceDate || undefined,
+      serviceEndDate: normalizedServiceEndDate,
       surchargeId: s.id,
-      surchargeCode: s.surchargeCode,
-      name: s.name,
+      surchargeCode: s.surchargeCode || s.code,
+      name: surchargeTitle,
+      surchargeName: surchargeTitle,
       surchargeCategory: s.surchargeCategory,
-      validFrom: win.travelStartDate || s.validFrom,
-      validTo: win.travelEndDate || s.validTo,
-      bookingValidFrom: win.bookingStartDate || s.bookingValidFrom,
-      bookingValidTo: win.bookingEndDate || s.bookingValidTo,
+      validFrom: periodStart,
+      validTo: periodEnd,
+      periodStartDate: periodStart,
+      periodEndDate: periodEnd,
+      periodLabel: win.label,
+      periodSnapshot: win,
+      bookingValidFrom: win.bookingStartDate || win.bookingValidFrom || s.bookingValidFrom,
+      bookingValidTo: win.bookingEndDate || win.bookingValidTo || s.bookingValidTo,
       affectedProductId: product.id,
-      affectedProductName: product.name,
+      affectedProductName: resolvedProductName || undefined,
       type: calcType,
-      value: calcType === 'PERCENTAGE' ? Number(s.percentage ?? s.amount ?? 0) : Number(s.amount || 0),
+      calculationType: calcType,
+      value: resolvedRateValue,
+      rateValue: resolvedRateValue,
+      adultRate,
+      childRate,
+      infantRate,
       currency: effectiveCurrency,
       targetCurrency,
       exchangeRate: targetConv.exchangeRate,
@@ -1461,13 +1834,16 @@ export function evaluateCentralizedProductSurcharges(
       appliedAmountConverted: convertedSelling,
       supplierNettNative: roundedSourceNett,
       supplierNettConverted: convertedNett,
+      baseSellingPriceInTargetCurrency: stepBase,
+      priceAfterSurcharge: stepAfter,
       eligibleDaysCount,
       isCentralized: true,
       isOverridden: Boolean(amountOverride),
       overrideType: amountOverride?.overrideType,
       overrideReason: amountOverride?.reason,
       overriddenBy: amountOverride?.authorizedByName,
-      conflictWarning: conflictWarnings.length > 0 ? conflictWarnings[0] : undefined
+      conflictWarning: conflictWarnings.length > 0 ? conflictWarnings[0] : undefined,
+      applicationStatus: hasMissingFields ? 'MISSING_CONFIG' : (amountOverride ? 'OVERRIDDEN' : 'APPLIED')
     });
   }
 
@@ -1495,7 +1871,10 @@ export function evaluateCentralizedProductSurcharges(
 
     const roundedCustomSource = roundCurrencyAmount(customSellingSource, customCurr);
     const targetConv = currencyEngine.convertWithMetadata(roundedCustomSource, customCurr, targetCurrency);
-    const convertedCustom = targetConv.isValid ? targetConv.convertedAmount : 0;
+    if (!targetConv.isValid && !anyFxError) {
+      anyFxError = targetConv.error || `Missing exchange rate for ${customCurr} -> ${targetCurrency}`;
+    }
+    const convertedCustom = targetConv.isValid ? roundCurrencyAmount(targetConv.convertedAmount, targetCurrency) : 0;
 
     const prodNativeConv = currencyEngine.convertWithMetadata(roundedCustomSource, customCurr, productNativeCurrency);
     const prodNativeCustom = prodNativeConv.isValid ? prodNativeConv.convertedAmount : roundedCustomSource;
@@ -1505,17 +1884,38 @@ export function evaluateCentralizedProductSurcharges(
     surchargeNettTotalInProductNative += prodNativeCustom;
     surchargeNettTotalConverted += convertedCustom;
 
+    const stepBase = runningSellingInTarget;
+    runningSellingInTarget = roundCurrencyAmount(runningSellingInTarget + convertedCustom, targetCurrency);
+    const stepAfter = runningSellingInTarget;
+
+    const customStart = normalizeIsoDate(customOv.validFrom || normalizedServiceDate) || '';
+    const customEnd = normalizeIsoDate(customOv.validTo || normalizedServiceEndDate || normalizedServiceDate) || '';
+    const customName = (customOv.surchargeName || customOv.customSurchargeName || 'Authorized Custom Surcharge').trim();
+    const customCalcType = customOv.calculationType || 'FIXED';
+
     appliedSurcharges.push({
+      quoteId,
+      quoteVersion,
+      itemId,
+      productId: product.id,
+      productName: resolvedProductName || undefined,
+      serviceDate: normalizedServiceDate || undefined,
+      serviceEndDate: normalizedServiceEndDate,
       surchargeId: customOv.surchargeId || customOv.id,
       surchargeCode: 'SUR-CUSTOM',
-      name: customOv.surchargeName || 'Authorized Custom Surcharge',
+      name: customName,
+      surchargeName: customName,
       surchargeCategory: 'Authorized Custom Surcharge',
-      validFrom: customOv.validFrom || serviceDate || '',
-      validTo: customOv.validTo || serviceEndDate || serviceDate || '',
+      validFrom: customStart,
+      validTo: customEnd,
+      periodStartDate: customStart,
+      periodEndDate: customEnd,
       affectedProductId: product.id,
-      affectedProductName: product.name,
-      type: customOv.calculationType || 'FIXED',
+      affectedProductName: resolvedProductName || undefined,
+      type: customCalcType,
+      calculationType: customCalcType,
       value: rawCustomVal,
+      rateValue: rawCustomVal,
       currency: customCurr,
       targetCurrency,
       exchangeRate: targetConv.exchangeRate,
@@ -1527,12 +1927,15 @@ export function evaluateCentralizedProductSurcharges(
       appliedAmountConverted: convertedCustom,
       supplierNettNative: roundedCustomSource,
       supplierNettConverted: convertedCustom,
+      baseSellingPriceInTargetCurrency: stepBase,
+      priceAfterSurcharge: stepAfter,
       eligibleDaysCount: 1,
       isCentralized: true,
       isOverridden: true,
       overrideType: 'ADD_CUSTOM_SURCHARGE',
       overrideReason: customOv.reason,
-      overriddenBy: customOv.authorizedByName
+      overriddenBy: customOv.authorizedByName,
+      applicationStatus: 'OVERRIDDEN'
     });
   }
 
@@ -1543,7 +1946,9 @@ export function evaluateCentralizedProductSurcharges(
     surchargeNettTotalInProductNative: roundCurrencyAmount(surchargeNettTotalInProductNative, productNativeCurrency),
     surchargeNettTotalConverted: roundCurrencyAmount(surchargeNettTotalConverted, targetCurrency),
     conflictWarnings,
-    fxValid: true
+    validationMessage: conflictWarnings.length > 0 ? conflictWarnings.join(' | ') : undefined,
+    fxValid: !anyFxError,
+    fxError: anyFxError
   };
 }
 

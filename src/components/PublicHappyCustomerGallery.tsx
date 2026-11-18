@@ -15,7 +15,7 @@ export const PublicHappyCustomerGallery: React.FC<PublicHappyCustomerGalleryProp
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['gallery'], () => {
       setGalleryImages(db.getGalleryImages());
     });
   }, [db]);
@@ -151,6 +151,7 @@ export const PublicHappyCustomerGallery: React.FC<PublicHappyCustomerGalleryProp
                     src={item.imageUrl}
                     alt={displayCaption || item.customerName || 'Happy Customer Moment'}
                     loading="lazy"
+                    decoding="async"
                     onError={() => handleImageError(item.id)}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     referrerPolicy="no-referrer"
@@ -230,6 +231,8 @@ export const PublicHappyCustomerGallery: React.FC<PublicHappyCustomerGalleryProp
               <img
                 src={activeModalImage.imageUrl}
                 alt={activeModalImage.caption || activeModalImage.customerName}
+                loading="eager"
+                decoding="async"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />

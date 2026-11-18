@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { 
   Building2, 
   MapPin, 
@@ -45,10 +45,13 @@ import {
   Columns,
   Split,
   Check,
-  Loader2
+  Loader2,
+  History,
+  RotateCcw
 } from 'lucide-react';
 import { sanitizeProductForAgent } from '../../utils/customerQuoteSanitizer';
 import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../../constants/commercialQuotationTerms';
+import { destinationTermsService, DestinationTermsReadinessResult } from '../../services/destinationTermsService';
 import { StepByStepQuotationWorkspace } from './StepByStepQuotationWorkspace';
 import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
 import { OptionComparisonMatrixModal } from './OptionComparisonMatrixModal';
@@ -72,11 +75,16 @@ import {
   PackageItineraryDay,
   AgentMarginType,
   TravelLead,
-  QuoteBrandingMode
+  QuoteBrandingMode,
+  QuotationCommercialTermsSnapshot,
+  QuotationTermsExceptionApproval,
+  QuotationOutputOptionKey
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
-import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent, roundCurrencyAmount, buildQuotationCurrencySnapshot } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent, roundCurrencyAmount, buildQuotationCurrencySnapshot, resolveQuoteAgencyPricingContext } from '../../services/pricingEngine';
+import { performanceMonitor } from '../../services/performanceMonitor';
+import { backgroundJobService, BackgroundJobRecord } from '../../services/backgroundJobService';
 import { canonicalImageService } from '../../services/imageService';
 import { sanitizeImageUrl } from '../../utils/imageUtils';
 import { ProposalDocumentView } from '../ProposalDocumentView';
@@ -107,6 +115,12 @@ import {
 } from '../../utils/b2bQuotationHelpers';
 import { AppDatabase } from '../../services/db';
 import { hotelToProduct, manualHotelToProduct, isManualHotelPricingComplete, calculateHotelStayPrice, validateRoomOccupancy, OccupancyValidationResult } from '../../utils/hotelHelpers';
+import {
+  doesHotelItemBelongToHubOccurrence,
+  generateAccommodationStayId,
+  getHubOccurrenceId,
+  computeStayDatesForHub
+} from '../../utils/hubStayMatching';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { EmailNotificationService } from '../../services/emailNotificationService';
@@ -121,6 +135,17 @@ import {
   normalizeMasterPackageTripType,
   MasterPackageVerificationReport
 } from '../../services/packageToQuoteTransformer';
+import {
+  buildAuthoritativeQuotationSnapshot,
+  recordQuotationGenerationEvent,
+  validateQuotationOutputConsistency
+} from '../../services/quotationSnapshotService';
+import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
+import {
+  quotationOperationsService,
+  withBoundedTimeout
+} from '../../services/quotationOperationsService';
 
 // Helper to check if a product is tagged with or matches a specific city / hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -165,11 +190,24 @@ export const isProductMatchingCity = (product: Product, targetCityName?: string,
   return false;
 };
 
+function shallowRecordEqual<T extends Record<string | number, any>>(a?: T, b?: T): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (let i = 0; i < keysA.length; i++) {
+    const k = keysA[i];
+    if (a[k] !== b[k]) return false;
+  }
+  return true;
+}
+
 export interface UnifiedB2BQuotationBuilderProps {
   initialDestinationSlug?: string;
   targetQuoteId?: string;
   targetQuoteVersion?: number;
-  initialMode?: 'inspect' | 'edit' | 'clone';
+  initialMode?: 'inspect' | 'edit' | 'clone' | 'readonly' | 'restore';
   isNewQuoteMode?: boolean;
   prefillLead?: TravelLead | null;
   destinations?: Destination[];
@@ -183,12 +221,15 @@ export interface UnifiedB2BQuotationBuilderProps {
   onBookQuotation?: (quote: Quotation) => void;
   onViewProductDetails?: (product: Product) => void;
   onOpenSpecs?: () => void;
+  onConfigureDestinationTerms?: (targetId: string) => void;
+  onQuoteSaved?: (quote: Quotation) => void;
 }
 
-export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProps> = ({
+const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> = ({
   initialDestinationSlug,
   targetQuoteId,
   targetQuoteVersion,
+  initialMode = 'edit',
   isNewQuoteMode = false,
   prefillLead,
   destinations = [],
@@ -201,7 +242,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   onConvertToBooking,
   onBookQuotation,
   onViewProductDetails,
-  onOpenSpecs
+  onOpenSpecs,
+  onConfigureDestinationTerms,
+  onQuoteSaved
 }) => {
   const { user } = useAuth();
   const db = AppDatabase.getInstance();
@@ -284,7 +327,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     quoteSource,
     priceRefreshNotice,
     clearQuote,
-    setIsQuoteDrawerOpen
+    setIsQuoteDrawerOpen,
+    draftDestinationReview,
+    destinationVisibilityError,
+    clearDestinationVisibilityError
   } = useQuotation();
 
   // Strictly close global cart drawer on entry into the B2B Quote Builder
@@ -315,30 +361,71 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [adminManualMarginValue, setAdminManualMarginValue] = useState<number>(0);
   const [adminMarginMode, setAdminMarginMode] = useState<'REPLACE' | 'ADD'>('ADD');
 
-  // Top-Level View State (Itinerary Builder vs Official Proposal Preview)
+  // Quote-specific Agency Pricing Context (prevents Admin's own profile from overriding the quote's B2B agency settings)
+  const [quoteCompanyId, setQuoteCompanyId] = useState<string | undefined>(undefined);
+  const [quoteAgentId, setQuoteAgentId] = useState<string | undefined>(undefined);
+  const [quoteAgentAgency, setQuoteAgentAgency] = useState<string | undefined>(undefined);
+  const [quoteProductLevelMarginEnabled, setQuoteProductLevelMarginEnabled] = useState<boolean | undefined>(undefined);
+  const [quoteAgentLevelMarginPercent, setQuoteAgentLevelMarginPercent] = useState<number | undefined>(undefined);
+
+  // Top-Level View State & Independent Per-Tab Scroll Restoration
   const [activeViewTab, setActiveViewTab] = useState<'BUILDER' | 'PROPOSAL_PREVIEW'>('BUILDER');
+  const workspaceScrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollTopMapRef = useRef<{ BUILDER: number; PROPOSAL_PREVIEW: number }>({
+    BUILDER: 0,
+    PROPOSAL_PREVIEW: 0
+  });
+  const activeViewTabRef = useRef<'BUILDER' | 'PROPOSAL_PREVIEW'>(activeViewTab);
+  activeViewTabRef.current = activeViewTab;
+
+  const handleWorkspaceScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    scrollTopMapRef.current[activeViewTabRef.current] = e.currentTarget.scrollTop;
+  }, []);
+
+  const switchViewTab = useCallback((nextTab: 'BUILDER' | 'PROPOSAL_PREVIEW') => {
+    if (workspaceScrollRef.current) {
+      scrollTopMapRef.current[activeViewTabRef.current] = workspaceScrollRef.current.scrollTop;
+    }
+    setActiveViewTab(nextTab);
+  }, []);
+
+  useLayoutEffect(() => {
+    const el = workspaceScrollRef.current;
+    if (el) {
+      el.scrollTop = scrollTopMapRef.current[activeViewTab] || 0;
+    }
+  }, [activeViewTab]);
+
   const [activeStepId, setActiveStepId] = useState<number>(1);
   const [brandingMode, setBrandingMode] = useState<QuoteBrandingMode>('STANDARD');
+
+  // Strict Active B2B Destinations (never expose INACTIVE / COMING_SOON / DRAFT / ARCHIVED for new quotes or selectors)
+  const activeB2BDestinations = useMemo(() => {
+    const passedActive = (destinations || []).filter(d => inventoryVisibilityService.isDestinationActiveForB2B(d));
+    if (passedActive.length > 0) return passedActive;
+    return inventoryVisibilityService.getB2BActiveDestinations();
+  }, [destinations]);
 
   // Destination & Specs State
   const defaultDest = useMemo(() => {
     if (initialDestinationSlug) {
-      const found = destinations.find(d => d.slug === initialDestinationSlug || d.id === initialDestinationSlug);
+      const found = activeB2BDestinations.find(d => d.slug === initialDestinationSlug || d.id === initialDestinationSlug);
       if (found) return found;
     }
-    return destinations[0] || {
-      id: 'dest-japan',
-      name: 'Japan',
-      slug: 'japan',
-      code: 'JP',
-      description: 'Land of the Rising Sun',
-      heroImage: 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e',
-      regions: ['Honshu', 'Kanto', 'Kansai'],
-      active: true,
-      currency: 'JPY',
-      featured: true
+    return activeB2BDestinations[0] || {
+      id: 'dest-unavailable',
+      name: 'No Active Destination',
+      slug: '',
+      code: '',
+      description: '',
+      heroImage: '',
+      regions: [],
+      status: 'INACTIVE',
+      active: false,
+      currency: 'USD',
+      featured: false
     };
-  }, [destinations, initialDestinationSlug]);
+  }, [activeB2BDestinations, initialDestinationSlug]);
 
   const [currentDestination, setCurrentDestination] = useState<Destination>(defaultDest);
 
@@ -365,6 +452,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [childrenCount, setChildrenCount] = useState<number>(() => contextPaxConfig?.children || 0);
   const [infantsCount, setInfantsCount] = useState<number>(() => contextPaxConfig?.infants || 0);
   const [childAges, setChildAges] = useState<number[]>(() => contextPaxConfig?.childAges || []);
+  const childAgesRef = useRef<number[]>(childAges);
+  childAgesRef.current = childAges;
   const [nationality, setNationality] = useState<string>('Indian');
   const [travelStyle, setTravelStyle] = useState<string>('FIT Luxury');
   const [mealPlanPreference, setMealPlanPreference] = useState<string>('CP (Breakfast Included)');
@@ -406,7 +495,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   useEffect(() => {
     if (contextDestination) {
       const qDestLower = contextDestination.toLowerCase();
-      const found = destinations.find(d => 
+      const found = activeB2BDestinations.find(d => 
         (d.name || '').toLowerCase() === qDestLower ||
         (d.slug || '').toLowerCase() === qDestLower ||
         (d.id || '').toLowerCase() === qDestLower
@@ -415,7 +504,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         setCurrentDestination(found);
       }
     }
-  }, [contextDestination, destinations, currentDestination.id]);
+  }, [contextDestination, activeB2BDestinations, currentDestination.id]);
 
   // Quotation Multi-Options State (Option 1, Option 2, Option 3)
   const [activeOptionTab, setActiveOptionTab] = useState<number>(1);
@@ -425,12 +514,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   // In-Builder Toast Notification (Replaces Cart Drawer popping up)
   const [builderToast, setBuilderToast] = useState<{ message: string; type: 'SUCCESS' | 'INFO' | 'WARNING' } | null>(null);
 
-  const showBuilderToast = (message: string, type: 'SUCCESS' | 'INFO' | 'WARNING' = 'SUCCESS') => {
+  const showBuilderToast = useCallback((message: string, type: 'SUCCESS' | 'INFO' | 'WARNING' = 'SUCCESS') => {
     setBuilderToast({ message, type });
     setTimeout(() => {
       setBuilderToast(prev => (prev?.message === message ? null : prev));
     }, 3500);
-  };
+  }, []);
 
   // Independent Options Data Storage
   interface OptionDataState {
@@ -609,11 +698,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       // 3. Centralized Pricing Engine Execution
       const calcParams = {
         productId: effectiveProduct.id,
+        productName: sanitizedProduct.name || effectiveProduct.name,
+        itemId: item.id,
+        quoteId: activeQuoteId,
         pricingTier: 'B2B' as const,
         adults: nextAdults,
         children: nextChildren,
         infants: nextInfants,
         travelDate: nextTravelDate,
+        serviceEndDate: nextCheckOut || item.checkOutDate,
+        nights: item.nights || nextManualDetails?.numberOfNights || (effectiveProduct as any).nights,
+        roomsCount: item.roomsCount || nextManualDetails?.numberOfRooms || (effectiveProduct as any).roomsCount,
         targetCurrency,
         selectedAddonIds: item.selectedAddonIds || [],
         userRole: user?.role || 'B2B_AGENT',
@@ -640,6 +735,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         travelDate: nextTravelDate,
         checkInDate: nextCheckIn,
         checkOutDate: nextCheckOut,
+        hubId: item.hubId || item.itineraryHubOccurrenceId || nextManualDetails?.hubId,
+        itineraryHubOccurrenceId: item.itineraryHubOccurrenceId || item.hubId || nextManualDetails?.itineraryHubOccurrenceId || nextManualDetails?.hubId,
+        accommodationStayId: item.accommodationStayId || nextManualDetails?.accommodationStayId,
         manualHotelDetails: nextManualDetails,
         calculation,
         pricing_snapshot: {
@@ -701,20 +799,20 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             d.setDate(d.getDate() + diffDays);
             return d.toISOString().split('T')[0];
           };
-          const shiftedHubs = routeHubs.map(h => ({
-            ...h,
-            checkInDate: shiftIso(h.checkInDate),
-            checkOutDate: shiftIso(h.checkOutDate),
-            manualHotel: h.manualHotel
-              ? {
-                  ...h.manualHotel,
-                  checkInDate: shiftIso(h.manualHotel.checkInDate) || h.manualHotel.checkInDate,
-                  checkOutDate: shiftIso(h.manualHotel.checkOutDate) || h.manualHotel.checkOutDate
-                }
-              : h.manualHotel
-          }));
-          setRouteHubs(shiftedHubs);
-          setContextRouteHubs(shiftedHubs);
+          handleUpdateRouteHubs(prevHubs =>
+            prevHubs.map(h => ({
+              ...h,
+              checkInDate: shiftIso(h.checkInDate),
+              checkOutDate: shiftIso(h.checkOutDate),
+              manualHotel: h.manualHotel
+                ? {
+                    ...h.manualHotel,
+                    checkInDate: shiftIso(h.manualHotel.checkInDate) || h.manualHotel.checkInDate,
+                    checkOutDate: shiftIso(h.manualHotel.checkOutDate) || h.manualHotel.checkOutDate
+                  }
+                : h.manualHotel
+            }))
+          );
         }
       }
     }
@@ -751,6 +849,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     } else if (safeCount < updatedAges.length) {
       updatedAges.splice(safeCount);
     }
+    childAgesRef.current = updatedAges;
     setChildAges(updatedAges);
     setContextPaxConfig(prev => ({ ...prev, children: safeCount, childAges: updatedAges }));
     if (items.length > 0) {
@@ -769,12 +868,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   };
 
   const handleUpdateChildAge = (index: number, age: number) => {
-    setChildAges(prev => {
-      const next = [...prev];
-      next[index] = age;
-      setContextPaxConfig(p => ({ ...p, childAges: next }));
-      return next;
-    });
+    const next = [...childAgesRef.current];
+    next[index] = age;
+    childAgesRef.current = next;
+    setChildAges(next);
+    setContextPaxConfig(p => ({ ...p, childAges: next }));
   };
 
   // Calculate Nights from Dates
@@ -791,201 +889,503 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [isRouteExpanded, setIsRouteExpanded] = useState<boolean>(true);
   const [isHotelSectionExpanded, setIsHotelSectionExpanded] = useState<boolean>(true);
 
-  // Auto-Save State & Authoritative Lifecycle
-  const [autoSaveStatus, setAutoSaveStatus] = useState<'SAVED' | 'SAVING' | 'IDLE'>('IDLE');
+  // Explicit Save Draft Lifecycle & Authoritative Version State (Zero Autosave)
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'SAVED' | 'SAVING' | 'IDLE' | 'FAILED'>('IDLE');
+  const [autoSaveError, setAutoSaveError] = useState<string | null>(null);
   const [lastSavedTimestamp, setLastSavedTimestamp] = useState<string>('');
+  const [activeBackgroundJobs, setActiveBackgroundJobs] = useState<BackgroundJobRecord[]>(() => backgroundJobService.getActiveJobs());
   const [activeQuoteId, setActiveQuoteId] = useState<string>(() => targetQuoteId && !isNewQuoteMode ? targetQuoteId : `QTE-${Date.now().toString(36).toUpperCase()}`);
   const [quoteNumber, setQuoteNumber] = useState<string>(() => `QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
   const [quoteVersion, setQuoteVersion] = useState<number>(() => targetQuoteVersion || 1);
+  const [latestSavedVersion, setLatestSavedVersion] = useState<number>(() => targetQuoteVersion || 1);
+  const [versionCount, setVersionCount] = useState<number>(0);
+  const [restoredFromVersion, setRestoredFromVersion] = useState<number | undefined>(undefined);
+  const [isReadOnlyHistoricalMode, setIsReadOnlyHistoricalMode] = useState<boolean>(initialMode === 'readonly');
   const [hasExplicitlySaved, setHasExplicitlySaved] = useState<boolean>(Boolean(targetQuoteId && !isNewQuoteMode));
+  const [isSavingExplicitly, setIsSavingExplicitly] = useState<boolean>(false);
+  const [baselineSavedHash, setBaselineSavedHash] = useState<string>('');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [authoritativeSavedQuote, setAuthoritativeSavedQuote] = useState<Quotation | null>(null);
+  const [outputSyncError, setOutputSyncError] = useState<string | null>(null);
+  const [outputBusyOption, setOutputBusyOption] = useState<QuotationOutputOptionKey | null>(null);
+  const [isVersionHistoryModalOpen, setIsVersionHistoryModalOpen] = useState<boolean>(false);
+  const [pendingLeaveAction, setPendingLeaveAction] = useState<(() => void) | null>(null);
+  const [pendingOutputRequest, setPendingOutputRequest] = useState<{
+    option: QuotationOutputOptionKey;
+    label: string;
+    onResolved: (quote: Quotation) => void | Promise<void>;
+  } | null>(null);
 
-  // Authoritative Quote Loading & In-Memory Mode Initialization
+  // Destination-Wise Commercial Quotation Terms State
+  const [loadedQuoteStatus, setLoadedQuoteStatus] = useState<Quotation['status']>('DRAFT');
+  const [loadedIsLocked, setLoadedIsLocked] = useState<boolean>(false);
+  const [loadedFinalisedSnapshot, setLoadedFinalisedSnapshot] = useState<QuotationCommercialTermsSnapshot | null>(null);
+  const [termsExceptionApproval, setTermsExceptionApproval] = useState<QuotationTermsExceptionApproval | undefined>(undefined);
+  const [termsRefreshTick, setTermsRefreshTick] = useState<number>(0);
+  const [hasDraftTermsUpdateAvailable, setHasDraftTermsUpdateAvailable] = useState<boolean>(false);
+  const [termsSyncLoading, setTermsSyncLoading] = useState<boolean>(false);
+  const [adminMissingTermsNotifiedKey, setAdminMissingTermsNotifiedKey] = useState<string>('');
+
+  const builderMountStartRef = useRef<number>(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const prevStepIdRef = useRef<number>(activeStepId);
+  const lastSavedHashRef = useRef<string>('');
+  const isExplicitSavingRef = useRef<boolean>(false);
+  const hydratedSessionKeyRef = useRef<string>('');
+  const pendingBaselineCommitRef = useRef<boolean>(false);
+  const nextHubUidRef = useRef<number>(0);
+  const isInternalHubMutationRef = useRef<boolean>(false);
+  const loadedTermsTargetsRef = useRef<Set<string>>(new Set());
+  const pendingSaveRequestIdRef = useRef<{ workingHash: string; requestId: string } | null>(null);
+  const emailIdempotencyKeyRef = useRef<{ signature: string; key: string } | null>(null);
+
+  // Measure Quote Builder mount latency and subscribe to active background jobs (e.g. PDF exports)
   useEffect(() => {
+    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - builderMountStartRef.current;
+    performanceMonitor.recordTiming('QUOTE_BUILDER_INIT', targetQuoteId ? 'Load Existing Quote' : 'New Quote Builder', elapsed, {
+      targetQuoteId: targetQuoteId || undefined
+    });
+    const unsubJobs = backgroundJobService.subscribe(() => {
+      setActiveBackgroundJobs(backgroundJobService.getActiveJobs());
+    });
+    return () => unsubJobs();
+  }, []);
+
+  // Track step navigation timings
+  useEffect(() => {
+    if (prevStepIdRef.current !== activeStepId) {
+      const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      requestAnimationFrame(() => {
+        const dt = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+        performanceMonitor.recordTiming('QUOTE_STEP_SWITCH', `Step ${prevStepIdRef.current} -> Step ${activeStepId}`, dt);
+        prevStepIdRef.current = activeStepId;
+      });
+    }
+  }, [activeStepId]);
+
+  // Authoritative Quote Loading & Async Firestore Deep-Link Hydration (Respects Historical, Restore & Working States)
+  useEffect(() => {
+    let cancelled = false;
+    const sessionKey = targetQuoteId && !isNewQuoteMode
+      ? `quote:${targetQuoteId}:v${targetQuoteVersion ?? 'latest'}:${initialMode}`
+      : sourcePackageId
+        ? `pkg:${sourcePackageId}`
+        : `new:${prefillLead?.id || 'blank'}`;
+
+    if (hydratedSessionKeyRef.current === sessionKey) {
+      return;
+    }
+
     if (targetQuoteId && !isNewQuoteMode) {
-      const q = db.getQuoteByIdAuthorized(targetQuoteId, user);
-      if (!q) {
-        setLoadError(`Quotation record #${targetQuoteId} could not be found or you do not have permission to view it.`);
-        return;
-      }
-      setLoadError(null);
-      setActiveQuoteId(q.id);
-      setQuoteNumber(q.quoteNumber);
-      setQuoteVersion(q.version || 1);
-      setHasExplicitlySaved(true);
-      setAutoSaveStatus('SAVED');
-      setLastSavedTimestamp('Loaded');
+      const applyQuoteData = (q: Quotation, opts: { isRestore: boolean; isReadOnlyHist: boolean; viewingVer: number; highestVer: number; totalVers: number; restoredFrom?: number; authBase: Quotation }) => {
+        if (cancelled) return;
+        setLoadError(null);
+        setActiveQuoteId(q.id);
+        setQuoteNumber(q.quoteNumber);
+        setQuoteVersion(opts.viewingVer);
+        setLatestSavedVersion(opts.highestVer);
+        setVersionCount(opts.totalVers);
+        setRestoredFromVersion(opts.restoredFrom);
+        setIsReadOnlyHistoricalMode(opts.isReadOnlyHist);
+        setHasExplicitlySaved(true);
+        setAutoSaveStatus(opts.isRestore ? 'IDLE' : 'SAVED');
+        setAutoSaveError(null);
+        setLastSavedTimestamp(opts.isRestore ? '' : 'Loaded');
+        setLoadedQuoteStatus(q.status || 'DRAFT');
+        setLoadedIsLocked(opts.isRestore ? false : Boolean(q.isLocked || opts.isReadOnlyHist));
+        setTermsExceptionApproval(q.termsExceptionApproval);
+        setAuthoritativeSavedQuote(opts.authBase);
+        setOutputSyncError(null);
 
-      // Hydrate all fields from authoritative record
-      if (q.clientName) setClientName(q.clientName);
-      if (q.clientEmail) setClientEmail(q.clientEmail);
-      if (q.clientPhone) setClientPhone(q.clientPhone);
-      if (q.clientCompany) setClientCompany(q.clientCompany);
-      if (q.agentNotes) setAgentNotes(q.agentNotes);
-      if (q.currency) setCurrency(q.currency);
-      const rawLeadRef = q.leadId || q.linkedLeadId || '';
-      if (rawLeadRef) {
-        const matchedLead = db.getLeads().find(l => l.id === rawLeadRef || l.leadNumber === rawLeadRef);
-        setSelectedLeadId(matchedLead ? matchedLead.id : '');
-      } else {
-        setSelectedLeadId('');
-      }
-      if (q.travelStartDate) setStartDate(q.travelStartDate);
-      if (q.travelEndDate) setEndDate(q.travelEndDate);
-      if (q.travelStartDate && q.travelEndDate) {
-        setContextQuotationDates(q.travelStartDate, q.travelEndDate);
-      }
-      if (q.adultsCount) setAdultsCount(q.adultsCount);
-      if (q.childrenCount !== undefined) setChildrenCount(q.childrenCount);
-      if (q.infantsCount !== undefined) setInfantsCount(q.infantsCount);
-      if (q.childAges) setChildAges(q.childAges);
-      if (q.agentMarginType) setAgentMarginType(q.agentMarginType);
-      if (q.agentMarginValue !== undefined) {
-        const safeMarginVal = Math.max(0, Number(q.agentMarginValue) || 0);
-        setAgentMarginValue(safeMarginVal);
-        if ((q.agentMarginType || 'PERCENTAGE') === 'PERCENTAGE') {
-          setAgentMarkupPercent(safeMarginVal);
+        if (opts.isRestore) {
+          pendingBaselineCommitRef.current = false;
+          setBaselineSavedHash('__UNSAVED_RESTORE__');
+        } else {
+          pendingBaselineCommitRef.current = true;
         }
-      }
-      if (q.adminBasePriceUpdatedNotification) {
-        setAdminBasePriceUpdatedNotification(q.adminBasePriceUpdatedNotification);
-      }
-      const savedAdminMarginType = q.adminManualMarginType || (q as any).admin_manual_margin_type || q.pricingSnapshot?.adminManualMarginType || (q as any).pricing_snapshot?.adminManualMarginType;
-      if (savedAdminMarginType) setAdminManualMarginType(savedAdminMarginType);
-      const savedAdminMarginValue = q.adminManualMarginValue ?? (q as any).admin_manual_margin_value ?? q.pricingSnapshot?.adminManualMarginValue ?? (q as any).pricing_snapshot?.adminManualMarginValue;
-      if (savedAdminMarginValue !== undefined) setAdminManualMarginValue(savedAdminMarginValue);
-      const savedAdminMarginMode = q.adminMarginMode || (q as any).admin_margin_mode || q.pricingSnapshot?.adminMarginMode || (q as any).pricing_snapshot?.adminMarginMode;
-      if (savedAdminMarginMode === 'REPLACE' || savedAdminMarginMode === 'ADD') {
-        setAdminMarginMode(savedAdminMarginMode);
-      }
-      if (q.overallDiscountPercent !== undefined) setOverallDiscountPercent(q.overallDiscountPercent);
-      const loadedScope: QuotationScope = (q.quotationScope as QuotationScope) || (q.scope as QuotationScope) || 'HOTEL_LAND';
-      setQuotationScope(loadedScope);
-      setContextQuotationScope(loadedScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
-      setBrandingMode(q.brandingMode || q.brandingSnapshot?.mode || 'STANDARD');
-      if (q.title) setQuoteTitle(q.title);
-      if (q.sourcePackageId !== undefined) setSourcePackageId(q.sourcePackageId || null);
-      if (q.sourcePackageName !== undefined) setSourcePackageName(q.sourcePackageName || '');
-      if (q.dayDescriptions) {
-        setDayDescriptions(q.dayDescriptions);
-        setContextDayDescriptions(q.dayDescriptions);
-      }
-      if (q.dayOverviews) {
-        setDayOverviews(q.dayOverviews);
-        setContextDayOverviews(q.dayOverviews);
-      }
-      if (q.dayNotes) {
-        setDayNotes(q.dayNotes);
-        setContextDayNotes(q.dayNotes);
-      }
-      if (q.itineraryOverview || (q as any).narrative) {
-        setItineraryOverview(q.itineraryOverview || (q as any).narrative || '');
-        setContextItineraryOverview(q.itineraryOverview || (q as any).narrative || '');
-      }
-      if (q.inclusions) setContextInclusions(q.inclusions);
-      if (q.exclusions) setContextExclusions(q.exclusions);
-      if (q.importantInformation !== undefined) setContextImportantInformation(q.importantInformation || '');
-      if (q.cancellationPolicy !== undefined) setContextCancellationPolicy(q.cancellationPolicy || '');
 
-      const normalizeLoadedHubs = (hubsList: TripRouteHub[], scopeVal: QuotationScope): TripRouteHub[] => {
-        return (hubsList || []).map(h => {
-          if (scopeVal === 'LAND_ONLY') {
-            const snapshot = (h.hotelId || h.manualHotel || h.isManualHotel)
-              ? {
-                  accommodationType: (h.isManualHotel || h.manualHotel ? 'manual' : 'hotel') as any,
-                  hotelId: h.hotelId,
-                  roomTypeId: h.roomTypeId,
-                  roomsCount: h.roomsCount,
-                  isManualHotel: h.isManualHotel,
-                  manualHotel: h.manualHotel
-                }
-              : h.savedAccommodationSnapshot;
-            return {
-              ...h,
-              accommodationType: 'NO_ACCOMMODATION',
-              overriddenByLandOnly: true,
-              savedAccommodationSnapshot: snapshot,
-              hotelId: undefined,
-              roomTypeId: undefined,
-              isManualHotel: false,
-              manualHotel: undefined
-            };
-          }
-          if (h.accommodationType === 'none' || h.accommodationType === 'NO_ACCOMMODATION') {
-            return {
-              ...h,
-              accommodationType: 'NO_ACCOMMODATION',
-              hotelId: undefined,
-              roomTypeId: undefined,
-              isManualHotel: false,
-              manualHotel: undefined
-            };
-          }
-          return h;
-        });
+        const isLoadedFinalised = Boolean(
+          !opts.isRestore && (
+            q.isLocked ||
+            opts.isReadOnlyHist ||
+            q.termsStatus === 'QUOTATION_FINALISED' ||
+            (q.status as string) === 'ISSUED' ||
+            q.status === 'SENT' ||
+            q.status === 'APPROVED' ||
+            q.status === 'ACCEPTED' ||
+            q.status === 'CONVERTED'
+          )
+        );
+        if (isLoadedFinalised && q.commercialTermsSnapshot && q.commercialTermsSnapshot.entries?.length > 0) {
+          setLoadedFinalisedSnapshot(q.commercialTermsSnapshot);
+        } else {
+          setLoadedFinalisedSnapshot(null);
+        }
+
+        // Hydrate all fields from authoritative record or historical snapshot
+        setClientName(q.clientName || '');
+        setClientEmail(q.clientEmail || '');
+        setClientPhone(q.clientPhone || '');
+        setClientCompany(q.clientCompany || '');
+        setAgentNotes(q.agentNotes || '');
+        if (q.currency) setCurrency(q.currency);
+        const rawLeadRef = q.leadId || q.linkedLeadId || '';
+        if (rawLeadRef) {
+          const matchedLead = db.getLeads().find(l => l.id === rawLeadRef || l.leadNumber === rawLeadRef);
+          setSelectedLeadId(matchedLead ? matchedLead.id : rawLeadRef);
+        } else {
+          setSelectedLeadId('');
+        }
+        if (q.travelStartDate) setStartDate(q.travelStartDate);
+        if (q.travelEndDate) setEndDate(q.travelEndDate);
+        if (q.travelStartDate && q.travelEndDate) {
+          setContextQuotationDates(q.travelStartDate, q.travelEndDate);
+        }
+        if (q.adultsCount) setAdultsCount(q.adultsCount);
+        if (q.childrenCount !== undefined) setChildrenCount(q.childrenCount);
+        if (q.infantsCount !== undefined) setInfantsCount(q.infantsCount);
+        if (q.childAges) setChildAges(q.childAges);
+        setAgentMarginType(q.agentMarginType || (q as any).agent_margin_type || 'PERCENTAGE');
+        const safeMarginVal = Math.max(0, Number(q.agentMarginValue ?? (q as any).agent_margin_value ?? q.overallMarkupPercent ?? 0) || 0);
+        setAgentMarginValue(safeMarginVal);
+        setAgentMarkupPercent((q.agentMarginType || 'PERCENTAGE') === 'PERCENTAGE' ? safeMarginVal : 0);
+        setAdminBasePriceUpdatedNotification(q.adminBasePriceUpdatedNotification);
+
+        const savedAdminMarginType = q.adminManualMarginType || (q as any).admin_manual_margin_type || q.pricingSnapshot?.adminManualMarginType || (q as any).pricing_snapshot?.adminManualMarginType;
+        setAdminManualMarginType(savedAdminMarginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE');
+        const savedAdminMarginValue = q.adminManualMarginValue ?? (q as any).admin_manual_margin_value ?? q.pricingSnapshot?.adminManualMarginValue ?? (q as any).pricing_snapshot?.adminManualMarginValue;
+        setAdminManualMarginValue(Math.max(0, Number(savedAdminMarginValue ?? 0) || 0));
+        const savedAdminMarginMode = q.adminMarginMode || (q as any).admin_margin_mode || q.pricingSnapshot?.adminMarginMode || (q as any).pricing_snapshot?.adminMarginMode;
+        setAdminMarginMode(savedAdminMarginMode === 'REPLACE' ? 'REPLACE' : 'ADD');
+        setOverallDiscountPercent(Math.max(0, Number(q.overallDiscountPercent || 0) || 0));
+
+        setQuoteCompanyId((q as any).companyId || undefined);
+        setQuoteAgentId(q.agentId || q.createdBy || undefined);
+        setQuoteAgentAgency(q.agentAgency || undefined);
+        setQuoteProductLevelMarginEnabled(
+          q.productLevelMarginEnabled !== undefined
+            ? Boolean(q.productLevelMarginEnabled)
+            : (q.activeMarginMode ? q.activeMarginMode === 'PRODUCT_LEVEL' : undefined)
+        );
+        setQuoteAgentLevelMarginPercent(
+          typeof q.agentLevelMarginPercent === 'number' ? q.agentLevelMarginPercent : undefined
+        );
+
+        const loadedScope: QuotationScope = (q.quotationScope as QuotationScope) || (q.scope as QuotationScope) || 'HOTEL_LAND';
+        setQuotationScope(loadedScope);
+        setContextQuotationScope(loadedScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
+        setBrandingMode(q.brandingMode || q.brandingSnapshot?.mode || 'STANDARD');
+        if (q.title) setQuoteTitle(q.title);
+        if (q.sourcePackageId !== undefined) setSourcePackageId(q.sourcePackageId || null);
+        if (q.sourcePackageName !== undefined) setSourcePackageName(q.sourcePackageName || '');
+        if (q.dayDescriptions) {
+          setDayDescriptions(q.dayDescriptions);
+          setContextDayDescriptions(q.dayDescriptions);
+        }
+        if (q.dayOverviews) {
+          setDayOverviews(q.dayOverviews);
+          setContextDayOverviews(q.dayOverviews);
+        }
+        if (q.dayNotes) {
+          setDayNotes(q.dayNotes);
+          setContextDayNotes(q.dayNotes);
+        }
+        if (q.itineraryOverview || (q as any).narrative) {
+          setItineraryOverview(q.itineraryOverview || (q as any).narrative || '');
+          setContextItineraryOverview(q.itineraryOverview || (q as any).narrative || '');
+        }
+        if (q.inclusions) setContextInclusions(q.inclusions);
+        if (q.exclusions) setContextExclusions(q.exclusions);
+        if (q.importantInformation !== undefined) setContextImportantInformation(q.importantInformation || '');
+        if (q.cancellationPolicy !== undefined) setContextCancellationPolicy(q.cancellationPolicy || '');
+
+        const normalizeLoadedHubs = (hubsList: TripRouteHub[], scopeVal: QuotationScope): TripRouteHub[] => {
+          return (hubsList || []).map(h => {
+            if (scopeVal === 'LAND_ONLY') {
+              const snapshot = (h.hotelId || h.manualHotel || h.isManualHotel)
+                ? {
+                    accommodationType: (h.isManualHotel || h.manualHotel ? 'manual' : 'hotel') as any,
+                    hotelId: h.hotelId,
+                    roomTypeId: h.roomTypeId,
+                    roomsCount: h.roomsCount,
+                    isManualHotel: h.isManualHotel,
+                    manualHotel: h.manualHotel
+                  }
+                : h.savedAccommodationSnapshot;
+              return {
+                ...h,
+                accommodationType: 'NO_ACCOMMODATION',
+                overriddenByLandOnly: true,
+                savedAccommodationSnapshot: snapshot,
+                hotelId: undefined,
+                roomTypeId: undefined,
+                isManualHotel: false,
+                manualHotel: undefined
+              };
+            }
+            if (h.accommodationType === 'none' || h.accommodationType === 'NO_ACCOMMODATION') {
+              return {
+                ...h,
+                accommodationType: 'NO_ACCOMMODATION',
+                hotelId: undefined,
+                roomTypeId: undefined,
+                isManualHotel: false,
+                manualHotel: undefined
+              };
+            }
+            return h;
+          });
+        };
+
+        if (q.items) {
+          const cleanedLoadedItems = loadedScope === 'LAND_ONLY'
+            ? q.items.filter(it => !(
+                it.product.productType === 'Hotel' ||
+                it.product.productType === 'Hotel & Resort' ||
+                it.isManualHotel === true ||
+                it.product.accommodationType === 'manual' ||
+                (it.product as any).category === 'Hotels'
+              ))
+            : q.items;
+          setItems(cleanedLoadedItems);
+        }
+        if (q.routeHubs) {
+          const normalizedHubs = normalizeLoadedHubs(q.routeHubs, loadedScope);
+          routeHubsRef.current = normalizedHubs;
+          isInternalHubMutationRef.current = true;
+          setRouteHubs(normalizedHubs);
+          setContextRouteHubs(normalizedHubs);
+        }
+        if (q.options && q.options.length > 0) {
+          setOptionsData(prev => {
+            const next = { ...prev };
+            q.options!.forEach((opt, idx) => {
+              const optNum = opt.optionNumber || (idx + 1);
+              const optScope = (opt.scope as QuotationScope) || (optNum === 1 ? loadedScope : (next[optNum]?.scope || loadedScope));
+              const optRawItems = opt.items || [];
+              const optCleanedItems = optScope === 'LAND_ONLY'
+                ? optRawItems.filter(it => !(
+                    it.product.productType === 'Hotel' ||
+                    it.product.productType === 'Hotel & Resort' ||
+                    it.isManualHotel === true ||
+                    it.product.accommodationType === 'manual' ||
+                    (it.product as any).category === 'Hotels'
+                  ))
+                : optRawItems;
+              next[optNum] = {
+                ...next[optNum],
+                optionNumber: optNum,
+                title: opt.title || next[optNum]?.title || `Option ${optNum}`,
+                badge: opt.badge || next[optNum]?.badge || '',
+                hotelTier: opt.hotelTier || next[optNum]?.hotelTier || '',
+                scope: optScope,
+                items: optCleanedItems,
+                routeHubs: normalizeLoadedHubs(opt.routeHubs || [], optScope),
+                dayThemes: q.dayThemes || {}
+              };
+            });
+            return next;
+          });
+        }
+        if (q.dayThemes) {
+          setDayThemes(q.dayThemes);
+          setContextDayThemes(q.dayThemes);
+        }
+        if (q.destination) {
+          const qDestLower = q.destination.toLowerCase();
+          const allKnownDestinations = db.getDestinations();
+          const dMatch =
+            activeB2BDestinations.find(d =>
+              (d.name || '').toLowerCase() === qDestLower ||
+              (d.id || '').toLowerCase() === qDestLower
+            ) ||
+            allKnownDestinations.find(d =>
+              (d.name || '').toLowerCase() === qDestLower ||
+              (d.id || '').toLowerCase() === qDestLower
+            );
+          if (dMatch) setCurrentDestination(dMatch);
+        }
       };
 
-      if (q.items) {
-        const cleanedLoadedItems = loadedScope === 'LAND_ONLY'
-          ? q.items.filter(it => !(
-              it.product.productType === 'Hotel' ||
-              it.product.productType === 'Hotel & Resort' ||
-              it.isManualHotel === true ||
-              it.product.accommodationType === 'manual' ||
-              (it.product as any).category === 'Hotels'
-            ))
-          : q.items;
-        setItems(cleanedLoadedItems);
-      }
-      if (q.routeHubs && q.routeHubs.length > 0) {
-        const normalizedHubs = normalizeLoadedHubs(q.routeHubs, loadedScope);
-        setRouteHubs(normalizedHubs);
-        setContextRouteHubs(normalizedHubs);
-      }
-      if (q.options && q.options.length > 0) {
-        setOptionsData(prev => {
-          const next = { ...prev };
-          q.options!.forEach((opt, idx) => {
-            const optNum = opt.optionNumber || (idx + 1);
-            const optScope = (opt.scope as QuotationScope) || (optNum === 1 ? loadedScope : (next[optNum]?.scope || loadedScope));
-            const optRawItems = opt.items || [];
-            const optCleanedItems = optScope === 'LAND_ONLY'
-              ? optRawItems.filter(it => !(
-                  it.product.productType === 'Hotel' ||
-                  it.product.productType === 'Hotel & Resort' ||
-                  it.isManualHotel === true ||
-                  it.product.accommodationType === 'manual' ||
-                  (it.product as any).category === 'Hotels'
-                ))
-              : optRawItems;
-            next[optNum] = {
-              ...next[optNum],
-              optionNumber: optNum,
-              title: opt.title || next[optNum]?.title || `Option ${optNum}`,
-              badge: opt.badge || next[optNum]?.badge || '',
-              hotelTier: opt.hotelTier || next[optNum]?.hotelTier || '',
-              scope: optScope,
-              items: optCleanedItems,
-              routeHubs: normalizeLoadedHubs(opt.routeHubs || [], optScope),
-              dayThemes: q.dayThemes || {}
-            };
+      const hydrateQuote = async (initialQ: Quotation) => {
+        if (cancelled) return;
+        let q = initialQ;
+        const needsDehydratedRecovery =
+          !q.items ||
+          q.items.length === 0 ||
+          q.items.some((it: any) => Boolean(it?.__dehydratedToVersionId)) ||
+          (q.options || []).some((o: any) => Boolean((o as any)?.__dehydratedToVersionId));
+        if ((q.masterHydratedFromVersionId || q.latestVersionId) && needsDehydratedRecovery) {
+          const targetHydrateVer = q.masterHydratedFromVersionId || q.latestVersionId || Number(q.latestVersion || q.version || 1);
+          const hydratedMaster = await db.hydrateMasterQuotationFromVersionAsync(q.id, targetHydrateVer, user).catch(() => null);
+          if (cancelled) return;
+          if (hydratedMaster) q = hydratedMaster;
+        }
+
+        const versions = db.getQuotationVersions(q.id, user);
+        const highestVer = Math.max(versions[0]?.version || 0, q.latestVersion || 0, q.version || 1);
+        const desiredVer = targetQuoteVersion || highestVer;
+
+        // Reconstruct split sections on demand if target version isn't yet hydrated in memory
+        const desiredManifest = versions.find(v => v.version === desiredVer);
+        if (desiredManifest && desiredManifest.storageFormat === 'SPLIT_SECTIONS_V2' && !desiredManifest.hasHydratedSections) {
+          await db.loadQuotationVersionFullAsync(q.id, desiredVer, user).catch(() => null);
+          if (cancelled) return;
+        }
+        const hydratedVersions = db.getQuotationVersions(q.id, user);
+
+        if (initialMode === 'restore') {
+          const restoredDraft = await db.prepareRestoredWorkingQuoteAsync(q.id, desiredVer, user);
+          if (cancelled) return;
+          hydratedSessionKeyRef.current = sessionKey;
+          if (restoredDraft) {
+            applyQuoteData(restoredDraft, {
+              isRestore: true,
+              isReadOnlyHist: false,
+              viewingVer: highestVer,
+              highestVer,
+              totalVers: hydratedVersions.length || 1,
+              restoredFrom: restoredDraft.restoredFromVersion || desiredVer,
+              authBase: q
+            });
+            showBuilderToast(`Loaded v${desiredVer} into working draft (Unsaved — click Save Draft to create v${highestVer + 1})`, 'INFO');
+          } else {
+            applyQuoteData(q, {
+              isRestore: true,
+              isReadOnlyHist: false,
+              viewingVer: highestVer,
+              highestVer,
+              totalVers: hydratedVersions.length || 1,
+              restoredFrom: desiredVer,
+              authBase: q
+            });
+          }
+          return;
+        }
+
+        const isHistVer = Boolean(targetQuoteVersion && targetQuoteVersion < highestVer);
+        const isReadOnlyHist = initialMode === 'readonly' || isHistVer;
+        if (targetQuoteVersion && hydratedVersions.some(v => v.version === targetQuoteVersion)) {
+          const vSnap = hydratedVersions.find(v => v.version === targetQuoteVersion)!;
+          const snapshotQuote: Quotation = {
+            ...q,
+            version: vSnap.version,
+            title: vSnap.title || q.title,
+            destination: vSnap.destination || q.destination,
+            clientName: vSnap.clientName || q.clientName,
+            clientEmail: vSnap.clientEmail ?? q.clientEmail,
+            clientPhone: vSnap.clientPhone ?? q.clientPhone,
+            clientCompany: vSnap.clientCompany ?? q.clientCompany,
+            nationality: vSnap.nationality ?? q.nationality,
+            travelStyle: vSnap.travelStyle ?? q.travelStyle,
+            mealPlanPreference: vSnap.mealPlanPreference ?? q.mealPlanPreference,
+            travelStartDate: vSnap.travelStartDate || q.travelStartDate,
+            travelEndDate: vSnap.travelEndDate || q.travelEndDate,
+            totalPax: vSnap.totalPax ?? q.totalPax,
+            adultsCount: vSnap.adultsCount ?? q.adultsCount,
+            childrenCount: vSnap.childrenCount ?? q.childrenCount,
+            infantsCount: vSnap.infantsCount ?? q.infantsCount,
+            childAges: vSnap.childAges ?? q.childAges,
+            currency: vSnap.currency || q.currency,
+            items: (vSnap.items && vSnap.items.length > 0 ? vSnap.items : q.items),
+            routeHubs: (vSnap.routeHubs && vSnap.routeHubs.length > 0 ? vSnap.routeHubs : q.routeHubs),
+            dayThemes: vSnap.dayThemes ?? q.dayThemes,
+            dayDescriptions: vSnap.dayDescriptions ?? q.dayDescriptions,
+            dayOverviews: vSnap.dayOverviews ?? q.dayOverviews,
+            dayNotes: vSnap.dayNotes ?? q.dayNotes,
+            itineraryOverview: vSnap.itineraryOverview ?? q.itineraryOverview,
+            inclusions: vSnap.inclusions ?? q.inclusions,
+            exclusions: vSnap.exclusions ?? q.exclusions,
+            importantInformation: vSnap.importantInformation ?? q.importantInformation,
+            cancellationPolicy: vSnap.cancellationPolicy ?? q.cancellationPolicy,
+            options: vSnap.options ?? q.options,
+            activeOptionId: vSnap.activeOptionId ?? q.activeOptionId,
+            quotationScope: vSnap.quotationScope ?? q.quotationScope,
+            brandingMode: vSnap.brandingMode ?? q.brandingMode,
+            brandingSnapshot: vSnap.brandingSnapshot ?? q.brandingSnapshot,
+            commercialTermsSnapshot: vSnap.commercialTermsSnapshot ?? q.commercialTermsSnapshot,
+            termsAndConditions: vSnap.termsAndConditions ?? q.termsAndConditions,
+            authoritativeSnapshot: vSnap.authoritativeSnapshot ?? q.authoritativeSnapshot,
+            pricingSnapshot: vSnap.pricingSnapshot ?? q.pricingSnapshot,
+            theUnboundBaseSellingPrice: vSnap.theUnboundBaseSellingPrice ?? q.theUnboundBaseSellingPrice,
+            adminManualMarginType: vSnap.adminManualMarginType ?? vSnap.pricingSnapshot?.adminManualMarginType ?? q.adminManualMarginType,
+            adminManualMarginValue: vSnap.adminManualMarginValue ?? vSnap.pricingSnapshot?.adminManualMarginValue ?? q.adminManualMarginValue,
+            adminManualMarginAmount: vSnap.adminManualMarginAmount ?? vSnap.pricingSnapshot?.adminManualMarginAmount ?? q.adminManualMarginAmount,
+            adminMarginMode: vSnap.adminMarginMode ?? vSnap.pricingSnapshot?.adminMarginMode ?? q.adminMarginMode,
+            revisedSellingPrice: vSnap.revisedSellingPrice ?? vSnap.pricingSnapshot?.revisedSellingPrice ?? q.revisedSellingPrice,
+            productLevelMarginEnabled: vSnap.productLevelMarginEnabled ?? q.productLevelMarginEnabled,
+            agentLevelMarginPercent: vSnap.agentLevelMarginPercent ?? q.agentLevelMarginPercent,
+            activeMarginMode: vSnap.activeMarginMode ?? q.activeMarginMode,
+            companyId: (vSnap as any).companyId ?? (q as any).companyId,
+            agentAgency: (vSnap as any).agentAgency ?? q.agentAgency,
+            agentId: vSnap.agentId ?? q.agentId,
+            agentMarginType: vSnap.agentMarginType ?? q.agentMarginType,
+            agentMarginValue: vSnap.agentMarginValue ?? q.agentMarginValue,
+            agentMarginAmount: vSnap.agentMarginAmount ?? q.agentMarginAmount,
+            overallDiscountPercent: vSnap.overallDiscountPercent ?? q.overallDiscountPercent,
+            totalSellingPrice: vSnap.totalSellingPrice ?? vSnap.finalCustomerSellingPrice ?? q.totalSellingPrice,
+            finalCustomerSellingPrice:
+              vSnap.finalCustomerSellingPrice ??
+              vSnap.totalSellingPrice ??
+              vSnap.authoritativeSnapshot?.pricing?.finalCustomerSellingPrice ??
+              q.finalCustomerSellingPrice ??
+              q.totalSellingPrice
+          };
+          hydratedSessionKeyRef.current = sessionKey;
+          applyQuoteData(snapshotQuote, {
+            isRestore: false,
+            isReadOnlyHist,
+            viewingVer: vSnap.version,
+            highestVer,
+            totalVers: hydratedVersions.length || 1,
+            authBase: snapshotQuote
           });
-          return next;
-        });
+        } else {
+          hydratedSessionKeyRef.current = sessionKey;
+          applyQuoteData(q, {
+            isRestore: false,
+            isReadOnlyHist,
+            viewingVer: highestVer,
+            highestVer,
+            totalVers: hydratedVersions.length || 1,
+            authBase: q
+          });
+        }
+
+        // Sync Firestore versions metadata quietly in background without touching active working draft fields
+        db.fetchQuotationVersionsFromFirestoreAsync(q.id, user)
+          .then(remoteVers => {
+            if (cancelled || !remoteVers || remoteVers.length === 0) return;
+            const remoteHighest = remoteVers[0]?.version || highestVer;
+            setLatestSavedVersion(remoteHighest);
+            setVersionCount(remoteVers.length);
+          })
+          .catch(() => undefined);
+      };
+
+      const localQuote = db.getQuoteByIdAuthorized(targetQuoteId, user);
+      if (localQuote) {
+        void hydrateQuote(localQuote);
+      } else {
+        db.fetchQuotationByIdFromFirestore(targetQuoteId, user)
+          .then(remoteQuote => {
+            if (cancelled) return;
+            if (!remoteQuote) {
+              setLoadError(`Quotation record #${targetQuoteId} could not be found or you do not have permission to view it.`);
+              return;
+            }
+            void hydrateQuote(remoteQuote);
+          })
+          .catch(() => {
+            if (!cancelled) {
+              setLoadError(`Quotation record #${targetQuoteId} could not be found or you do not have permission to view it.`);
+            }
+          });
       }
-      if (q.dayThemes) {
-        setDayThemes(q.dayThemes);
-        setContextDayThemes(q.dayThemes);
-      }
-      if (q.destination) {
-        const qDestLower = q.destination.toLowerCase();
-        const dMatch = destinations.find(d => 
-          (d.name || '').toLowerCase() === qDestLower || 
-          (d.id || '').toLowerCase() === qDestLower
-        );
-        if (dMatch) setCurrentDestination(dMatch);
-      }
+      return () => {
+        cancelled = true;
+      };
     } else if (!targetQuoteId && (quoteSource === 'PACKAGE' || sourcePackageId)) {
+      hydratedSessionKeyRef.current = sessionKey;
       // Package Customization Mode: initialize fresh quote identity while preserving all loaded package state
       setActiveQuoteId(`QTE-${Date.now().toString(36).toUpperCase()}`);
       setQuoteNumber(`QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
@@ -993,6 +1393,12 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setHasExplicitlySaved(false);
       setLoadError(null);
       setAutoSaveStatus('IDLE');
+      setAutoSaveError(null);
+      setLoadedQuoteStatus('DRAFT');
+      setLoadedIsLocked(false);
+      setLoadedFinalisedSnapshot(null);
+      setTermsExceptionApproval(undefined);
+      setHasDraftTermsUpdateAvailable(false);
       setActiveStepId(1);
       setActiveViewTab('BUILDER');
       setActiveOptionTab(1);
@@ -1004,6 +1410,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setAdminManualMarginType('PERCENTAGE');
       setAdminManualMarginValue(0);
       setAdminMarginMode('ADD');
+      setQuoteCompanyId(undefined);
+      setQuoteAgentId(undefined);
+      setQuoteAgentAgency(undefined);
+      setQuoteProductLevelMarginEnabled(undefined);
+      setQuoteAgentLevelMarginPercent(undefined);
       if (!quoteTitle && sourcePackageName) {
         setQuoteTitle(sourcePackageName);
       }
@@ -1025,6 +1436,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         setQuotationScope(contextQuotationScope);
       }
       if (contextRouteHubs && contextRouteHubs.length > 0) {
+        routeHubsRef.current = contextRouteHubs;
         setRouteHubs(contextRouteHubs);
       }
       if (contextDayThemes) {
@@ -1054,11 +1466,18 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         }
       }));
     } else if (isNewQuoteMode) {
+      hydratedSessionKeyRef.current = sessionKey;
       // In new quote mode, start clean in-memory workspace without creating records
       setActiveQuoteId(`QTE-${Date.now().toString(36).toUpperCase()}`);
       setQuoteNumber(`QTE-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
       setQuoteVersion(1);
+      setLatestSavedVersion(1);
+      setVersionCount(0);
+      setRestoredFromVersion(undefined);
+      setIsReadOnlyHistoricalMode(false);
       setHasExplicitlySaved(false);
+      setBaselineSavedHash('');
+      pendingBaselineCommitRef.current = true;
       setLoadError(null);
       setAutoSaveStatus('IDLE');
       setBrandingMode('STANDARD');
@@ -1069,6 +1488,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       setAdminManualMarginType('PERCENTAGE');
       setAdminManualMarginValue(0);
       setAdminMarginMode('ADD');
+      setQuoteCompanyId(undefined);
+      setQuoteAgentId(undefined);
+      setQuoteAgentAgency(undefined);
+      setQuoteProductLevelMarginEnabled(undefined);
+      setQuoteAgentLevelMarginPercent(undefined);
 
       if (prefillLead) {
         setClientName(prefillLead.contactName || prefillLead.clientName || '');
@@ -1084,7 +1508,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         }
         if (prefillLead.destinationName) {
           const pLeadDestLower = prefillLead.destinationName.toLowerCase();
-          const dMatch = destinations.find(d => 
+          const dMatch = activeB2BDestinations.find(d => 
             (d.name || '').toLowerCase() === pLeadDestLower || 
             (d.id || '').toLowerCase() === (prefillLead.destinationId || '').toLowerCase()
           );
@@ -1250,7 +1674,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return DestinationRelevanceService.getInstance().getRelevantHubs(currentDestination.id);
   }, [currentDestination]);
 
-  // Structural equality helper to avoid spurious render loops
+  // Expanded structural equality helper to eliminate ping-pong re-render loops across routeHubs <-> context
   const areRouteHubsEqual = (a?: TripRouteHub[], b?: TripRouteHub[]): boolean => {
     if (a === b) return true;
     if (!a || !b) return !a && !b;
@@ -1260,11 +1684,21 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       return Boolean(
         other &&
         hub.id === other.id &&
+        (hub.itineraryHubOccurrenceId || hub.id) === (other.itineraryHubOccurrenceId || other.id) &&
+        (hub.accommodationStayId || '') === (other.accommodationStayId || '') &&
         hub.hubId === other.hubId &&
-        hub.nights === other.nights &&
+        (hub.hubName || '') === (other.hubName || '') &&
+        Number(hub.nights || 0) === Number(other.nights || 0) &&
         hub.accommodationType === other.accommodationType &&
-        hub.hotelId === other.hotelId &&
-        hub.roomTypeId === other.roomTypeId &&
+        (hub.hotelId || '') === (other.hotelId || '') &&
+        (hub.roomTypeId || '') === (other.roomTypeId || '') &&
+        Number(hub.roomsCount || 0) === Number(other.roomsCount || 0) &&
+        Boolean(hub.isManualHotel) === Boolean(other.isManualHotel) &&
+        (hub.manualHotel?.hotelName || '') === (other.manualHotel?.hotelName || '') &&
+        Number(hub.manualHotel?.ratePerNight || 0) === Number(other.manualHotel?.ratePerNight || 0) &&
+        (hub.notes || '') === (other.notes || '') &&
+        (hub.checkInDate || '') === (other.checkInDate || '') &&
+        (hub.checkOutDate || '') === (other.checkOutDate || '') &&
         hub.order === other.order
       );
     });
@@ -1277,36 +1711,21 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
     return [];
   });
+  const routeHubsRef = useRef<TripRouteHub[]>(routeHubs);
+  routeHubsRef.current = routeHubs;
 
-  // Sync route hubs with context when AI Planner loads or external context updates
+  // Single-direction sync ONLY when external context changes outside local handleUpdateRouteHubs
   useEffect(() => {
-    if (contextRouteHubs && contextRouteHubs.length > 0 && !areRouteHubsEqual(contextRouteHubs, routeHubs)) {
+    if (isInternalHubMutationRef.current) {
+      isInternalHubMutationRef.current = false;
+      return;
+    }
+    if (contextRouteHubs && contextRouteHubs.length > 0 && !areRouteHubsEqual(contextRouteHubs, routeHubsRef.current)) {
+      routeHubsRef.current = contextRouteHubs;
       setRouteHubs(contextRouteHubs);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextRouteHubs]);
-
-  // Keep QuotationContext synchronized when local routeHubs changes
-  useEffect(() => {
-    if (!areRouteHubsEqual(contextRouteHubs, routeHubs)) {
-      setContextRouteHubs(routeHubs);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [routeHubs]);
-
-  // Keep active option data synchronized with routeHubs changes safely
-  useEffect(() => {
-    setOptionsData(prevOpts => {
-      if (areRouteHubsEqual(prevOpts[activeOptionTab]?.routeHubs, routeHubs)) return prevOpts;
-      return {
-        ...prevOpts,
-        [activeOptionTab]: {
-          ...prevOpts[activeOptionTab],
-          routeHubs
-        }
-      };
-    });
-  }, [routeHubs, activeOptionTab]);
 
   // Keep hub hotel assignments synchronized when hotel items are removed from cart
   const prevCartItemsRef = useRef<QuoteItem[]>(items);
@@ -1329,21 +1748,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     const removedHotels = removedItems.filter(isHotelItemCheck);
     if (removedHotels.length > 0) {
       const remainingHotels = items.filter(isHotelItemCheck);
-      setRouteHubs(prevHubs => {
+      handleUpdateRouteHubs(prevHubs => {
         if (prevHubs.length === 0) return prevHubs;
         let changed = false;
         const nextHubs = prevHubs.map(h => {
           const wasRemovedForHub = removedHotels.some(rem =>
-            rem.hubId === h.id ||
-            rem.manualHotelDetails?.hubId === h.id ||
-            (h.hotelId && (rem.hotelId === h.hotelId || rem.product?.id?.includes(h.hotelId)))
+            doesHotelItemBelongToHubOccurrence(rem, h, prevHubs)
           );
           if (!wasRemovedForHub) return h;
 
           const stillHasHotelForHub = remainingHotels.some(rem =>
-            rem.hubId === h.id ||
-            rem.manualHotelDetails?.hubId === h.id ||
-            (h.hotelId && (rem.hotelId === h.hotelId || rem.product?.id?.includes(h.hotelId)))
+            doesHotelItemBelongToHubOccurrence(rem, h, prevHubs)
           );
           if (stillHasHotelForHub) return h;
 
@@ -1353,6 +1768,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             hotelId: undefined,
             roomTypeId: undefined,
             roomsCount: undefined,
+            accommodationStayId: undefined,
+            roomConfiguration: undefined,
             isManualHotel: false,
             manualHotel: undefined,
             accommodationType: 'NO_ACCOMMODATION' as const
@@ -1363,14 +1780,28 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
   }, [items, activeOptionTab]);
 
-  const handleUpdateRouteHubs: React.Dispatch<React.SetStateAction<TripRouteHub[]>> = (updaterOrValue) => {
-    setRouteHubs(prev => {
-      const next = typeof updaterOrValue === 'function'
-        ? (updaterOrValue as (p: TripRouteHub[]) => TripRouteHub[])(prev)
-        : updaterOrValue;
-      return next;
+  // Unified atomic route hub updater — updates local routeHubs, contextRouteHubs, and active option in one pass without render cascades or nested context setState calls
+  const handleUpdateRouteHubs: React.Dispatch<React.SetStateAction<TripRouteHub[]>> = useCallback((updaterOrValue) => {
+    const prev = routeHubsRef.current;
+    const next = typeof updaterOrValue === 'function'
+      ? (updaterOrValue as (p: TripRouteHub[]) => TripRouteHub[])(prev)
+      : updaterOrValue;
+    if (areRouteHubsEqual(prev, next)) return;
+    routeHubsRef.current = next;
+    isInternalHubMutationRef.current = true;
+    setRouteHubs(next);
+    setContextRouteHubs(next);
+    setOptionsData(prevOpts => {
+      if (areRouteHubsEqual(prevOpts[activeOptionTab]?.routeHubs, next)) return prevOpts;
+      return {
+        ...prevOpts,
+        [activeOptionTab]: {
+          ...prevOpts[activeOptionTab],
+          routeHubs: next
+        }
+      };
     });
-  };
+  }, [activeOptionTab, setContextRouteHubs]);
 
   // Predictable state transition when switching Land-Only Mode ON or OFF
   const handleChangeQuotationScope = (nextScope: QuotationScope) => {
@@ -1414,7 +1845,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           manualHotel: undefined
         };
       });
+      routeHubsRef.current = updated;
       setRouteHubs(updated);
+      isInternalHubMutationRef.current = true;
       setContextRouteHubs(updated);
       setOptionsData(prevOpts => ({
         ...prevOpts,
@@ -1442,7 +1875,9 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         }
         return h;
       });
+      routeHubsRef.current = updated;
       setRouteHubs(updated);
+      isInternalHubMutationRef.current = true;
       setContextRouteHubs(updated);
       setOptionsData(prevOpts => ({
         ...prevOpts,
@@ -1475,6 +1910,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [showDestinationChangeModal, setShowDestinationChangeModal] = useState<boolean>(false);
 
   const handleDestinationChange = (newDest: Destination) => {
+    if (!inventoryVisibilityService.isDestinationActiveForB2B(newDest)) {
+      showBuilderToast(`Destination "${newDest.name}" is not Active and is excluded from B2B sales.`, 'WARNING');
+      return;
+    }
     if (newDest.id === currentDestination.id) return;
 
     // Check if there are existing items or route hubs incompatible with new destination
@@ -1514,8 +1953,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     // Apply sanitized items and route hubs
     setItems(sanitized.cleanedItems);
-    setRouteHubs(sanitized.cleanedRouteHubs);
-    setContextRouteHubs(sanitized.cleanedRouteHubs);
+    handleUpdateRouteHubs(sanitized.cleanedRouteHubs);
 
     // Switch destination
     setCurrentDestination(pendingDestination);
@@ -1542,54 +1980,61 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [dayNotes, setDayNotes] = useState<Record<number, string>>(() => contextDayNotes || {});
   const [itineraryOverview, setItineraryOverview] = useState<string>(() => contextItineraryOverview || '');
 
+  const dayThemesRef = useRef(dayThemes);
+  dayThemesRef.current = dayThemes;
+  const dayDescriptionsRef = useRef(dayDescriptions);
+  dayDescriptionsRef.current = dayDescriptions;
+
   useEffect(() => {
     if (contextDayThemes && Object.keys(contextDayThemes).length > 0) {
-      setDayThemes(contextDayThemes);
+      setDayThemes(prev => (shallowRecordEqual(prev, contextDayThemes) ? prev : contextDayThemes));
     }
   }, [contextDayThemes]);
 
   useEffect(() => {
     if (contextDayDescriptions && Object.keys(contextDayDescriptions).length > 0) {
-      setDayDescriptions(contextDayDescriptions);
+      setDayDescriptions(prev => (shallowRecordEqual(prev, contextDayDescriptions) ? prev : contextDayDescriptions));
     }
   }, [contextDayDescriptions]);
 
   useEffect(() => {
     if (contextDayOverviews && Object.keys(contextDayOverviews).length > 0) {
-      setDayOverviews(contextDayOverviews);
+      setDayOverviews(prev => (shallowRecordEqual(prev, contextDayOverviews) ? prev : contextDayOverviews));
     }
   }, [contextDayOverviews]);
 
   useEffect(() => {
     if (contextDayNotes && Object.keys(contextDayNotes).length > 0) {
-      setDayNotes(contextDayNotes);
+      setDayNotes(prev => (shallowRecordEqual(prev, contextDayNotes) ? prev : contextDayNotes));
     }
   }, [contextDayNotes]);
 
   useEffect(() => {
     if (contextItineraryOverview) {
-      setItineraryOverview(contextItineraryOverview);
+      setItineraryOverview(prev => (prev === contextItineraryOverview ? prev : contextItineraryOverview));
     }
   }, [contextItineraryOverview]);
 
-  const handleUpdateDayThemes: React.Dispatch<React.SetStateAction<Record<number, string>>> = (updaterOrValue) => {
-    const next = typeof updaterOrValue === 'function' ? updaterOrValue(dayThemes) : updaterOrValue;
+  const handleUpdateDayThemes: React.Dispatch<React.SetStateAction<Record<number, string>>> = useCallback((updaterOrValue) => {
+    const next = typeof updaterOrValue === 'function' ? updaterOrValue(dayThemesRef.current) : updaterOrValue;
+    dayThemesRef.current = next;
     setDayThemes(next);
     setContextDayThemes(next);
-  };
+  }, [setContextDayThemes]);
 
-  const handleUpdateDayDescriptions: React.Dispatch<React.SetStateAction<Record<number, string>>> = (updaterOrValue) => {
-    const next = typeof updaterOrValue === 'function' ? updaterOrValue(dayDescriptions) : updaterOrValue;
+  const handleUpdateDayDescriptions: React.Dispatch<React.SetStateAction<Record<number, string>>> = useCallback((updaterOrValue) => {
+    const next = typeof updaterOrValue === 'function' ? updaterOrValue(dayDescriptionsRef.current) : updaterOrValue;
+    dayDescriptionsRef.current = next;
     setDayDescriptions(next);
     setDayOverviews(next);
     setContextDayDescriptions(next);
     setContextDayOverviews(next);
-  };
+  }, [setContextDayDescriptions, setContextDayOverviews]);
 
-  const handleUpdateItineraryOverview = (overview: string) => {
+  const handleUpdateItineraryOverview = useCallback((overview: string) => {
     setItineraryOverview(overview);
     setContextItineraryOverview(overview);
-  };
+  }, [setContextItineraryOverview]);
   const [selectedHubFilter, setSelectedHubFilter] = useState<string>('ALL');
 
   // Visa Section & Picker Modal State
@@ -1607,11 +2052,25 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     hubId?: string;
   } | null>(null);
   const [quickAddSearch, setQuickAddSearch] = useState('');
+  const [debouncedQuickAddSearch, setDebouncedQuickAddSearch] = useState('');
+  const [quickAddVisibleLimit, setQuickAddVisibleLimit] = useState<number>(30);
   const [quickAddCategory, setQuickAddCategory] = useState('ALL');
   const [filterByDayCityOnly, setFilterByDayCityOnly] = useState<boolean>(true);
   const [inspectingProduct, setInspectingProduct] = useState<Product | null>(null);
   const [calculatorProduct, setCalculatorProduct] = useState<Product | null>(null);
   const [editingRailItem, setEditingRailItem] = useState<QuoteItem | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedQuickAddSearch(quickAddSearch);
+      setQuickAddVisibleLimit(30);
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [quickAddSearch]);
+
+  useEffect(() => {
+    setQuickAddVisibleLimit(30);
+  }, [quickAddModalDay, quickAddCategory, filterByDayCityOnly]);
 
   // Save as Package Modal State
   const [isSavePackageModalOpen, setIsSavePackageModalOpen] = useState(false);
@@ -1639,7 +2098,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const [viewingSavedMasterPackage, setViewingSavedMasterPackage] = useState<B2BPackage | null>(null);
 
   // Helper to open quick add modal for a day slot
-  const handleOpenQuickAddModal = (slot: { dayNumber: number; dateString: string; hub?: TripRouteHub | null }) => {
+  const handleOpenQuickAddModal = useCallback((slot: { dayNumber: number; dateString: string; hub?: TripRouteHub | null }) => {
     const resolvedHubName = slot.hub?.hubName?.trim() || '';
     const resolvedHubId = slot.hub?.hubId?.trim() || '';
     setQuickAddModalDay({
@@ -1651,15 +2110,15 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setQuickAddSearch('');
     setQuickAddCategory('ALL');
     setFilterByDayCityOnly(true);
-  };
+  }, []);
 
   // Helper to view product details
-  const handleOpenProductDetails = (prod: Product) => {
+  const handleOpenProductDetails = useCallback((prod: Product) => {
     setInspectingProduct(prod);
     if (onViewProductDetails) {
       onViewProductDetails(prod);
     }
-  };
+  }, [onViewProductDetails]);
 
   // Dedicated Service Configurator State (Zero Generic Customizer Architecture)
   const [editingServiceItem, setEditingServiceItem] = useState<QuoteItem | null>(null);
@@ -1773,6 +2232,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     setQuotationScope(targetScope);
     setItems(targetItems);
+    routeHubsRef.current = targetHubs;
+    isInternalHubMutationRef.current = true;
     setRouteHubs(targetHubs);
     setContextRouteHubs(targetHubs);
     setDayThemes(targetThemes);
@@ -1796,11 +2257,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             const calcFn = canViewInternalCosts ? calculateProductPrice : calculateProductPriceForAgent;
             const calculation = calcFn(item.product, {
               productId: item.product.id,
+              productName: item.product.name,
+              itemId: item.id,
+              quoteId: activeQuoteId,
               pricingTier: user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C',
               adults: item.pax?.adults || adultsCount || 2,
               children: item.pax?.children || childrenCount || 0,
               infants: item.pax?.infants || infantsCount || 0,
               travelDate: item.travelDate || startDate,
+              serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
+              nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
+              roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
               targetCurrency: currency,
               selectedAddonIds: item.selectedAddonIds || []
             }) as any;
@@ -1879,6 +2346,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     // Switch to target option
     setQuotationScope(clonedScope);
     setItems(clonedItems);
+    routeHubsRef.current = clonedHubs;
+    isInternalHubMutationRef.current = true;
     setRouteHubs(clonedHubs);
     setContextRouteHubs(clonedHubs);
     setDayThemes(clonedThemes);
@@ -1890,7 +2359,19 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   };
 
   // Silent Product Add (Suppresses Cart Drawer popup in builder)
-  const handleAddProductToQuoteSilently = (product: Product, options?: any) => {
+  const handleAddProductToQuoteSilently = useCallback((product: Product, options?: any) => {
+    // Enforce strict ACTIVE destination visibility for any new product addition
+    const isManualHotelEntry = Boolean(options?.isManualHotel || (product as any)?.accommodationType === 'manual');
+    if (isManualHotelEntry) {
+      if (!inventoryVisibilityService.isDestinationActiveForB2B(currentDestination)) {
+        showBuilderToast(`Cannot add services: destination "${currentDestination.name}" is not Active.`, 'WARNING');
+        return;
+      }
+    } else if (!inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', product)) {
+      showBuilderToast(`Service "${product.name}" belongs to a non-active destination and cannot be added.`, 'WARNING');
+      return;
+    }
+
     // Japan Rail / Shinkansen products MUST only use Shinkansen Dynamic Journey Configurator
     if (isRailProduct(product)) {
       setInspectingProduct(product);
@@ -1898,7 +2379,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     }
     addProductToQuote(product, { ...options, openDrawer: false });
     showBuilderToast(`✓ Added "${product.name}" to Option ${activeOptionTab}`, 'SUCCESS');
-  };
+  }, [addProductToQuote, activeOptionTab, showBuilderToast, currentDestination]);
 
   // Generate Calendar Days
   const calendarDays = useMemo(() => {
@@ -2104,6 +2585,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Add Suggested Transfer Helper (Prefers Authoritative Master Products from availableProducts)
   const handleAddSuggestedTransfer = (s: TransferSuggestion) => {
+    if (!inventoryVisibilityService.isDestinationActiveForB2B(currentDestination)) {
+      showBuilderToast(`Cannot add suggested transfer: destination "${currentDestination.name}" is not Active.`, 'WARNING');
+      return;
+    }
     const targetDay = calendarDays.find(d => d.dayNumber === s.dayNumber);
     const dateStr = targetDay?.dateString || startDate;
 
@@ -2183,7 +2668,24 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const visaTotalSelling = useMemo(() => visaItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [visaItems]);
   const experienceTotalSelling = useMemo(() => experienceItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0), [experienceItems]);
 
-  const agencyPricingSettings = useMemo(() => db.resolveAgencyPricingSettings({ user }), [user]);
+  const quoteAgencyContext = useMemo(() => {
+    return resolveQuoteAgencyPricingContext(
+      {
+        companyId: quoteCompanyId,
+        agentAgency: quoteAgentAgency,
+        agentId: quoteAgentId,
+        productLevelMarginEnabled: quoteProductLevelMarginEnabled,
+        agentLevelMarginPercent: quoteAgentLevelMarginPercent
+      },
+      user
+    );
+  }, [quoteCompanyId, quoteAgentAgency, quoteAgentId, quoteProductLevelMarginEnabled, quoteAgentLevelMarginPercent, user]);
+
+  const agencyPricingSettings = useMemo(() => ({
+    productLevelMarginEnabled: quoteAgencyContext.productLevelMarginEnabled,
+    agentLevelMarginPercent: quoteAgencyContext.agentLevelMarginPercent,
+    activeMarginMode: quoteAgencyContext.activeMarginMode
+  }), [quoteAgencyContext]);
   const isProductLevelMarginActive = agencyPricingSettings.productLevelMarginEnabled !== false;
 
   const liveQuoteBreakdown = useMemo(() => {
@@ -2195,8 +2697,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       overallDiscountPercent: overallDiscountPercent || 0,
       userRole: user?.role,
       user,
-      companyId: user?.companyId,
-      agencyName: user?.agencyName,
+      companyId: quoteAgencyContext.companyId,
+      agencyName: quoteAgencyContext.agencyName,
       productLevelMarginEnabled: isProductLevelMarginActive,
       customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
       scope: quotationScope,
@@ -2212,6 +2714,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     agentMarginValue,
     overallDiscountPercent,
     user,
+    quoteAgencyContext.companyId,
+    quoteAgencyContext.agencyName,
     isProductLevelMarginActive,
     agencyPricingSettings.agentLevelMarginPercent,
     quotationScope,
@@ -2224,65 +2728,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
   const step7InternalBreakdown = canViewInternalCosts ? liveQuoteBreakdown : null;
 
   const baseFinalSellingPrice = useMemo(() => {
-    if (liveQuoteBreakdown && liveQuoteBreakdown.theUnboundBaseSellingPrice > 0) {
-      return liveQuoteBreakdown.theUnboundBaseSellingPrice;
+    if (liveQuoteBreakdown && (liveQuoteBreakdown.itemizedBreakdown.some(ib => !ib.isExcludedNoAccommodation) || liveQuoteBreakdown.theUnboundBaseSellingPrice > 0)) {
+      return roundCurrencyAmount(liveQuoteBreakdown.theUnboundBaseSellingPrice, currency);
     }
-
-    const rawSellingPrice = roundCurrencyAmount(
+    return roundCurrencyAmount(
       quotationScope === 'LAND_ONLY'
         ? effectivePricedItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0)
         : totalSellingPrice,
       currency
     );
-
-    if (canViewInternalCosts) {
-      if (step7InternalBreakdown && step7InternalBreakdown.adminFinalTotal !== undefined && step7InternalBreakdown.adminFinalTotal > 0) {
-        return step7InternalBreakdown.adminFinalTotal;
-      }
-      if (totalNetCost > 0) {
-        const adminMarginAmount = adminManualMarginType === 'PERCENTAGE'
-          ? roundCurrencyAmount(totalNetCost * ((adminManualMarginValue || 0) / 100), currency)
-          : roundCurrencyAmount(adminManualMarginValue || 0, currency);
-        const adminSurchargesTotal = roundCurrencyAmount(step7InternalBreakdown?.surchargesTotal || 0, currency);
-        const stage1PreDiscount = adminMarginMode === 'REPLACE'
-          ? roundCurrencyAmount(totalNetCost + adminMarginAmount + adminSurchargesTotal, currency)
-          : roundCurrencyAmount(rawSellingPrice + adminMarginAmount, currency);
-        const stage1Discount = (overallDiscountPercent || 0) > 0
-          ? roundCurrencyAmount(stage1PreDiscount * ((overallDiscountPercent || 0) / 100), currency)
-          : 0;
-        return Math.max(0, roundCurrencyAmount(stage1PreDiscount - stage1Discount, currency));
-      }
-    }
-
-    return rawSellingPrice;
-  }, [
-    liveQuoteBreakdown,
-    totalSellingPrice,
-    quotationScope,
-    effectivePricedItems,
-    adminManualMarginValue,
-    adminManualMarginType,
-    adminMarginMode,
-    totalNetCost,
-    canViewInternalCosts,
-    step7InternalBreakdown,
-    overallDiscountPercent,
-    currency
-  ]);
+  }, [liveQuoteBreakdown, totalSellingPrice, quotationScope, effectivePricedItems, currency]);
 
   const additionalMarginAmount = useMemo(() => {
-    if (liveQuoteBreakdown && (liveQuoteBreakdown.theUnboundBaseSellingPrice > 0 || liveQuoteBreakdown.partnerMarginAmount > 0)) {
+    if (liveQuoteBreakdown) {
       return roundCurrencyAmount(Math.max(0, liveQuoteBreakdown.partnerMarginAmount), currency);
     }
-    const safeVal = Math.max(0, Number(agentMarginValue) || 0);
-    if (agentMarginType === 'PERCENTAGE') {
-      return roundCurrencyAmount(baseFinalSellingPrice * (safeVal / 100), currency);
-    }
-    return roundCurrencyAmount(safeVal, currency);
-  }, [liveQuoteBreakdown, baseFinalSellingPrice, agentMarginType, agentMarginValue, currency]);
+    return 0;
+  }, [liveQuoteBreakdown, currency]);
 
   const finalCustomerSellingPrice = useMemo(() => {
-    if (liveQuoteBreakdown && liveQuoteBreakdown.finalPackagePrice > 0) {
+    if (liveQuoteBreakdown) {
       return Math.max(baseFinalSellingPrice, roundCurrencyAmount(liveQuoteBreakdown.finalPackagePrice, currency));
     }
     return Math.max(baseFinalSellingPrice, roundCurrencyAmount(baseFinalSellingPrice + additionalMarginAmount, currency));
@@ -2290,7 +2755,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   const finalClientPrice = finalCustomerSellingPrice;
 
-  // Dynamic 3-Option Calculations Engine
+  // Dynamic 3-Option Calculations Engine (reuses liveQuoteBreakdown for active option & fast-paths empty inactive options)
   const computedQuotationOptions: QuotationOption[] = useMemo(() => {
     return [1, 2, 3].map(optNum => {
       const isCurrentActiveOption = optNum === activeOptionTab;
@@ -2319,28 +2784,43 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           };
 
       const optItems = optState.items;
-      const optBreakdown = calculateQuoteInternalBreakdown({
-        items: optItems,
-        targetCurrency: currency,
-        agentMarginType: isCurrentActiveOption ? agentMarginType : 'PERCENTAGE',
-        agentMarginValue: isCurrentActiveOption ? Math.max(0, agentMarginValue) : Math.max(0, optState.agentMarkupPercent ?? 0),
-        overallDiscountPercent: optState.overallDiscountPercent ?? 0,
-        userRole: user?.role,
-        user,
-        companyId: user?.companyId,
-        agencyName: user?.agencyName,
-        productLevelMarginEnabled: isProductLevelMarginActive,
-        customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
-        scope: optState.scope,
-        routeHubs: optState.routeHubs,
-        ...(isCurrentActiveOption
-          ? {
-              adminManualMarginType,
-              adminManualMarginValue,
-              adminMarginMode
-            }
-          : {})
-      });
+      if (!isCurrentActiveOption && optItems.length === 0) {
+        return {
+          id: `opt-${optNum}`,
+          optionNumber: optNum,
+          title: optState.title,
+          badge: optState.badge,
+          hotelTier: optState.hotelTier,
+          scope: optState.scope,
+          items: optItems,
+          routeHubs: optState.routeHubs,
+          totalNetCost: 0,
+          totalSellingPrice: 0,
+          totalMargin: 0,
+          totalTaxes: 0
+        };
+      }
+
+      const optBreakdown = isCurrentActiveOption
+        ? liveQuoteBreakdown
+        : calculateQuoteInternalBreakdown({
+            items: optItems,
+            targetCurrency: currency,
+            agentMarginType: 'PERCENTAGE',
+            agentMarginValue: Math.max(0, optState.agentMarkupPercent ?? 0),
+            overallDiscountPercent: optState.overallDiscountPercent ?? 0,
+            userRole: user?.role,
+            user,
+            companyId: quoteAgencyContext.companyId,
+            agencyName: quoteAgencyContext.agencyName,
+            productLevelMarginEnabled: isProductLevelMarginActive,
+            customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
+            adminManualMarginType,
+            adminManualMarginValue,
+            adminMarginMode,
+            scope: optState.scope,
+            routeHubs: optState.routeHubs
+          });
 
       const optMarkupAmount = isCurrentActiveOption
         ? additionalMarginAmount
@@ -2367,6 +2847,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       };
     });
   }, [
+    liveQuoteBreakdown,
     effectivePricedItems,
     routeHubs,
     quotationScope,
@@ -2374,394 +2855,480 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     agentMarginValue,
     additionalMarginAmount,
     finalCustomerSellingPrice,
-    adminManualMarginType,
-    adminManualMarginValue,
-    adminMarginMode,
     overallDiscountPercent,
     optionsData,
     activeOptionTab,
     canViewInternalCosts,
     currency,
     user,
+    quoteAgencyContext.companyId,
+    quoteAgencyContext.agencyName,
     isProductLevelMarginActive,
-    agencyPricingSettings.agentLevelMarginPercent
+    agencyPricingSettings.agentLevelMarginPercent,
+    adminManualMarginType,
+    adminManualMarginValue,
+    adminMarginMode
   ]);
 
-  // Sync / Auto-Save Quote to AppDatabase
-  // Default explicit = true so all user action buttons (PDF, WhatsApp, Email, Convert Booking) always save & return the quote
-  const handleSaveDraft = (explicit = true): Quotation | null => {
-    if (isNewQuoteMode && !hasExplicitlySaved && !explicit) {
-      // In new quote mode, do not persist background timer auto-saves until user explicitly saves or triggers an action
-      return null;
+  // Lightweight deterministic dirty hash to skip redundant background auto-saves
+  const buildSaveStateHash = useCallback(() => {
+    const itemSig = items
+      .map(
+        it =>
+          `${it.id}:${it.product?.id}:${it.travelDate || ''}:${it.pax?.adults || 0}:${it.pax?.children || 0}:${it.pax?.infants || 0}:${it.calculation?.finalTotalSellingPrice || 0}:${it.agentAdditionalMarkupType || ''}:${it.agentAdditionalMarkupValue || 0}:${(it.selectedAddonIds || []).join(',')}:${it.serviceTime || ''}:${it.notes || ''}`
+      )
+      .join('|');
+    const hubSig = routeHubs
+      .map(
+        h =>
+          `${h.id}:${h.hubId}:${h.nights}:${h.accommodationType || ''}:${h.hotelId || ''}:${h.roomTypeId || ''}:${h.roomsCount || 1}:${h.manualHotel?.ratePerNight || 0}`
+      )
+      .join('|');
+    return [
+      activeQuoteId,
+      quoteTitle,
+      currentDestination?.id,
+      clientName,
+      clientEmail,
+      clientPhone,
+      clientCompany,
+      agentNotes,
+      selectedLeadId,
+      startDate,
+      endDate,
+      adultsCount,
+      childrenCount,
+      infantsCount,
+      currency,
+      quotationScope,
+      brandingMode,
+      quoteCompanyId || '',
+      quoteAgentId || '',
+      quoteAgencyContext.productLevelMarginEnabled ? '1' : '0',
+      quoteAgencyContext.agentLevelMarginPercent,
+      liveQuoteBreakdown?.surchargesTotal || 0,
+      agentMarginType,
+      agentMarginValue,
+      adminManualMarginType,
+      adminManualMarginValue,
+      adminMarginMode,
+      overallDiscountPercent,
+      itineraryOverview,
+      JSON.stringify(dayThemes),
+      JSON.stringify(dayDescriptions),
+      JSON.stringify(dayOverviews),
+      JSON.stringify(dayNotes),
+      itemSig,
+      hubSig
+    ].join('::');
+  }, [
+    activeQuoteId,
+    quoteTitle,
+    currentDestination?.id,
+    clientName,
+    clientEmail,
+    clientPhone,
+    clientCompany,
+    agentNotes,
+    selectedLeadId,
+    startDate,
+    endDate,
+    adultsCount,
+    childrenCount,
+    infantsCount,
+    currency,
+    quotationScope,
+    brandingMode,
+    quoteCompanyId,
+    quoteAgentId,
+    quoteAgencyContext.productLevelMarginEnabled,
+    quoteAgencyContext.agentLevelMarginPercent,
+    liveQuoteBreakdown?.surchargesTotal,
+    agentMarginType,
+    agentMarginValue,
+    adminManualMarginType,
+    adminManualMarginValue,
+    adminMarginMode,
+    overallDiscountPercent,
+    itineraryOverview,
+    dayThemes,
+    dayDescriptions,
+    dayOverviews,
+    dayNotes,
+    items,
+    routeHubs
+  ]);
+
+  const currentWorkingHash = buildSaveStateHash();
+
+  const previewUpdatedAtRef = useRef<{ hash: string; ts: string }>({
+    hash: '',
+    ts: new Date().toISOString()
+  });
+  if (previewUpdatedAtRef.current.hash !== currentWorkingHash) {
+    previewUpdatedAtRef.current = { hash: currentWorkingHash, ts: new Date().toISOString() };
+  }
+
+  useEffect(() => {
+    if (pendingBaselineCommitRef.current) {
+      pendingBaselineCommitRef.current = false;
+      setBaselineSavedHash(currentWorkingHash);
+      lastSavedHashRef.current = currentWorkingHash;
     }
-    setHasExplicitlySaved(true);
-    setAutoSaveStatus('SAVING');
-    try {
-      const groundItems = items.filter(it => {
-        const cat = (it.product?.category || '').toLowerCase();
-        const pType = (it.product?.productType || '').toLowerCase();
-        const sub = (it.product?.subcategory || '').toLowerCase();
-        const isTrf = Boolean((it.product as any).isTransfer) ||
-                      cat.includes('transfer') ||
-                      pType.includes('transfer') ||
-                      sub.includes('transfer') ||
-                      sub.includes('chauffeur') ||
-                      cat.includes('transport');
-        const isRail = isRailQuoteItem(it) || 
-                       cat === 'rail' || 
-                       Boolean(it.railJourneyDetails) ||
-                       it.product?.id === 'RAIL-JP-ORD-RESERVED' ||
-                       it.product?.id === 'RAIL-JP-GREEN-RESERVED';
-        return isTrf || isRail;
-      });
-      const totalGroundPrice = groundItems.reduce((sum, it) => sum + (it.calculation?.finalTotalSellingPrice || 0), 0);
+  }, [currentWorkingHash]);
 
-      const activeBreakdown = canViewInternalCosts
-        ? calculateQuoteInternalBreakdown({
-            items: effectivePricedItems,
-            targetCurrency: currency,
-            agentMarginType,
-            agentMarginValue,
-            overallDiscountPercent,
-            userRole: user?.role,
-            user,
-            companyId: user?.companyId,
-            agencyName: user?.agencyName,
-            productLevelMarginEnabled: isProductLevelMarginActive,
-            customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
-            scope: quotationScope,
-            routeHubs,
-            adminManualMarginType,
-            adminManualMarginValue,
-            adminMarginMode
-          })
-        : null;
-
-      const existingSaved = db.getQuoteByIdAuthorized(activeQuoteId, user);
-      const brandingSnapshot = buildAgencyBrandingSnapshotFromUser(user, existingSaved, brandingMode);
-
-      // Historical Quote Protection: If an existing finalized/saved quote's currency or FX rate is refreshed, increment version and preserve prior snapshot in versionHistory
-      let effectiveVersion = quoteVersion || 1;
-      let updatedVersionHistory = existingSaved?.versionHistory ? [...existingSaved.versionHistory] : [];
-      if (existingSaved?.currencyConversionSnapshot && explicit) {
-        const prevSnap = existingSaved.currencyConversionSnapshot;
-        const currSnapshotPreview = buildQuotationCurrencySnapshot({
-          quoteId: activeQuoteId,
-          quoteVersion: effectiveVersion,
-          items: effectivePricedItems,
-          targetCurrency: currency,
-          scope: quotationScope,
-          routeHubs,
-          userRole: user?.role,
-          user,
-          companyId: user?.companyId,
-          agencyName: user?.agencyName,
-          productLevelMarginEnabled: isProductLevelMarginActive,
-          customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
-          adminManualMarginType,
-          adminManualMarginValue,
-          adminMarginMode,
-          agentMarginType,
-          agentMarginValue,
-          overallDiscountPercent
-        });
-        const currencyChanged = prevSnap.targetCurrency !== currency;
-        const rateChanged = prevSnap.lineItems.some((prevLine, idx) => {
-          const currLine = currSnapshotPreview.lineItems[idx];
-          return currLine && prevLine.sourceCurrency === currLine.sourceCurrency && prevLine.targetCurrency === currLine.targetCurrency && Math.abs(prevLine.exchangeRate - currLine.exchangeRate) > 1e-9;
-        });
-        if (currencyChanged || rateChanged) {
-          updatedVersionHistory = [
-            {
-              version: existingSaved.version || 1,
-              updatedAt: existingSaved.updatedAt || new Date().toISOString(),
-              updatedBy: user?.name || existingSaved.agentName || 'Agent',
-              changesSummary: currencyChanged
-                ? `Currency switched from ${prevSnap.targetCurrency} to ${currency}`
-                : `FX rates refreshed for ${currency}`,
-              totalSellingPrice: existingSaved.finalCustomerSellingPrice ?? existingSaved.totalSellingPrice,
-              currencyConversionSnapshot: prevSnap
-            },
-            ...updatedVersionHistory
-          ];
-          effectiveVersion = (existingSaved.version || quoteVersion || 1) + 1;
-          setQuoteVersion(effectiveVersion);
-        }
-      }
-
-      const currencyConversionSnapshot = buildQuotationCurrencySnapshot({
-        quoteId: activeQuoteId,
-        quoteVersion: effectiveVersion,
-        items: effectivePricedItems,
-        targetCurrency: currency,
-        scope: quotationScope,
-        routeHubs,
-        userRole: user?.role,
-        user,
-        companyId: user?.companyId,
-        agencyName: user?.agencyName,
-        productLevelMarginEnabled: isProductLevelMarginActive,
-        customAgentMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
-        adminManualMarginType,
-        adminManualMarginValue,
-        adminMarginMode,
-        agentMarginType,
-        agentMarginValue,
-        overallDiscountPercent
-      });
-
-      const snapshotObject = {
-        baseFinalSellingPrice,
-        theUnboundBaseSellingPrice: baseFinalSellingPrice,
-        currency,
-        agentMarginType,
-        agentMarginValue,
-        agentMarginAmount: additionalMarginAmount,
-        productLevelAgentMarkupTotal: liveQuoteBreakdown?.productLevelAgentMarkupTotal ?? 0,
-        overallAgentMarkupAmount: liveQuoteBreakdown?.overallAgentMarkupAmount ?? additionalMarginAmount,
-        totalAgentAdditionalMarkupAmount: additionalMarginAmount,
-        finalCustomerSellingPrice,
-        hotelAccommodationTotal: currencyConversionSnapshot.hotelAccommodationTotal,
-        landPartTotal: currencyConversionSnapshot.landPartTotal,
-        calculatedAt: currencyConversionSnapshot.capturedAt,
-        pricingVersion: effectiveVersion,
-        itemsCount: items.length,
-        totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
-        adminManualMarginType,
-        adminManualMarginValue,
-        adminMarginMode,
-        revisedSellingPrice: baseFinalSellingPrice,
-        currencyConversionSnapshot
-      };
-
-      const activeQuote: Quotation = {
-        id: activeQuoteId,
-        quoteNumber,
-        version: effectiveVersion,
-        versionHistory: updatedVersionHistory.length > 0 ? updatedVersionHistory : existingSaved?.versionHistory,
-        title: quoteTitle || (sourcePackageName ? `${sourcePackageName} (${tripNights} Nights)` : `${currentDestination.name} Bespoke Journey (${tripNights} Nights)`),
-        destination: currentDestination.name,
-        sourcePackageId: sourcePackageId || undefined,
-        sourcePackageName: sourcePackageName || undefined,
-        quotationScope: quotationScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND',
-        items: effectivePricedItems,
-        currency,
-        overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
-        overallDiscountPercent: overallDiscountPercent || 0,
-        totalNetCost: canViewInternalCosts && activeBreakdown?.isComplete ? activeBreakdown.totalNettCost : 0,
-        totalSellingPrice: finalCustomerSellingPrice,
-        totalTaxes: canViewInternalCosts && activeBreakdown ? activeBreakdown.taxAmount : 0,
-        totalMargin: canViewInternalCosts && activeBreakdown ? activeBreakdown.totalMargin : additionalMarginAmount,
-        theUnboundBaseSellingPrice: baseFinalSellingPrice,
-        baseFinalSellingPrice,
-        base_final_selling_price: baseFinalSellingPrice,
-        baseFinalSellingPriceCurrency: currency,
-        base_final_selling_price_currency: currency,
-        adminManualMarginType,
-        admin_manual_margin_type: adminManualMarginType,
-        adminManualMarginValue,
-        admin_manual_margin_value: adminManualMarginValue,
-        adminMarginMode,
-        admin_margin_mode: adminMarginMode,
-        revisedSellingPrice: baseFinalSellingPrice,
-        revised_selling_price: baseFinalSellingPrice,
-        agentMarginType,
-        agent_margin_type: agentMarginType,
-        agentMarginValue,
-        agent_margin_value: agentMarginValue,
-        agentMarginAmount: additionalMarginAmount,
-        agent_margin_amount: additionalMarginAmount,
-        productLevelAgentMarkupTotal: liveQuoteBreakdown?.productLevelAgentMarkupTotal ?? 0,
-        overallAgentMarkupAmount: liveQuoteBreakdown?.overallAgentMarkupAmount ?? additionalMarginAmount,
-        totalAgentAdditionalMarkupAmount: additionalMarginAmount,
-        finalCustomerSellingPrice,
-        final_customer_selling_price: finalCustomerSellingPrice,
-        pricingCalculatedAt: currencyConversionSnapshot.capturedAt,
-        pricing_calculated_at: currencyConversionSnapshot.capturedAt,
-        pricingVersion: effectiveVersion,
-        pricing_version: effectiveVersion,
-        totalGroundLogisticsSnapshot: totalGroundPrice,
-        transactionCurrencySnapshot: currency,
-        pricingVersionSnapshot: effectiveVersion,
-        currencyConversionSnapshot,
-        pricingSnapshot: snapshotObject,
-        pricing_snapshot: snapshotObject,
-        clientName: clientName || 'Client Name Pending',
-        clientEmail: clientEmail || 'client@example.com',
-        clientPhone: clientPhone || '',
-        clientCompany: clientCompany || user?.agencyName || 'Direct B2B Client',
-        agentId: user?.id || 'usr-agent-01',
-        agentName: (brandingSnapshot as any).specialistName || brandingSnapshot.agencyName || user?.name || 'Travel Consultant',
-        agentAgency: brandingSnapshot.agencyName || user?.agencyName || 'Partner Agency',
-        agentEmail: brandingSnapshot.email || user?.email || '',
-        agentPhone: brandingSnapshot.phone || user?.phone || '',
-        agentLogoUrl: brandingSnapshot.logoUrl || user?.brandLogoUrl,
-        brandingMode,
-        brandingSnapshot,
-        agentNotes: agentNotes || '',
-        termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
-        status: 'DRAFT',
-        travelStartDate: startDate,
-        travelEndDate: endDate,
-        totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
-        adultsCount,
-        childrenCount,
-        infantsCount,
-        childAges,
-        nationality,
-        travelStyle,
-        mealPlanPreference,
-        roomingConfig: {
-          roomsCount: roomingConfig.roomsCount || 1,
-          adultsPerRoom: Math.max(1, Math.ceil((adultsCount || 2) / (roomingConfig.roomsCount || 1))),
-          cwbPerRoom: 0,
-          cnbPerRoom: 0,
-          infPerRoom: 0,
-          extraBed: Boolean(roomingConfig.extraBedRequired)
-        },
-        passengerBreakdown: passengerClassification,
-        visaAssistanceChoice,
-        feasibilityScore: feasibility.score,
-        options: computedQuotationOptions,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        leadId: selectedLeadId || '',
-        linkedLeadId: selectedLeadId || undefined,
-        scope: quotationScope,
-        routeHubs,
-        dayThemes,
-        dayDescriptions,
-        dayOverviews,
-        dayNotes,
-        itineraryOverview: itineraryOverview || undefined,
-        narrative: itineraryOverview || undefined,
-        inclusions: contextInclusions && contextInclusions.length > 0 ? contextInclusions : undefined,
-        exclusions: contextExclusions && contextExclusions.length > 0 ? contextExclusions : undefined,
-        importantInformation: contextImportantInformation || undefined,
-        cancellationPolicy: contextCancellationPolicy || undefined
-      };
-
-      db.saveQuote(activeQuote, user, 'EDITED');
-      setAutoSaveStatus('SAVED');
-      setLastSavedTimestamp(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-      return activeQuote;
-    } catch (e) {
-      console.error('Auto-save error:', e);
-      setAutoSaveStatus('IDLE');
-      return null;
+  const hasUnsavedChanges = useMemo(() => {
+    if (isReadOnlyHistoricalMode) return false;
+    if (restoredFromVersion !== undefined) return true;
+    if (!hasExplicitlySaved) {
+      return Boolean(
+        items.length > 0 ||
+        routeHubs.length > 0 ||
+        (clientName && clientName.trim() !== '') ||
+        (quoteTitle && quoteTitle.trim() !== '') ||
+        (agentNotes && agentNotes.trim() !== '')
+      );
     }
+    if (!baselineSavedHash) return false;
+    return currentWorkingHash !== baselineSavedHash;
+  }, [
+    isReadOnlyHistoricalMode,
+    restoredFromVersion,
+    hasExplicitlySaved,
+    baselineSavedHash,
+    currentWorkingHash,
+    items.length,
+    routeHubs.length,
+    clientName,
+    quoteTitle,
+    agentNotes
+  ]);
+
+  // Warn browser tab reload/close when unsaved changes exist (never silently autosaves)
+  useEffect(() => {
+    if (!hasUnsavedChanges || isReadOnlyHistoricalMode) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasUnsavedChanges, isReadOnlyHistoricalMode]);
+
+  const requestNavigationWithUnsavedGuard = (navAction: () => void) => {
+    if (hasUnsavedChanges && !isReadOnlyHistoricalMode) {
+      setPendingLeaveAction(() => navAction);
+      return;
+    }
+    navAction();
   };
 
-  // Auto-Save Effect when items or specs change (ONLY active once draft has been explicitly saved)
-  useEffect(() => {
-    if (!hasExplicitlySaved) return;
-    const timer = setTimeout(() => {
-      if (items.length > 0 || clientName) {
-        handleSaveDraft(false);
-      }
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [items, clientName, clientEmail, selectedLeadId, startDate, endDate, agentMarkupPercent, agentMarginType, agentMarginValue, adminManualMarginType, adminManualMarginValue, adminMarginMode, overallDiscountPercent, currency, routeHubs, quotationScope, brandingMode, hasExplicitlySaved]);
+  // Switch into working restored draft (non-persisting) or open another saved version from banner/modal
+  const handleSwitchBuilderVersion = async (qId: string, ver: number, targetMode: 'inspect' | 'readonly' | 'restore') => {
+    const target = db.getQuoteByIdAuthorized(qId, user);
+    if (!target) return;
+    hydratedSessionKeyRef.current = '';
+    const loadedSnap = await db.loadQuotationVersionFullAsync(target.id, ver, user).catch(() => null);
+    const versions = db.getQuotationVersions(target.id, user);
+    const highestVer = Math.max(versions[0]?.version || 0, target.latestVersion || 0, target.version || 1);
+
+    if (targetMode === 'restore') {
+      const restoredDraft = await db.prepareRestoredWorkingQuoteAsync(target.id, ver, user);
+      const qToApply = restoredDraft || target;
+      setRestoredFromVersion(ver);
+      setIsReadOnlyHistoricalMode(false);
+      setLoadedIsLocked(false);
+      setQuoteVersion(highestVer);
+      setLatestSavedVersion(highestVer);
+      setVersionCount(versions.length || 1);
+      setBaselineSavedHash('__UNSAVED_RESTORE__');
+      setAutoSaveStatus('IDLE');
+      setLastSavedTimestamp('');
+      if (qToApply.clientName) setClientName(qToApply.clientName);
+      if (qToApply.clientEmail !== undefined) setClientEmail(qToApply.clientEmail || '');
+      if (qToApply.clientPhone !== undefined) setClientPhone(qToApply.clientPhone || '');
+      if (qToApply.clientCompany !== undefined) setClientCompany(qToApply.clientCompany || '');
+      if (qToApply.currency) setCurrency(qToApply.currency);
+      if (qToApply.travelStartDate) setStartDate(qToApply.travelStartDate);
+      if (qToApply.travelEndDate) setEndDate(qToApply.travelEndDate);
+      if (qToApply.adultsCount) setAdultsCount(qToApply.adultsCount);
+      if (qToApply.childrenCount !== undefined) setChildrenCount(qToApply.childrenCount);
+      if (qToApply.infantsCount !== undefined) setInfantsCount(qToApply.infantsCount);
+      if (qToApply.title) setQuoteTitle(qToApply.title);
+      if (qToApply.items) setItems(qToApply.items);
+      if (qToApply.routeHubs) handleUpdateRouteHubs(qToApply.routeHubs);
+      if (qToApply.dayThemes) handleUpdateDayThemes(qToApply.dayThemes);
+      if (qToApply.dayDescriptions) handleUpdateDayDescriptions(qToApply.dayDescriptions);
+      if (qToApply.itineraryOverview !== undefined) handleUpdateItineraryOverview(qToApply.itineraryOverview || '');
+      if (qToApply.agentMarginType) setAgentMarginType(qToApply.agentMarginType);
+      const restoredAgentVal = Math.max(0, Number(qToApply.agentMarginValue ?? qToApply.overallMarkupPercent ?? 0) || 0);
+      setAgentMarginValue(restoredAgentVal);
+      setAgentMarkupPercent((qToApply.agentMarginType || 'PERCENTAGE') === 'PERCENTAGE' ? restoredAgentVal : 0);
+      setOverallDiscountPercent(Math.max(0, Number(qToApply.overallDiscountPercent || 0) || 0));
+      const restoredScope = (qToApply.quotationScope as QuotationScope) || (qToApply.scope as QuotationScope) || 'HOTEL_LAND';
+      setQuotationScope(restoredScope);
+      setContextQuotationScope(restoredScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
+      setBrandingMode(qToApply.brandingMode || qToApply.brandingSnapshot?.mode || 'STANDARD');
+      const rAdminType = qToApply.adminManualMarginType || (qToApply as any).admin_manual_margin_type || qToApply.pricingSnapshot?.adminManualMarginType;
+      setAdminManualMarginType(rAdminType === 'FIXED' ? 'FIXED' : 'PERCENTAGE');
+      const rAdminVal = qToApply.adminManualMarginValue ?? (qToApply as any).admin_manual_margin_value ?? qToApply.pricingSnapshot?.adminManualMarginValue;
+      setAdminManualMarginValue(Math.max(0, Number(rAdminVal ?? 0) || 0));
+      const rAdminMode = qToApply.adminMarginMode || (qToApply as any).admin_margin_mode || qToApply.pricingSnapshot?.adminMarginMode;
+      setAdminMarginMode(rAdminMode === 'REPLACE' ? 'REPLACE' : 'ADD');
+      setQuoteCompanyId((qToApply as any).companyId || undefined);
+      setQuoteAgentId(qToApply.agentId || qToApply.createdBy || undefined);
+      setQuoteAgentAgency(qToApply.agentAgency || undefined);
+      setQuoteProductLevelMarginEnabled(
+        qToApply.productLevelMarginEnabled !== undefined
+          ? Boolean(qToApply.productLevelMarginEnabled)
+          : (qToApply.activeMarginMode ? qToApply.activeMarginMode === 'PRODUCT_LEVEL' : undefined)
+      );
+      setQuoteAgentLevelMarginPercent(
+        typeof qToApply.agentLevelMarginPercent === 'number' ? qToApply.agentLevelMarginPercent : undefined
+      );
+      setAuthoritativeSavedQuote(qToApply);
+      showBuilderToast(`Loaded v${ver} into working draft (Unsaved — click Save Draft to create v${highestVer + 1})`, 'INFO');
+      return;
+    }
+
+    const vSnap = loadedSnap || versions.find(v => v.version === ver);
+    const readOnlyHist = targetMode === 'readonly' || ver < highestVer;
+    const snapQuote: Quotation = vSnap
+      ? {
+          ...target,
+          version: vSnap.version,
+          title: vSnap.title || target.title,
+          destination: vSnap.destination || target.destination,
+          clientName: vSnap.clientName || target.clientName,
+          clientEmail: vSnap.clientEmail ?? target.clientEmail,
+          clientPhone: vSnap.clientPhone ?? target.clientPhone,
+          clientCompany: vSnap.clientCompany ?? target.clientCompany,
+          travelStartDate: vSnap.travelStartDate || target.travelStartDate,
+          travelEndDate: vSnap.travelEndDate || target.travelEndDate,
+          adultsCount: vSnap.adultsCount ?? target.adultsCount,
+          childrenCount: vSnap.childrenCount ?? target.childrenCount,
+          infantsCount: vSnap.infantsCount ?? target.infantsCount,
+          currency: vSnap.currency || target.currency,
+          items: vSnap.items && vSnap.items.length > 0 ? vSnap.items : target.items,
+          routeHubs: vSnap.routeHubs && vSnap.routeHubs.length > 0 ? vSnap.routeHubs : target.routeHubs,
+          dayThemes: vSnap.dayThemes ?? target.dayThemes,
+          dayDescriptions: vSnap.dayDescriptions ?? target.dayDescriptions,
+          itineraryOverview: vSnap.itineraryOverview ?? target.itineraryOverview,
+          quotationScope: vSnap.quotationScope ?? target.quotationScope,
+          brandingMode: vSnap.brandingMode ?? target.brandingMode,
+          brandingSnapshot: vSnap.brandingSnapshot ?? target.brandingSnapshot,
+          commercialTermsSnapshot: vSnap.commercialTermsSnapshot ?? target.commercialTermsSnapshot,
+          termsAndConditions: vSnap.termsAndConditions ?? target.termsAndConditions,
+          authoritativeSnapshot: vSnap.authoritativeSnapshot ?? target.authoritativeSnapshot,
+          pricingSnapshot: vSnap.pricingSnapshot ?? target.pricingSnapshot,
+          theUnboundBaseSellingPrice: vSnap.theUnboundBaseSellingPrice ?? target.theUnboundBaseSellingPrice,
+          adminManualMarginType: vSnap.adminManualMarginType ?? vSnap.pricingSnapshot?.adminManualMarginType ?? target.adminManualMarginType,
+          adminManualMarginValue: vSnap.adminManualMarginValue ?? vSnap.pricingSnapshot?.adminManualMarginValue ?? target.adminManualMarginValue,
+          adminManualMarginAmount: vSnap.adminManualMarginAmount ?? vSnap.pricingSnapshot?.adminManualMarginAmount ?? target.adminManualMarginAmount,
+          adminMarginMode: vSnap.adminMarginMode ?? vSnap.pricingSnapshot?.adminMarginMode ?? target.adminMarginMode,
+          revisedSellingPrice: vSnap.revisedSellingPrice ?? vSnap.pricingSnapshot?.revisedSellingPrice ?? target.revisedSellingPrice,
+          companyId: (vSnap as any).companyId ?? (target as any).companyId,
+          agentAgency: (vSnap as any).agentAgency ?? target.agentAgency,
+          agentId: vSnap.agentId ?? target.agentId,
+          productLevelMarginEnabled: vSnap.productLevelMarginEnabled ?? target.productLevelMarginEnabled,
+          agentLevelMarginPercent: vSnap.agentLevelMarginPercent ?? target.agentLevelMarginPercent,
+          activeMarginMode: vSnap.activeMarginMode ?? target.activeMarginMode,
+          agentMarginType: vSnap.agentMarginType ?? target.agentMarginType,
+          agentMarginValue: vSnap.agentMarginValue ?? target.agentMarginValue,
+          agentMarginAmount: vSnap.agentMarginAmount ?? target.agentMarginAmount,
+          overallDiscountPercent: vSnap.overallDiscountPercent ?? target.overallDiscountPercent,
+          totalSellingPrice: vSnap.totalSellingPrice ?? target.totalSellingPrice,
+          finalCustomerSellingPrice: vSnap.totalSellingPrice ?? target.finalCustomerSellingPrice
+        }
+      : target;
+    setRestoredFromVersion(undefined);
+    setIsReadOnlyHistoricalMode(readOnlyHist);
+    setLoadedIsLocked(Boolean(snapQuote.isLocked || readOnlyHist));
+    setQuoteVersion(snapQuote.version || ver);
+    setLatestSavedVersion(highestVer);
+    setVersionCount(versions.length || 1);
+    setAuthoritativeSavedQuote(snapQuote);
+    setAutoSaveStatus('SAVED');
+    if (snapQuote.clientName) setClientName(snapQuote.clientName);
+    if (snapQuote.clientEmail !== undefined) setClientEmail(snapQuote.clientEmail || '');
+    if (snapQuote.currency) setCurrency(snapQuote.currency);
+    if (snapQuote.travelStartDate) setStartDate(snapQuote.travelStartDate);
+    if (snapQuote.travelEndDate) setEndDate(snapQuote.travelEndDate);
+    if (snapQuote.title) setQuoteTitle(snapQuote.title);
+    if (snapQuote.items) setItems(snapQuote.items);
+    if (snapQuote.routeHubs) handleUpdateRouteHubs(snapQuote.routeHubs);
+    if (snapQuote.dayThemes) handleUpdateDayThemes(snapQuote.dayThemes);
+    if (snapQuote.dayDescriptions) handleUpdateDayDescriptions(snapQuote.dayDescriptions);
+    setAgentMarginType(snapQuote.agentMarginType || 'PERCENTAGE');
+    const histAgentVal = Math.max(0, Number(snapQuote.agentMarginValue ?? snapQuote.overallMarkupPercent ?? 0) || 0);
+    setAgentMarginValue(histAgentVal);
+    setAgentMarkupPercent((snapQuote.agentMarginType || 'PERCENTAGE') === 'PERCENTAGE' ? histAgentVal : 0);
+    setOverallDiscountPercent(Math.max(0, Number(snapQuote.overallDiscountPercent || 0) || 0));
+    const histScope = (snapQuote.quotationScope as QuotationScope) || (snapQuote.scope as QuotationScope) || 'HOTEL_LAND';
+    setQuotationScope(histScope);
+    setContextQuotationScope(histScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
+    setBrandingMode(snapQuote.brandingMode || snapQuote.brandingSnapshot?.mode || 'STANDARD');
+    setAdminManualMarginType(snapQuote.adminManualMarginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE');
+    setAdminManualMarginValue(Math.max(0, Number(snapQuote.adminManualMarginValue ?? 0) || 0));
+    setAdminMarginMode(snapQuote.adminMarginMode === 'REPLACE' ? 'REPLACE' : 'ADD');
+    setQuoteCompanyId((snapQuote as any).companyId || undefined);
+    setQuoteAgentId(snapQuote.agentId || snapQuote.createdBy || undefined);
+    setQuoteAgentAgency(snapQuote.agentAgency || undefined);
+    setQuoteProductLevelMarginEnabled(
+      snapQuote.productLevelMarginEnabled !== undefined
+        ? Boolean(snapQuote.productLevelMarginEnabled)
+        : (snapQuote.activeMarginMode ? snapQuote.activeMarginMode === 'PRODUCT_LEVEL' : undefined)
+    );
+    setQuoteAgentLevelMarginPercent(
+      typeof snapQuote.agentLevelMarginPercent === 'number' ? snapQuote.agentLevelMarginPercent : undefined
+    );
+    pendingBaselineCommitRef.current = true;
+  };
 
   // Balance Nights Helper
   const handleAutoBalanceNights = () => {
     if (routeHubs.length === 0) return;
-    const count = routeHubs.length;
-    const baseNights = Math.floor(tripNights / count);
-    const remainder = tripNights % count;
-
-    setRouteHubs(prev =>
-      prev.map((hub, idx) => ({
+    handleUpdateRouteHubs(prev => {
+      if (prev.length === 0) return prev;
+      const count = prev.length;
+      const baseNights = Math.floor(tripNights / count);
+      const remainder = tripNights % count;
+      return prev.map((hub, idx) => ({
         ...hub,
         nights: idx === 0 ? baseNights + remainder : baseNights
-      }))
-    );
+      }));
+    });
   };
 
-  // Add Hub to Route
+  // Add Hub to Route (Repeated hubs are always permitted; each occurrence gets a unique itineraryHubOccurrenceId)
   const handleAddHubToRoute = (hubId: string) => {
     const hub = destinationHubs.find(h => h.id === hubId);
     if (!hub) return;
-    const newOrder = routeHubs.length + 1;
-    setRouteHubs(prev => [
+    const uid = `rhub-${Date.now()}-${++nextHubUidRef.current}`;
+    handleUpdateRouteHubs(prev => [
       ...prev,
       {
-        id: `rhub-${Date.now()}`,
+        id: uid,
+        itineraryHubOccurrenceId: uid,
         hubId: hub.id,
         hubName: hub.hubName || hub.name,
         nights: 2,
-        order: newOrder,
+        order: prev.length + 1,
         notes: `Stay in ${hub.hubName || hub.name}`
       }
     ]);
   };
 
-  // Remove Hub from Route
+  // Remove Hub from Route (removes only the deleted occurrence and its linked hotel items)
+  const handleDeleteHubOccurrenceItems = useCallback((deletedHub: TripRouteHub, currentHubsSnapshot?: TripRouteHub[]) => {
+    const hubsRef = currentHubsSnapshot || routeHubs;
+    const toRemove = items.filter(it => doesHotelItemBelongToHubOccurrence(it, deletedHub, hubsRef));
+    toRemove.forEach(it => removeProductFromQuote(it.id));
+  }, [items, routeHubs, removeProductFromQuote]);
+
   const handleRemoveHubFromRoute = (hubId: string) => {
-    if (routeHubs.length <= 1) return;
-    setRouteHubs(prev => 
-      prev.filter(h => h.id !== hubId).map((h, idx) => ({ ...h, order: idx + 1 }))
-    );
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
+    if (targetHub) {
+      handleDeleteHubOccurrenceItems(targetHub, routeHubs);
+    }
+    handleUpdateRouteHubs(prev => {
+      if (prev.length <= 1) return prev;
+      return prev.filter(h => h.id !== hubId && getHubOccurrenceId(h) !== hubId).map((h, idx) => ({ ...h, order: idx + 1 }));
+    });
   };
+
+  // Sync linked hotel QuoteItems when a specific hub occurrence's nights or stay dates change
+  const handleSyncHubStayToHotelItems = useCallback((updatedHub: TripRouteHub, nextHubsList: TripRouteHub[]) => {
+    const dates = computeStayDatesForHub(nextHubsList, getHubOccurrenceId(updatedHub), startDate, updatedHub.nights);
+    const matchingIds = new Set(
+      items.filter(it => doesHotelItemBelongToHubOccurrence(it, updatedHub, nextHubsList)).map(it => it.id)
+    );
+    if (matchingIds.size === 0) return;
+
+    const syncedItems = items.map(it => {
+      if (!matchingIds.has(it.id)) return it;
+      const nextNights = Math.max(1, updatedHub.nights || dates.nights || 1);
+      const nextManual = it.manualHotelDetails
+        ? {
+            ...it.manualHotelDetails,
+            numberOfNights: nextNights,
+            nights: nextNights,
+            checkInDate: dates.checkInIso,
+            checkOutDate: dates.checkOutIso
+          }
+        : it.manualHotelDetails;
+      return {
+        ...it,
+        nights: nextNights,
+        travelDate: dates.checkInIso,
+        checkInDate: dates.checkInIso,
+        checkOutDate: dates.checkOutIso,
+        manualHotelDetails: nextManual
+      };
+    });
+
+    const { updatedItems } = recalculateItemsWithLatestTariffs(
+      syncedItems,
+      adultsCount,
+      childrenCount,
+      infantsCount,
+      currency,
+      0
+    );
+    setItems(updatedItems);
+  }, [items, startDate, recalculateItemsWithLatestTariffs, adultsCount, childrenCount, infantsCount, currency, setItems]);
 
   // Adjust Hub Nights
   const handleAdjustHubNights = (hubId: string, delta: number) => {
-    setRouteHubs(prev =>
-      prev.map(h => {
-        if (h.id === hubId) {
-          const updated = Math.max(1, (h.nights || 1) + delta);
-          return { ...h, nights: updated };
+    let updatedHubSnapshot: TripRouteHub | null = null;
+    const nextHubs = routeHubs.map(h => {
+      if (h.id === hubId || getHubOccurrenceId(h) === hubId) {
+        const updatedNights = Math.max(1, (h.nights || 1) + delta);
+        let nextCheckOut = h.checkOutDate;
+        if (h.checkInDate) {
+          const ci = new Date(h.checkInDate);
+          if (!isNaN(ci.getTime())) {
+            ci.setDate(ci.getDate() + updatedNights);
+            nextCheckOut = ci.toISOString().split('T')[0];
+          }
         }
-        return h;
-      })
-    );
-  };
-
-  // Helper to compute check-in / check-out dates for a hub
-  const getHubDates = (hubOrder: number, hubNights: number) => {
-    let accumulated = 0;
-    for (let i = 0; i < hubOrder - 1; i++) {
-      accumulated += (routeHubs[i]?.nights || 1);
+        updatedHubSnapshot = {
+          ...h,
+          nights: updatedNights,
+          ...(nextCheckOut ? { checkOutDate: nextCheckOut } : {})
+        };
+        return updatedHubSnapshot;
+      }
+      return h;
+    });
+    handleUpdateRouteHubs(nextHubs);
+    if (updatedHubSnapshot) {
+      handleSyncHubStayToHotelItems(updatedHubSnapshot, nextHubs);
     }
-
-    const checkInDate = new Date(startDate);
-    checkInDate.setDate(checkInDate.getDate() + accumulated);
-    const checkInIso = checkInDate.toISOString().split('T')[0];
-
-    const checkOutDate = new Date(checkInDate);
-    checkOutDate.setDate(checkOutDate.getDate() + Math.max(1, hubNights || 1));
-    const checkOutIso = checkOutDate.toISOString().split('T')[0];
-
-    return {
-      checkInIso,
-      checkOutIso,
-      checkInFormatted: checkInDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      checkOutFormatted: checkOutDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-    };
   };
 
-  // Helper to remove hotel stay for a specific hub (sets hub to NO_ACCOMMODATION)
+  // Helper to compute check-in / check-out dates for a specific hub occurrence (supports hubId or numeric order)
+  const getHubDates = useCallback((hubIdOrOrder: string | number, hubNights?: number) => {
+    return computeStayDatesForHub(routeHubs, hubIdOrOrder, startDate, hubNights);
+  }, [routeHubs, startDate]);
+
+  // Helper to remove hotel stay for a specific hub occurrence (sets hub to NO_ACCOMMODATION without touching sibling hubs)
   const handleRemoveHotelForHub = (hubId: string) => {
-    const targetHub = routeHubs.find(h => h.id === hubId);
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
     if (!targetHub) return;
 
-    // Find and remove matching hotel items
-    const matchingItems = items.filter(it => 
-      isHotelQuoteItem(it) &&
-      (it.hubId === targetHub.id ||
-       it.manualHotelDetails?.hubId === targetHub.id ||
-       it.notes?.includes(targetHub.hubName) ||
-       (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
-    );
-
+    // Strictly remove matching hotel items ONLY for this occurrence
+    const matchingItems = items.filter(it => doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs));
     matchingItems.forEach(it => removeProductFromQuote(it.id));
 
     handleUpdateRouteHubs(prev =>
-      prev.map(h => (h.id === hubId ? {
+      prev.map(h => (h.id === targetHub.id ? {
         ...h,
         hotelId: undefined,
         roomTypeId: undefined,
         roomsCount: undefined,
+        accommodationStayId: undefined,
+        roomConfiguration: undefined,
         isManualHotel: false,
         manualHotel: undefined,
         accommodationType: 'NO_ACCOMMODATION',
@@ -2770,23 +3337,28 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     );
   };
 
-  // Add or Update Hotel Stay for a Hub with Room Type, Rooms Count, and Clean Final Price
+  // Add or Update Hotel Stay for a Specific Hub Occurrence (supports unique hub.id or order)
   const handleSelectHotelForHub = (
-    hubOrder: number, 
+    hubIdOrOrder: string | number, 
     hotel: Hotel | null, 
     roomTypeId?: string, 
     roomsCount: number = 1
   ) => {
-    const targetHub = routeHubs.find(h => h.order === hubOrder);
+    const targetHub =
+      typeof hubIdOrOrder === 'string'
+        ? routeHubs.find(h => h.id === hubIdOrOrder || getHubOccurrenceId(h) === hubIdOrOrder)
+        : routeHubs.find(h => h.order === hubIdOrOrder);
     if (!targetHub) return;
+
+    const targetOccId = getHubOccurrenceId(targetHub);
 
     if (!hotel) {
       handleRemoveHotelForHub(targetHub.id);
       return;
     }
 
-    // Calculate dates for this hub
-    const { checkInIso, checkOutIso } = getHubDates(hubOrder, targetHub.nights || 1);
+    // Calculate dates strictly for this hub occurrence
+    const { checkInIso, checkOutIso } = getHubDates(targetOccId, targetHub.nights || 1);
 
     // Selected room type and rate
     const selectedRoom = hotel.roomTypes?.find(r => r.id === roomTypeId) || hotel.roomTypes?.[0];
@@ -2794,14 +3366,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     const nights = targetHub.nights || 1;
     const safeRooms = Math.max(1, roomsCount || 1);
+    const stayId = targetHub.accommodationStayId || generateAccommodationStayId(targetOccId);
 
-    // Remove existing hotel items for this hub
-    const existingHotelItems = items.filter(it => 
-      isHotelQuoteItem(it) &&
-      (it.hubId === targetHub.id ||
-       it.manualHotelDetails?.hubId === targetHub.id ||
-       it.notes?.includes(targetHub.hubName) ||
-       (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)))
+    // Strictly remove existing hotel items ONLY for this hub occurrence
+    const existingHotelItems = items.filter(it =>
+      doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
 
@@ -2809,36 +3378,64 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     const occupancy = validateRoomOccupancy(selectedRoom, safeRooms, adultsCount, childrenCount, infantsCount);
 
     if (occupancy.isValid) {
-      // Create hotel product item (with 0 taxes & fees)
       const hotelProduct = hotelToProduct(hotel, selectedRoom, selectedRate, nights, safeRooms);
       
-      // Add for check-in date
       addProductToQuote(hotelProduct, {
         adults: adultsCount,
         children: childrenCount,
         infants: infantsCount,
         travelDate: checkInIso,
         hubId: targetHub.id,
+        itineraryHubOccurrenceId: targetOccId,
+        accommodationStayId: stayId,
         hotelId: hotel.id,
         roomTypeId: selectedRoom?.id,
+        mealPlanCode: selectedRate?.mealPlanCode,
         roomsCount: safeRooms,
         nights,
         checkInDate: checkInIso,
         checkOutDate: checkOutIso,
         isManualHotel: false,
         accommodationType: 'hotel',
-        notes: `${hotel.name} • ${selectedRoom?.roomName || 'Luxury Room'} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'} • ${nights} Nights in ${targetHub.hubName} [Check-in: ${checkInIso}, Check-out: ${checkOutIso}]`,
+        configuration_snapshot: {
+          roomTypeId: selectedRoom?.id,
+          roomTypeName: selectedRoom?.roomName,
+          mealPlanName: selectedRate?.mealPlanName,
+          roomsCount: safeRooms,
+          nights,
+          itineraryHubOccurrenceId: targetOccId,
+          accommodationStayId: stayId
+        },
+        notes: `${hotel.name} • ${selectedRoom?.roomName || 'Luxury Room'} • ${safeRooms} ${safeRooms > 1 ? 'Rooms' : 'Room'} • ${nights} Nights in ${targetHub.hubName} [Stay #${targetHub.order} | Check-in: ${checkInIso}, Check-out: ${checkOutIso}]`,
         openDrawer: false
       });
     }
 
-    // Update hub state
+    const roomConfiguration = {
+      roomTypeId: selectedRoom?.id,
+      roomTypeName: selectedRoom?.roomName,
+      roomsCount: safeRooms,
+      mealPlanCode: selectedRate?.mealPlanCode,
+      mealPlanName: selectedRate?.mealPlanName,
+      adults: adultsCount,
+      children: childrenCount,
+      infants: infantsCount
+    };
+
+    // Update ONLY this hub occurrence state
     handleUpdateRouteHubs(prev =>
       prev.map(h => (h.id === targetHub.id ? { 
-        ...h, 
+        ...h,
+        itineraryHubOccurrenceId: targetOccId,
+        accommodationStayId: stayId,
         hotelId: hotel.id, 
         roomTypeId: selectedRoom?.id,
+        mealPlanCode: selectedRate?.mealPlanCode,
+        mealPlan: selectedRate?.mealPlanName,
         roomsCount: safeRooms,
+        roomConfiguration,
+        checkInDate: checkInIso,
+        checkOutDate: checkOutIso,
         isManualHotel: false,
         accommodationType: 'hotel',
         overriddenByLandOnly: false,
@@ -2856,7 +3453,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Open Add Manual Hotel Modal
   const handleOpenAddManualHotel = (hubId?: string) => {
-    const targetHub = routeHubs.find(h => h.id === hubId) || routeHubs[0];
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId) || routeHubs[0];
     setManualHotelModalHubId(targetHub?.id);
     setManualHotelModalInitialData(targetHub?.manualHotel || targetHub?.savedAccommodationSnapshot?.manualHotel || null);
     setIsManualHotelModalOpen(true);
@@ -2864,31 +3461,36 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   // Open Edit Manual Hotel Modal
   const handleOpenEditManualHotel = (hubId: string) => {
-    const targetHub = routeHubs.find(h => h.id === hubId);
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
     if (!targetHub) return;
-    setManualHotelModalHubId(hubId);
+    setManualHotelModalHubId(targetHub.id);
     setManualHotelModalInitialData(targetHub.manualHotel || targetHub.savedAccommodationSnapshot?.manualHotel || null);
     setIsManualHotelModalOpen(true);
   };
 
-  // Save Manual Hotel & Rate (Strictly Quotation-Level • No Master DB modification)
+  // Save Manual Hotel & Rate (Strictly scoped to one itinerary hub occurrence)
   const handleSaveManualHotel = (manualData: ManualHotelDetails) => {
-    const targetHub = routeHubs.find(h => h.id === manualData.hubId || h.hubName.toLowerCase() === manualData.city.toLowerCase()) || routeHubs[0];
+    const explicitId = manualData.itineraryHubOccurrenceId || manualData.hubId;
+    const targetHub =
+      (explicitId
+        ? routeHubs.find(h => h.id === explicitId || getHubOccurrenceId(h) === explicitId)
+        : routeHubs.find(h => h.hubName.toLowerCase() === manualData.city.toLowerCase())) ||
+      routeHubs[0];
     if (!targetHub) return;
+
+    const targetOccId = getHubOccurrenceId(targetHub);
+    const stayId = manualData.accommodationStayId || targetHub.accommodationStayId || generateAccommodationStayId(targetOccId);
 
     const normalizedManualData: ManualHotelDetails = {
       ...manualData,
-      hubId: targetHub.id
+      hubId: targetHub.id,
+      itineraryHubOccurrenceId: targetOccId,
+      accommodationStayId: stayId
     };
 
-    // 1. Remove any previous hotel items for this hub
-    const existingHotelItems = items.filter(it => 
-      isHotelQuoteItem(it) &&
-      (it.hubId === targetHub.id ||
-       it.notes?.includes(targetHub.hubName) || 
-       (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)) || 
-       (it.manualHotelDetails?.hubId === targetHub.id) ||
-       (it.product.name || '').toLowerCase().includes((targetHub.hubName || '').toLowerCase()))
+    // 1. Strictly remove previous hotel items ONLY for this hub occurrence
+    const existingHotelItems = items.filter(it =>
+      doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
     existingHotelItems.forEach(it => removeProductFromQuote(it.id));
 
@@ -2897,7 +3499,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     // 3. Add to quotation items
     const mealDesc = normalizedManualData.mealPlanName || normalizedManualData.mealPlan;
-    const stayNote = `${normalizedManualData.hotelName} [Manual Accommodation] • ${normalizedManualData.roomType} • ${normalizedManualData.numberOfRooms} ${normalizedManualData.numberOfRooms > 1 ? 'Rooms' : 'Room'} • ${normalizedManualData.numberOfNights} Nights in ${targetHub.hubName} (${mealDesc}) [Check-in: ${normalizedManualData.checkInDate}, Check-out: ${normalizedManualData.checkOutDate}]`;
+    const stayNote = `${normalizedManualData.hotelName} [Manual Accommodation] • ${normalizedManualData.roomType} • ${normalizedManualData.numberOfRooms} ${(normalizedManualData.numberOfRooms || 1) > 1 ? 'Rooms' : 'Room'} • ${normalizedManualData.numberOfNights} Nights in ${targetHub.hubName} (${mealDesc}) [Stay #${targetHub.order} | Check-in: ${normalizedManualData.checkInDate}, Check-out: ${normalizedManualData.checkOutDate}]`;
 
     addProductToQuote(hotelProduct, {
       adults: adultsCount,
@@ -2905,8 +3507,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       infants: infantsCount,
       travelDate: normalizedManualData.checkInDate,
       hubId: targetHub.id,
+      itineraryHubOccurrenceId: targetOccId,
+      accommodationStayId: stayId,
       hotelId: hotelProduct.id,
       roomTypeId: 'manual-room',
+      mealPlanCode: normalizedManualData.mealPlan,
       roomsCount: normalizedManualData.numberOfRooms,
       nights: normalizedManualData.numberOfNights,
       checkInDate: normalizedManualData.checkInDate,
@@ -2918,16 +3523,32 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       openDrawer: false
     });
 
-    // 4. Update routeHubs state
+    const roomConfiguration = {
+      roomTypeId: 'manual-room',
+      roomTypeName: normalizedManualData.roomType,
+      roomsCount: normalizedManualData.numberOfRooms || 1,
+      mealPlanCode: normalizedManualData.mealPlan,
+      mealPlanName: normalizedManualData.mealPlanName || String(normalizedManualData.mealPlan),
+      adults: adultsCount,
+      children: childrenCount,
+      infants: infantsCount
+    };
+
+    // 4. Update ONLY this hub occurrence in routeHubs
     handleUpdateRouteHubs(prev =>
       prev.map(h => {
         if (h.id === targetHub.id) {
           return {
             ...h,
+            itineraryHubOccurrenceId: targetOccId,
+            accommodationStayId: stayId,
             hotelId: hotelProduct.id,
             roomTypeId: 'manual-room',
             roomsCount: normalizedManualData.numberOfRooms,
-            nights: normalizedManualData.numberOfNights,
+            nights: normalizedManualData.numberOfNights || h.nights,
+            checkInDate: normalizedManualData.checkInDate,
+            checkOutDate: normalizedManualData.checkOutDate,
+            roomConfiguration,
             isManualHotel: true,
             accommodationType: 'manual',
             overriddenByLandOnly: false,
@@ -2945,98 +3566,42 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         return h;
       })
     );
-
-    // 5. Add audit log record to current quote
-    try {
-      const allQuotes = db.getAllSavedQuotes();
-      const activeQuote = allQuotes.find(q => q.id === (activeQuoteId || quoteNumber));
-      if (activeQuote) {
-        const updatedQuote: Quotation = {
-          ...activeQuote,
-          activityLog: [
-            ...(activeQuote.activityLog || []),
-            {
-              id: `act-${Date.now()}`,
-              timestamp: new Date().toISOString(),
-              userName: user?.name || 'B2B Agent',
-              userRole: user?.role || 'B2B_AGENT',
-              action: 'PRICING_UPDATED' as const,
-              details: `Added manual hotel: ${manualData.hotelName} (${manualData.roomType}, ${manualData.numberOfRooms}R × ${manualData.numberOfNights}N @ ${manualData.rateCurrency} ${manualData.ratePerNight}/nt) for ${targetHub.hubName}`
-            }
-          ]
-        };
-        db.saveQuote(updatedQuote, user, 'EDITED');
-      }
-    } catch (e) {
-      console.warn('Manual hotel activity log notice:', e);
-    }
   };
 
-  // Remove Manual Hotel Stay for a Hub
+  // Remove Manual Hotel Stay ONLY for a Specific Hub Occurrence
   const handleRemoveManualHotel = (hubId: string) => {
-    const targetHub = routeHubs.find(h => h.id === hubId);
+    const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
     if (!targetHub) return;
 
-    const hotelName = targetHub.manualHotel?.hotelName || 'Manual Hotel';
-
-    // Remove matching items
-    const matchingItems = items.filter(it => 
-      isHotelQuoteItem(it) &&
-      (it.hubId === targetHub.id ||
-       it.notes?.includes(targetHub.hubName) || 
-       (targetHub.hotelId && it.product.id.includes(targetHub.hotelId)) || 
-       (it.manualHotelDetails?.hubId === targetHub.id))
+    const matchingItems = items.filter(it =>
+      doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
     matchingItems.forEach(it => removeProductFromQuote(it.id));
 
-    // Reset hub
     handleUpdateRouteHubs(prev =>
-      prev.map(h => (h.id === hubId ? { 
+      prev.map(h => (h.id === targetHub.id ? { 
         ...h, 
         hotelId: undefined, 
         roomTypeId: undefined, 
         roomsCount: undefined,
+        accommodationStayId: undefined,
+        roomConfiguration: undefined,
         isManualHotel: undefined,
         accommodationType: 'NO_ACCOMMODATION',
         overriddenByLandOnly: false,
         manualHotel: undefined
       } : h))
     );
-
-    // Audit log
-    try {
-      const allQuotes = db.getAllSavedQuotes();
-      const activeQuote = allQuotes.find(q => q.id === (activeQuoteId || quoteNumber));
-      if (activeQuote) {
-        const updatedQuote: Quotation = {
-          ...activeQuote,
-          activityLog: [
-            ...(activeQuote.activityLog || []),
-            {
-              id: `act-${Date.now()}`,
-              timestamp: new Date().toISOString(),
-              userName: user?.name || 'B2B Agent',
-              userRole: user?.role || 'B2B_AGENT',
-              action: 'EDITED' as const,
-              details: `Removed manual hotel: ${hotelName} from ${targetHub.hubName}`
-            }
-          ]
-        };
-        db.saveQuote(updatedQuote, user, 'EDITED');
-      }
-    } catch (e) {
-      console.warn('Manual hotel remove notice:', e);
-    }
   };
 
   // Open Dedicated Configurator for Service Item (Hotel -> Hotel Configurator, Rail -> Shinkansen Configurator, Activity -> Activity Configurator)
-  const handleOpenEditItem = (item: QuoteItem) => {
+  const handleOpenEditItem = useCallback((item: QuoteItem) => {
     if (isRailQuoteItem(item) || isRailProduct(item.product) || item.railJourneyDetails || (item.product.category || '').toLowerCase() === 'rail') {
       setEditingRailItem(item);
     } else {
       setEditingServiceItem(item);
     }
-  };
+  }, []);
 
   // Validate that all items have valid exchange rates and live tariffs before final quote generation
   const validateFxBeforeFinalGeneration = (): boolean => {
@@ -3065,61 +3630,823 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return true;
   };
 
-  // Download PDF Action
-  const handleDownloadPDF = () => {
-    if (!validateFxBeforeFinalGeneration()) return;
-    const saved = handleSaveDraft(true);
-    if (!saved) return;
-    try {
-      downloadQuotationPDF({
-        quote: saved,
-        agentName: (saved.brandingSnapshot as any)?.specialistName || saved.brandingSnapshot?.agencyName || saved.agentName || user?.name || 'Travel Specialist',
-        agentAgency: saved.brandingSnapshot?.agencyName || saved.agentAgency || user?.agencyName || 'Partner Travel Agency',
-        agentEmail: saved.brandingSnapshot?.email || saved.agentEmail || user?.email || '',
-        agentPhone: saved.brandingSnapshot?.phone || saved.agentPhone || user?.phone || '',
-        agentLogoUrl: saved.brandingSnapshot?.logoUrl || saved.agentLogoUrl || user?.brandLogoUrl,
-        brandingMode: saved.brandingMode || brandingMode,
-        leadId: selectedLeadId || saved.leadId
+  // =========================================================================
+  // DESTINATION-WISE COMMERCIAL QUOTATION TERMS RESOLUTION & ENFORCEMENT
+  // =========================================================================
+  const canManageDestinationTerms = Boolean(
+    user &&
+    (user.role === 'ADMIN' ||
+      (user as any).role === 'SUPER_ADMIN' ||
+      user.role === 'DMC_STAFF' ||
+      (user.role === 'TEAM_MEMBER' && user.permissions?.cmsContent?.enabled !== false))
+  );
+  const isAdminTermsApprover = Boolean(
+    user &&
+    (user.role === 'ADMIN' || (user as any).role === 'SUPER_ADMIN' || user.role === 'DMC_STAFF')
+  );
+
+  const extractedTermsTargets = useMemo(() => {
+    return destinationTermsService.extractQuotationDestinationTargets({
+      destinationId: currentDestination?.id,
+      destinationName: currentDestination?.name,
+      routeHubs,
+      items
+    });
+  }, [currentDestination?.id, currentDestination?.name, routeHubs, items]);
+
+  const termsTargetSignature = useMemo(() => {
+    return extractedTermsTargets.map((t) => t.targetId).join('|');
+  }, [extractedTermsTargets]);
+
+  const isQuoteTermsFinalised = Boolean(
+    loadedFinalisedSnapshot &&
+    loadedFinalisedSnapshot.entries.length > 0 &&
+    (loadedIsLocked ||
+      loadedQuoteStatus === 'ISSUED' ||
+      loadedQuoteStatus === 'SENT' ||
+      loadedQuoteStatus === 'APPROVED' ||
+      loadedQuoteStatus === 'ACCEPTED' ||
+      loadedQuoteStatus === 'CONVERTED')
+  );
+
+  // Targeted Firestore read ONLY for newly added destination(s) / route hubs (prevents loading-spinner flicker on hub edits)
+  useEffect(() => {
+    if (isQuoteTermsFinalised) return;
+    let cancelled = false;
+    const targetIds = extractedTermsTargets.map((t) => t.targetId);
+    if (targetIds.length === 0) return;
+
+    const missingTargetIds = targetIds.filter(id => !loadedTermsTargetsRef.current.has(id));
+    if (missingTargetIds.length === 0) return;
+
+    setTermsSyncLoading(true);
+    destinationTermsService
+      .loadPublishedTermsForTargetsAsync(missingTargetIds)
+      .then(() => {
+        if (!cancelled) {
+          missingTargetIds.forEach(id => loadedTermsTargetsRef.current.add(id));
+          setTermsRefreshTick((n) => n + 1);
+          setTermsSyncLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTermsSyncLoading(false);
       });
-      // Auto-schedule Google Calendar 24h Quote Follow-Up SLA
-      googleCalendarAutomation.triggerQuoteFollowUpSLA(saved, user);
-    } catch (err) {
-      console.error('PDF export error:', err);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [termsTargetSignature, isQuoteTermsFinalised]);
+
+  // Listen for Admin CMS publication updates while a Draft quotation is open
+  useEffect(() => {
+    return destinationTermsService.subscribe(() => {
+      if (isQuoteTermsFinalised) return;
+      setHasDraftTermsUpdateAvailable(true);
+      setTermsRefreshTick((n) => n + 1);
+    });
+  }, [isQuoteTermsFinalised]);
+
+  // Clear stale Admin exception override whenever itinerary destinations change
+  useEffect(() => {
+    if (!termsExceptionApproval || isQuoteTermsFinalised) return;
+    const targetIdSet = new Set(extractedTermsTargets.map((t) => t.targetId));
+    const stillMatches = termsExceptionApproval.missingDestinationIds.some((id) => targetIdSet.has(id));
+    if (!stillMatches) {
+      setTermsExceptionApproval(undefined);
+    }
+  }, [termsTargetSignature, isQuoteTermsFinalised]);
+
+  const termsResolution = useMemo<{
+    isImmutableFrozen: boolean;
+    readiness: DestinationTermsReadinessResult;
+  }>(() => {
+    if (isQuoteTermsFinalised && loadedFinalisedSnapshot) {
+      return {
+        isImmutableFrozen: true,
+        readiness: {
+          termsStatus: 'QUOTATION_FINALISED',
+          canFinalise: true,
+          canExportCompleteQuote: true,
+          missingTargets: [],
+          resolvedEntries: loadedFinalisedSnapshot.entries,
+          snapshot: loadedFinalisedSnapshot
+        }
+      };
+    }
+
+    const readiness = destinationTermsService.evaluateQuotationCommercialTerms({
+      quoteId: activeQuoteId,
+      quoteVersion,
+      destinationId: currentDestination?.id,
+      destinationName: currentDestination?.name,
+      routeHubs,
+      items,
+      user,
+      isFinalised: false,
+      termsExceptionApproval
+    });
+
+    return {
+      isImmutableFrozen: false,
+      readiness
+    };
+  }, [
+    isQuoteTermsFinalised,
+    loadedFinalisedSnapshot,
+    activeQuoteId,
+    quoteVersion,
+    currentDestination?.id,
+    currentDestination?.name,
+    routeHubs,
+    items,
+    user,
+    termsExceptionApproval,
+    termsRefreshTick
+  ]);
+
+  const handleRefreshDraftTerms = useCallback(async () => {
+    const targetIds = extractedTermsTargets.map((t) => t.targetId);
+    if (targetIds.length === 0) return;
+    setTermsSyncLoading(true);
+    try {
+      await destinationTermsService.loadPublishedTermsForTargetsAsync(targetIds, true);
+      setHasDraftTermsUpdateAvailable(false);
+      setTermsRefreshTick((n) => n + 1);
+      showBuilderToast('Destination Commercial Quotation Terms refreshed from latest published CMS configuration.', 'SUCCESS');
+    } finally {
+      setTermsSyncLoading(false);
+    }
+  }, [extractedTermsTargets]);
+
+  const handleNotifyAdminMissingTerms = useCallback(async () => {
+    if (termsResolution.readiness.missingTargets.length === 0) return;
+    await destinationTermsService.notifyAdminMissingTermsAsync({
+      quoteId: activeQuoteId,
+      quoteNumber,
+      missingTargets: termsResolution.readiness.missingTargets,
+      user
+    });
+    setAdminMissingTermsNotifiedKey(termsTargetSignature);
+    showBuilderToast(
+      `Admin notified to configure Commercial Quotation Terms for: ${termsResolution.readiness.missingTargets.map((m) => m.targetName).join(', ')}`,
+      'SUCCESS'
+    );
+  }, [activeQuoteId, quoteNumber, termsResolution.readiness.missingTargets, termsTargetSignature, user]);
+
+  const handleApproveTermsException = useCallback((reason: string) => {
+    if (!isAdminTermsApprover) {
+      showBuilderToast('Only Admins can approve a Commercial Quotation Terms exception.', 'WARNING');
+      return;
+    }
+    const cleanReason = (reason || '').trim();
+    if (cleanReason.length < 5) {
+      showBuilderToast('Please enter a mandatory approval reason (minimum 5 characters).', 'WARNING');
+      return;
+    }
+    const missing = termsResolution.readiness.missingTargets;
+    const approval: QuotationTermsExceptionApproval = {
+      approved: true,
+      approvedBy: user?.name || user?.email || 'Admin',
+      approvedByEmail: user?.email || undefined,
+      approvedAt: new Date().toISOString(),
+      reason: cleanReason,
+      missingDestinationIds: missing.map((m) => m.targetId),
+      missingDestinationNames: missing.map((m) => m.targetName)
+    };
+    setTermsExceptionApproval(approval);
+    showBuilderToast('Admin exception approved for missing destination terms.', 'SUCCESS');
+  }, [isAdminTermsApprover, termsResolution.readiness.missingTargets, user]);
+
+  const validateTermsBeforeExportOrFinalise = (): boolean => {
+    if (termsResolution.readiness.canExportCompleteQuote) return true;
+    const missingNames = termsResolution.readiness.missingTargets.map((t) => t.targetName).join(', ');
+    showBuilderToast(
+      `Commercial Quotation Terms are not configured for: ${missingNames || currentDestination.name}. Configure destination terms or obtain Admin exception approval before exporting or finalising.`,
+      'WARNING'
+    );
+    setActiveStepId(7);
+    return false;
+  };
+
+  // Authoritative central draft builder for all 7 Output Options
+  const buildActiveQuotationDraft = (modeOverride?: QuoteBrandingMode): Quotation => {
+    const existingSaved = db.getQuoteByIdAuthorized(activeQuoteId, user);
+    const activeBrandMode: QuoteBrandingMode = modeOverride || brandingMode;
+    const brandSnap = buildAgencyBrandingSnapshotFromUser(user, existingSaved || authoritativeSavedQuote, activeBrandMode);
+    const totalPaxCount = (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0);
+    return {
+      ...(existingSaved || {}),
+      // Clear cached historical pricing snapshots on active draft so Save Draft & pricing engine compute from latest working state
+      authoritativeSnapshot: undefined,
+      pricingSnapshot: undefined,
+      pricing_snapshot: undefined,
+      currencyConversionSnapshot: undefined,
+      currency_conversion_snapshot: undefined,
+      id: activeQuoteId,
+      quoteNumber,
+      version: quoteVersion || existingSaved?.version || 1,
+      title: quoteTitle || (sourcePackageName ? `${sourcePackageName} (${tripNights} Nights)` : `${currentDestination.name} Bespoke Journey (${tripNights} Nights)`),
+      destination: currentDestination.name,
+      sourcePackageId: sourcePackageId || undefined,
+      sourcePackageName: sourcePackageName || undefined,
+      activeOptionId: `opt-${activeOptionTab}`,
+      quotationScope: quotationScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND',
+      scope: quotationScope,
+      items: effectivePricedItems,
+      currency,
+      overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
+      overallDiscountPercent: overallDiscountPercent || 0,
+      totalNetCost: canViewInternalCosts && liveQuoteBreakdown?.isComplete ? liveQuoteBreakdown.totalNettCost : 0,
+      totalSellingPrice: finalCustomerSellingPrice,
+      totalTaxes: canViewInternalCosts && liveQuoteBreakdown ? liveQuoteBreakdown.taxAmount : 0,
+      totalMargin: canViewInternalCosts && liveQuoteBreakdown ? liveQuoteBreakdown.totalMargin : additionalMarginAmount,
+      theUnboundBaseSellingPrice: baseFinalSellingPrice,
+      baseFinalSellingPrice,
+      base_final_selling_price: baseFinalSellingPrice,
+      baseFinalSellingPriceCurrency: currency,
+      base_final_selling_price_currency: currency,
+      ...(canViewInternalCosts
+        ? {
+            adminManualMarginType,
+            admin_manual_margin_type: adminManualMarginType,
+            adminManualMarginValue,
+            admin_manual_margin_value: adminManualMarginValue,
+            adminManualMarginAmount: liveQuoteBreakdown?.adminManualMarginAmount ?? 0,
+            admin_manual_margin_amount: liveQuoteBreakdown?.adminManualMarginAmount ?? 0,
+            adminMarginMode,
+            admin_margin_mode: adminMarginMode,
+            revisedSellingPrice: liveQuoteBreakdown?.revisedSellingPrice ?? baseFinalSellingPrice,
+            revised_selling_price: liveQuoteBreakdown?.revisedSellingPrice ?? baseFinalSellingPrice
+          }
+        : {}),
+      agentMarginType,
+      agent_margin_type: agentMarginType,
+      agentMarginValue,
+      agent_margin_value: agentMarginValue,
+      agentMarginAmount: additionalMarginAmount,
+      agent_margin_amount: additionalMarginAmount,
+      productLevelAgentMarkupTotal: liveQuoteBreakdown?.productLevelAgentMarkupTotal ?? 0,
+      overallAgentMarkupAmount: liveQuoteBreakdown?.overallAgentMarkupAmount ?? additionalMarginAmount,
+      totalAgentAdditionalMarkupAmount: additionalMarginAmount,
+      finalCustomerSellingPrice,
+      final_customer_selling_price: finalCustomerSellingPrice,
+      surchargesTotal: liveQuoteBreakdown?.surchargesTotal,
+      appliedSurcharges: liveQuoteBreakdown?.appliedSurcharges,
+      clientName: clientName || 'Client Name Pending',
+      clientEmail: clientEmail || 'client@example.com',
+      clientPhone: clientPhone || '',
+      clientCompany: clientCompany || user?.agencyName || 'Direct B2B Client',
+      companyId: quoteAgencyContext.companyId ?? (existingSaved as any)?.companyId,
+      agentId: quoteAgentId || existingSaved?.agentId || existingSaved?.createdBy || user?.id || 'usr-agent-01',
+      agentName: existingSaved?.agentName || (brandSnap as any).specialistName || brandSnap.agencyName || user?.name || 'Travel Consultant',
+      agentAgency: quoteAgentAgency || existingSaved?.agentAgency || brandSnap.agencyName || user?.agencyName || 'Partner Agency',
+      ...(canViewInternalCosts
+        ? {
+            productLevelMarginEnabled: isProductLevelMarginActive,
+            agentLevelMarginPercent: agencyPricingSettings.agentLevelMarginPercent,
+            activeMarginMode: agencyPricingSettings.activeMarginMode
+          }
+        : {}),
+      agentEmail: existingSaved?.agentEmail || brandSnap.email || user?.email || '',
+      agentPhone: existingSaved?.agentPhone || brandSnap.phone || user?.phone || '',
+      agentLogoUrl: brandSnap.logoUrl || user?.brandLogoUrl,
+      brandingMode: activeBrandMode,
+      brandingSnapshot: brandSnap,
+      agentNotes: agentNotes || '',
+      termsStatus: termsResolution.readiness.termsStatus,
+      commercialTermsSnapshot: termsResolution.readiness.snapshot,
+      missingTermsDestinations: termsResolution.readiness.missingTargets,
+      termsExceptionApproval,
+      termsAndConditions: termsResolution.readiness.snapshot.combinedPlainText || COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+      status: existingSaved?.isLocked ? existingSaved.status : (loadedQuoteStatus || 'DRAFT'),
+      isLocked: existingSaved?.isLocked ?? loadedIsLocked,
+      travelStartDate: startDate,
+      travelEndDate: endDate,
+      totalPax: totalPaxCount,
+      adultsCount,
+      childrenCount,
+      infantsCount,
+      childAges,
+      nationality,
+      travelStyle,
+      mealPlanPreference,
+      roomingConfig: {
+        roomsCount: roomingConfig.roomsCount || 1,
+        adultsPerRoom: Math.max(1, Math.ceil((adultsCount || 2) / (roomingConfig.roomsCount || 1))),
+        cwbPerRoom: 0,
+        cnbPerRoom: 0,
+        infPerRoom: 0,
+        extraBed: Boolean(roomingConfig.extraBedRequired)
+      },
+      passengerBreakdown: passengerClassification,
+      visaAssistanceChoice,
+      feasibilityScore: feasibility.score,
+      options: computedQuotationOptions,
+      createdAt: existingSaved?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      validUntil: existingSaved?.validUntil || new Date(Date.now() + 14 * 86400000).toISOString(),
+      leadId: selectedLeadId || '',
+      linkedLeadId: selectedLeadId || undefined,
+      routeHubs,
+      dayThemes,
+      dayDescriptions,
+      dayOverviews,
+      dayNotes,
+      itineraryOverview: itineraryOverview || undefined,
+      narrative: itineraryOverview || undefined,
+      inclusions: contextInclusions && contextInclusions.length > 0 ? contextInclusions : undefined,
+      exclusions: contextExclusions && contextExclusions.length > 0 ? contextExclusions : undefined,
+      importantInformation: contextImportantInformation || undefined,
+      cancellationPolicy: contextCancellationPolicy || undefined,
+      generationHistory: authoritativeSavedQuote?.generationHistory || existingSaved?.generationHistory || []
+    };
+  };
+
+  const getOutputActionLabel = (opt: QuotationOutputOptionKey): string => {
+    switch (opt) {
+      case 'PREVIEW_PROPOSAL': return 'Preview Client Proposal';
+      case 'DOWNLOAD_PDF': return 'Download PDF Itinerary';
+      case 'SEND_EMAIL': return 'Send Proposal via Email';
+      case 'SHARE_WHATSAPP': return 'Share via WhatsApp';
+      case 'SAVE_MASTER_PACKAGE': return 'Save as Master Package';
+      case 'CONVERT_BOOKING': return 'Convert to Confirmed Booking';
+      default: return 'Save Quotation Draft';
     }
   };
 
-  // Share on WhatsApp Action
-  const handleShareWhatsApp = () => {
+  // Strict non-mutating output resolver: NEVER silently saves dirty working edits or bumps version.
+  const runOutputWithAuthoritativeSnapshot = async (
+    outputOption: QuotationOutputOptionKey,
+    onResolved: (readyQuote: Quotation) => void | Promise<void>
+  ): Promise<void> => {
+    if (isReadOnlyHistoricalMode && authoritativeSavedQuote) {
+      const activeSnap =
+        authoritativeSavedQuote.brandingMode === brandingMode
+          ? authoritativeSavedQuote
+          : {
+              ...authoritativeSavedQuote,
+              brandingMode,
+              brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, authoritativeSavedQuote, brandingMode)
+            };
+      await onResolved(activeSnap);
+      return;
+    }
+
+    if (!hasExplicitlySaved || hasUnsavedChanges || !authoritativeSavedQuote) {
+      setPendingOutputRequest({
+        option: outputOption,
+        label: getOutputActionLabel(outputOption),
+        onResolved
+      });
+      return;
+    }
+
+    setOutputBusyOption(outputOption);
+    setOutputSyncError(null);
+    try {
+      let baseSaved = db.getQuoteByIdAuthorized(authoritativeSavedQuote.id, user) || authoritativeSavedQuote;
+      const baseNeedsHydration =
+        !baseSaved.items ||
+        baseSaved.items.length === 0 ||
+        baseSaved.items.some((it: any) => Boolean(it?.__dehydratedToVersionId)) ||
+        (baseSaved.options || []).some((o: any) => Boolean((o as any)?.__dehydratedToVersionId));
+      if ((baseSaved.masterHydratedFromVersionId || baseSaved.latestVersionId) && baseNeedsHydration) {
+        const hydrateVerRef = baseSaved.masterHydratedFromVersionId || baseSaved.latestVersionId || Number(baseSaved.latestVersion || baseSaved.version || 1);
+        baseSaved = (await withBoundedTimeout(
+          db.hydrateMasterQuotationFromVersionAsync(baseSaved.id, hydrateVerRef, user),
+          15000,
+          'Hydrate Quotation Snapshot'
+        )) || baseSaved;
+      }
+      const effectiveMode = brandingMode || baseSaved.brandingMode || 'STANDARD';
+      const brandSnap =
+        baseSaved.brandingSnapshot?.mode === effectiveMode
+          ? baseSaved.brandingSnapshot
+          : buildAgencyBrandingSnapshotFromUser(user, baseSaved, effectiveMode);
+
+      const snapshotCandidate: Quotation = {
+        ...baseSaved,
+        activeOptionId: `opt-${activeOptionTab}`,
+        brandingMode: effectiveMode,
+        brandingSnapshot: brandSnap
+      };
+
+      const targetVerNum = latestSavedVersion || baseSaved.version || 1;
+      const candProductMarkupTotal = Number(snapshotCandidate.productLevelAgentMarkupTotal ?? 0);
+      const snapProductMarkupTotal = Number(snapshotCandidate.authoritativeSnapshot?.pricing?.productLevelAgentMarkupTotal ?? 0);
+      const canReuseCachedOutputSnap = Boolean(
+        snapshotCandidate.authoritativeSnapshot &&
+          snapshotCandidate.brandingMode === baseSaved.brandingMode &&
+          snapshotCandidate.authoritativeSnapshot.pricing?.currency === snapshotCandidate.currency &&
+          Number(snapshotCandidate.authoritativeSnapshot.versionNumber || targetVerNum) === Number(targetVerNum) &&
+          (!snapshotCandidate.activeOptionId || !snapshotCandidate.authoritativeSnapshot.selectedOptionId || snapshotCandidate.authoritativeSnapshot.selectedOptionId === snapshotCandidate.activeOptionId) &&
+          (snapshotCandidate.isLocked ||
+            (
+              snapshotCandidate.authoritativeSnapshot.itinerary?.itemsCount === (snapshotCandidate.items || []).length &&
+              (snapshotCandidate.authoritativeSnapshot.pricing?.agentMarginType || 'PERCENTAGE') === (snapshotCandidate.agentMarginType || 'PERCENTAGE') &&
+              Math.abs(Number(snapshotCandidate.authoritativeSnapshot.pricing?.agentMarginValue ?? 0) - Number(snapshotCandidate.agentMarginValue ?? 0)) < 0.0001 &&
+              Math.abs(Number(snapshotCandidate.authoritativeSnapshot.pricing?.overallDiscountPercent ?? 0) - Number(snapshotCandidate.overallDiscountPercent ?? 0)) < 0.0001 &&
+              Math.abs(candProductMarkupTotal - snapProductMarkupTotal) < 0.05 &&
+              (snapshotCandidate.authoritativeSnapshot.pricing?.adminMarginMode ?? 'ADD') === (snapshotCandidate.adminMarginMode ?? 'ADD') &&
+              (snapshotCandidate.authoritativeSnapshot.pricing?.adminManualMarginType ?? 'PERCENTAGE') === (snapshotCandidate.adminManualMarginType ?? 'PERCENTAGE') &&
+              Math.abs(Number(snapshotCandidate.authoritativeSnapshot.pricing?.adminManualMarginValue ?? 0) - Number(snapshotCandidate.adminManualMarginValue ?? 0)) < 0.0001 &&
+              (!snapshotCandidate.authoritativeSnapshot.pricing?.activeMarginMode ||
+                snapshotCandidate.authoritativeSnapshot.pricing.activeMarginMode === (snapshotCandidate.activeMarginMode || quoteAgencyContext.activeMarginMode)) &&
+              JSON.stringify(snapshotCandidate.surchargeOverrides || []) === JSON.stringify(snapshotCandidate.authoritativeSnapshot.pricing?.surchargeOverrides || [])
+            ))
+      );
+      const builtSnap = canReuseCachedOutputSnap
+        ? snapshotCandidate.authoritativeSnapshot!
+        : buildAuthoritativeQuotationSnapshot(snapshotCandidate, {
+            existingSaved: baseSaved,
+            versionNumber: targetVerNum,
+            selectedOptionIndexOrId: `opt-${activeOptionTab}`,
+            brandingMode: effectiveMode,
+            user,
+            preserveExistingPricingIfLocked: Boolean(baseSaved.isLocked)
+          });
+
+      const preparedQuote: Quotation = {
+        ...snapshotCandidate,
+        snapshotHash: builtSnap.snapshotHash,
+        snapshotVersion: builtSnap.versionNumber,
+        authoritativeSnapshot: builtSnap
+      };
+
+      const report = validateQuotationOutputConsistency(preparedQuote, {
+        selectedOptionIndexOrId: preparedQuote.activeOptionId,
+        brandingMode: effectiveMode
+      });
+      if (!report.isValid) {
+        const msg = `Synchronisation check blocked ${getOutputActionLabel(outputOption)}: ${report.mismatches[0]}`;
+        setOutputSyncError(msg);
+        showBuilderToast(msg, 'WARNING');
+        return;
+      }
+      await onResolved(preparedQuote);
+    } catch (err: any) {
+      const msg = err?.message || `Failed to prepare quotation snapshot for ${outputOption}.`;
+      setOutputSyncError(msg);
+      showBuilderToast(msg, 'WARNING');
+    } finally {
+      setOutputBusyOption(null);
+    }
+  };
+
+  // Output Option 1: EXPLICIT "Save Draft" — ONLY action that creates a sequential immutable saved version (max + 1)
+  const handleExplicitSaveDraft = async (): Promise<Quotation | null> => {
+    if (isReadOnlyHistoricalMode) {
+      showBuilderToast(
+        `Viewing historical saved version v${quoteVersion} (read-only). Click "Restore v${quoteVersion} as Working Draft" to create a new version.`,
+        'WARNING'
+      );
+      return null;
+    }
+    if (!hasExplicitlySaved && !inventoryVisibilityService.isDestinationActiveForB2B(currentDestination)) {
+      showBuilderToast(
+        `Cannot save a new quotation for non-active destination "${currentDestination.name}". Please select an Active destination.`,
+        'WARNING'
+      );
+      return null;
+    }
+    if (isExplicitSavingRef.current) {
+      return null;
+    }
+
+    isExplicitSavingRef.current = true;
+    setIsSavingExplicitly(true);
+    setOutputBusyOption('SAVE_DRAFT');
+    setOutputSyncError(null);
+    setAutoSaveStatus('SAVING');
+    setAutoSaveError(null);
+
+    const savedHash = currentWorkingHash;
+    const reuseSaveReq = pendingSaveRequestIdRef.current && pendingSaveRequestIdRef.current.workingHash === savedHash;
+    const clientSaveRequestId = reuseSaveReq
+      ? pendingSaveRequestIdRef.current!.requestId
+      : `save-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    pendingSaveRequestIdRef.current = { workingHash: savedHash, requestId: clientSaveRequestId };
+
+    const targetNextVersion = hasExplicitlySaved ? (Math.max(latestSavedVersion, quoteVersion) + 1) : 1;
+    const saveOp = quotationOperationsService.startOperation({
+      operationType: 'SAVE_DRAFT',
+      quoteId: activeQuoteId,
+      versionId: `v${targetNextVersion}`,
+      uid: user?.id,
+      idempotencyKey: clientSaveRequestId
+    });
+
+    try {
+      const draft = buildActiveQuotationDraft();
+      const existingSaved = hasExplicitlySaved ? (db.getQuoteByIdAuthorized(draft.id, user) || authoritativeSavedQuote) : null;
+
+      const builtSnapshot = buildAuthoritativeQuotationSnapshot(
+        {
+          ...draft,
+          version: targetNextVersion,
+          versionNumber: targetNextVersion,
+          snapshotVersion: targetNextVersion
+        },
+        {
+          existingSaved,
+          versionNumber: targetNextVersion,
+          selectedOptionIndexOrId: `opt-${activeOptionTab}`,
+          brandingMode,
+          user,
+          preserveExistingPricingIfLocked: false,
+          recalculateIfDirty: true
+        }
+      );
+
+      const enrichedDraft: Quotation = {
+        ...draft,
+        activeOptionId: builtSnapshot.selectedOptionId,
+        brandingMode: builtSnapshot.branding.mode,
+        brandingSnapshot: builtSnapshot.branding.snapshot,
+        theUnboundBaseSellingPrice: builtSnapshot.pricing.theUnboundBaseSellingPrice,
+        baseFinalSellingPrice: builtSnapshot.pricing.baseFinalSellingPrice,
+        base_final_selling_price: builtSnapshot.pricing.baseFinalSellingPrice,
+        agentMarginType: builtSnapshot.pricing.agentMarginType,
+        agentMarginValue: builtSnapshot.pricing.agentMarginValue,
+        agentMarginAmount: builtSnapshot.pricing.agentMarginAmount,
+        productLevelAgentMarkupTotal: builtSnapshot.pricing.productLevelAgentMarkupTotal,
+        overallAgentMarkupAmount: builtSnapshot.pricing.overallAgentMarkupAmount,
+        totalAgentAdditionalMarkupAmount: builtSnapshot.pricing.totalAgentAdditionalMarkupAmount,
+        ...(canViewInternalCosts && (builtSnapshot.pricing.adminMarginMode || builtSnapshot.pricing.adminManualMarginValue !== undefined)
+          ? {
+              adminManualMarginType: builtSnapshot.pricing.adminManualMarginType,
+              admin_manual_margin_type: builtSnapshot.pricing.adminManualMarginType,
+              adminManualMarginValue: builtSnapshot.pricing.adminManualMarginValue,
+              admin_manual_margin_value: builtSnapshot.pricing.adminManualMarginValue,
+              adminManualMarginAmount: builtSnapshot.pricing.adminManualMarginAmount,
+              admin_manual_margin_amount: builtSnapshot.pricing.adminManualMarginAmount,
+              adminMarginMode: builtSnapshot.pricing.adminMarginMode,
+              admin_margin_mode: builtSnapshot.pricing.adminMarginMode,
+              revisedSellingPrice: builtSnapshot.pricing.revisedSellingPrice,
+              revised_selling_price: builtSnapshot.pricing.revisedSellingPrice
+            }
+          : {}),
+        finalCustomerSellingPrice: builtSnapshot.pricing.finalCustomerSellingPrice,
+        final_customer_selling_price: builtSnapshot.pricing.finalCustomerSellingPrice,
+        totalSellingPrice: builtSnapshot.pricing.finalCustomerSellingPrice,
+        totalTaxes: canViewInternalCosts ? builtSnapshot.pricing.taxesTotal : 0,
+        hotelAccommodationTotal: builtSnapshot.pricing.hotelAccommodationTotal,
+        landPartTotal: builtSnapshot.pricing.landPartTotal,
+        surchargesTotal: builtSnapshot.pricing.surchargesTotal,
+        appliedSurcharges: builtSnapshot.pricing.appliedSurcharges,
+        surchargeOverrides: builtSnapshot.pricing.surchargeOverrides,
+        currencyConversionSnapshot: builtSnapshot.pricing.currencyConversionSnapshot,
+        termsStatus: builtSnapshot.commercialTerms.termsStatus || draft.termsStatus,
+        commercialTermsSnapshot: builtSnapshot.commercialTerms.snapshot || draft.commercialTermsSnapshot,
+        termsAndConditions: builtSnapshot.commercialTerms.plainText,
+        snapshotVersion: builtSnapshot.versionNumber,
+        snapshotHash: builtSnapshot.snapshotHash,
+        authoritativeSnapshot: builtSnapshot
+      };
+
+      const consistencyReport = validateQuotationOutputConsistency(enrichedDraft, {
+        selectedOptionIndexOrId: enrichedDraft.activeOptionId,
+        brandingMode: enrichedDraft.brandingMode
+      });
+      if (!consistencyReport.isValid) {
+        const msg = `Save blocked due to consistency mismatch: ${consistencyReport.mismatches[0]}`;
+        quotationOperationsService.markFailed(saveOp.operationId, new Error(msg));
+        setOutputSyncError(msg);
+        setAutoSaveStatus('FAILED');
+        setAutoSaveError(msg);
+        showBuilderToast(msg, 'WARNING');
+        return null;
+      }
+
+      const saveRes = await withBoundedTimeout(
+        db.saveQuotationExplicitVersionAsync({
+          quote: enrichedDraft,
+          user,
+          clientSaveRequestId,
+          restoredFromVersion
+        }),
+        30000,
+        'Save Quotation Draft'
+      );
+
+      const genRec = recordQuotationGenerationEvent(db, saveRes.quote, {
+        outputOption: 'SAVE_DRAFT',
+        status: 'SUCCEEDED',
+        brandingMode: saveRes.quote.brandingMode,
+        selectedOptionId: saveRes.quote.activeOptionId,
+        user
+      });
+
+      const persistedQuote = genRec.updatedQuote;
+      pendingSaveRequestIdRef.current = null;
+
+      hydratedSessionKeyRef.current = `quote:${persistedQuote.id}:v${saveRes.versionNumber}:edit`;
+      lastSavedHashRef.current = savedHash;
+      setBaselineSavedHash(savedHash);
+      setActiveQuoteId(persistedQuote.id);
+      setQuoteNumber(persistedQuote.quoteNumber || persistedQuote.id);
+      setQuoteVersion(saveRes.versionNumber);
+      setLatestSavedVersion(saveRes.versionNumber);
+      setVersionCount(persistedQuote.versionCount || (persistedQuote.versionHistory?.length ?? saveRes.versionNumber));
+      setRestoredFromVersion(undefined);
+      setHasExplicitlySaved(true);
+      setAuthoritativeSavedQuote(persistedQuote);
+      setLoadedQuoteStatus(persistedQuote.status);
+      setAutoSaveStatus('SAVED');
+      setAutoSaveError(null);
+      setLastSavedTimestamp(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      quotationOperationsService.markSucceeded(saveOp.operationId, {
+        versionId: `v${saveRes.versionNumber}`,
+        resultRef: persistedQuote.snapshotHash || persistedQuote.id
+      });
+      onQuoteSaved?.(persistedQuote);
+
+      showBuilderToast(
+        `✓ Saved quotation version v${saveRes.versionNumber} (${persistedQuote.snapshotHash || ''})`,
+        'SUCCESS'
+      );
+      return persistedQuote;
+    } catch (err: any) {
+      const msg = err?.message || 'Failed to persist quotation version to Firestore.';
+      quotationOperationsService.markFailed(saveOp.operationId, err);
+      setOutputSyncError(msg);
+      setAutoSaveStatus('FAILED');
+      setAutoSaveError(msg);
+      showBuilderToast(`Save failed: ${msg}`, 'WARNING');
+      return null;
+    } finally {
+      isExplicitSavingRef.current = false;
+      setIsSavingExplicitly(false);
+      setOutputBusyOption(null);
+    }
+  };
+
+  // Memoized ProposalDocumentView quote prop so unrelated UI state changes do not rebuild/remount preview
+  const previewQuote = useMemo(() => {
+    if (activeViewTab !== 'PROPOSAL_PREVIEW') return null;
+    const baseQ = authoritativeSavedQuote || {
+      ...buildActiveQuotationDraft(),
+      updatedAt: previewUpdatedAtRef.current.ts
+    };
+    if (baseQ.brandingMode === brandingMode && baseQ.brandingSnapshot?.mode === brandingMode) {
+      return baseQ;
+    }
+    return {
+      ...baseQ,
+      brandingMode,
+      brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, baseQ, brandingMode)
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeViewTab, authoritativeSavedQuote, brandingMode, user, currentWorkingHash, activeOptionTab]);
+
+  // Output Option 2: Preview Client Proposal (reads authoritative saved snapshot; never auto-saves)
+  const handlePreviewProposal = async () => {
+    if (packagePricingStatus === 'CALCULATING') {
+      showBuilderToast('Live wholesale tariffs are currently calculating. Please wait...', 'WARNING');
+      return;
+    }
+    if (packagePricingStatus === 'ERROR') {
+      showBuilderToast('Cannot generate quote: live pricing calculation encountered an error. Please retry tariffs.', 'WARNING');
+      return;
+    }
+    await runOutputWithAuthoritativeSnapshot('PREVIEW_PROPOSAL', (synced) => {
+      const rec = recordQuotationGenerationEvent(db, synced, {
+        outputOption: 'PREVIEW_PROPOSAL',
+        status: 'SUCCEEDED',
+        brandingMode: synced.brandingMode,
+        selectedOptionId: synced.activeOptionId,
+        user
+      });
+      setAuthoritativeSavedQuote(rec.updatedQuote);
+      switchViewTab('PROPOSAL_PREVIEW');
+    });
+  };
+
+  // Output Option 3: Download PDF Itinerary (reads authoritative saved snapshot; never auto-saves)
+  const handleDownloadPDF = async () => {
     if (!validateFxBeforeFinalGeneration()) return;
-    // 1. Check authorization
+    if (!validateTermsBeforeExportOrFinalise()) return;
+    await runOutputWithAuthoritativeSnapshot('DOWNLOAD_PDF', async (synced) => {
+      const pdfOp = quotationOperationsService.startOperation({
+        operationType: 'PDF_GENERATE',
+        quoteId: synced.id,
+        versionId: `v${synced.version || 1}`,
+        uid: user?.id,
+        idempotencyKey: `pdf:${synced.id}:v${synced.version || 1}:${synced.snapshotHash || 'live'}`
+      });
+      let recordedFailure = false;
+      try {
+        const pdfResult = await withBoundedTimeout(
+          downloadQuotationPDF({
+            quote: synced,
+            agentName: (synced.brandingSnapshot as any)?.specialistName || synced.brandingSnapshot?.agencyName || synced.agentName || user?.name || 'Travel Specialist',
+            agentAgency: synced.brandingSnapshot?.agencyName || synced.agentAgency || user?.agencyName || 'Partner Travel Agency',
+            agentEmail: synced.brandingSnapshot?.email || synced.agentEmail || user?.email || '',
+            agentPhone: synced.brandingSnapshot?.phone || synced.agentPhone || user?.phone || '',
+            agentLogoUrl: synced.brandingSnapshot?.logoUrl || synced.agentLogoUrl || user?.brandLogoUrl,
+            agentAddress: synced.brandingSnapshot?.address,
+            agentRegisteredAddress: synced.brandingSnapshot?.registeredAddress,
+            agentCurrentAddress: synced.brandingSnapshot?.currentAddress,
+            agentWebsite: synced.brandingSnapshot?.website,
+            footerText: synced.brandingSnapshot?.footerText,
+            disclaimer: synced.brandingSnapshot?.disclaimer,
+            brandingMode: synced.brandingMode || brandingMode,
+            selectedOptionIndexOrId: synced.activeOptionId || `opt-${activeOptionTab}`,
+            snapshotHash: synced.snapshotHash,
+            leadId: selectedLeadId || synced.leadId,
+            onComplete: () => {
+              const rec = recordQuotationGenerationEvent(db, synced, {
+                outputOption: 'DOWNLOAD_PDF',
+                status: 'SUCCEEDED',
+                brandingMode: synced.brandingMode,
+                selectedOptionId: synced.activeOptionId,
+                user
+              });
+              setAuthoritativeSavedQuote(rec.updatedQuote);
+            },
+            onError: (err) => {
+              recordedFailure = true;
+              const rec = recordQuotationGenerationEvent(db, synced, {
+                outputOption: 'DOWNLOAD_PDF',
+                status: 'FAILED',
+                brandingMode: synced.brandingMode,
+                selectedOptionId: synced.activeOptionId,
+                errorMessage: err.message,
+                user
+              });
+              setAuthoritativeSavedQuote(rec.updatedQuote);
+            }
+          }),
+          60000,
+          'PDF Generation'
+        );
+
+        if (!pdfResult.success) {
+          const errMsg = pdfResult.error || 'PDF generation failed. Please retry.';
+          quotationOperationsService.markFailed(pdfOp.operationId, new Error(errMsg));
+          setOutputSyncError(`PDF Export Failed: ${errMsg}`);
+          showBuilderToast(`PDF export failed: ${errMsg}`, 'WARNING');
+          return;
+        }
+
+        quotationOperationsService.markSucceeded(pdfOp.operationId, {
+          versionId: `v${synced.version || 1}`,
+          resultRef: synced.quoteNumber || synced.id
+        });
+        showBuilderToast(`✓ PDF Itinerary generated for ${synced.quoteNumber || synced.id}`, 'SUCCESS');
+        googleCalendarAutomation.triggerQuoteFollowUpSLA(synced, user);
+      } catch (err: any) {
+        const errMsg = err?.message || 'PDF generation timed out or failed.';
+        quotationOperationsService.markFailed(pdfOp.operationId, err);
+        if (!recordedFailure) {
+          const rec = recordQuotationGenerationEvent(db, synced, {
+            outputOption: 'DOWNLOAD_PDF',
+            status: 'FAILED',
+            brandingMode: synced.brandingMode,
+            selectedOptionId: synced.activeOptionId,
+            errorMessage: errMsg,
+            user
+          });
+          setAuthoritativeSavedQuote(rec.updatedQuote);
+        }
+        setOutputSyncError(`PDF Export Failed: ${errMsg}`);
+        showBuilderToast(`PDF export failed: ${errMsg}`, 'WARNING');
+      }
+    });
+  };
+
+  // Output Option 5: Share via WhatsApp (reads authoritative saved snapshot; never auto-saves)
+  const handleShareWhatsApp = async () => {
+    if (!validateFxBeforeFinalGeneration()) return;
+    if (!validateTermsBeforeExportOrFinalise()) return;
     const permCheck = canUserShareQuoteWhatsApp(user);
     if (!permCheck.allowed) {
       showBuilderToast(permCheck.reason || 'You are not authorized to share quotations via WhatsApp.', 'WARNING');
       return;
     }
 
-    // 2. Save quote state to ensure latest numbers, items, and version are persisted
-    const saved = handleSaveDraft(true);
-    if (!saved) return;
-
-    // 3. Open WhatsApp Modal
-    setWhatsAppModalQuote(saved);
-    setIsWhatsAppModalOpen(true);
+    await runOutputWithAuthoritativeSnapshot('SHARE_WHATSAPP', (synced) => {
+      setWhatsAppModalQuote(synced);
+      setIsWhatsAppModalOpen(true);
+    });
   };
 
-  // Helper to sync canonical email preview when note or quote changes
+  // Helper to sync canonical email preview when note, branding, or quote changes
   const refreshCanonicalEmailContent = (quoteObj: Quotation, customNoteText: string, modeOverride?: QuoteBrandingMode) => {
     const activeMode = modeOverride || quoteObj.brandingMode || brandingMode;
-    const snap = buildAgencyBrandingSnapshotFromUser(user, quoteObj, activeMode);
-    const emailService = EmailNotificationService.getInstance();
+    const snap =
+      quoteObj.brandingSnapshot?.mode === activeMode
+        ? quoteObj.brandingSnapshot
+        : buildAgencyBrandingSnapshotFromUser(user, quoteObj, activeMode);
+    const safeRecipient = (emailRecipient || clientEmail || (quoteObj.clientEmail && quoteObj.clientEmail !== 'client@example.com' ? quoteObj.clientEmail : '') || '').trim();
     const canonical = emailService.buildCanonicalQuotationEmail(
       {
         ...quoteObj,
         brandingMode: activeMode,
         brandingSnapshot: snap,
-        clientEmail: emailRecipient || clientEmail || quoteObj.clientEmail || 'client@example.com',
-        clientName: clientName || quoteObj.clientName || 'Valued Guest',
-        totalSellingPrice: finalClientPrice
+        clientEmail: safeRecipient,
+        clientName: clientName || quoteObj.clientName || 'Valued Guest'
       },
       {
         name: (snap as any).specialistName || snap.agencyName || user?.name || quoteObj.agentName || 'Travel Specialist',
@@ -3132,7 +4459,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         primaryColor: snap.primaryColor || (user as any)?.brandPrimaryColor,
         accentColor: snap.accentColor || (user as any)?.brandAccentColor,
         brandingMode: activeMode,
-        selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
+        selectedOptionIndexOrId: quoteObj.activeOptionId || `opt-${activeOptionTab}`,
         customNote: customNoteText
       }
     );
@@ -3143,31 +4470,33 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return canonical;
   };
 
-  // Open Email Modal with Complete Canonical Quotation Content
-  const handleOpenEmailModal = () => {
+  // Output Option 4: Open Email Modal with Authoritative Saved Snapshot (never auto-saves)
+  const handleOpenEmailModal = async () => {
     if (!validateFxBeforeFinalGeneration()) return;
-    const saved = handleSaveDraft(true);
-    if (!saved) return;
-    setEmailModalQuote(saved);
-    const defaultRecipient = clientEmail || saved.clientEmail || 'client@example.com';
-    setEmailRecipient(defaultRecipient);
-    setEmailCustomNote('');
-    const canonical = refreshCanonicalEmailContent(
-      {
-        ...saved,
-        clientEmail: defaultRecipient,
-        clientName: clientName || saved.clientName || 'Valued Guest',
-        totalSellingPrice: finalClientPrice
-      },
-      ''
-    );
-    setEmailSubject(canonical.subject);
-    setEmailPreviewTab('HTML_PREVIEW');
-    setPlainTextSubView('PREVIEW');
-    setEmailCopied(false);
-    setEmailSuccessMessage(null);
-    setEmailErrorMessage(null);
-    setIsEmailModalOpen(true);
+    if (!validateTermsBeforeExportOrFinalise()) return;
+    await runOutputWithAuthoritativeSnapshot('SEND_EMAIL', (synced) => {
+      setEmailModalQuote(synced);
+      const rawCandidate = (clientEmail || synced.clientEmail || '').trim();
+      const defaultRecipient = /^client@example\.com$/i.test(rawCandidate) ? '' : rawCandidate;
+      setEmailRecipient(defaultRecipient);
+      setEmailCustomNote('');
+      emailIdempotencyKeyRef.current = null;
+      const canonical = refreshCanonicalEmailContent(
+        {
+          ...synced,
+          clientEmail: defaultRecipient,
+          clientName: clientName || synced.clientName || 'Valued Guest'
+        },
+        ''
+      );
+      setEmailSubject(canonical.subject);
+      setEmailPreviewTab('HTML_PREVIEW');
+      setPlainTextSubView('PREVIEW');
+      setEmailCopied(false);
+      setEmailSuccessMessage(null);
+      setEmailErrorMessage(null);
+      setIsEmailModalOpen(true);
+    });
   };
 
   // Copy Complete Quotation as Formatted Rich Text (text/html + text/plain fallback)
@@ -3241,14 +4570,19 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
   const handleCopyEmailText = handleCopyFormattedQuotation;
 
-  // Send Complete Email Proposal via EmailNotificationService
+  // Send Complete Email Proposal via EmailNotificationService (uses authoritative saved snapshot; never bumps version)
   const handleSendProposalEmail = async () => {
-    const saved = handleSaveDraft(true);
-    if (!saved) return;
-
+    if (isSendingEmail) return;
+    if (!validateTermsBeforeExportOrFinalise()) return;
     const cleanRecipient = emailRecipient.trim();
-    if (!cleanRecipient || !cleanRecipient.includes('@')) {
-      setEmailErrorMessage('Please enter a valid recipient email address.');
+    if (!cleanRecipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanRecipient)) {
+      setEmailErrorMessage('Please enter a valid recipient email address before dispatching.');
+      return;
+    }
+
+    const synced = emailModalQuote || authoritativeSavedQuote;
+    if (!synced) {
+      showBuilderToast('Please save draft before sending quotation email.', 'WARNING');
       return;
     }
 
@@ -3256,80 +4590,138 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     setEmailErrorMessage(null);
     setEmailSuccessMessage(null);
 
+    const activeMode = synced.brandingMode || brandingMode;
+    const finalSubjectPreview = emailSubject.trim() || synced.title || synced.quoteNumber || 'Quotation Proposal';
+    const idempotencySignature = `${synced.id}:v${synced.version || latestSavedVersion || 1}:${cleanRecipient.toLowerCase()}:${activeMode}:${finalSubjectPreview}`;
+    const idempotencyKey =
+      emailIdempotencyKeyRef.current?.signature === idempotencySignature
+        ? emailIdempotencyKeyRef.current.key
+        : `quote-email-${synced.id}-v${synced.version || latestSavedVersion || 1}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    emailIdempotencyKeyRef.current = { signature: idempotencySignature, key: idempotencyKey };
+
+    const emailOp = quotationOperationsService.startOperation({
+      operationType: 'EMAIL_SEND',
+      quoteId: synced.id,
+      versionId: `v${synced.version || latestSavedVersion || 1}`,
+      uid: user?.id,
+      idempotencyKey
+    });
+
     try {
-      const activeMode = saved.brandingMode || brandingMode;
-      const snap = buildAgencyBrandingSnapshotFromUser(user, saved, activeMode);
+      const snap =
+        synced.brandingSnapshot?.mode === activeMode
+          ? synced.brandingSnapshot
+          : buildAgencyBrandingSnapshotFromUser(user, synced, activeMode);
       const emailService = EmailNotificationService.getInstance();
       const generatedEmail = emailService.generateQuotationProposalEmail(
         {
-          ...saved,
+          ...synced,
           brandingMode: activeMode,
           brandingSnapshot: snap,
           clientEmail: cleanRecipient,
-          clientName: clientName || saved.clientName || 'Valued Guest',
-          totalSellingPrice: finalClientPrice
+          clientName: clientName || synced.clientName || 'Valued Guest'
         },
         {
-          name: (snap as any).specialistName || user?.name || saved.agentName || 'Travel Specialist',
-          agencyName: snap.agencyName || user?.agencyName || saved.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'Luxury Partner Agency'),
-          email: snap.email || user?.email || saved.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
-          phone: snap.phone || user?.phone || saved.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
-          logoUrl: snap.logoUrl || user?.brandLogoUrl || saved.agentLogoUrl,
+          name: (snap as any).specialistName || user?.name || synced.agentName || 'Travel Specialist',
+          agencyName: snap.agencyName || user?.agencyName || synced.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'Luxury Partner Agency'),
+          email: snap.email || user?.email || synced.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
+          phone: snap.phone || user?.phone || synced.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
+          logoUrl: snap.logoUrl || user?.brandLogoUrl || synced.agentLogoUrl,
           website: snap.website || (user as any)?.website,
           address: snap.address || (user as any)?.businessAddress,
           primaryColor: snap.primaryColor || (user as any)?.brandPrimaryColor,
           accentColor: snap.accentColor || (user as any)?.brandAccentColor,
           brandingMode: activeMode,
-          selectedOptionIndexOrId: Math.max(0, activeOptionTab - 1),
+          selectedOptionIndexOrId: synced.activeOptionId || `opt-${activeOptionTab}`,
           customNote: emailCustomNote,
           formattingMode: emailPreviewTab === 'HTML_PREVIEW' ? 'PROPOSAL_VIEW' : 'PLAIN_TEXT'
         }
       );
 
       const finalSubject = emailSubject.trim() || generatedEmail.subject;
-      // Option 1: Proposal View Rich HTML vs Option 2: Complete Plain-Text Simple Semantic HTML
       const finalHtmlBody = emailPreviewTab === 'HTML_PREVIEW'
         ? (emailRichHtml && emailRichHtml.trim() ? emailRichHtml : generatedEmail.proposalViewHtml || generatedEmail.fullHtml)
         : (emailSimpleHtml && emailSimpleHtml.trim() ? emailSimpleHtml : formatPlainTextQuotationToHtml(emailMessage));
 
-      const result = await emailService.sendViaGmailApi(
-        cleanRecipient,
-        finalSubject,
-        finalHtmlBody,
-        {
-          quoteId: saved.id,
-          leadId: saved.leadId,
-          recipientType: 'BUYER',
-          eventType: 'QUOTE_EMAIL_SENT',
-          sentBy: user?.id,
-          sentByName: user?.name || 'Agent'
-        },
-        emailMessage
+      const result = await withBoundedTimeout(
+        emailService.sendViaGmailApi(
+          cleanRecipient,
+          finalSubject,
+          finalHtmlBody,
+          {
+            quoteId: synced.id,
+            leadId: synced.leadId,
+            recipientType: 'BUYER',
+            eventType: 'QUOTE_EMAIL_SENT',
+            idempotencyKey,
+            sentBy: user?.id,
+            sentByName: user?.name || 'Agent'
+          },
+          emailMessage
+        ),
+        25000,
+        'Email Dispatch'
       );
 
       if (result.success) {
-        // Update quote status & version history
+        const frozenSnap = synced.commercialTermsSnapshot || termsResolution.readiness.snapshot;
         const updatedQuote: Quotation = {
-          ...saved,
+          ...synced,
           clientEmail: cleanRecipient,
-          status: saved.status === 'DRAFT' ? 'SENT' : saved.status,
-          versionHistory: [
-            {
-              version: saved.version || 1,
-              updatedAt: new Date().toISOString(),
-              updatedBy: user?.name || saved.agentName || 'Agent',
-              changesSummary: `Complete quotation proposal emailed to ${cleanRecipient}`,
-              totalSellingPrice: finalClientPrice
-            },
-            ...(saved.versionHistory || [])
-          ]
+          status: synced.status === 'DRAFT' ? 'SENT' : synced.status,
+          isLocked: true,
+          termsStatus: 'QUOTATION_FINALISED',
+          commercialTermsSnapshot: frozenSnap,
+          authoritativeSnapshot: synced.authoritativeSnapshot
+            ? {
+                ...synced.authoritativeSnapshot,
+                status: synced.status === 'DRAFT' ? 'SENT' : synced.status,
+                isLocked: true,
+                commercialTerms: {
+                  ...synced.authoritativeSnapshot.commercialTerms,
+                  termsStatus: 'QUOTATION_FINALISED',
+                  snapshot: frozenSnap
+                }
+              }
+            : undefined
         };
-        db.saveQuote(updatedQuote, user, 'SENT', `Complete quotation emailed to ${cleanRecipient}`);
+
+        let emailSaved = db.saveQuote(updatedQuote, user, 'SENT', `Complete quotation emailed to ${cleanRecipient}`);
+        try {
+          emailSaved = await withBoundedTimeout(
+            db.saveQuoteAsync(updatedQuote, user, 'SENT', `Complete quotation emailed to ${cleanRecipient}`),
+            12000,
+            'Quotation Email Status Persistence'
+          );
+        } catch (persistErr: any) {
+          console.warn('Email sent but cloud status sync failed:', persistErr?.message);
+        }
+
+        const genRec = recordQuotationGenerationEvent(db, emailSaved, {
+          outputOption: 'SEND_EMAIL',
+          status: 'SUCCEEDED',
+          brandingMode: activeMode,
+          selectedOptionId: emailSaved.activeOptionId,
+          recipient: cleanRecipient,
+          user
+        });
+        setAuthoritativeSavedQuote(genRec.updatedQuote);
+        setLoadedIsLocked(true);
+        if (frozenSnap && frozenSnap.entries?.length > 0) {
+          setLoadedFinalisedSnapshot(frozenSnap);
+        }
+        setLoadedQuoteStatus(genRec.updatedQuote.status);
         if (cleanRecipient !== clientEmail) {
           setClientEmail(cleanRecipient);
         }
+        emailIdempotencyKeyRef.current = null;
 
-        const msg = `Complete quotation proposal dispatched to ${cleanRecipient}! (Ref: ${saved.quoteNumber} • ID: ${result.messageId || 'SENT'})`;
+        const channelLabel = result.providerStatus === 'EMAIL_ACCEPTED_RELAY' ? 'via Transactional Relay' : 'via Gmail API';
+        const msg = `Complete quotation proposal dispatched to ${cleanRecipient} ${channelLabel}${result.alreadySent ? ' (already delivered)' : ''}! (Ref: ${synced.quoteNumber} • ID: ${result.messageId || 'SENT'})`;
+        quotationOperationsService.markSucceeded(emailOp.operationId, {
+          versionId: `v${synced.version || latestSavedVersion || 1}`,
+          resultRef: `${result.providerStatus || 'EMAIL'}:${result.messageId || 'SENT'}`
+        });
         setEmailSuccessMessage(msg);
         showBuilderToast(`✓ Complete quotation emailed to ${cleanRecipient}`, 'SUCCESS');
         setTimeout(() => {
@@ -3337,34 +4729,94 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           setEmailSuccessMessage(null);
         }, 2200);
       } else {
-        setEmailErrorMessage(`Email delivery failed. Reason: ${result.error || 'Unable to dispatch email'}. You can also copy the complete email or open in your mail client.`);
+        const failErr = result.error || 'Unable to dispatch email';
+        quotationOperationsService.markFailed(emailOp.operationId, new Error(failErr));
+        recordQuotationGenerationEvent(db, synced, {
+          outputOption: 'SEND_EMAIL',
+          status: 'FAILED',
+          brandingMode: activeMode,
+          selectedOptionId: synced.activeOptionId,
+          recipient: cleanRecipient,
+          errorMessage: failErr,
+          user
+        });
+        setEmailErrorMessage(`Email delivery failed. Reason: ${failErr}. Retry using the button below, or copy the formatted proposal / open in your mail client.`);
       }
     } catch (err: any) {
-      setEmailErrorMessage(`Email delivery failed. Reason: ${err?.message || 'Network error'}. Please retry.`);
+      const errMsg = err?.message || 'Network error';
+      quotationOperationsService.markFailed(emailOp.operationId, err);
+      recordQuotationGenerationEvent(db, synced, {
+        outputOption: 'SEND_EMAIL',
+        status: 'FAILED',
+        recipient: cleanRecipient,
+        errorMessage: errMsg,
+        user
+      });
+      setEmailErrorMessage(`Email delivery failed. Reason: ${errMsg}. Please retry.`);
     } finally {
       setIsSendingEmail(false);
     }
   };
 
-  // Convert to Confirmed Booking Action (Idempotent)
-  const handleConvertBooking = () => {
+  // Output Option 7: Convert to Confirmed Booking (Idempotent, never auto-saves dirty working edits)
+  const handleConvertBooking = async () => {
     if (!validateFxBeforeFinalGeneration()) return;
-    const saved = handleSaveDraft();
-    if (!saved) return;
-
-    try {
-      db.updateQuotationStatus(saved.id, 'APPROVED', user);
-      const booking = db.convertQuotationToBooking(saved, user);
-      if (onConvertToBooking) {
-        onConvertToBooking(saved);
-      } else if (onBookQuotation) {
-        onBookQuotation(saved);
+    if (!validateTermsBeforeExportOrFinalise()) return;
+    await runOutputWithAuthoritativeSnapshot('CONVERT_BOOKING', async (synced) => {
+      try {
+        const frozenSnap = synced.commercialTermsSnapshot || termsResolution.readiness.snapshot;
+        const finalisedQuote: Quotation = {
+          ...synced,
+          isLocked: true,
+          termsStatus: 'QUOTATION_FINALISED',
+          commercialTermsSnapshot: frozenSnap,
+          authoritativeSnapshot: synced.authoritativeSnapshot
+            ? {
+                ...synced.authoritativeSnapshot,
+                isLocked: true,
+                commercialTerms: {
+                  ...synced.authoritativeSnapshot.commercialTerms,
+                  termsStatus: 'QUOTATION_FINALISED',
+                  snapshot: frozenSnap
+                }
+              }
+            : undefined
+        };
+        const persistedFinal = db.saveQuote(finalisedQuote, user, 'STATUS_CHANGED', 'Frozen Commercial Quotation Terms on booking conversion');
+        db.updateQuotationStatus(persistedFinal.id, 'APPROVED', user);
+        if (frozenSnap && frozenSnap.entries?.length > 0) {
+          setLoadedFinalisedSnapshot(frozenSnap);
+        }
+        setLoadedQuoteStatus('APPROVED');
+        setLoadedIsLocked(true);
+        const booking = db.convertQuotationToBooking(persistedFinal, user);
+        const rec = recordQuotationGenerationEvent(db, { ...persistedFinal, status: 'BOOKED' }, {
+          outputOption: 'CONVERT_BOOKING',
+          status: 'SUCCEEDED',
+          brandingMode: persistedFinal.brandingMode,
+          selectedOptionId: persistedFinal.activeOptionId,
+          targetEntityId: booking?.id,
+          targetReference: booking?.bookingReference || booking?.id,
+          user
+        });
+        setAuthoritativeSavedQuote(rec.updatedQuote);
+        if (onConvertToBooking) {
+          onConvertToBooking(rec.updatedQuote);
+        } else if (onBookQuotation) {
+          onBookQuotation(rec.updatedQuote);
+        }
+        showBuilderToast(`Quotation converted to Booking (${booking?.bookingReference || booking?.id || 'Confirmed'})!`, 'SUCCESS');
+      } catch (err: any) {
+        console.error('Booking conversion error:', err);
+        recordQuotationGenerationEvent(db, synced, {
+          outputOption: 'CONVERT_BOOKING',
+          status: 'FAILED',
+          errorMessage: err?.message || 'Booking conversion encountered an issue.',
+          user
+        });
+        showBuilderToast(err?.message || 'Booking conversion encountered an issue.', 'WARNING');
       }
-      showBuilderToast(`Quotation converted to Booking (${booking?.bookingReference || booking?.id || 'Confirmed'})!`, 'SUCCESS');
-    } catch (err: any) {
-      console.error('Booking conversion error:', err);
-      showBuilderToast(err?.message || 'Booking conversion encountered an issue.', 'WARNING');
-    }
+    });
   };
 
   // Resolve currently linked Master Package (from sourcePackageId or lastSavedMasterPackage)
@@ -3437,7 +4889,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
         exclusions: contextExclusions,
         importantInformation: contextImportantInformation,
         cancellationPolicy: contextCancellationPolicy,
+        termsAndConditions: termsResolution.readiness.snapshot.combinedPlainText || undefined,
         itineraryOverview,
+        sourceQuoteId: activeQuoteId,
+        sourceSnapshotVersion: quoteVersion,
+        sourceSnapshotHash: authoritativeSavedQuote?.snapshotHash,
         currency,
         adultsCount,
         childrenCount,
@@ -3468,7 +4924,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     contextExclusions,
     contextImportantInformation,
     contextCancellationPolicy,
+    termsResolution.readiness.snapshot.combinedPlainText,
     itineraryOverview,
+    activeQuoteId,
+    quoteVersion,
+    authoritativeSavedQuote?.snapshotHash,
     currency,
     adultsCount,
     childrenCount,
@@ -3477,7 +4937,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     user
   ]);
 
-  // Save Current Itinerary as a Master Ready-Made Package (with complete validation & synchronization)
+  // Output Option 6: Save Current Itinerary as a Master Ready-Made Package (uses authoritative saved snapshot; never auto-saves)
   const handleConfirmSavePackage = async () => {
     if (!packageFormData.title.trim()) {
       setSavePackageError('Package Title is required.');
@@ -3486,65 +4946,87 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
     setSavePackageError(null);
 
-    const result = saveAndVerifyMasterPackageFromQuote({
-      title: packageFormData.title.trim(),
-      tagline: packageFormData.tagline.trim(),
-      description: packageFormData.description.trim(),
-      tripType: packageFormData.tripType,
-      status: packageFormData.status,
-      featured: packageFormData.featured,
-      currentDestination,
-      quotationScope,
-      routeHubs,
-      items: effectivePricedItems,
-      calendarDays,
-      daySlots,
-      dayThemes,
-      dayDescriptions,
-      dayOverviews,
-      dayNotes,
-      inclusions: contextInclusions,
-      exclusions: contextExclusions,
-      importantInformation: contextImportantInformation,
-      cancellationPolicy: contextCancellationPolicy,
-      itineraryOverview,
-      currency,
-      adultsCount,
-      childrenCount,
-      infantsCount,
-      existingPackageId: packageFormData.updateExisting ? linkedExistingMasterPackage?.id : null,
-      updateExisting: packageFormData.updateExisting,
-      user
+    await runOutputWithAuthoritativeSnapshot('SAVE_MASTER_PACKAGE', async (synced) => {
+      const result = saveAndVerifyMasterPackageFromQuote({
+        title: packageFormData.title.trim(),
+        tagline: packageFormData.tagline.trim(),
+        description: packageFormData.description.trim(),
+        tripType: packageFormData.tripType,
+        status: packageFormData.status,
+        featured: packageFormData.featured,
+        currentDestination,
+        quotationScope: synced.quotationScope || quotationScope,
+        routeHubs: synced.routeHubs || routeHubs,
+        items: synced.items || effectivePricedItems,
+        calendarDays,
+        daySlots,
+        dayThemes: synced.dayThemes || dayThemes,
+        dayDescriptions: synced.dayDescriptions || dayDescriptions,
+        dayOverviews: synced.dayOverviews || dayOverviews,
+        dayNotes: synced.dayNotes || dayNotes,
+        inclusions: synced.inclusions || contextInclusions,
+        exclusions: synced.exclusions || contextExclusions,
+        importantInformation: synced.importantInformation || contextImportantInformation,
+        cancellationPolicy: synced.cancellationPolicy || contextCancellationPolicy,
+        termsAndConditions: synced.commercialTermsSnapshot?.combinedPlainText || synced.termsAndConditions,
+        itineraryOverview: synced.itineraryOverview || itineraryOverview,
+        sourceQuoteId: synced.id,
+        sourceSnapshotVersion: synced.snapshotVersion || synced.version,
+        sourceSnapshotHash: synced.snapshotHash,
+        currency: synced.currency || currency,
+        adultsCount: synced.adultsCount || adultsCount,
+        childrenCount: synced.childrenCount ?? childrenCount,
+        infantsCount: synced.infantsCount ?? infantsCount,
+        existingPackageId: packageFormData.updateExisting ? linkedExistingMasterPackage?.id : null,
+        updateExisting: packageFormData.updateExisting,
+        user
+      });
+
+      if (!result.success || !result.pkg) {
+        recordQuotationGenerationEvent(db, synced, {
+          outputOption: 'SAVE_MASTER_PACKAGE',
+          status: 'FAILED',
+          errorMessage: result.error || 'Failed to generate and synchronize Ready-Made Package.',
+          user
+        });
+        setSavePackageError(result.error || 'Failed to generate and synchronize Ready-Made Package.');
+        return;
+      }
+
+      try {
+        await db.savePackageAsync(result.pkg, user);
+      } catch (saveErr) {
+        console.warn('Async save warning:', saveErr);
+      }
+
+      setSourcePackageId(result.pkg.id);
+      setSourcePackageName(result.pkg.title);
+      setLastSavedMasterPackage(result.pkg);
+      setLastPackageVerificationReport(result.verificationReport || null);
+      setIsSavePackageModalOpen(false);
+
+      const linkedQuote = db.saveQuote(
+        {
+          ...synced,
+          sourcePackageId: result.pkg.id,
+          sourcePackageName: result.pkg.title
+        },
+        user,
+        'SAVED',
+        'Linked source master package'
+      );
+      const rec = recordQuotationGenerationEvent(db, linkedQuote, {
+        outputOption: 'SAVE_MASTER_PACKAGE',
+        status: 'SUCCEEDED',
+        targetEntityId: result.pkg.id,
+        targetReference: result.pkg.slug || result.pkg.id,
+        user
+      });
+      setAuthoritativeSavedQuote(rec.updatedQuote);
+
+      const actionWord = result.verificationReport?.isUpdate ? 'updated and synchronized in' : 'published and synchronized to';
+      setPackageSavedNotice(`Master Package "${result.pkg.title}" (${result.pkg.id}) ${actionWord} Ready-Made Packages.`);
     });
-
-    if (!result.success || !result.pkg) {
-      setSavePackageError(result.error || 'Failed to generate and synchronize Ready-Made Package.');
-      return;
-    }
-
-    try {
-      await db.savePackageAsync(result.pkg, user);
-    } catch (saveErr) {
-      console.warn('Async save warning:', saveErr);
-    }
-
-    // Link quotation workspace to the saved Master Package ID to prevent duplicates on repeated saves
-    setSourcePackageId(result.pkg.id);
-    setSourcePackageName(result.pkg.title);
-    setLastSavedMasterPackage(result.pkg);
-    setLastPackageVerificationReport(result.verificationReport || null);
-    setIsSavePackageModalOpen(false);
-
-    // If active quote is in savedQuotes, update its linked source package ID
-    const activeQ = db.getQuoteById(activeQuoteId);
-    if (activeQ) {
-      activeQ.sourcePackageId = result.pkg.id;
-      activeQ.sourcePackageName = result.pkg.title;
-      db.saveQuotation(activeQ, user);
-    }
-
-    const actionWord = result.verificationReport?.isUpdate ? 'updated and synchronized in' : 'published and synchronized to';
-    setPackageSavedNotice(`Master Package "${result.pkg.title}" (${result.pkg.id}) ${actionWord} Ready-Made Packages.`);
   };
 
   // Active base products for the day modal based on city filter scope
@@ -3613,11 +5095,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     return dynamicList;
   }, [quickAddModalDay, quickAddBaseProducts]);
 
-  // Quick Add Products Filter - strictly filters by category and search term
+  // Quick Add Products Filter - strictly filters by category and debounced search term
   const quickAddFilteredProducts = useMemo(() => {
     if (!quickAddModalDay) return [];
+    const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    const q = (debouncedQuickAddSearch || '').trim().toLowerCase();
 
-    return quickAddBaseProducts.filter(p => {
+    const filtered = quickAddBaseProducts.filter(p => {
       // 1. Category Filter using Canonical Mapping
       if (quickAddCategory !== 'ALL') {
         const prodCatEnum = resolveProductCategoryEnum(p);
@@ -3639,7 +5123,6 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       }
 
       // 2. Search text query
-      const q = (quickAddSearch || '').trim().toLowerCase();
       if (!q) return true;
 
       const matchSearch =
@@ -3653,7 +5136,13 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
 
       return matchSearch;
     });
-  }, [quickAddModalDay, quickAddBaseProducts, quickAddCategory, quickAddSearch]);
+
+    if (q) {
+      const dt = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+      performanceMonitor.recordTiming('PRODUCT_SEARCH', `QuickAdd: "${q}"`, dt, { results: filtered.length });
+    }
+    return filtered;
+  }, [quickAddModalDay, quickAddBaseProducts, quickAddCategory, debouncedQuickAddSearch]);
 
   // Total products in catalog tagged specifically for this day's city/hub
   const totalCityProductsCount = useMemo(() => {
@@ -3686,6 +5175,151 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     );
   }
 
+  // Stable refs & callbacks for StepByStepQuotationWorkspace to avoid unnecessary child re-renders
+  const adminAuditContextRef = useRef({
+    canViewInternalCosts,
+    user,
+    activeQuoteId,
+    quoteNumber,
+    adminMarginMode,
+    adminManualMarginType,
+    adminManualMarginValue
+  });
+  adminAuditContextRef.current = {
+    canViewInternalCosts,
+    user,
+    activeQuoteId,
+    quoteNumber,
+    adminMarginMode,
+    adminManualMarginType,
+    adminManualMarginValue
+  };
+
+  const agentMarginTypeRef = useRef(agentMarginType);
+  agentMarginTypeRef.current = agentMarginType;
+  const agentMarginValueRef = useRef(agentMarginValue);
+  agentMarginValueRef.current = agentMarginValue;
+
+  const handleDismissAdminBasePriceNotification = useCallback(() => {
+    setAdminBasePriceUpdatedNotification(undefined);
+  }, []);
+
+  const handleSetAdminManualMarginType = useCallback((newType: 'PERCENTAGE' | 'FIXED') => {
+    const ctx = adminAuditContextRef.current;
+    if (newType === ctx.adminManualMarginType) return;
+    const prevSummary = `${ctx.adminMarginMode} | ${ctx.adminManualMarginType} ${ctx.adminManualMarginValue}`;
+    const nextSummary = `${ctx.adminMarginMode} | ${newType} ${ctx.adminManualMarginValue}`;
+    setAdminManualMarginType(newType);
+    if (ctx.canViewInternalCosts) {
+      db.logAudit(
+        ctx.user ? { id: ctx.user.id, name: ctx.user.name, role: ctx.user.role } : null,
+        'MARGIN_CHANGED',
+        'Quotation',
+        ctx.activeQuoteId,
+        `Admin changed Manual Margin Type for ${ctx.quoteNumber || ctx.activeQuoteId} from ${ctx.adminManualMarginType} to ${newType} (working draft; click Save Draft to save version).`,
+        prevSummary,
+        nextSummary
+      );
+    }
+  }, [db]);
+
+  const handleSetAdminManualMarginValue = useCallback((newVal: number) => {
+    const safeVal = Math.max(0, Number.isFinite(Number(newVal)) ? Number(newVal) : 0);
+    setAdminManualMarginValue(safeVal);
+  }, []);
+
+  const handleSetAdminMarginMode = useCallback((newMode: 'REPLACE' | 'ADD') => {
+    const ctx = adminAuditContextRef.current;
+    if (newMode === ctx.adminMarginMode) return;
+    const prevSummary = `${ctx.adminMarginMode} | ${ctx.adminManualMarginType} ${ctx.adminManualMarginValue}`;
+    const nextSummary = `${newMode} | ${ctx.adminManualMarginType} ${ctx.adminManualMarginValue}`;
+    setAdminMarginMode(newMode);
+    if (ctx.canViewInternalCosts) {
+      db.logAudit(
+        ctx.user ? { id: ctx.user.id, name: ctx.user.name, role: ctx.user.role } : null,
+        'MARGIN_CHANGED',
+        'Quotation',
+        ctx.activeQuoteId,
+        `Admin switched Manual Margin Mode for ${ctx.quoteNumber || ctx.activeQuoteId} from ${ctx.adminMarginMode} to ${newMode} (working draft; click Save Draft to save version).`,
+        prevSummary,
+        nextSummary
+      );
+    }
+  }, [db]);
+
+  const handleCommitAdminManualMarginAudit = useCallback((prevVal: number, nextVal: number) => {
+    const ctx = adminAuditContextRef.current;
+    if (!ctx.canViewInternalCosts || Math.abs(prevVal - nextVal) < 0.0001) return;
+    db.logAudit(
+      ctx.user ? { id: ctx.user.id, name: ctx.user.name, role: ctx.user.role } : null,
+      'MARGIN_CHANGED',
+      'Quotation',
+      ctx.activeQuoteId,
+      `Admin updated Manual Margin Value for ${ctx.quoteNumber || ctx.activeQuoteId} in ${ctx.adminMarginMode} mode (${ctx.adminManualMarginType}) from ${prevVal} to ${nextVal} (working draft; click Save Draft to save version).`,
+      `${ctx.adminMarginMode} | ${ctx.adminManualMarginType} ${prevVal}`,
+      `${ctx.adminMarginMode} | ${ctx.adminManualMarginType} ${nextVal}`
+    );
+  }, [db]);
+
+  const handleSetAgentMarginType = useCallback((t: AgentMarginType) => {
+    setAgentMarginType(t);
+    if (t === 'PERCENTAGE') setAgentMarkupPercent(agentMarginValueRef.current);
+  }, []);
+
+  const handleSetAgentMarginValue = useCallback((val: number) => {
+    const safeVal = Math.max(0, Number(val) || 0);
+    setAgentMarginValue(safeVal);
+    if (agentMarginTypeRef.current === 'PERCENTAGE') setAgentMarkupPercent(safeVal);
+  }, []);
+
+  const handleSetAgentMarkupPercentProp = useCallback((val: number) => {
+    const safeVal = Math.max(0, Number(val) || 0);
+    setAgentMarginType('PERCENTAGE');
+    setAgentMarginValue(safeVal);
+    setAgentMarkupPercent(safeVal);
+  }, []);
+
+  const handleOpenVisaPickerModal = useCallback(() => setShowVisaPickerModal(true), []);
+  const handleOpenAddonModal = useCallback((cat?: 'ALL' | 'INSURANCE' | 'ESIM' | 'SERVICES') => {
+    if (cat) setAddonModalCategory(cat);
+    setShowAddonModal(true);
+  }, []);
+  const handleOpenCalculatorForStep = useCallback((prod: Product) => {
+    if (isRailProduct(prod)) {
+      setInspectingProduct(prod);
+    } else {
+      setCalculatorProduct(prod);
+    }
+  }, []);
+  const handleOpenCartDrawerForStep = useCallback(() => {
+    setIsQuoteDrawerOpen(true, { explicitFromQuoteBuilder: true });
+  }, [setIsQuoteDrawerOpen]);
+  const handleOpenVersionHistoryForStep = useMemo(
+    () => (hasExplicitlySaved ? () => setIsVersionHistoryModalOpen(true) : undefined),
+    [hasExplicitlySaved]
+  );
+  const handleViewSavedMasterPackageForStep = useMemo(
+    () =>
+      linkedExistingMasterPackage
+        ? () => {
+            const latestPkg = db.getPackages().find(p => p.id === linkedExistingMasterPackage.id) || linkedExistingMasterPackage;
+            setViewingSavedMasterPackage(latestPkg);
+          }
+        : undefined,
+    [linkedExistingMasterPackage, db]
+  );
+  const handleNavigateToPackagesForStep = useMemo(
+    () =>
+      onNavigateToPackages
+        ? () => onNavigateToPackages(linkedExistingMasterPackage?.id)
+        : undefined,
+    [onNavigateToPackages, linkedExistingMasterPackage?.id]
+  );
+  const selectedOptionIdStr = useMemo(() => `opt-${activeOptionTab}`, [activeOptionTab]);
+  const adminMissingTermsNotifiedBool = Boolean(
+    adminMissingTermsNotifiedKey === termsTargetSignature && termsTargetSignature.length > 0
+  );
+
   return (
     <div 
       id="quote-builder-shell"
@@ -3696,7 +5330,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       {/* ========================================================================= */}
       <header 
         id="quote-builder-fixed-header"
-        className="shrink-0 w-full z-40 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 sm:px-4 lg:px-5 py-1.5 sm:py-2 shadow-xs sticky top-0"
+        className="shrink-0 w-full z-40 bg-white border-b border-slate-200 px-3 sm:px-4 lg:px-5 py-1.5 sm:py-2 shadow-xs sticky top-0"
       >
         <div className="w-full max-w-[1920px] mx-auto flex items-center justify-between gap-2 xl:gap-3 flex-nowrap min-w-0">
           {/* Left: Back + Quote Info + Customer + Destination + Dates + Pax + Status */}
@@ -3705,8 +5339,11 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               <button
                 type="button"
                 onClick={() => {
-                  if (onBackToDashboard) onBackToDashboard();
-                  else if (onViewMyQuotes) onViewMyQuotes();
+                  const navigateOut = () => {
+                    if (onBackToDashboard) onBackToDashboard();
+                    else if (onViewMyQuotes) onViewMyQuotes();
+                  };
+                  requestNavigationWithUnsavedGuard(navigateOut);
                 }}
                 className="h-[34px] px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer border border-slate-200 text-xs font-semibold flex items-center gap-1 shrink-0 whitespace-nowrap"
                 title="Back to Quotes"
@@ -3723,20 +5360,64 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 {quoteNumber} <span className="text-slate-400 font-normal">v{quoteVersion}</span>
               </span>
 
-              {/* Draft Status Badge */}
-              {!hasExplicitlySaved ? (
-                <span 
-                  className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 shrink-0 whitespace-nowrap" 
-                  title="Unsaved Draft (In-Memory)"
+              {/* Explicit Version & Save Status Badge */}
+              {isReadOnlyHistoricalMode ? (
+                <span
+                  className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0 whitespace-nowrap flex items-center gap-1"
+                  title={`Viewing immutable saved version v${quoteVersion} (Latest: v${latestSavedVersion})`}
                 >
-                  Draft
+                  <Lock className="w-2.5 h-2.5" />
+                  <span>Viewing v{quoteVersion} (Read-Only)</span>
+                </span>
+              ) : autoSaveStatus === 'FAILED' ? (
+                <button
+                  type="button"
+                  onClick={() => handleExplicitSaveDraft()}
+                  className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 shrink-0 whitespace-nowrap cursor-pointer flex items-center gap-1"
+                  title={autoSaveError || 'Save failed — click Save Draft to retry'}
+                >
+                  <AlertCircle className="w-3 h-3" />
+                  <span>Retry Save</span>
+                </button>
+              ) : isSavingExplicitly || autoSaveStatus === 'SAVING' ? (
+                <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-200 shrink-0 whitespace-nowrap flex items-center gap-1">
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                  <span>Saving v{hasExplicitlySaved ? latestSavedVersion + 1 : 1}...</span>
+                </span>
+              ) : restoredFromVersion !== undefined ? (
+                <span
+                  className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200 shrink-0 whitespace-nowrap"
+                  title={`Loaded from v${restoredFromVersion}. Click Save Draft to create v${latestSavedVersion + 1}.`}
+                >
+                  Restored v{restoredFromVersion} (Unsaved)
+                </span>
+              ) : !hasExplicitlySaved ? (
+                <span
+                  className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200 shrink-0 whitespace-nowrap"
+                  title="New Draft in Memory — click Save Draft to persist v1"
+                >
+                  Unsaved Draft
+                </span>
+              ) : hasUnsavedChanges ? (
+                <span
+                  className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 shrink-0 whitespace-nowrap"
+                  title={`Latest saved: v${latestSavedVersion}. Working edits are unsaved until you click Save Draft.`}
+                >
+                  Unsaved Changes (Saved v{latestSavedVersion})
                 </span>
               ) : (
-                <span 
-                  className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 shrink-0 whitespace-nowrap"
-                  title="Saved to Database"
+                <span
+                  className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0 whitespace-nowrap"
+                  title={lastSavedTimestamp ? `Saved v${latestSavedVersion} (${lastSavedTimestamp})` : `Saved v${latestSavedVersion}`}
                 >
-                  Saved
+                  Saved v{latestSavedVersion}
+                </span>
+              )}
+
+              {activeBackgroundJobs.length > 0 && (
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0 whitespace-nowrap flex items-center gap-1">
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                  <span>{activeBackgroundJobs[0].label} ({activeBackgroundJobs[0].progressPercent}%)</span>
                 </span>
               )}
 
@@ -3816,15 +5497,55 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               ))}
             </select>
 
-            {/* Save Draft */}
+            {/* Versions History Button (only after at least 1 saved version exists) */}
+            {hasExplicitlySaved && (
+              <button
+                type="button"
+                onClick={() => setIsVersionHistoryModalOpen(true)}
+                className="h-[34px] px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold border border-slate-200 transition-colors cursor-pointer flex items-center gap-1 shrink-0 whitespace-nowrap"
+                title="View saved versions, compare snapshots, or restore an earlier version"
+                aria-label="Version History"
+              >
+                <History className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                <span>Versions ({Math.max(versionCount, latestSavedVersion, 1)})</span>
+              </button>
+            )}
+
+            {/* Explicit Save Draft Button — ONLY version-creating action */}
             <button
               type="button"
-              onClick={() => handleSaveDraft(true)}
-              className="h-[34px] px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold border border-slate-200 transition-colors cursor-pointer shrink-0 whitespace-nowrap"
-              title="Save current quote draft"
+              disabled={isSavingExplicitly || isReadOnlyHistoricalMode}
+              onClick={() => handleExplicitSaveDraft()}
+              className={`h-[34px] px-2.5 rounded-lg text-xs font-semibold border transition-colors shrink-0 whitespace-nowrap flex items-center gap-1 ${
+                isReadOnlyHistoricalMode
+                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                  : isSavingExplicitly
+                    ? 'bg-teal-50 text-teal-700 border-teal-200 cursor-wait'
+                    : hasUnsavedChanges || !hasExplicitlySaved
+                      ? 'bg-slate-900 hover:bg-slate-800 text-[#00E5C0] border-slate-900 cursor-pointer shadow-2xs'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200 cursor-pointer'
+              }`}
+              title={
+                isReadOnlyHistoricalMode
+                  ? 'Historical version is read-only. Restore as working draft to save changes.'
+                  : 'Save explicit quotation draft version'
+              }
               aria-label="Save Draft"
             >
-              {autoSaveStatus === 'SAVING' ? 'Saving...' : 'Save Draft'}
+              {isSavingExplicitly ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <span>
+                  {!hasExplicitlySaved
+                    ? 'Save Draft v1'
+                    : hasUnsavedChanges
+                      ? `Save Draft v${latestSavedVersion + 1}`
+                      : 'Save Draft'}
+                </span>
+              )}
             </button>
 
             {/* WhatsApp */}
@@ -3866,7 +5587,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             {/* Edit Quote (Return to Editor) */}
             <button
               type="button"
-              onClick={() => setActiveViewTab('BUILDER')}
+              onClick={() => switchViewTab('BUILDER')}
               className={`h-[34px] px-2.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-2xs ${
                 activeViewTab === 'PROPOSAL_PREVIEW'
                   ? 'bg-slate-900 text-[#00E5C0] hover:bg-slate-800'
@@ -3883,19 +5604,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             <button
               type="button"
               disabled={packagePricingStatus === 'CALCULATING'}
-              onClick={() => {
-                if (packagePricingStatus === 'CALCULATING') {
-                  showBuilderToast('Live wholesale tariffs are currently calculating. Please wait...', 'WARNING');
-                  return;
-                }
-                if (packagePricingStatus === 'ERROR') {
-                  showBuilderToast('Cannot generate quote: live pricing calculation encountered an error. Please retry tariffs.', 'WARNING');
-                  return;
-                }
-                handleSaveDraft(true);
-                setActiveViewTab('PROPOSAL_PREVIEW');
-              }}
-              className={`h-[34px] px-3 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs ${
+              onClick={handlePreviewProposal}
+              className={`h-[34px] px-3 rounded-lg text-xs font-bold transition-colors flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs ${
                 packagePricingStatus === 'CALCULATING'
                   ? 'bg-slate-200 text-slate-500 cursor-not-allowed opacity-75'
                   : 'bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 cursor-pointer'
@@ -3919,8 +5629,93 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       {/* ========================================================================= */}
       <div 
         id="quote-builder-workspace-scroll-area"
+        ref={workspaceScrollRef}
+        onScroll={handleWorkspaceScroll}
         className="flex-1 overflow-y-auto overflow-x-hidden w-full min-h-0 relative bg-slate-100/90"
       >
+        {/* Historical Read-Only / Restored Draft Context Banner */}
+        {isReadOnlyHistoricalMode && (
+          <div className="bg-indigo-950 text-white px-4 sm:px-6 py-2.5 border-b border-indigo-800 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs">
+              <Lock className="w-4 h-4 text-indigo-300 shrink-0" />
+              <span>
+                <strong>Viewing Historical Saved Version v{quoteVersion} (Read-Only).</strong>{' '}
+                Latest saved version is <strong>v{latestSavedVersion}</strong>. Saved snapshots are immutable.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {quoteVersion < latestSavedVersion && (
+                <button
+                  type="button"
+                  onClick={() => handleSwitchBuilderVersion(activeQuoteId, latestSavedVersion, 'inspect')}
+                  className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs font-bold cursor-pointer"
+                >
+                  Open Latest v{latestSavedVersion}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => handleSwitchBuilderVersion(activeQuoteId, quoteVersion, 'restore')}
+                className="px-3 py-1 rounded-lg bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black flex items-center gap-1 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restore v{quoteVersion} as Working Draft</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!isReadOnlyHistoricalMode && restoredFromVersion !== undefined && (
+          <div className="bg-amber-50 text-amber-950 px-4 sm:px-6 py-2 border-b border-amber-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2">
+              <RotateCcw className="w-4 h-4 text-amber-700 shrink-0" />
+              <span>
+                <strong>Restored from v{restoredFromVersion} (Unsaved Working Draft).</strong>{' '}
+                Latest saved version remains <strong>v{latestSavedVersion}</strong> until you click <strong>Save Draft</strong>.
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={isSavingExplicitly}
+              onClick={() => handleExplicitSaveDraft()}
+              className="px-3 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black cursor-pointer disabled:opacity-50"
+            >
+              Save Draft as v{latestSavedVersion + 1}
+            </button>
+          </div>
+        )}
+
+        {/* Non-Active Destination Review Banner (Preserves Historical Quotes & Drafts) */}
+        {(draftDestinationReview?.requiresReview || (activeQuoteId && !inventoryVisibilityService.isDestinationActiveForB2B(currentDestination))) && (
+          <div className="bg-amber-50 border-b border-amber-300 text-amber-950 px-4 sm:px-6 py-2.5 flex items-start gap-2.5 text-xs">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              <div className="font-black uppercase tracking-wide text-[11px] text-amber-900">
+                Destination Inactive — Review Required
+              </div>
+              <p className="text-amber-900 leading-snug">
+                This quotation references a destination ({draftDestinationReview?.affectedDestinations?.join(', ') || currentDestination.name}) that is currently non-active. Existing saved items and finalized snapshots are preserved intact, but adding new items from non-active destinations is disabled.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {destinationVisibilityError && (
+          <div className="bg-rose-50 border-b border-rose-200 text-rose-900 px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{destinationVisibilityError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={clearDestinationVisibilityError}
+              className="text-rose-700 hover:text-rose-950 font-bold cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         {/* ========================================================================= */}
         {/* VIEW: OFFICIAL PROPOSAL PRESENTATION PREVIEW */}
         {/* ========================================================================= */}
@@ -3941,8 +5736,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setBrandingMode('STANDARD')}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                  onClick={() => {
+                    setBrandingMode('STANDARD');
+                  }}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                     brandingMode === 'STANDARD'
                       ? 'bg-slate-900 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -3952,8 +5749,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                 </button>
                 <button
                   type="button"
-                  onClick={() => setBrandingMode('WHITE_LABEL')}
-                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                  onClick={() => {
+                    setBrandingMode('WHITE_LABEL');
+                  }}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                     brandingMode === 'WHITE_LABEL'
                       ? 'bg-amber-600 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -3965,91 +5764,17 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             </div>
           </div>
 
-          {/* Render Full Proposal Document */}
-          <ProposalDocumentView
-            quote={{
-              id: activeQuoteId,
-              quoteNumber,
-              version: quoteVersion,
-              title: quoteTitle || (sourcePackageName ? `${sourcePackageName} (${tripNights} Nights)` : `${currentDestination.name} Bespoke Travel Proposal`),
-              destination: currentDestination.name,
-              sourcePackageId: sourcePackageId || undefined,
-              sourcePackageName: sourcePackageName || undefined,
-              quotationScope: quotationScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND',
-              scope: quotationScope,
-              items: effectivePricedItems,
-              currency,
-              overallMarkupPercent: agentMarkupPercent,
-              overallDiscountPercent: overallDiscountPercent || 0,
-              totalNetCost: 0,
-              totalSellingPrice: finalCustomerSellingPrice,
-              baseFinalSellingPrice,
-              agentMarginType,
-              agentMarginValue,
-              agentMarginAmount: additionalMarginAmount,
-              finalCustomerSellingPrice,
-              adminManualMarginType,
-              adminManualMarginValue,
-              adminMarginMode,
-              pricingSnapshot: {
-                baseFinalSellingPrice,
-                currency,
-                agentMarginType,
-                agentMarginValue,
-                agentMarginAmount: additionalMarginAmount,
-                finalCustomerSellingPrice,
-                hotelAccommodationTotal: step7InternalBreakdown?.hotelAccommodationTotal,
-                landPartTotal: step7InternalBreakdown?.landPartTotal,
-                calculatedAt: new Date().toISOString(),
-                pricingVersion: quoteVersion || 1,
-                itemsCount: effectivePricedItems.length,
-                totalPax: adultsCount + childrenCount + infantsCount,
-                adminManualMarginType,
-                adminManualMarginValue,
-                adminMarginMode,
-                revisedSellingPrice: baseFinalSellingPrice
-              },
-              totalTaxes: 0,
-              totalMargin: Math.round(finalClientPrice - totalSellingPrice),
-              clientName: clientName || 'Valued Guest',
-              clientEmail: clientEmail || 'client@example.com',
-              clientPhone: clientPhone || '',
-              clientCompany: clientCompany || user?.agencyName || 'Direct B2B Client',
-              agentId: user?.id || 'usr-agent-01',
-              agentName: user?.name || 'Travel Consultant',
-              agentAgency: user?.agencyName || 'Partner Agency',
-              agentEmail: user?.email || '',
-              agentPhone: user?.phone || '',
-              agentLogoUrl: user?.brandLogoUrl,
-              brandingMode,
-              brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, undefined, brandingMode),
-              agentNotes: agentNotes || '',
-              termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
-              status: 'DRAFT',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              travelStartDate: startDate,
-              travelEndDate: endDate,
-              totalPax: adultsCount + childrenCount + infantsCount,
-              adultsCount,
-              childrenCount,
-              infantsCount,
-              childAges,
-              nationality,
-              travelStyle,
-              options: computedQuotationOptions,
-              routeHubs,
-              dayThemes,
-              dayDescriptions,
-              dayOverviews,
-              dayNotes,
-              inclusions: contextInclusions && contextInclusions.length > 0 ? contextInclusions : undefined,
-              exclusions: contextExclusions && contextExclusions.length > 0 ? contextExclusions : undefined,
-              importantInformation: contextImportantInformation || undefined,
-              cancellationPolicy: contextCancellationPolicy || undefined
-            }}
-            agentUser={user}
-          />
+          {/* Render Full Proposal Document from Memoized Authoritative Snapshot */}
+          {previewQuote && (
+            <ProposalDocumentView
+              quote={previewQuote}
+              agentUser={user}
+              selectedOptionIndexOrId={selectedOptionIdStr}
+              onDownloadPdf={handleDownloadPDF}
+              onShareWhatsApp={handleShareWhatsApp}
+              onSendEmail={handleOpenEmailModal}
+            />
+          )}
         </main>
       ) : (
         /* ========================================================================= */
@@ -4060,8 +5785,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               activeStepId={activeStepId}
               setActiveStepId={setActiveStepId}
               currentDestination={currentDestination}
-              destinations={destinations}
-              onSelectDestination={(dest) => handleDestinationChange(dest)}
+              destinations={activeB2BDestinations}
+              onSelectDestination={handleDestinationChange}
               destinationHubs={destinationHubs}
               availableHotels={availableHotels}
               products={availableProducts}
@@ -4122,34 +5847,28 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               updateItemNotes={updateItemNotes}
               updateItemAdditionalMarkup={updateItemAdditionalMarkup}
               adminBasePriceUpdatedNotification={adminBasePriceUpdatedNotification}
-              onDismissAdminBasePriceNotification={() => setAdminBasePriceUpdatedNotification(undefined)}
+              onDismissAdminBasePriceNotification={handleDismissAdminBasePriceNotification}
+              quoteCompanyId={quoteAgencyContext.companyId}
+              quoteAgentId={quoteAgencyContext.agentId}
+              quoteAgentAgency={quoteAgencyContext.agencyName}
+              productLevelMarginEnabled={isProductLevelMarginActive}
+              agentLevelMarginPercent={agencyPricingSettings.agentLevelMarginPercent}
               baseFinalSellingPrice={baseFinalSellingPrice}
               adminManualMarginType={adminManualMarginType}
-              setAdminManualMarginType={setAdminManualMarginType}
+              setAdminManualMarginType={handleSetAdminManualMarginType}
               adminManualMarginValue={adminManualMarginValue}
-              setAdminManualMarginValue={setAdminManualMarginValue}
+              setAdminManualMarginValue={handleSetAdminManualMarginValue}
               adminMarginMode={adminMarginMode}
-              setAdminMarginMode={setAdminMarginMode}
+              setAdminMarginMode={handleSetAdminMarginMode}
+              onCommitAdminManualMarginAudit={handleCommitAdminManualMarginAudit}
               agentMarginType={agentMarginType}
-              setAgentMarginType={(t) => {
-                setAgentMarginType(t);
-                if (t === 'PERCENTAGE') setAgentMarkupPercent(agentMarginValue);
-              }}
+              setAgentMarginType={handleSetAgentMarginType}
               agentMarginValue={agentMarginValue}
-              setAgentMarginValue={(val) => {
-                const safeVal = Math.max(0, Number(val) || 0);
-                setAgentMarginValue(safeVal);
-                if (agentMarginType === 'PERCENTAGE') setAgentMarkupPercent(safeVal);
-              }}
+              setAgentMarginValue={handleSetAgentMarginValue}
               agentMarginAmount={additionalMarginAmount}
               finalCustomerSellingPrice={finalCustomerSellingPrice}
               agentMarkupPercent={agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0}
-              setAgentMarkupPercent={(val) => {
-                const safeVal = Math.max(0, Number(val) || 0);
-                setAgentMarginType('PERCENTAGE');
-                setAgentMarginValue(safeVal);
-                setAgentMarkupPercent(safeVal);
-              }}
+              setAgentMarkupPercent={handleSetAgentMarkupPercentProp}
               overallDiscountPercent={overallDiscountPercent}
               setOverallDiscountPercent={setOverallDiscountPercent}
               totalNetCost={totalNetCost}
@@ -4162,28 +5881,14 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               transferSuggestions={transferSuggestions}
               onAddSuggestedTransfer={handleAddSuggestedTransfer}
               feasibility={feasibility}
-              onOpenManualHotelModal={(hubId) => {
-                handleOpenAddManualHotel(hubId);
-              }}
-              onOpenVisaPickerModal={() => setShowVisaPickerModal(true)}
-              onOpenAddonModal={(cat) => {
-                if (cat) setAddonModalCategory(cat);
-                setShowAddonModal(true);
-              }}
+              onOpenManualHotelModal={handleOpenAddManualHotel}
+              onOpenVisaPickerModal={handleOpenVisaPickerModal}
+              onOpenAddonModal={handleOpenAddonModal}
               onOpenQuickAddProductModal={handleOpenQuickAddModal}
               onOpenProductDetails={handleOpenProductDetails}
-              onOpenCalculator={(prod) => {
-                if (isRailProduct(prod)) {
-                  setInspectingProduct(prod);
-                } else {
-                  setCalculatorProduct(prod);
-                }
-              }}
-              onSaveDraft={() => handleSaveDraft(true)}
-              onPreviewQuotation={() => {
-                handleSaveDraft(true);
-                setActiveViewTab('PROPOSAL_PREVIEW');
-              }}
+              onOpenCalculator={handleOpenCalculatorForStep}
+              onSaveDraft={handleExplicitSaveDraft}
+              onPreviewQuotation={handlePreviewProposal}
               onDownloadPDF={handleDownloadPDF}
               onShareWhatsApp={handleShareWhatsApp}
               onOpenEmailModal={handleOpenEmailModal}
@@ -4191,29 +5896,28 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               onOpenSavePackageModal={handleOpenSavePackageModal}
               linkedMasterPackageId={linkedExistingMasterPackage?.id || null}
               linkedMasterPackageTitle={linkedExistingMasterPackage?.title || null}
-              onViewSavedMasterPackage={
-                linkedExistingMasterPackage
-                  ? () => {
-                      const latestPkg = db.getPackages().find(p => p.id === linkedExistingMasterPackage.id) || linkedExistingMasterPackage;
-                      setViewingSavedMasterPackage(latestPkg);
-                    }
-                  : undefined
-              }
-              onNavigateToPackagesModule={
-                onNavigateToPackages
-                  ? () => onNavigateToPackages(linkedExistingMasterPackage?.id)
-                  : undefined
-              }
+              onViewSavedMasterPackage={handleViewSavedMasterPackageForStep}
+              onNavigateToPackagesModule={handleNavigateToPackagesForStep}
               canSaveAsPackage={canSaveAsPackage}
               canAddManualHotel={canAddManualHotel}
               autoSaveStatus={autoSaveStatus}
               lastSavedTimestamp={lastSavedTimestamp}
+              hasUnsavedChanges={hasUnsavedChanges}
+              isSavingExplicitly={isSavingExplicitly}
+              latestSavedVersion={latestSavedVersion}
+              restoredFromVersion={restoredFromVersion}
+              isReadOnlyHistoricalMode={isReadOnlyHistoricalMode}
+              onOpenVersionHistory={handleOpenVersionHistoryForStep}
+              precomputedQuoteBreakdown={liveQuoteBreakdown}
+              onRetryAutoSave={handleExplicitSaveDraft}
               quoteNumber={quoteNumber}
               quoteVersion={quoteVersion}
               onSelectHotelForHub={handleSelectHotelForHub}
               onRemoveHotelForHub={handleRemoveHotelForHub}
               onOpenEditManualHotel={handleOpenEditManualHotel}
               onRemoveManualHotel={handleRemoveManualHotel}
+              onSyncHubStayToHotelItems={handleSyncHubStayToHotelItems}
+              onDeleteHubOccurrenceItems={handleDeleteHubOccurrenceItems}
               onOpenEditItem={handleOpenEditItem}
               dayThemes={dayThemes}
               setDayThemes={handleUpdateDayThemes}
@@ -4229,7 +5933,20 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
               setQuoteTitle={setQuoteTitle}
               brandingMode={brandingMode}
               setBrandingMode={setBrandingMode}
-              onOpenCartDrawer={() => setIsQuoteDrawerOpen(true, { explicitFromQuoteBuilder: true })}
+              onOpenCartDrawer={handleOpenCartDrawerForStep}
+              termsReadiness={termsResolution.readiness}
+              isFinalisedTermsLocked={termsResolution.isImmutableFrozen}
+              termsSyncLoading={termsSyncLoading}
+              canManageDestinationTerms={canManageDestinationTerms}
+              isAdminTermsApprover={isAdminTermsApprover}
+              hasDraftTermsUpdateAvailable={hasDraftTermsUpdateAvailable}
+              adminMissingTermsNotified={adminMissingTermsNotifiedBool}
+              onRefreshDraftTerms={handleRefreshDraftTerms}
+              onNotifyAdminMissingTerms={handleNotifyAdminMissingTerms}
+              onConfigureDestinationTerms={onConfigureDestinationTerms}
+              onApproveTermsException={handleApproveTermsException}
+              outputSyncError={outputSyncError}
+              outputBusyOption={outputBusyOption}
             />
         </main>
       )}
@@ -4395,7 +6112,8 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                   )}
                 </div>
               ) : (
-                quickAddFilteredProducts.map(prod => (
+                <>
+                {quickAddFilteredProducts.slice(0, quickAddVisibleLimit).map(prod => (
                   <div
                     key={prod.id}
                     className="bg-white p-3.5 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:border-slate-300 hover:shadow-xs transition-all"
@@ -4405,6 +6123,10 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       <img
                         src={canonicalImageService.resolveProductImage(prod)}
                         alt={prod.name}
+                        width={64}
+                        height={64}
+                        loading="lazy"
+                        decoding="async"
                         referrerPolicy="no-referrer"
                         className="w-16 h-16 rounded-xl object-cover border border-slate-200 shrink-0"
                         onError={(e) => {
@@ -4485,7 +6207,19 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       </button>
                     </div>
                   </div>
-                ))
+                ))}
+                {quickAddFilteredProducts.length > quickAddVisibleLimit && (
+                  <div className="pt-2 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setQuickAddVisibleLimit(prev => prev + 30)}
+                      className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-300 text-xs font-bold text-slate-700 shadow-2xs cursor-pointer"
+                    >
+                      Show More Products ({quickAddFilteredProducts.length - quickAddVisibleLimit} remaining)
+                    </button>
+                  </div>
+                )}
+                </>
               )}
             </div>
           </div>
@@ -4560,11 +6294,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       type="button"
                       onClick={() => {
                         setBrandingMode('STANDARD');
-                        if (emailModalQuote) {
-                          const updated = {
-                            ...emailModalQuote,
-                            brandingMode: 'STANDARD' as QuoteBrandingMode,
-                            brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, emailModalQuote, 'STANDARD')
+                        const targetQuote = emailModalQuote || authoritativeSavedQuote;
+                        if (targetQuote) {
+                          const snap = buildAgencyBrandingSnapshotFromUser(user, targetQuote, 'STANDARD');
+                          const nextAuthSnap = buildAuthoritativeQuotationSnapshot(
+                            { ...targetQuote, brandingMode: 'STANDARD', brandingSnapshot: snap },
+                            {
+                              existingSaved: targetQuote,
+                              versionNumber: targetQuote.version || latestSavedVersion || 1,
+                              selectedOptionIndexOrId: targetQuote.activeOptionId || `opt-${activeOptionTab}`,
+                              brandingMode: 'STANDARD',
+                              user,
+                              preserveExistingPricingIfLocked: true
+                            }
+                          );
+                          const updated: Quotation = {
+                            ...targetQuote,
+                            brandingMode: 'STANDARD',
+                            brandingSnapshot: snap,
+                            snapshotHash: nextAuthSnap.snapshotHash,
+                            authoritativeSnapshot: nextAuthSnap
                           };
                           setEmailModalQuote(updated);
                           const canonical = refreshCanonicalEmailContent(updated, emailCustomNote, 'STANDARD');
@@ -4581,11 +6330,26 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                       type="button"
                       onClick={() => {
                         setBrandingMode('WHITE_LABEL');
-                        if (emailModalQuote) {
-                          const updated = {
-                            ...emailModalQuote,
-                            brandingMode: 'WHITE_LABEL' as QuoteBrandingMode,
-                            brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, emailModalQuote, 'WHITE_LABEL')
+                        const targetQuote = emailModalQuote || authoritativeSavedQuote;
+                        if (targetQuote) {
+                          const snap = buildAgencyBrandingSnapshotFromUser(user, targetQuote, 'WHITE_LABEL');
+                          const nextAuthSnap = buildAuthoritativeQuotationSnapshot(
+                            { ...targetQuote, brandingMode: 'WHITE_LABEL', brandingSnapshot: snap },
+                            {
+                              existingSaved: targetQuote,
+                              versionNumber: targetQuote.version || latestSavedVersion || 1,
+                              selectedOptionIndexOrId: targetQuote.activeOptionId || `opt-${activeOptionTab}`,
+                              brandingMode: 'WHITE_LABEL',
+                              user,
+                              preserveExistingPricingIfLocked: true
+                            }
+                          );
+                          const updated: Quotation = {
+                            ...targetQuote,
+                            brandingMode: 'WHITE_LABEL',
+                            brandingSnapshot: snap,
+                            snapshotHash: nextAuthSnap.snapshotHash,
+                            authoritativeSnapshot: nextAuthSnap
                           };
                           setEmailModalQuote(updated);
                           const canonical = refreshCanonicalEmailContent(updated, emailCustomNote, 'WHITE_LABEL');
@@ -4600,7 +6364,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
                     </button>
                   </div>
                   <div className="font-mono font-black text-sm text-slate-900">
-                    Total: {formatCurrency(finalClientPrice, currency)}
+                    Total: {formatCurrency(emailModalQuote?.authoritativeSnapshot?.pricing.finalCustomerSellingPrice ?? emailModalQuote?.finalCustomerSellingPrice ?? finalClientPrice, emailModalQuote?.currency || currency)}
                   </div>
                 </div>
               </div>
@@ -4850,10 +6614,46 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             setIsWhatsAppModalOpen(false);
             setWhatsAppModalQuote(null);
           }}
+          onBrandingModeChange={(mode) => {
+            setBrandingMode(mode);
+            const targetQuote = whatsAppModalQuote || authoritativeSavedQuote;
+            if (targetQuote) {
+              const snap = buildAgencyBrandingSnapshotFromUser(user, targetQuote, mode);
+              const nextAuthSnap = buildAuthoritativeQuotationSnapshot(
+                { ...targetQuote, brandingMode: mode, brandingSnapshot: snap },
+                {
+                  existingSaved: targetQuote,
+                  versionNumber: targetQuote.version || latestSavedVersion || 1,
+                  selectedOptionIndexOrId: targetQuote.activeOptionId || `opt-${activeOptionTab}`,
+                  brandingMode: mode,
+                  user,
+                  preserveExistingPricingIfLocked: true
+                }
+              );
+              setWhatsAppModalQuote({
+                ...targetQuote,
+                brandingMode: mode,
+                brandingSnapshot: snap,
+                snapshotHash: nextAuthSnap.snapshotHash,
+                authoritativeSnapshot: nextAuthSnap
+              });
+            }
+          }}
           onSuccess={(updatedQuote) => {
             if (updatedQuote.clientPhone && setClientPhone) {
               setClientPhone(updatedQuote.clientPhone);
             }
+            const rec = recordQuotationGenerationEvent(db, updatedQuote, {
+              outputOption: 'SHARE_WHATSAPP',
+              status: 'SUCCEEDED',
+              brandingMode: updatedQuote.brandingMode || brandingMode,
+              selectedOptionId: updatedQuote.activeOptionId || `opt-${activeOptionTab}`,
+              recipient: updatedQuote.lastSharedRecipientPhone || updatedQuote.clientPhone,
+              user
+            });
+            setAuthoritativeSavedQuote(rec.updatedQuote);
+            setWhatsAppModalQuote(rec.updatedQuote);
+            setLoadedQuoteStatus(rec.updatedQuote.status);
           }}
         />
       )}
@@ -4905,8 +6705,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           onClose={() => setEditingServiceItem(null)}
           onSuccess={() => {
             setEditingServiceItem(null);
-            handleSaveDraft();
-            showBuilderToast('✓ Service configuration updated', 'SUCCESS');
+            showBuilderToast('✓ Service configuration updated (unsaved until Save Draft)', 'SUCCESS');
           }}
         />
       )}
@@ -4926,8 +6725,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             const prodName = configuredItem?.name || configuringQuickAddProduct.product.name;
             setConfiguringQuickAddProduct(null);
             setQuickAddModalDay(null);
-            handleSaveDraft();
-            showBuilderToast(`✓ Added ${prodName} to Day ${dayNum}`, 'SUCCESS');
+            showBuilderToast(`✓ Added ${prodName} to Day ${dayNum} (click Save Draft to persist)`, 'SUCCESS');
           }}
         />
       )}
@@ -5372,7 +7170,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             {/* List of Visas */}
             <div className="p-4 sm:p-6 overflow-y-auto space-y-3 flex-1">
               {(() => {
-                const activeVisas = db.getVisas().filter(v => v.status === 'ACTIVE' || !v.status);
+                const activeVisas = inventoryVisibilityService.getB2BActiveVisas();
                 const filtered = activeVisas.filter(visa => {
                   const q = (visaPickerSearch || '').trim().toLowerCase();
                   const matchesSearch = !q || 
@@ -5475,7 +7273,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
             {/* Modal Footer */}
             <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
               <span className="text-[11px] text-slate-500 font-medium">
-                Showing {db.getVisas().filter(v => v.status === 'ACTIVE' || !v.status).length} verified production visa pathways from Master Inventory.
+                Showing {inventoryVisibilityService.getB2BActiveVisas().length} verified production visa pathways from Master Inventory.
               </span>
               <button
                 type="button"
@@ -5502,9 +7300,7 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
           initialApplicants={adultsCount + childrenCount}
           onSuccess={(visa, details) => {
             setSelectedVisaForQuoteModal(null);
-            // Open toast or update status
-            setAutoSaveStatus('SAVED');
-            setLastSavedTimestamp(new Date().toLocaleTimeString());
+            showBuilderToast(`✓ Visa facilitation added (${visa.name}) — click Save Draft to save version`, 'SUCCESS');
           }}
         />
       )}
@@ -5612,16 +7408,197 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
       )}
 
       {/* ========================================================================= */}
+      {/* MODAL: QUOTATION VERSION HISTORY & COMPARE */}
+      {/* ========================================================================= */}
+      {isVersionHistoryModalOpen && hasExplicitlySaved && (
+        <QuotationVersionHistoryModal
+          isOpen={isVersionHistoryModalOpen}
+          onClose={() => setIsVersionHistoryModalOpen(false)}
+          quoteId={activeQuoteId}
+          initialQuote={authoritativeSavedQuote}
+          currentUser={user}
+          onOpenVersion={(qId, ver, m) => handleSwitchBuilderVersion(qId, ver, m)}
+          onRestoreVersion={(qId, ver) => handleSwitchBuilderVersion(qId, ver, 'restore')}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: OUTPUT ACTION UNSAVED CHANGES GATE */}
+      {/* ========================================================================= */}
+      {pendingOutputRequest && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Unsaved Working Changes</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Action: <strong>{pendingOutputRequest.label}</strong>
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              {!hasExplicitlySaved
+                ? 'This quotation has not been saved yet. Save Draft v1 first so all outputs (Preview, PDF, Email, WhatsApp, Booking) use the exact authoritative saved snapshot.'
+                : `You have unsaved edits in the builder. Latest saved version is v${latestSavedVersion}. Would you like to explicitly Save Draft v${latestSavedVersion + 1} before running ${pendingOutputRequest.label}?`}
+            </p>
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isSavingExplicitly}
+                onClick={async () => {
+                  const req = pendingOutputRequest;
+                  setPendingOutputRequest(null);
+                  const saved = await handleExplicitSaveDraft();
+                  if (saved) {
+                    await req.onResolved(saved);
+                  }
+                }}
+                className="w-full px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black cursor-pointer disabled:opacity-50"
+              >
+                {hasExplicitlySaved ? `Save Draft v${latestSavedVersion + 1} & Continue` : 'Save Draft v1 & Continue'}
+              </button>
+              {hasExplicitlySaved && authoritativeSavedQuote && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const req = pendingOutputRequest;
+                    setPendingOutputRequest(null);
+                    setOutputBusyOption(req.option);
+                    setOutputSyncError(null);
+                    try {
+                      let baseSaved = db.getQuoteByIdAuthorized(authoritativeSavedQuote.id, user) || authoritativeSavedQuote;
+                      const needsHydrate =
+                        !baseSaved.items ||
+                        baseSaved.items.length === 0 ||
+                        baseSaved.items.some((it: any) => Boolean(it?.__dehydratedToVersionId)) ||
+                        (baseSaved.options || []).some((o: any) => Boolean((o as any)?.__dehydratedToVersionId));
+                      if ((baseSaved.masterHydratedFromVersionId || baseSaved.latestVersionId) && needsHydrate) {
+                        const verRef = baseSaved.masterHydratedFromVersionId || baseSaved.latestVersionId || Number(baseSaved.latestVersion || baseSaved.version || 1);
+                        baseSaved = (await withBoundedTimeout(
+                          db.hydrateMasterQuotationFromVersionAsync(baseSaved.id, verRef, user),
+                          15000,
+                          'Hydrate Saved Quotation'
+                        )) || baseSaved;
+                      }
+                      const modeToUse = brandingMode || baseSaved.brandingMode || 'STANDARD';
+                      const bSnap = baseSaved.brandingSnapshot?.mode === modeToUse
+                        ? baseSaved.brandingSnapshot
+                        : buildAgencyBrandingSnapshotFromUser(user, baseSaved, modeToUse);
+                      const candidate: Quotation = {
+                        ...baseSaved,
+                        activeOptionId: `opt-${activeOptionTab}`,
+                        brandingMode: modeToUse,
+                        brandingSnapshot: bSnap
+                      };
+                      const savedVerNum = latestSavedVersion || baseSaved.version || 1;
+                      const builtSnap = buildAuthoritativeQuotationSnapshot(candidate, {
+                        existingSaved: baseSaved,
+                        versionNumber: savedVerNum,
+                        selectedOptionIndexOrId: `opt-${activeOptionTab}`,
+                        brandingMode: modeToUse,
+                        user,
+                        preserveExistingPricingIfLocked: Boolean(baseSaved.isLocked)
+                      });
+                      const preparedSaved: Quotation = {
+                        ...candidate,
+                        snapshotHash: builtSnap.snapshotHash,
+                        snapshotVersion: builtSnap.versionNumber,
+                        authoritativeSnapshot: builtSnap
+                      };
+                      const report = validateQuotationOutputConsistency(preparedSaved, {
+                        selectedOptionIndexOrId: preparedSaved.activeOptionId,
+                        brandingMode: modeToUse
+                      });
+                      if (!report.isValid) {
+                        const msg = `Synchronisation check blocked ${req.label}: ${report.mismatches[0]}`;
+                        setOutputSyncError(msg);
+                        showBuilderToast(msg, 'WARNING');
+                        return;
+                      }
+                      await req.onResolved(preparedSaved);
+                    } catch (err: any) {
+                      const msg = err?.message || `Failed to prepare last saved snapshot for ${req.label}.`;
+                      setOutputSyncError(msg);
+                      showBuilderToast(msg, 'WARNING');
+                    } finally {
+                      setOutputBusyOption(null);
+                    }
+                  }}
+                  className="w-full px-4 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold cursor-pointer"
+                >
+                  Use Last Saved v{latestSavedVersion} Without Saving Edits
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setPendingOutputRequest(null)}
+                className="w-full px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100 text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: LEAVE QUOTE BUILDER UNSAVED GUARD */}
+      {/* ========================================================================= */}
+      {pendingLeaveAction && (
+        <div className="fixed inset-0 z-[75] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-900">Leave With Unsaved Changes?</h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Quotation #{quoteNumber}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Your working edits are not saved and will <strong>not</strong> be autosaved. Click <strong>Continue Editing</strong> if you want to save a draft first, or <strong>Leave Without Saving</strong> to discard working changes.
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPendingLeaveAction(null)}
+                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black cursor-pointer"
+              >
+                Continue Editing
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const act = pendingLeaveAction;
+                  setPendingLeaveAction(null);
+                  act();
+                }}
+                className="px-4 py-2 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold cursor-pointer"
+              >
+                Leave Without Saving
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* FLOATING IN-BUILDER TOAST NOTIFICATION */}
       {/* ========================================================================= */}
       {builderToast && (
         <div className="fixed bottom-6 right-6 z-50 animate-bounce-short shadow-2xl">
-          <div className={`px-4 py-3 rounded-2xl flex items-center space-x-3 text-xs font-bold border backdrop-blur-md ${
+          <div className={`px-4 py-3 rounded-2xl flex items-center space-x-3 text-xs font-bold border ${
             builderToast.type === 'SUCCESS'
-              ? 'bg-slate-900/95 text-[#00E5C0] border-teal-500/40 shadow-teal-500/10'
+              ? 'bg-slate-900 text-[#00E5C0] border-teal-500/40 shadow-teal-500/10'
               : builderToast.type === 'WARNING'
-              ? 'bg-amber-900/95 text-amber-200 border-amber-500/40 shadow-amber-500/10'
-              : 'bg-slate-900/95 text-white border-slate-700 shadow-black/20'
+              ? 'bg-amber-900 text-amber-200 border-amber-500/40 shadow-amber-500/10'
+              : 'bg-slate-900 text-white border-slate-700 shadow-black/20'
           }`}>
             <div className="w-6 h-6 rounded-full bg-[#00E5C0]/20 text-[#00E5C0] flex items-center justify-center shrink-0">
               <Check className="w-3.5 h-3.5" />
@@ -5640,3 +7617,5 @@ export const UnifiedB2BQuotationBuilder: React.FC<UnifiedB2BQuotationBuilderProp
     </div>
   );
 };
+
+export const UnifiedB2BQuotationBuilder = React.memo(UnifiedB2BQuotationBuilderBase);

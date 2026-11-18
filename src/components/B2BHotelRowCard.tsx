@@ -172,6 +172,8 @@ export const B2BHotelRowCard: React.FC<B2BHotelRowCardProps> = ({
             <img
               src={canonicalImageService.resolveHotelImage(hotel)}
               alt={hotel.name}
+              loading="lazy"
+              decoding="async"
               className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
             />
             <div className="absolute top-1 left-1 bg-black/70 backdrop-blur-xs text-white text-[9px] font-black px-1.5 py-0.5 rounded flex items-center">

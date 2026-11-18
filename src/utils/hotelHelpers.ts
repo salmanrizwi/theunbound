@@ -1,6 +1,7 @@
 import { Hotel, HotelRoomType, HotelRate, MealPlanCode, Product, CurrencyCode, ManualHotelDetails, InventorySurcharge, AppliedSurchargeDetail, InventoryValidityEvaluation } from '../types';
 import { convertCurrency, formatCurrency, evaluateInventoryValidity, evaluateApplicableSurcharges, roundCurrencyAmount } from '../services/pricingEngine';
 import { canonicalImageService } from '../services/imageService';
+import { pricingCache } from '../services/pricingCache';
 
 export function collectHotelSurcharges(
   hotel?: Hotel,
@@ -112,7 +113,7 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     throw new Error('Hotel parameter is required for stay calculation.');
   }
 
-  const cacheKey = `${params.hotel.id}_${params.roomType?.id || 'r0'}_${params.rate?.id || 'rt0'}_${params.checkInDate || ''}_${params.checkOutDate || ''}_${params.nights}_${params.roomsCount}_${params.adults}_${params.children}_${params.extraBeds}_${params.targetCurrency}_${params.agentClientMarkupPercent || 12}_${params.customDiscountPercent || 0}`;
+  const cacheKey = `${params.hotel.id}_${params.roomType?.id || 'r0'}_${params.rate?.id || 'rt0'}_${params.checkInDate || ''}_${params.checkOutDate || ''}_${params.nights}_${params.roomsCount}_${params.adults}_${params.children}_${params.extraBeds}_${params.targetCurrency}_${params.agentClientMarkupPercent || 12}_${params.customDiscountPercent || 0}_scv${pricingCache.getSurchargeCatalogVersion()}`;
   const cached = hotelStayPriceCache.get(cacheKey);
   if (cached) {
     return cached;
@@ -233,12 +234,20 @@ export function calculateHotelStayPrice(params: HotelStayCalculationParams): Hot
     checkInDate
   );
 
-  const combinedSurcharges = collectHotelSurcharges(hotel, roomType, rate);
   const surchargeEval = evaluateApplicableSurcharges({
-    surcharges: combinedSurcharges,
+    surcharges: [],
+    productId: hotel.id,
+    productName: `${hotel.name}${roomType?.roomName ? ` — ${roomType.roomName}` : ''}`,
+    category: 'Hotels',
+    productType: 'Hotel & Resort',
+    destinationId: hotel.destinationId,
+    destinationName: (hotel as any).destinationName || hotel.country,
+    country: hotel.country,
     serviceDate: checkInDate,
+    serviceEndDate: checkOutDate,
     nights,
     baseNativeAmount: nativeBaseSellingBeforeSurcharges,
+    baseTargetAmount: baseSellingPriceBeforeSurcharges,
     nativeCurrency: hotelCurrency,
     targetCurrency,
     adults,
@@ -419,10 +428,9 @@ export function hotelToProduct(
     hotel.validity?.validTo ||
     hotel.validityTo ||
     '2026-12-31';
-  const combinedSurcharges = collectHotelSurcharges(hotel, selectedRoom, selectedRate);
-
   return {
     id: `hotel-prod-${hotel.id}-${selectedRoom?.id || 'std'}-${safeEffectiveRooms}r-${safeEffectiveNights}n`,
+    hotelId: hotel.id,
     sku: `${hotel.code || 'HTL'}-${selectedRoom?.id?.substring(0, 4)?.toUpperCase() || 'STD'}`,
     destinationId: hotel.destinationId,
     destinationName: hotel.destinationName,
@@ -466,7 +474,7 @@ export function hotelToProduct(
       validFrom: effectiveValidFrom,
       validTo: effectiveValidTo
     },
-    surcharges: combinedSurcharges,
+    surcharges: [],
     minPax: 1,
     maxPax: (selectedRoom?.maxOccupancy || 2) * safeRooms,
     availability: 'INSTANT',

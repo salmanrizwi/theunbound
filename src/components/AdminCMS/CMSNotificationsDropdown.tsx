@@ -40,9 +40,12 @@ export const CMSNotificationsDropdown: React.FC<CMSNotificationsDropdownProps> =
 
   // Real-time synchronization
   useEffect(() => {
-    const unsub = db.subscribe(() => {
-      setDbTick(t => t + 1);
-    });
+    const unsub = db.subscribeToCollections(
+      ['admin_activities', 'leads', 'saved_quotes', 'bookings', 'system_users', 'calendar_tasks'],
+      () => {
+        setDbTick(t => t + 1);
+      }
+    );
     return () => unsub();
   }, [db]);
 

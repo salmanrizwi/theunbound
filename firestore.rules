@@ -10,6 +10,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
     function getUserDoc(uid) {
       return get(/databases/$(database)/documents/users/$(uid));
     }
@@ -396,7 +400,7 @@ service cloud.firestore {
 
     match /products/{document=**} {
       allow read: if true;
-      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow create, update: if canAccessCMSOperations() || canAccessCMSFinance() || isValidAdminCMSData();
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
     }
 
@@ -426,7 +430,7 @@ service cloud.firestore {
 
     match /japan_rail_commercial_products/{document=**} {
       allow read: if true;
-      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow create, update: if canAccessCMSOperations() || canAccessCMSFinance() || isValidAdminCMSData();
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
     }
 
@@ -492,8 +496,7 @@ service cloud.firestore {
 
     match /visas/{document=**} {
       allow read: if true;
-      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
-      allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
+      allow create, update, delete: if canAccessCMSOperations();
     }
 
     match /travel_protection_plans/{document=**} {
@@ -598,6 +601,21 @@ service cloud.firestore {
       allow read: if true;
       allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
       allow delete: if canAccessCMSContent() || isResourceAdminOwned();
+    }
+
+    // Destination-Wise Commercial Quotation Terms (Admin CMS Controlled, B2B Read Published Only)
+    match /destination_commercial_terms/{configId} {
+      allow read: if canAccessCMSContent() || isMasterAdmin() || resource == null || (
+        resource.data.status == 'PUBLISHED' && resource.data.isActive == true
+      );
+      allow create, update: if canAccessCMSContent() || isMasterAdmin() || isValidAdminCMSData();
+      allow delete: if canAccessCMSContent() || isMasterAdmin() || isResourceAdminOwned();
+    }
+
+    match /destination_commercial_terms_history/{versionId} {
+      allow read: if canAccessCMSContent() || isMasterAdmin();
+      allow create: if canAccessCMSContent() || isMasterAdmin() || isValidAdminCMSData();
+      allow update, delete: if isMasterAdmin();
     }
 
     match /menu_items/{document=**} {
@@ -816,37 +834,291 @@ service cloud.firestore {
         )
       );
 
-      // Quote versions subcollection
+      // Split-document version manifests subcollection (created exclusively via explicit Save Draft)
+      // Committed manifests are strictly immutable; only PREPARING -> COMMITTED|FAILED transitions are allowed.
       match /versions/{versionId} {
-        allow read: if canAccessCMSOperations() || (
-          isAuthenticated() && (
+        allow get: if isValidId(quotationId) && isValidId(versionId) && (
+          canAccessCMSOperations() || (
+            isAuthenticated() && (
+              resource.data.agentId == request.auth.uid ||
+              resource.data.userId == request.auth.uid ||
+              (
+                exists(/databases/$(database)/documents/quotations/$(quotationId)) && (
+                  get(/databases/$(database)/documents/quotations/$(quotationId)).data.agentId == request.auth.uid ||
+                  get(/databases/$(database)/documents/quotations/$(quotationId)).data.userId == request.auth.uid
+                )
+              )
+            )
+          )
+        );
+        allow list: if isValidId(quotationId) && (
+          canAccessCMSOperations() || (
+            isAuthenticated() && (
+              resource.data.agentId == request.auth.uid ||
+              resource.data.userId == request.auth.uid ||
+              (
+                exists(/databases/$(database)/documents/quotations/$(quotationId)) && (
+                  get(/databases/$(database)/documents/quotations/$(quotationId)).data.agentId == request.auth.uid ||
+                  get(/databases/$(database)/documents/quotations/$(quotationId)).data.userId == request.auth.uid
+                )
+              )
+            )
+          )
+        );
+        allow create: if isValidId(quotationId) && isValidId(versionId) && (
+          request.resource.data.quoteId == quotationId &&
+          (request.resource.data.version is int || request.resource.data.version is number) &&
+          request.resource.data.version >= 1 &&
+          (
+            !('manifestStatus' in request.resource.data) ||
+            request.resource.data.manifestStatus in ['PREPARING', 'COMMITTED']
+          )
+        ) && (
+          canAccessCMSOperations() || (
+            isAuthenticated() && (
+              request.resource.data.agentId == request.auth.uid ||
+              request.resource.data.userId == request.auth.uid
+            ) && (
+              !('internalNettCost' in request.resource.data) &&
+              !('supplierCost' in request.resource.data) &&
+              !('internalMarkup' in request.resource.data) &&
+              !('internalProfit' in request.resource.data) &&
+              !('dmcMarginAmount' in request.resource.data) &&
+              !('totalNetCost' in request.resource.data) &&
+              !('totalMargin' in request.resource.data) &&
+              !('marginAmount' in request.resource.data)
+            )
+          )
+        );
+        allow update: if isValidId(quotationId) && isValidId(versionId) && (
+          (
+            resource.data.manifestStatus == 'PREPARING' &&
+            request.resource.data.manifestStatus in ['COMMITTED', 'FAILED'] &&
+            request.resource.data.quoteId == resource.data.quoteId &&
+            request.resource.data.version == resource.data.version &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'storageFormat',
+              'schemaVersion',
+              'manifestStatus',
+              'committedAt',
+              'sectionIds',
+              'sectionRefs',
+              'sections',
+              'sectionCount',
+              'chunkCount',
+              'sectionsIntegrityHash',
+              'totalReconstructedBytes',
+              'failureReason',
+              'isLatest',
+              'isImmutable',
+              'updatedAt',
+              'migrationStatus',
+              'migrationState',
+              'migratedAt',
+              'verifiedAt',
+              'failingFieldPaths'
+            ])
+          ) ||
+          (
+            (!('storageFormat' in resource.data) || resource.data.storageFormat == 'SINGLE_DOC_V1') &&
+            request.resource.data.storageFormat == 'SPLIT_SECTIONS_V2' &&
+            request.resource.data.manifestStatus == 'COMMITTED' &&
+            request.resource.data.quoteId == resource.data.quoteId &&
+            request.resource.data.version == resource.data.version &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'storageFormat',
+              'schemaVersion',
+              'manifestStatus',
+              'committedAt',
+              'sectionIds',
+              'sectionRefs',
+              'sections',
+              'sectionCount',
+              'chunkCount',
+              'sectionsIntegrityHash',
+              'totalReconstructedBytes',
+              'isLatest',
+              'isImmutable',
+              'updatedAt',
+              'migrationStatus',
+              'migrationState',
+              'migratedAt',
+              'verifiedAt',
+              'totalItems',
+              'totalHubs'
+            ])
+          )
+        ) && (
+          canAccessCMSOperations() || (
+            isAuthenticated() && (
+              resource.data.agentId == request.auth.uid ||
+              resource.data.userId == request.auth.uid
+            ) && (
+              !('internalNettCost' in request.resource.data) &&
+              !('supplierCost' in request.resource.data) &&
+              !('internalMarkup' in request.resource.data) &&
+              !('internalProfit' in request.resource.data) &&
+              !('dmcMarginAmount' in request.resource.data) &&
+              !('totalNetCost' in request.resource.data) &&
+              !('totalMargin' in request.resource.data) &&
+              !('marginAmount' in request.resource.data)
+            )
+          )
+        );
+        allow delete: if canAccessCMSOperations() || (
+          isAuthenticated() &&
+          resource.data.manifestStatus in ['PREPARING', 'FAILED'] &&
+          (
             resource.data.agentId == request.auth.uid ||
             resource.data.userId == request.auth.uid
           )
         );
-        allow create, update: if canAccessCMSOperations() || (
-          isAuthenticated() && (
-            request.resource.data.agentId == request.auth.uid ||
-            request.resource.data.userId == request.auth.uid
-          )
-        );
-        allow delete: if canAccessCMSOperations();
+
+        // Modular section & dynamic chunk documents (write-once per version)
+        match /sections/{sectionId} {
+          allow get: if isValidId(quotationId) && isValidId(versionId) && isValidId(sectionId) && (
+            canAccessCMSOperations() || (
+              isAuthenticated() && (
+                resource.data.agentId == request.auth.uid ||
+                resource.data.userId == request.auth.uid ||
+                (
+                  exists(/databases/$(database)/documents/quotations/$(quotationId)) && (
+                    get(/databases/$(database)/documents/quotations/$(quotationId)).data.agentId == request.auth.uid ||
+                    get(/databases/$(database)/documents/quotations/$(quotationId)).data.userId == request.auth.uid
+                  )
+                )
+              )
+            )
+          );
+          allow list: if isValidId(quotationId) && isValidId(versionId) && (
+            canAccessCMSOperations() || (
+              isAuthenticated() && (
+                resource.data.agentId == request.auth.uid ||
+                resource.data.userId == request.auth.uid ||
+                (
+                  exists(/databases/$(database)/documents/quotations/$(quotationId)) && (
+                    get(/databases/$(database)/documents/quotations/$(quotationId)).data.agentId == request.auth.uid ||
+                    get(/databases/$(database)/documents/quotations/$(quotationId)).data.userId == request.auth.uid
+                  )
+                )
+              )
+            )
+          );
+          allow create: if isValidId(quotationId) && isValidId(versionId) && isValidId(sectionId) && (
+            request.resource.data.quoteId == quotationId &&
+            request.resource.data.versionId == versionId &&
+            (request.resource.data.chunkIndex is int || request.resource.data.chunkIndex is number)
+          ) && (
+            canAccessCMSOperations() || (
+              isAuthenticated() && (
+                request.resource.data.agentId == request.auth.uid ||
+                request.resource.data.userId == request.auth.uid
+              ) && (
+                !('internalNettCost' in request.resource.data) &&
+                !('supplierCost' in request.resource.data) &&
+                !('internalMarkup' in request.resource.data) &&
+                !('internalProfit' in request.resource.data) &&
+                !('dmcMarginAmount' in request.resource.data) &&
+                !('totalNetCost' in request.resource.data) &&
+                !('totalMargin' in request.resource.data) &&
+                !('marginAmount' in request.resource.data) &&
+                (
+                  !('data' in request.resource.data) || (
+                    !('internalNettCost' in request.resource.data.data) &&
+                    !('supplierCost' in request.resource.data.data) &&
+                    !('internalMarkup' in request.resource.data.data) &&
+                    !('internalProfit' in request.resource.data.data) &&
+                    !('totalNetCost' in request.resource.data.data) &&
+                    !('totalMargin' in request.resource.data.data) &&
+                    !('marginAmount' in request.resource.data.data)
+                  )
+                )
+              )
+            )
+          );
+          allow update: if isValidId(quotationId) && isValidId(versionId) && isValidId(sectionId) && (
+            exists(/databases/$(database)/documents/quotations/$(quotationId)/versions/$(versionId)) &&
+            get(/databases/$(database)/documents/quotations/$(quotationId)/versions/$(versionId)).data.manifestStatus in ['PREPARING', 'FAILED'] &&
+            request.resource.data.quoteId == quotationId &&
+            request.resource.data.versionId == versionId &&
+            (request.resource.data.chunkIndex is int || request.resource.data.chunkIndex is number)
+          ) && (
+            canAccessCMSOperations() || (
+              isAuthenticated() && (
+                request.resource.data.agentId == request.auth.uid ||
+                request.resource.data.userId == request.auth.uid
+              ) && (
+                !('internalNettCost' in request.resource.data) &&
+                !('supplierCost' in request.resource.data) &&
+                !('internalMarkup' in request.resource.data) &&
+                !('internalProfit' in request.resource.data) &&
+                !('dmcMarginAmount' in request.resource.data) &&
+                !('totalNetCost' in request.resource.data) &&
+                !('totalMargin' in request.resource.data) &&
+                !('marginAmount' in request.resource.data) &&
+                (
+                  !('data' in request.resource.data) || (
+                    !('internalNettCost' in request.resource.data.data) &&
+                    !('supplierCost' in request.resource.data.data) &&
+                    !('internalMarkup' in request.resource.data.data) &&
+                    !('internalProfit' in request.resource.data.data) &&
+                    !('totalNetCost' in request.resource.data.data) &&
+                    !('totalMargin' in request.resource.data.data) &&
+                    !('marginAmount' in request.resource.data.data)
+                  )
+                )
+              )
+            )
+          );
+          allow delete: if canAccessCMSOperations() || (
+            isAuthenticated() &&
+            exists(/databases/$(database)/documents/quotations/$(quotationId)/versions/$(versionId)) &&
+            get(/databases/$(database)/documents/quotations/$(quotationId)/versions/$(versionId)).data.manifestStatus in ['PREPARING', 'FAILED'] &&
+            (
+              resource.data.agentId == request.auth.uid ||
+              resource.data.userId == request.auth.uid
+            )
+          );
+        }
       }
     }
 
     match /quote_versions/{versionId} {
-      allow read: if canAccessCMSOperations() || (
+      allow get: if isValidId(versionId) && (
+        canAccessCMSOperations() || (
+          isAuthenticated() && (
+            resource.data.agentId == request.auth.uid ||
+            resource.data.userId == request.auth.uid
+          )
+        )
+      );
+      allow list: if canAccessCMSOperations() || (
         isAuthenticated() && (
           resource.data.agentId == request.auth.uid ||
           resource.data.userId == request.auth.uid
         )
       );
-      allow create, update: if canAccessCMSOperations() || (
-        isAuthenticated() && (
-          request.resource.data.agentId == request.auth.uid ||
-          request.resource.data.userId == request.auth.uid
+      allow create: if isValidId(versionId) && (
+        (request.resource.data.version is int || request.resource.data.version is number) &&
+        request.resource.data.version >= 1
+      ) && (
+        canAccessCMSOperations() || (
+          isAuthenticated() && (
+            request.resource.data.agentId == request.auth.uid ||
+            request.resource.data.userId == request.auth.uid
+          ) && (
+            !('internalNettCost' in request.resource.data) &&
+            !('supplierCost' in request.resource.data) &&
+            !('internalMarkup' in request.resource.data) &&
+            !('internalProfit' in request.resource.data) &&
+            !('dmcMarginAmount' in request.resource.data) &&
+            !('totalNetCost' in request.resource.data) &&
+            !('totalMargin' in request.resource.data) &&
+            !('marginAmount' in request.resource.data)
+          )
         )
       );
+      allow update: if false;
       allow delete: if canAccessCMSOperations();
     }
 
@@ -1086,6 +1358,30 @@ service cloud.firestore {
     }
 
     // =========================================================================
+    // CENTRALIZED SURCHARGE MANAGEMENT (Finance & Administration)
+    // Writes & audit history strictly restricted to Master Admin / Finance.
+    // B2B Quote Builder reads active surcharge catalogs; Buyers/Agents cannot mutate.
+    // =========================================================================
+
+    match /surcharge_masters/{surchargeId} {
+      allow read: if true;
+      allow create, update: if isMasterAdmin() || canAccessCMSFinance() || isValidAdminCMSData();
+      allow delete: if isMasterAdmin() || canAccessCMSFinance() || isResourceAdminOwned();
+    }
+
+    match /surcharge_product_mappings/{mappingId} {
+      allow read: if true;
+      allow create, update: if isMasterAdmin() || canAccessCMSFinance() || isValidAdminCMSData();
+      allow delete: if isMasterAdmin() || canAccessCMSFinance() || isResourceAdminOwned();
+    }
+
+    match /surcharge_history/{historyId} {
+      allow read: if isMasterAdmin() || canAccessCMSFinance() || isInternalUser();
+      allow create: if isMasterAdmin() || canAccessCMSFinance() || isValidAdminCMSData();
+      allow update, delete: if false;
+    }
+
+    // =========================================================================
     // SYSTEM AUDITING, TELEMETRY & DIAGNOSTICS
     // =========================================================================
 
@@ -1241,6 +1537,251 @@ service cloud.firestore {
         resource.data.userId == request.auth.uid ||
         request.resource.data.userId == request.auth.uid
       );
+    }
+
+    // =========================================================================
+    // MARGIN & COMMISSION GOVERNANCE (Strictly Admin / Finance Admin Only)
+    // B2B Agents, Buyers, and unprivileged Staff have strictly NO read/write access.
+    // =========================================================================
+
+    function isValidProductMarginConfig(data) {
+      return data != null &&
+        data.keys().hasAll([
+          'id', 'productId', 'marginType', 'marginValue', 'b2bAgentMarkupPercent',
+          'defaultMarkupPercent', 'commissionPercent', 'isActive', 'status',
+          'version', 'updatedAt', 'updatedByUid', 'updatedByEmail', 'updatedByRole'
+        ]) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.productId is string && data.productId == data.id &&
+        data.marginType in ['PERCENTAGE', 'FIXED'] &&
+        (data.marginValue is int || data.marginValue is float) && data.marginValue >= 0 &&
+        (data.b2bAgentMarkupPercent is int || data.b2bAgentMarkupPercent is float) && data.b2bAgentMarkupPercent >= 0 &&
+        (data.defaultMarkupPercent is int || data.defaultMarkupPercent is float) && data.defaultMarkupPercent >= 0 &&
+        (data.commissionPercent is int || data.commissionPercent is float) && data.commissionPercent >= 0 && data.commissionPercent <= 100 &&
+        data.isActive is bool &&
+        data.status in ['ACTIVE', 'INACTIVE'] &&
+        (data.version is int || data.version is float) && data.version >= 1 &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64 &&
+        data.updatedByUid is string && data.updatedByUid.size() > 0 && data.updatedByUid.size() <= 128 &&
+        data.updatedByEmail is string && data.updatedByEmail.size() > 0 && data.updatedByEmail.size() <= 200 &&
+        data.updatedByRole in ['ADMIN', 'SUPER_ADMIN', 'TEAM_MEMBER', 'DMC_STAFF'];
+    }
+
+    function isValidProductMarginAuditLog(data) {
+      return data != null &&
+        data.keys().hasAll([
+          'id', 'productId', 'action', 'newMarginType', 'newMarginValue',
+          'newCommissionPercent', 'newStatus', 'previousVersion', 'newVersion',
+          'actorUid', 'actorEmail', 'actorRole', 'timestamp'
+        ]) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 160 &&
+        data.productId is string && data.productId.size() > 0 && data.productId.size() <= 128 &&
+        data.action in ['MARGIN_CREATED', 'MARGIN_UPDATED', 'MARGIN_BULK_UPDATED', 'COMMISSION_UPDATED', 'MARGIN_STATUS_CHANGED'] &&
+        data.newMarginType in ['PERCENTAGE', 'FIXED'] &&
+        (data.newMarginValue is int || data.newMarginValue is float) && data.newMarginValue >= 0 &&
+        (data.newCommissionPercent is int || data.newCommissionPercent is float) && data.newCommissionPercent >= 0 && data.newCommissionPercent <= 100 &&
+        data.newStatus in ['ACTIVE', 'INACTIVE'] &&
+        (data.previousVersion is int || data.previousVersion is float) && data.previousVersion >= 0 &&
+        (data.newVersion is int || data.newVersion is float) && data.newVersion >= 1 &&
+        data.actorUid is string && data.actorUid.size() > 0 && data.actorUid.size() <= 128 &&
+        data.actorEmail is string && data.actorEmail.size() > 0 && data.actorEmail.size() <= 200 &&
+        data.actorRole in ['ADMIN', 'SUPER_ADMIN', 'TEAM_MEMBER', 'DMC_STAFF'] &&
+        data.timestamp is string && data.timestamp.size() > 0 && data.timestamp.size() <= 64;
+    }
+
+    match /product_margin_configs/{productId} {
+      allow read: if isAuthenticated() && canAccessCMSFinance();
+      allow create: if isAuthenticated() && isValidId(productId) && canAccessCMSFinance() && isValidProductMarginConfig(request.resource.data);
+      allow update: if isAuthenticated() && isValidId(productId) && canAccessCMSFinance() &&
+        isValidProductMarginConfig(request.resource.data) &&
+        request.resource.data.productId == resource.data.productId &&
+        request.resource.data.version >= resource.data.version;
+      allow delete: if isMasterAdmin();
+    }
+
+    match /product_margin_audit_logs/{logId} {
+      allow read: if isAuthenticated() && canAccessCMSFinance();
+      allow create: if isAuthenticated() && isValidId(logId) && canAccessCMSFinance() && isValidProductMarginAuditLog(request.resource.data);
+      allow update, delete: if isMasterAdmin();
+    }
+
+    // =========================================================================
+    // CASHBACK & REWARDS WALLET (RBAC + Owner Isolation + Anti-Self-Approval)
+    // =========================================================================
+
+    function isValidCashbackUserConfig(data) {
+      return data != null &&
+        data.keys().hasAll(['userId', 'isEligible', 'cashbackPercent', 'status', 'updatedAt', 'updatedByUid']) &&
+        data.userId is string && data.userId.size() > 0 && data.userId.size() <= 128 &&
+        data.isEligible is bool &&
+        (data.cashbackPercent is int || data.cashbackPercent is float) &&
+        data.cashbackPercent >= 0 && data.cashbackPercent <= 100 &&
+        data.status in ['ACTIVE', 'INACTIVE', 'SUSPENDED'] &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64 &&
+        data.updatedByUid is string && data.updatedByUid.size() > 0 && data.updatedByUid.size() <= 128;
+    }
+
+    function isValidUserBankAccount(data, expectedUid) {
+      return data != null &&
+        data.keys().hasAll([
+          'id', 'userId', 'accountHolderName', 'bankName',
+          'accountNumberMasked', 'accountNumberLast4', 'country', 'currency', 'isDefault', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.userId is string && data.userId == expectedUid &&
+        data.accountHolderName is string && data.accountHolderName.size() >= 2 && data.accountHolderName.size() <= 150 &&
+        data.bankName is string && data.bankName.size() >= 2 && data.bankName.size() <= 150 &&
+        data.accountNumberMasked is string && data.accountNumberMasked.size() >= 4 && data.accountNumberMasked.size() <= 32 &&
+        data.accountNumberLast4 is string && data.accountNumberLast4.size() == 4 &&
+        data.country is string && data.country.size() >= 2 && data.country.size() <= 100 &&
+        data.currency is string && data.currency.size() == 3 &&
+        data.isDefault is bool &&
+        (!('ifscCode' in data) || data.ifscCode == null || data.ifscCode == '' || data.ifscCode.matches('^[A-Z]{4}0[A-Z0-9]{6}$'));
+    }
+
+    function isValidWithdrawalCreate(data, expectedUid) {
+      return data != null &&
+        data.keys().hasAll([
+          'id', 'userId', 'requestedAmount', 'currency', 'bankAccountId',
+          'bankSnapshotMasked', 'status', 'submittedAt'
+        ]) &&
+        data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+        data.userId is string && data.userId == expectedUid &&
+        (data.requestedAmount is int || data.requestedAmount is float) && data.requestedAmount > 0 &&
+        data.currency is string && data.currency.size() == 3 &&
+        data.bankAccountId is string && data.bankAccountId.size() > 0 && data.bankAccountId.size() <= 128 &&
+        data.status == 'SUBMITTED' &&
+        data.submittedAt is string && data.submittedAt.size() > 0 && data.submittedAt.size() <= 64;
+    }
+
+    match /cashback_user_configs/{uid} {
+      allow get: if isAuthenticated() && isValidId(uid) && (request.auth.uid == uid || canAccessCMSFinance());
+      allow list: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow create, update: if isAuthenticated() && isValidId(uid) && canAccessCMSFinance() &&
+        isValidCashbackUserConfig(request.resource.data) && request.resource.data.userId == uid;
+      allow delete: if false;
+    }
+
+    match /cashback_config_history/{historyId} {
+      allow read: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidId(historyId) && canAccessCMSFinance();
+      allow update, delete: if false;
+    }
+
+    match /cashback_wallets/{uid} {
+      allow get: if isAuthenticated() && isValidId(uid) && (request.auth.uid == uid || canAccessCMSFinance());
+      allow list: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow create, update: if isAuthenticated() && isValidId(uid) && (canAccessCMSFinance() || request.auth.uid == uid) &&
+        request.resource.data.userId == uid &&
+        (request.resource.data.availableBalance is int || request.resource.data.availableBalance is float) &&
+        request.resource.data.availableBalance >= 0;
+      allow delete: if false;
+    }
+
+    match /cashback_ledger_transactions/{txId} {
+      allow read: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidId(txId) && (
+        canAccessCMSFinance() ||
+        (request.resource.data.userId == request.auth.uid && request.resource.data.type in ['WITHDRAWAL_HOLD', 'WITHDRAWAL_RELEASE'])
+      ) && (request.resource.data.amount is int || request.resource.data.amount is float) && request.resource.data.amount > 0;
+      allow update, delete: if false;
+    }
+
+    match /booking_cashback_records/{recordId} {
+      allow read: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidId(recordId) && (
+        canAccessCMSFinance() ||
+        request.resource.data.userId == request.auth.uid
+      );
+      allow update: if isAuthenticated() && isValidId(recordId) && canAccessCMSFinance();
+      allow delete: if false;
+    }
+
+    match /user_bank_accounts/{accountId} {
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || canAccessCMSFinance());
+      allow create: if isAuthenticated() && isValidId(accountId) && isValidUserBankAccount(request.resource.data, request.auth.uid);
+      allow update: if isAuthenticated() && isValidId(accountId) &&
+        resource.data.userId == request.auth.uid &&
+        isValidUserBankAccount(request.resource.data, request.auth.uid);
+      allow delete: if isAuthenticated() && isValidId(accountId) && resource.data.userId == request.auth.uid;
+    }
+
+    match /cashbackWithdrawalRequests/{requestId} {
+      allow read: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidId(requestId) && isValidWithdrawalCreate(request.resource.data, request.auth.uid);
+      allow update: if isAuthenticated() && isValidId(requestId) && (
+        (
+          request.auth.uid == resource.data.userId &&
+          resource.data.status == 'SUBMITTED' &&
+          request.resource.data.status == 'CANCELLED' &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'releaseLedgerTransactionId', 'statusHistory', 'updatedAt'])
+        ) ||
+        (
+          canAccessCMSFinance() &&
+          request.auth.uid != resource.data.userId &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.requestedAmount == resource.data.requestedAmount &&
+          request.resource.data.status in ['UNDER_REVIEW', 'APPROVED', 'PROCESSING', 'PAID', 'REJECTED']
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /cashback_audit_logs/{logId} {
+      allow read: if isAuthenticated() && canAccessCMSFinance();
+      allow create: if isAuthenticated() && isValidId(logId) && (canAccessCMSFinance() || request.resource.data.actorUid == request.auth.uid);
+      allow update, delete: if false;
+    }
+
+    match /cashback_notifications/{notifId} {
+      allow read: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && isValidId(notifId) && (canAccessCMSFinance() || request.resource.data.userId == request.auth.uid);
+      allow update: if isAuthenticated() && isValidId(notifId) && resource.data.userId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow delete: if false;
+    }
+
+    // Nested user & booking subcollections aligned with strict ownership & RBAC
+    match /users/{userId}/cashback/{docId} {
+      allow read: if isAuthenticated() && isValidId(userId) && (request.auth.uid == userId || canAccessCMSFinance());
+      allow write: if isAuthenticated() && isValidId(userId) && canAccessCMSFinance();
+    }
+
+    match /users/{userId}/cashback/transactions/items/{txId} {
+      allow read: if isAuthenticated() && isValidId(userId) && (request.auth.uid == userId || canAccessCMSFinance());
+      allow create: if isAuthenticated() && isValidId(userId) && isValidId(txId) && (canAccessCMSFinance() || request.auth.uid == userId);
+      allow update, delete: if false;
+    }
+
+    match /users/{userId}/bankAccounts/{accountId} {
+      allow read: if isAuthenticated() && isValidId(userId) && (request.auth.uid == userId || canAccessCMSFinance());
+      allow create, update: if isAuthenticated() && isValidId(userId) && isValidId(accountId) &&
+        request.auth.uid == userId && isValidUserBankAccount(request.resource.data, userId);
+      allow delete: if isAuthenticated() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId;
+    }
+
+    match /bookings/{bookingId}/cashback/{recordId} {
+      allow read: if isAuthenticated() && (canAccessCMSFinance() || resource.data.userId == request.auth.uid);
+      allow write: if isAuthenticated() && canAccessCMSFinance();
+    }
+
+    // Quote Builder traceable durable operation state tracking (no raw itinerary blobs or internal costs)
+    match /quotation_operations/{operationId} {
+      allow read: if isAuthenticated() && isValidId(operationId) && (
+        canAccessCMSOperations() || resource.data.uid == request.auth.uid
+      );
+      allow create, update: if isAuthenticated() && isValidId(operationId) && (
+        request.resource.data.operationId == operationId &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.quoteId is string && request.resource.data.quoteId.size() > 0 && request.resource.data.quoteId.size() <= 128 &&
+        request.resource.data.idempotencyKey is string && request.resource.data.idempotencyKey.size() > 0 && request.resource.data.idempotencyKey.size() <= 200 &&
+        request.resource.data.operationType in ['SAVE_DRAFT', 'SNAPSHOT_CREATE', 'PDF_GENERATE', 'EMAIL_SEND', 'WHATSAPP_SHARE'] &&
+        request.resource.data.status in ['IDLE', 'PREPARING', 'IN_PROGRESS', 'VERIFYING', 'SUCCEEDED', 'FAILED', 'TIMED_OUT', 'RETRY_AVAILABLE'] &&
+        !('internalNettCost' in request.resource.data) &&
+        !('supplierCost' in request.resource.data) &&
+        !('totalNetCost' in request.resource.data)
+      );
+      allow delete: if false;
     }
   }
 }

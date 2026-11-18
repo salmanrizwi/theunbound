@@ -54,6 +54,11 @@ import {
   InvoiceServiceItem,
   BookingVoucher,
   QuoteVersionRecord,
+  QuotationVersionSectionDocument,
+  QuotationVersionSectionId,
+  QuotationVersionSummary,
+  QuoteActivityRecord,
+  GroupedLeadQuotationVersions,
   BookingFinancialRecord,
   JobSheet,
   EmailCampaignConfig,
@@ -108,6 +113,8 @@ import {
   BookingSourceType,
   CMSDeletableEntityType,
   DependencyDetailItem,
+  ProductMarginConfigRecord,
+  ProductMarginAuditRecord,
   DependencyGroup,
   DeletionCheckResult,
   SecureDeleteResult,
@@ -154,6 +161,7 @@ import {
   VehicleMaster,
   YachtMaster,
   FerryMaster,
+  InventorySurcharge,
   SurchargeMaster,
   SurchargeProductMapping,
   SurchargeHistoryRecord,
@@ -166,11 +174,15 @@ import {
 } from '../constants/commercialQuotationTerms';
 import {
   INITIAL_SURCHARGE_MASTERS,
+  isUnauthorizedLegacyOrDemoSurcharge,
   buildMappingsForSurcharge,
   migrateLegacyProductSurcharges,
+  migrateLegacyMultiInventorySurcharges,
+  LegacyInventorySurchargeSource,
   calculateSurchargeDashboardMetrics,
   generateSurchargeCode,
   resolveEffectiveSurchargeStatus,
+  doesSurchargeMatchProductScope,
   inspectSurchargeUsage,
   SurchargeUsageInspection
 } from './surchargeEngine';
@@ -193,44 +205,22 @@ import {
   buildFallbackSEO,
   sanitizeSlug
 } from './seoEngine';
-import { INITIAL_PRODUCTS } from '../data/initialProducts';
-import { DESTINATIONS } from '../data/destinations';
-import { INITIAL_MASTER_REGIONS } from '../data/initialRegions';
-import { INITIAL_PROMOTIONS } from '../data/initialPromotions';
-import { INITIAL_BLOGS } from '../data/initialBlogs';
-import { INITIAL_REVIEWS } from '../data/initialReviews';
-import { INITIAL_HOTELS } from '../data/initialHotels';
-import { INITIAL_CITY_HUBS } from '../data/initialCityHubs';
-import { INITIAL_FAQS } from '../data/initialFAQs';
-import { INITIAL_GALLERY } from '../data/initialGallery';
 import { INITIAL_HOMEPAGE_CONFIG } from '../data/initialHomepage';
-import { INITIAL_CAMPAIGNS } from '../data/initialCampaigns';
-import { INITIAL_ROSTER_RESOURCES } from '../data/initialRoster';
-import { INITIAL_VISAS } from '../data/initialVisas';
-import { 
-  INITIAL_TRAVEL_PROTECTION_PLANS, 
-  INITIAL_VIP_GROUND_SERVICES, 
-  INITIAL_CONNECTIVITY_PLANS 
-} from '../data/initialAncillaryServices';
 import { INITIAL_FOOTER_CONFIG } from '../data/initialFooter';
-import { INITIAL_B2B_PACKAGES } from '../data/initialPackages';
-import { INITIAL_LEADS } from '../data/initialLeads';
-import { INITIAL_RAIL_STATIONS } from '../data/initialRailStations';
-import { INITIAL_RAIL_ROUTES } from '../data/initialRailRoutes';
-import { INITIAL_RAIL_RATES } from '../data/initialRailRates';
-import { INITIAL_RAIL_SEASON_CALENDAR } from '../data/initialRailSeasons';
 import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
-import { INITIAL_VEHICLES } from '../data/initialVehicles';
-import { INITIAL_YACHTS } from '../data/initialYachts';
-import { INITIAL_FERRIES } from '../data/initialFerries';
+import { getCachedDemoSeeds, loadDemoSeedsAsync, type DemoSeedBundle } from '../data/demoSeedLoader';
 import { RailStation, RailService, RailRoute, RailFare, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, JapanRailCommercialProduct, resolveRailRateNettPrice } from '../types/rail';
 import { INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS } from '../data/initialRailCommercialProducts';
 import { EmailNotificationService } from './emailNotificationService';
-import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
-import { googleBusinessService } from './googleBusinessService';
+import type { FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { envService } from './environment';
 import { MasterDataService } from './masterDataService';
 import { auth, db as firestoreDb } from './firebase';
+import { masterDataCache } from './masterDataCache';
+import { pricingCache } from './pricingCache';
+import { performanceMonitor } from './performanceMonitor';
+import { calculateEligibleBookingComponents } from './cashbackEngine';
+import { withBoundedTimeout } from './quotationOperationsService';
 
 let currentAuthUser: User | null = null;
 import { 
@@ -243,10 +233,16 @@ import {
   onSnapshot, 
   getDocFromServer,
   writeBatch,
+  runTransaction,
   query,
   where,
   or,
-  type Query
+  orderBy,
+  limit,
+  startAfter,
+  getCountFromServer,
+  type Query,
+  type DocumentSnapshot
 } from 'firebase/firestore';
 import { 
   getDefaultPermissionsForRole, 
@@ -259,19 +255,42 @@ import {
   canEditPassengerDetails,
   canUploadPassengerDocuments,
   toB2BAgentBookingDTO,
-  canUserViewInternalCostBreakdown
+  canUserViewInternalCostBreakdown,
+  canUserAccessCMSModule
 } from './permissionEngine';
 import { 
   sanitizeQuoteForAgent, 
   sanitizeQuoteDocumentForCustomer,
+  sanitizeQuoteVersionForAgent,
+  sanitizeQuoteItemForAgent,
   sanitizeBookingForAgent, 
   sanitizeProductForAgent,
   sanitizePackageForAgent 
 } from '../utils/customerQuoteSanitizer';
 import {
   calculateQuoteTotal,
-  validateAgentAdditionalMarkup
+  calculateQuoteInternalBreakdown,
+  resolveQuoteAgencyPricingContext,
+  validateAgentAdditionalMarkup,
+  validateAdminManualMargin
 } from './pricingEngine';
+import {
+  FIRESTORE_MAX_DOC_BYTES,
+  SAFE_DOC_BYTE_THRESHOLD,
+  estimateFirestoreDocumentBytes,
+  offloadInlineBinaryAssets,
+  splitQuotationVersionIntoSections,
+  reconstructQuotationVersionFromSections,
+  buildCompactVersionSummary,
+  compactMasterQuotationForFirestore,
+  normalizeHydratedMasterQuotation,
+  computeDeterministicHexHash,
+  deepCloneSafe,
+  stripRestrictedCommercialFieldsForRole,
+  verifyVersionRoundTripIntegrity,
+  type BinaryAssetUploadHandler
+} from './quotationVersionStorage';
+import type { SplitVersionPersistenceAdapter } from './quotationVersionMigration';
 
 export function cleanForFirestore(data: any): any {
   if (data === undefined) {
@@ -745,6 +764,10 @@ export const safeStorage = {
 export class AppDatabase {
   private static instance: AppDatabase;
   private listeners: Set<() => void> = new Set();
+  private collectionSubscribers: Map<string, Set<() => void>> = new Map();
+  private dirtyKeys: Set<string> = new Set();
+  private publicUnsubscribers: Array<() => void> = [];
+  private optionalSyncUnsubscribers: Map<string, () => void> = new Map();
   private bookingSaveListeners: BookingSaveListener[] = [];
   private quotationSaveListeners: QuotationSaveListener[] = [];
   private userRegisteredListeners: UserRegisteredListener[] = [];
@@ -753,6 +776,15 @@ export class AppDatabase {
   private isFirestoreInitialized: boolean = false;
   private notifyTimer: any = null;
   private memoryCache: Map<string, any> = new Map();
+  private explicitQuoteSaveLocks: Map<string, Promise<unknown>> = new Map();
+  private explicitQuoteSaveCache: Map<string, { timestamp: number; result: any }> = new Map();
+  private hydratedSplitVersionCache: Map<string, QuoteVersionRecord> = new Map();
+  private memorySplitVersionManifests: Map<string, QuoteVersionRecord> = new Map();
+  private memorySplitVersionSections: Map<string, QuotationVersionSectionDocument[]> = new Map();
+  private lastCompactedFirestoreMasterByQuoteId: Map<string, { doc: Record<string, any>; estimatedBytes: number }> = new Map();
+  private pendingMasterHydrations: Map<string, Promise<Quotation | null>> = new Map();
+  private migratedLegacyQuoteIds: Set<string> = new Set();
+  private pendingLegacyQuoteMigrations: Map<string, Promise<void>> = new Map();
   private actionCenterHooks?: {
     onBookingStatusChanged?: (bookingId: string, bookingRef: string, status: string, user: User | null) => void;
     onPaymentVerified?: (bookingId: string, bookingRef: string, paymentId: string, user: User | null) => void;
@@ -767,6 +799,61 @@ export class AppDatabase {
     onLeadStatusChanged?: (leadId: string, leadNumber: string, status: string, user: User | null) => void;
   }) {
     this.actionCenterHooks = hooks;
+  }
+
+  public cashbackHooks?: {
+    onBookingChanged?: (
+      booking: Booking,
+      event: 'BOOKING_CREATED' | 'BOOKING_UPDATED' | 'BOOKING_STATUS_CHANGED' | 'BOOKING_CANCELLED' | 'BOOKING_REFUNDED',
+      actor: User | null,
+      extra?: {
+        refundAmount?: number;
+        isFullRefund?: boolean;
+        reason?: string;
+        affectedComponent?: 'LAND' | 'HOTEL' | 'MIXED' | 'AUTO';
+        landRefundAmount?: number;
+        hotelRefundAmount?: number;
+      }
+    ) => void;
+  };
+
+  private dispatchCashbackHook(
+    booking: Booking,
+    event: 'BOOKING_CREATED' | 'BOOKING_UPDATED' | 'BOOKING_STATUS_CHANGED' | 'BOOKING_CANCELLED' | 'BOOKING_REFUNDED',
+    actor: User | null,
+    extra?: {
+      refundAmount?: number;
+      isFullRefund?: boolean;
+      reason?: string;
+      affectedComponent?: 'LAND' | 'HOTEL' | 'MIXED' | 'AUTO';
+      landRefundAmount?: number;
+      hotelRefundAmount?: number;
+    }
+  ): void {
+    try {
+      if (this.cashbackHooks?.onBookingChanged) {
+        this.cashbackHooks.onBookingChanged(booking, event, actor, extra);
+      } else {
+        void import('./cashbackService').then((m) => {
+          m.cashbackService.attachToDatabase(this);
+          this.cashbackHooks?.onBookingChanged?.(booking, event, actor, extra);
+        }).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[CASHBACK] Lifecycle hook error:', err);
+    }
+  }
+
+  public getCashbackStore<T>(key: string, defaultValue: T): T {
+    return this.getItem<T>(key, defaultValue);
+  }
+
+  public setCashbackStore<T>(key: string, value: T): void {
+    this.setItem(key, value);
+  }
+
+  public syncCashbackDoc(collectionName: string, docId: string, data: any): void {
+    this.syncFirestoreDoc(collectionName, docId, data);
   }
 
   private constructor() {
@@ -861,6 +948,30 @@ export class AppDatabase {
     return () => this.listeners.delete(callback);
   }
 
+  /**
+   * Scoped collection subscription: fires callback ONLY when at least one of the specified
+   * collection/storage keys changes, eliminating global re-render storms.
+   */
+  public subscribeToCollections(keys: string[], callback: () => void): () => void {
+    keys.forEach((k) => {
+      let bucket = this.collectionSubscribers.get(k);
+      if (!bucket) {
+        bucket = new Set();
+        this.collectionSubscribers.set(k, bucket);
+      }
+      bucket.add(callback);
+    });
+    return () => {
+      keys.forEach((k) => {
+        const bucket = this.collectionSubscribers.get(k);
+        if (bucket) {
+          bucket.delete(callback);
+          if (bucket.size === 0) this.collectionSubscribers.delete(k);
+        }
+      });
+    };
+  }
+
   public onBookingSaved(listener: BookingSaveListener): () => void {
     this.bookingSaveListeners.push(listener);
     return () => {
@@ -896,7 +1007,12 @@ export class AppDatabase {
     };
   }
 
+  public getSeedBundle(): DemoSeedBundle | null {
+    return envService.allowDemoData() ? getCachedDemoSeeds() : null;
+  }
+
   public async runDiagnostics(): Promise<FirestoreDiagnosticReport> {
+    const { runFirestoreDiagnostics } = await import('./firestoreDiagnostic');
     return runFirestoreDiagnostics();
   }
 
@@ -905,6 +1021,30 @@ export class AppDatabase {
       clearTimeout(this.notifyTimer);
     }
     this.notifyTimer = setTimeout(() => {
+      this.notifyTimer = null;
+      const changedKeys = Array.from(this.dirtyKeys);
+      this.dirtyKeys.clear();
+
+      // Notify scoped collection subscribers whose keys actually changed
+      if (this.collectionSubscribers.size > 0) {
+        const scopedToInvoke = new Set<() => void>();
+        if (changedKeys.length === 0) {
+          this.collectionSubscribers.forEach((set) => set.forEach((cb) => scopedToInvoke.add(cb)));
+        } else {
+          changedKeys.forEach((k) => {
+            const set = this.collectionSubscribers.get(k);
+            if (set) set.forEach((cb) => scopedToInvoke.add(cb));
+          });
+        }
+        scopedToInvoke.forEach((cb) => {
+          try {
+            cb();
+          } catch (err) {
+            console.debug('Scoped listener callback error:', err);
+          }
+        });
+      }
+
       this.listeners.forEach(cb => {
         try {
           cb();
@@ -922,7 +1062,7 @@ export class AppDatabase {
     }
     try {
       const data = safeStorage.getItem(STORAGE_KEY_PREFIX + key);
-      if (data !== null) {
+      if (data !== null && data !== '__MEM_CACHED__') {
         const parsed = JSON.parse(data);
         this.memoryCache.set(key, parsed);
         return (Array.isArray(parsed) ? [...parsed] : parsed) as T;
@@ -938,7 +1078,50 @@ export class AppDatabase {
     try {
       const storedValue = Array.isArray(value) ? [...value] : value;
       this.memoryCache.set(key, storedValue);
-      safeStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(storedValue));
+      masterDataCache.bumpVersion(key);
+      if (
+        key === 'destinations' ||
+        key === 'city_hubs' ||
+        key === 'regions' ||
+        key === 'master_regions' ||
+        key === 'hotels' ||
+        key === 'visas' ||
+        key === 'b2b_packages' ||
+        key === 'transfer_routes' ||
+        key === 'travel_protection_plans' ||
+        key === 'vip_ground_services' ||
+        key === 'connectivity_plans' ||
+        key === 'inventory_tombstones'
+      ) {
+        masterDataCache.clearAllDerived();
+        pricingCache.clearAll();
+      }
+      if (key === 'destinations' || key === 'city_hubs' || key === 'regions') {
+        masterDataCache.bumpVersion('city_hubs');
+        masterDataCache.bumpVersion('regions');
+        masterDataCache.bumpVersion('products');
+        masterDataCache.bumpVersion('hotels');
+        masterDataCache.bumpVersion('b2b_packages');
+      }
+      if (key === 'surcharge_masters' || key === 'surcharge_product_mappings') {
+        pricingCache.bumpSurchargeCatalogVersion();
+      }
+      if (
+        key === 'products' ||
+        key === 'product_margin_configs' ||
+        key === 'rail_markup_rules' ||
+        key === 'japan_rail_commercial_products'
+      ) {
+        pricingCache.clearAll();
+      }
+      this.dirtyKeys.add(key);
+
+      if (BULKY_COLLECTION_KEYS.has(key)) {
+        // Keep bulky master catalogs strictly in memoryCache without expensive JSON.stringify serialization
+        memoryStorage.set(STORAGE_KEY_PREFIX + key, '__MEM_CACHED__');
+      } else {
+        safeStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(storedValue));
+      }
       if (shouldNotify) {
         this.notify();
       }
@@ -950,13 +1133,66 @@ export class AppDatabase {
   public invalidateMemoryCache(key?: string): void {
     if (key) {
       this.memoryCache.delete(key);
+      masterDataCache.bumpVersion(key);
     } else {
       this.memoryCache.clear();
+      masterDataCache.bumpAll();
     }
+  }
+
+  private prepareFirestoreQuotationPayload(docId: string, enrichedData: any): any {
+    if (!enrichedData || typeof enrichedData !== 'object') return enrichedData;
+    const isFullQuotation =
+      Boolean(enrichedData.quoteNumber) ||
+      Array.isArray(enrichedData.items) ||
+      Array.isArray(enrichedData.routeHubs) ||
+      Boolean(enrichedData.authoritativeSnapshot);
+
+    if (isFullQuotation) {
+      const existingVersions = this.getQuotationVersions(docId, null);
+      const summaryInput = [
+        ...((enrichedData.versionSummaries || []) as QuotationVersionSummary[]),
+        ...((enrichedData.versionHistory || []) as QuoteVersionRecord[]),
+        ...existingVersions
+      ];
+      const byVer = new Map<number, QuotationVersionSummary>();
+      summaryInput.forEach(item => {
+        const vNum = Number((item as any).versionNumber || (item as any).version || 0);
+        if (vNum > 0 && !byVer.has(vNum)) {
+          byVer.set(vNum, buildCompactVersionSummary({ ...(item as any), quoteId: docId, version: vNum, versionNumber: vNum }));
+        }
+      });
+      const summaries = Array.from(byVer.values()).sort((a, b) => (b.version || 0) - (a.version || 0));
+      const latestVerId =
+        enrichedData.latestVersionId ||
+        (enrichedData.latestVersion ? `${docId}__v${enrichedData.latestVersion}` : undefined) ||
+        summaries[0]?.id;
+      const compacted = compactMasterQuotationForFirestore(
+        { ...enrichedData, id: enrichedData.id || docId } as Quotation,
+        summaries,
+        latestVerId
+      );
+      this.lastCompactedFirestoreMasterByQuoteId.set(docId, {
+        doc: compacted.masterDoc,
+        estimatedBytes: compacted.estimatedBytes
+      });
+      return compacted.masterDoc;
+    }
+
+    // Even for partial patch writes (e.g. booking status updates), NEVER push bloated embedded versionHistory to Firestore
+    if ('versionHistory' in enrichedData) {
+      const clone = { ...enrichedData };
+      const cached = this.getQuotationVersions(docId, null);
+      clone.versionSummaries = cached.map(v => buildCompactVersionSummary(v));
+      clone.versionHistory = [];
+      return clone;
+    }
+    return enrichedData;
   }
 
   private syncFirestoreDoc(collectionName: string, docId: string, data: any): void {
     if (!docId) return;
+    if (typeof window === 'undefined') return;
     try {
       this.unmarkEntityDeleted(collectionName, docId);
       const isMasterAdminEmail = (email?: string) => {
@@ -979,14 +1215,18 @@ export class AppDatabase {
         : (currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN'));
       const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || 'usr-admin-business';
 
-      const enrichedData = {
+      let enrichedData: any = {
         ...data,
         updatedByRole: effectiveRole,
         updatedByEmail: effectiveEmail,
         updatedBy: effectiveUid,
         isDeleted: false
       };
+      if (collectionName === 'quotations') {
+        enrichedData = this.prepareFirestoreQuotationPayload(docId, enrichedData);
+      }
       const cleanData = cleanForFirestore(enrichedData);
+      performanceMonitor.recordFirestoreWrite(1);
       setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true }).catch((err) => {
         console.debug(`Firestore sync note (${collectionName}/${docId}):`, err);
       });
@@ -997,6 +1237,7 @@ export class AppDatabase {
 
   public async syncFirestoreDocAsync(collectionName: string, docId: string, data: any): Promise<boolean> {
     if (!docId) return false;
+    if (typeof window === 'undefined') return true;
     try {
       this.unmarkEntityDeleted(collectionName, docId);
       const isMasterAdminEmail = (email?: string) => {
@@ -1019,26 +1260,41 @@ export class AppDatabase {
         : (currentAuthUser?.role || (auth.currentUser ? 'B2B_AGENT' : 'ADMIN'));
       const effectiveUid = auth.currentUser?.uid || currentAuthUser?.id || data?.updatedBy || data?.createdBy || 'usr-admin-business';
 
-      const enrichedData = {
+      let enrichedData: any = {
         ...data,
         updatedByRole: effectiveRole,
         updatedByEmail: effectiveEmail,
         updatedBy: effectiveUid,
         isDeleted: false
       };
+      if (collectionName === 'quotations') {
+        const firebaseUid = auth.currentUser?.uid;
+        if (firebaseUid && enrichedData.agentId !== firebaseUid && enrichedData.userId !== firebaseUid) {
+          enrichedData.userId = firebaseUid;
+        }
+        enrichedData = this.prepareFirestoreQuotationPayload(docId, enrichedData);
+      }
       const cleanData = cleanForFirestore(enrichedData);
-      const writePromise = setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true }).then(() => true);
-      const timeoutPromise = new Promise<boolean>(resolve => setTimeout(() => resolve(true), 1200));
-      return await Promise.race([writePromise, timeoutPromise]);
+      performanceMonitor.recordFirestoreWrite(1);
+      await withBoundedTimeout(
+        setDoc(doc(firestoreDb, collectionName, docId), cleanData, { merge: true }),
+        12000,
+        `Firestore write (${collectionName}/${docId})`,
+        'FIRESTORE_WRITE_TIMEOUT'
+      );
+      return true;
     } catch (e: any) {
-      console.warn(`[DB] Firestore syncDocAsync note (${collectionName}/${docId}):`, e?.message || e);
+      console.warn(`[DB] Firestore syncDocAsync failed (${collectionName}/${docId}):`, e?.message || e);
       return false;
     }
   }
 
   public getDeletedEntityIds(): Set<string> {
+    const ver = masterDataCache.getVersion('inventory_tombstones');
+    const cached = masterDataCache.getDerived<Set<string>>('deleted_ids_set', ver, ver);
+    if (cached) return cached;
     const ids = this.getItem<string[]>('inventory_tombstones', []);
-    return new Set(ids);
+    return masterDataCache.setDerived('deleted_ids_set', ver, ver, new Set(ids));
   }
 
   public markEntityDeleted(collectionOrType: string, recordId: string, details?: any): void {
@@ -1074,8 +1330,7 @@ export class AppDatabase {
 
   public unmarkEntityDeleted(collectionOrType: string, recordId: string): void {
     if (!recordId) return;
-    const current = this.getItem<string[]>('inventory_tombstones', []);
-    const set = new Set(current);
+    const existingSet = this.getDeletedEntityIds();
     const keysToDelete = [
       recordId,
       `${collectionOrType}_${recordId}`,
@@ -1112,13 +1367,18 @@ export class AppDatabase {
       `connectivity_plans_${recordId}`,
       `User_${recordId}`
     ];
-    keysToDelete.forEach(k => set.delete(k));
+
+    const actuallyMarked = keysToDelete.filter(k => existingSet.has(k));
+    if (actuallyMarked.length === 0) return;
+
+    const current = this.getItem<string[]>('inventory_tombstones', []);
+    const set = new Set(current);
+    actuallyMarked.forEach(k => set.delete(k));
     this.setItem('inventory_tombstones', Array.from(set));
 
-    // Remove tombstone documents from Firestore
+    // Remove only actually existing tombstone documents from Firestore
     try {
-      const uniqueKeys = Array.from(new Set(keysToDelete));
-      uniqueKeys.forEach(tombstoneId => {
+      actuallyMarked.forEach(tombstoneId => {
         deleteDoc(doc(firestoreDb, 'inventory_tombstones', tombstoneId)).catch(() => {});
       });
     } catch (e) {
@@ -1137,6 +1397,7 @@ export class AppDatabase {
   public async deleteFirestoreDocAsync(collectionName: string, docId: string, details?: any): Promise<boolean> {
     if (!docId) return true;
     this.markEntityDeleted(collectionName, docId, details);
+    if (typeof window === 'undefined') return true;
     try {
       await deleteDoc(doc(firestoreDb, collectionName, docId));
       return true;
@@ -1170,44 +1431,45 @@ export class AppDatabase {
     const deletedSet = this.getDeletedEntityIds();
     if (deletedSet.size === 0) return;
     const allowDemo = envService.allowDemoData();
+    const seeds = allowDemo ? this.getSeedBundle() : null;
 
-    const products = this.getItem<Product[]>('products', allowDemo ? INITIAL_PRODUCTS : []);
+    const products = this.getItem<Product[]>('products', seeds?.INITIAL_PRODUCTS || []);
     const filteredProducts = products.filter(p => !deletedSet.has(p.id));
     if (filteredProducts.length !== products.length) this.setItem('products', filteredProducts, false);
 
-    const hotels = this.getItem<Hotel[]>('hotels', allowDemo ? INITIAL_HOTELS : []);
+    const hotels = this.getItem<Hotel[]>('hotels', seeds?.INITIAL_HOTELS || []);
     const filteredHotels = hotels.filter(h => !deletedSet.has(h.id));
     if (filteredHotels.length !== hotels.length) this.setItem('hotels', filteredHotels, false);
 
-    const hubs = this.getItem<CityHub[]>('city_hubs', allowDemo ? INITIAL_CITY_HUBS : []);
+    const hubs = this.getItem<CityHub[]>('city_hubs', seeds?.INITIAL_CITY_HUBS || []);
     const filteredHubs = hubs.filter(h => !deletedSet.has(h.id));
     if (filteredHubs.length !== hubs.length) this.setItem('city_hubs', filteredHubs, false);
 
-    const regions = this.getItem<MasterRegion[]>('master_regions', allowDemo ? INITIAL_MASTER_REGIONS : []);
+    const regions = this.getItem<MasterRegion[]>('master_regions', seeds?.INITIAL_MASTER_REGIONS || []);
     const filteredRegions = regions.filter(r => !deletedSet.has(r.id));
     if (filteredRegions.length !== regions.length) this.setItem('master_regions', filteredRegions, false);
 
-    const pkgs = this.getItem<B2BPackage[]>('b2b_packages', allowDemo ? INITIAL_B2B_PACKAGES : []);
+    const pkgs = this.getItem<B2BPackage[]>('b2b_packages', seeds?.INITIAL_B2B_PACKAGES || []);
     const filteredPkgs = pkgs.filter(p => !deletedSet.has(p.id));
     if (filteredPkgs.length !== pkgs.length) this.setItem('b2b_packages', filteredPkgs, false);
 
-    const dests = this.getItem<Destination[]>('destinations', allowDemo ? DESTINATIONS : []);
+    const dests = this.getItem<Destination[]>('destinations', seeds?.DESTINATIONS || []);
     const filteredDests = dests.filter(d => !deletedSet.has(d.id) && !deletedSet.has(d.slug));
     if (filteredDests.length !== dests.length) this.setItem('destinations', filteredDests, false);
 
-    const visas = this.getItem<VisaProduct[]>('visas', allowDemo ? INITIAL_VISAS : []);
+    const visas = this.getItem<VisaProduct[]>('visas', seeds?.INITIAL_VISAS || []);
     const filteredVisas = visas.filter(v => !deletedSet.has(v.id) && !deletedSet.has(`Visa_${v.id}`) && !deletedSet.has(`visas_${v.id}`));
     if (filteredVisas.length !== visas.length) this.setItem('visas', filteredVisas, false);
 
-    const protections = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', allowDemo ? INITIAL_TRAVEL_PROTECTION_PLANS : []);
+    const protections = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', seeds?.INITIAL_TRAVEL_PROTECTION_PLANS || []);
     const filteredProtections = protections.filter(p => !deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`) && !deletedSet.has(`travel_protection_plans_${p.id}`));
     if (filteredProtections.length !== protections.length) this.setItem('travel_protection_plans', filteredProtections, false);
 
-    const vip = this.getItem<VipGroundService[]>('vip_ground_services', allowDemo ? INITIAL_VIP_GROUND_SERVICES : []);
+    const vip = this.getItem<VipGroundService[]>('vip_ground_services', seeds?.INITIAL_VIP_GROUND_SERVICES || []);
     const filteredVip = vip.filter(v => !deletedSet.has(v.id) && !deletedSet.has(`VipGroundService_${v.id}`) && !deletedSet.has(`vip_ground_services_${v.id}`));
     if (filteredVip.length !== vip.length) this.setItem('vip_ground_services', filteredVip, false);
 
-    const conn = this.getItem<ConnectivityPlan[]>('connectivity_plans', allowDemo ? INITIAL_CONNECTIVITY_PLANS : []);
+    const conn = this.getItem<ConnectivityPlan[]>('connectivity_plans', seeds?.INITIAL_CONNECTIVITY_PLANS || []);
     const filteredConn = conn.filter(c => !deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`) && !deletedSet.has(`connectivity_plans_${c.id}`));
     if (filteredConn.length !== conn.length) this.setItem('connectivity_plans', filteredConn, false);
   }
@@ -1507,12 +1769,25 @@ export class AppDatabase {
    * In Development mode: Preserves local development mock fixtures if Firestore is empty.
    * Filters out any tombstoned or deleted entities.
    */
+  private needsMasterVersionHydration(q: Quotation): boolean {
+    if (!q) return false;
+    const hasMissingItems = !q.items || q.items.length === 0;
+    const hasDehydratedItemStubs = Array.isArray(q.items) && q.items.some((it: any) => Boolean(it?.__dehydratedToVersionId));
+    const hasDehydratedOptionStubs = Array.isArray(q.options) && q.options.some((o: any) => Boolean(o?.__dehydratedToVersionId));
+    const hasDehydratedFlag = Boolean(q.masterHydratedFromVersionId || q.latestVersionId);
+    return hasDehydratedFlag && (hasMissingItems || hasDehydratedItemStubs || hasDehydratedOptionStubs);
+  }
+
   private syncCollectionSafely<T extends Record<string, any>>(
     collectionName: string,
     storageKey: string,
     transformDoc?: (docData: any, docId: string) => T | null
   ): () => void {
-    return onSnapshot(collection(firestoreDb, collectionName), (snapshot) => {
+    const listenerLabel = `col:${collectionName}`;
+    performanceMonitor.registerListener(listenerLabel);
+    const unsub = onSnapshot(collection(firestoreDb, collectionName), (snapshot) => {
+      performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+      masterDataCache.markHydrated(collectionName);
       const deletedSet = this.getDeletedEntityIds();
       const list: T[] = [];
       if (!snapshot.empty) {
@@ -1535,13 +1810,33 @@ export class AppDatabase {
           if (item) {
             if ((item as any).isDeleted === true || (item as any).status === 'DELETED') return;
             if ((item as any).id && deletedSet.has((item as any).id)) return;
-            list.push(item);
+            if (storageKey === 'saved_quotes') {
+              list.push(normalizeHydratedMasterQuotation({ ...(item as any), id: (item as any).id || docSnap.id }) as unknown as T);
+            } else {
+              list.push(item);
+            }
           }
         });
       }
       
       // In production mode, always commit authoritative Firestore state (including 0 items [])
       if (!snapshot.empty || !envService.allowDemoData()) {
+        if (storageKey === 'saved_quotes') {
+          const existingLocal = this.getItem<Quotation[]>('saved_quotes', []);
+          const localById = new Map(existingLocal.map(q => [q.id, q]));
+          list.forEach((qRaw, idx) => {
+            const q = qRaw as unknown as Quotation;
+            const prev = localById.get(q.id);
+            const cachedVer = q.latestVersionId ? this.hydratedSplitVersionCache.get(q.latestVersionId) : undefined;
+            if (this.needsMasterVersionHydration(q)) {
+              if (cachedVer) {
+                (list as any[])[idx] = this.applyVersionFieldsToMasterQuotation(q, cachedVer);
+              } else if (prev && prev.latestVersionId === q.latestVersionId && !this.needsMasterVersionHydration(prev)) {
+                (list as any[])[idx] = { ...prev, ...q, items: prev.items, options: prev.options, authoritativeSnapshot: prev.authoritativeSnapshot, commercialTermsSnapshot: prev.commercialTermsSnapshot };
+              }
+            }
+          });
+        }
         const entityTypeMap: Record<string, any> = {
           products: 'PRODUCT',
           hotels: 'HOTEL',
@@ -1598,6 +1893,10 @@ export class AppDatabase {
     }, (err) => {
       console.debug(`Firestore ${collectionName} sync note (non-blocking):`, err?.message || err);
     });
+    return () => {
+      performanceMonitor.unregisterListener(listenerLabel);
+      try { unsub(); } catch {}
+    };
   }
 
   private syncQuerySafely<T>(
@@ -1605,7 +1904,10 @@ export class AppDatabase {
     storageKey: string,
     transformDoc?: (docData: any, docId: string) => T | null
   ): () => void {
-    return onSnapshot(queryRef, (snapshot) => {
+    const listenerLabel = `qry:${storageKey}`;
+    performanceMonitor.registerListener(listenerLabel);
+    const unsub = onSnapshot(queryRef, (snapshot) => {
+      performanceMonitor.recordFirestoreRead(snapshot.size || 1);
       const deletedSet = this.getDeletedEntityIds();
       const list: T[] = [];
       if (!snapshot.empty) {
@@ -1626,7 +1928,28 @@ export class AppDatabase {
           if (item) {
             if ((item as any).isDeleted === true || (item as any).status === 'DELETED') return;
             if ((item as any).id && deletedSet.has((item as any).id)) return;
-            list.push(item);
+            if (storageKey === 'saved_quotes') {
+              list.push(normalizeHydratedMasterQuotation({ ...(item as any), id: (item as any).id || docSnap.id }) as unknown as T);
+            } else {
+              list.push(item);
+            }
+          }
+        });
+      }
+
+      if (storageKey === 'saved_quotes') {
+        const existingLocal = this.getItem<Quotation[]>('saved_quotes', []);
+        const localById = new Map(existingLocal.map(q => [q.id, q]));
+        list.forEach((qRaw, idx) => {
+          const q = qRaw as unknown as Quotation;
+          const prev = localById.get(q.id);
+          const cachedVer = q.latestVersionId ? this.hydratedSplitVersionCache.get(q.latestVersionId) : undefined;
+          if (this.needsMasterVersionHydration(q)) {
+            if (cachedVer) {
+              (list as any[])[idx] = this.applyVersionFieldsToMasterQuotation(q, cachedVer);
+            } else if (prev && prev.latestVersionId === q.latestVersionId && !this.needsMasterVersionHydration(prev)) {
+              (list as any[])[idx] = { ...prev, ...q, items: prev.items, options: prev.options, authoritativeSnapshot: prev.authoritativeSnapshot, commercialTermsSnapshot: prev.commercialTermsSnapshot };
+            }
           }
         });
       }
@@ -1634,6 +1957,160 @@ export class AppDatabase {
       this.setItem(storageKey, list, true);
     }, (err) => {
       console.debug(`[DB] Scoped query sync note (${storageKey}):`, err?.message || err);
+    });
+    return () => {
+      performanceMonitor.unregisterListener(listenerLabel);
+      try { unsub(); } catch {}
+    };
+  }
+
+  /**
+   * One-shot parallel collection hydration helper for read-mostly secondary collections
+   * (avoids permanent Firestore WebSocket listener overhead).
+   */
+  private async hydrateCollectionsOneShot(
+    entries: Array<{ collectionName: string; storageKey: string }>
+  ): Promise<void> {
+    const deletedSet = this.getDeletedEntityIds();
+    await Promise.allSettled(
+      entries.map(async ({ collectionName, storageKey }) => {
+        if (masterDataCache.isFresh(collectionName)) return;
+        try {
+          const snap = await getDocs(collection(firestoreDb, collectionName));
+          performanceMonitor.recordFirestoreRead(snap.size || 1);
+          masterDataCache.markHydrated(collectionName);
+          if (snap.empty && envService.allowDemoData()) return;
+          const list: any[] = [];
+          snap.forEach((docSnap) => {
+            const raw = docSnap.data();
+            const id = raw.id || docSnap.id;
+            if (raw.isDeleted === true || raw.status === 'DELETED') return;
+            if (deletedSet.has(docSnap.id) || deletedSet.has(id)) return;
+            list.push({ ...raw, id });
+          });
+          this.setItem(storageKey, list, true);
+        } catch (err) {
+          console.debug(`[DB] One-shot hydration note (${collectionName}):`, err);
+        }
+      })
+    );
+  }
+
+  /**
+   * Attaches a real-time listener on demand for secondary modules (e.g. Invoices, Surcharge History, Campaigns).
+   */
+  public ensureCollectionSynced(collectionName: string, storageKey: string): () => void {
+    if (!this.optionalSyncUnsubscribers.has(storageKey)) {
+      const unsub = this.syncCollectionSafely<any>(collectionName, storageKey);
+      this.optionalSyncUnsubscribers.set(storageKey, unsub);
+    }
+    return () => this.detachOptionalSync(storageKey);
+  }
+
+  public detachOptionalSync(storageKey: string): void {
+    const unsub = this.optionalSyncUnsubscribers.get(storageKey);
+    if (unsub) {
+      try { unsub(); } catch {}
+      this.optionalSyncUnsubscribers.delete(storageKey);
+    }
+  }
+
+  /**
+   * Targeted single-quotation retrieval by ID from Firestore without scanning the full collection.
+   */
+  public async fetchQuotationByIdFromFirestore(quoteId: string, user: User | null): Promise<Quotation | null> {
+    const localAuthorized = this.getQuoteByIdAuthorized(quoteId, user);
+    if (localAuthorized) {
+      if (this.needsMasterVersionHydration(localAuthorized)) {
+        const targetVerRef = localAuthorized.masterHydratedFromVersionId || localAuthorized.latestVersionId || Number(localAuthorized.latestVersion || localAuthorized.version || 1);
+        const hydrated = await this.hydrateMasterQuotationFromVersionAsync(
+          localAuthorized.id,
+          targetVerRef,
+          user
+        );
+        return hydrated || localAuthorized;
+      }
+      return localAuthorized;
+    }
+    if (!quoteId || !user) return null;
+
+    return performanceMonitor.measureAsync('DB_QUERY', `fetchQuotationById:${quoteId}`, async () => {
+      try {
+        const snap = await getDoc(doc(firestoreDb, 'quotations', quoteId));
+        performanceMonitor.recordFirestoreRead(1);
+        if (!snap.exists()) return null;
+        let raw = normalizeHydratedMasterQuotation({ ...snap.data(), id: snap.data().id || snap.id } as Quotation);
+        if ((raw as any).isDeleted || (raw as any).status === 'DELETED') return null;
+
+        const existing = this.getAllSavedQuotes();
+        const idx = existing.findIndex(q => q.id === raw.id);
+        if (idx >= 0) existing[idx] = raw;
+        else existing.unshift(raw);
+        this.setItem('saved_quotes', existing, false);
+
+        if (this.needsMasterVersionHydration(raw)) {
+          const targetVerRef = raw.masterHydratedFromVersionId || raw.latestVersionId || Number(raw.latestVersion || raw.version || 1);
+          const hydrated = await this.hydrateMasterQuotationFromVersionAsync(raw.id, targetVerRef, user);
+          if (hydrated) raw = hydrated;
+        }
+
+        return this.getQuoteByIdAuthorized(raw.id, user);
+      } catch (err) {
+        console.debug('[DB] Targeted quote fetch note:', err);
+        return null;
+      }
+    });
+  }
+
+  /**
+   * Server-side paginated & filtered Firestore query with optional cached total count.
+   */
+  public async queryCollectionPaginated<T = any>(
+    collectionName: string,
+    options: {
+      pageSize?: number;
+      orderByField?: string;
+      direction?: 'asc' | 'desc';
+      filters?: Array<{ field: string; op: any; value: any }>;
+      cursor?: DocumentSnapshot | null;
+      includeTotalCount?: boolean;
+    } = {}
+  ): Promise<{ items: T[]; lastDoc: DocumentSnapshot | null; hasMore: boolean; totalCount?: number }> {
+    const pageSize = Math.max(1, Math.min(100, options.pageSize || 25));
+    return performanceMonitor.measureAsync('DB_QUERY', `paginated:${collectionName}`, async () => {
+      const colRef = collection(firestoreDb, collectionName);
+      const constraints: any[] = [];
+      (options.filters || []).forEach((f) => {
+        if (f && f.field && f.value !== undefined) {
+          constraints.push(where(f.field, f.op, f.value));
+        }
+      });
+      if (options.orderByField) {
+        constraints.push(orderBy(options.orderByField, options.direction || 'desc'));
+      }
+      if (options.cursor) {
+        constraints.push(startAfter(options.cursor));
+      }
+      constraints.push(limit(pageSize + 1));
+
+      const q = query(colRef, ...constraints);
+      const [snap, countSnap] = await Promise.all([
+        getDocs(q),
+        options.includeTotalCount
+          ? getCountFromServer(query(colRef, ...(options.filters || []).map(f => where(f.field, f.op, f.value)))).catch(() => null)
+          : Promise.resolve(null)
+      ]);
+      performanceMonitor.recordFirestoreRead(snap.size || 1);
+      const docs = snap.docs;
+      const hasMore = docs.length > pageSize;
+      const slice = hasMore ? docs.slice(0, pageSize) : docs;
+      const items = slice.map(d => ({ ...(d.data() as any), id: (d.data() as any).id || d.id }) as T);
+      return {
+        items,
+        lastDoc: slice.length > 0 ? slice[slice.length - 1] : null,
+        hasMore,
+        totalCount: countSnap ? countSnap.data().count : undefined
+      };
     });
   }
 
@@ -1680,8 +2157,21 @@ export class AppDatabase {
       const isInternal = user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF' || (user as any).role === 'SUPER_ADMIN';
 
       try {
+        const catalogSubCollections: Array<{ collectionName: string; storageKey: string }> = [
+          { collectionName: 'hotel_rooms', storageKey: 'hotel_rooms' },
+          { collectionName: 'hotel_rates', storageKey: 'hotel_rates' },
+          { collectionName: 'hotel_meal_plans', storageKey: 'hotel_meal_plans' },
+          { collectionName: 'transfer_routes', storageKey: 'transfer_routes' },
+          { collectionName: 'transfer_rates', storageKey: 'transfer_rates' },
+          { collectionName: 'product_pricing_rates', storageKey: 'product_pricing_rates' },
+          { collectionName: 'product_capacities', storageKey: 'product_capacities' },
+          { collectionName: 'visa_rates', storageKey: 'visa_rates' },
+          { collectionName: 'package_items', storageKey: 'package_items' }
+        ];
+
         if (isInternal) {
-          // Internal operations staff can query full collections
+          // Internal operations staff: keep core operational collections real-time;
+          // secondary audit/ops/CMS sub-collections use parallel one-shot hydration to cut persistent listeners.
           this.authenticatedUnsubscribers.push(
             this.syncCollectionSafely<User>('users', 'system_users'),
             this.syncCollectionSafely<Company>('companies', 'companies'),
@@ -1691,30 +2181,27 @@ export class AppDatabase {
             this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers'),
             this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
             this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks'),
-            this.syncCollectionSafely<WishlistFolder>('wishlist_folders', 'wishlist_folders'),
-            this.syncCollectionSafely<WishlistItem>('wishlist_items', 'wishlist_items'),
-            this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
-            this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
-            this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
-            this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
-            this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
-            this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
-            this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
-            this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
-            this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items'),
-            this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices'),
-            this.syncCollectionSafely<BookingUploadedInvoice>('uploaded_invoices', 'uploaded_invoices'),
-            this.syncCollectionSafely<BookingVoucher>('vouchers', 'vouchers'),
-            this.syncCollectionSafely<JobSheet>('job_sheets', 'job_sheets'),
-            this.syncCollectionSafely<RosterResource>('roster_resources', 'roster_resources'),
-            this.syncCollectionSafely<SLAAutomationRule>('sla_automation_rules', 'sla_automation_rules'),
-            this.syncCollectionSafely<AdminActivityRecord>('admin_activities', 'admin_activities'),
-            this.syncCollectionSafely<CampaignEvent>('campaign_events', 'campaign_events'),
-            this.syncCollectionSafely<SEORedirect>('seo_redirects', 'seo_redirects'),
             this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
-            this.syncCollectionSafely<SupplierRequest>('supplier_requests', 'supplier_requests'),
             this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages')
           );
+
+          // Hydrate secondary CMS & rate sub-collections via parallel one-shot getDocs
+          void this.hydrateCollectionsOneShot([
+            ...catalogSubCollections,
+            { collectionName: 'wishlist_folders', storageKey: 'wishlist_folders' },
+            { collectionName: 'wishlist_items', storageKey: 'wishlist_items' },
+            { collectionName: 'invoices', storageKey: 'invoices' },
+            { collectionName: 'uploaded_invoices', storageKey: 'uploaded_invoices' },
+            { collectionName: 'vouchers', storageKey: 'vouchers' },
+            { collectionName: 'job_sheets', storageKey: 'job_sheets' },
+            { collectionName: 'roster_resources', storageKey: 'roster_resources' },
+            { collectionName: 'sla_automation_rules', storageKey: 'sla_automation_rules' },
+            { collectionName: 'admin_activities', storageKey: 'admin_activities' },
+            { collectionName: 'campaign_events', storageKey: 'campaign_events' },
+            { collectionName: 'seo_redirects', storageKey: 'seo_redirects' },
+            { collectionName: 'supplier_requests', storageKey: 'supplier_requests' },
+            { collectionName: 'surcharge_history', storageKey: 'surcharge_history' }
+          ]);
         } else {
           // External B2B Agents: Query strictly scoped to their own records to satisfy firestore.rules
           const uid = fbUser.uid || user.id;
@@ -1784,18 +2271,11 @@ export class AppDatabase {
             this.syncQuerySafely<B2BCustomer>(scopedCustomersQuery, 'b2b_customers'),
             this.syncQuerySafely<B2BTask>(scopedTasksQuery, 'b2b_tasks'),
             this.syncQuerySafely<WishlistFolder>(scopedWishlistFoldersQuery, 'wishlist_folders'),
-            this.syncQuerySafely<WishlistItem>(scopedWishlistItemsQuery, 'wishlist_items'),
-            // B2B Catalog sub-collections (Public read permitted in rules)
-            this.syncCollectionSafely<HotelRoomType>('hotel_rooms', 'hotel_rooms'),
-            this.syncCollectionSafely<HotelRate>('hotel_rates', 'hotel_rates'),
-            this.syncCollectionSafely<HotelMealPlanItem>('hotel_meal_plans', 'hotel_meal_plans'),
-            this.syncCollectionSafely<TransferRoute>('transfer_routes', 'transfer_routes'),
-            this.syncCollectionSafely<TransferRate>('transfer_rates', 'transfer_rates'),
-            this.syncCollectionSafely<ProductPricingRate>('product_pricing_rates', 'product_pricing_rates'),
-            this.syncCollectionSafely<ProductCapacityItem>('product_capacities', 'product_capacities'),
-            this.syncCollectionSafely<VisaRateItem>('visa_rates', 'visa_rates'),
-            this.syncCollectionSafely<PackageItemRef>('package_items', 'package_items')
+            this.syncQuerySafely<WishlistItem>(scopedWishlistItemsQuery, 'wishlist_items')
           );
+
+          // B2B Catalog sub-collections hydrated in one parallel one-shot batch (no permanent sockets)
+          void this.hydrateCollectionsOneShot(catalogSubCollections);
         }
       } catch (err) {
         console.warn('[DB] Error establishing background authenticated sync listeners:', err);
@@ -1803,7 +2283,7 @@ export class AppDatabase {
     }, 150);
   }
 
-  public async hydrateFromFirestoreNow(): Promise<void> {
+  public async hydrateFromFirestoreNow(force: boolean = false): Promise<void> {
     const collectionsToHydrate: Array<{ collectionName: string; storageKey: string }> = [
       { collectionName: 'inventory_tombstones', storageKey: 'inventory_tombstones_raw' },
       { collectionName: 'master_regions', storageKey: 'master_regions' },
@@ -1819,10 +2299,14 @@ export class AppDatabase {
       { collectionName: 'faqs', storageKey: 'destination_faqs' }
     ];
 
-    for (const { collectionName, storageKey } of collectionsToHydrate) {
-      try {
-        const snap = await getDocs(collection(firestoreDb, collectionName));
-        if (collectionName === 'inventory_tombstones') {
+    await performanceMonitor.measureAsync('DB_HYDRATION', 'hydrateFromFirestoreNow', async () => {
+      // Phase 1: Tombstones first (only if stale or forced)
+      const tombEntry = collectionsToHydrate[0];
+      if (force || !masterDataCache.isFresh(tombEntry.collectionName)) {
+        try {
+          const snap = await getDocs(collection(firestoreDb, tombEntry.collectionName));
+          performanceMonitor.recordFirestoreRead(snap.size || 1);
+          masterDataCache.markHydrated(tombEntry.collectionName);
           const current = this.getItem<string[]>('inventory_tombstones', []);
           const set = new Set(current);
           snap.forEach(docSnap => {
@@ -1832,23 +2316,40 @@ export class AppDatabase {
             set.add(docSnap.id);
           });
           this.setItem('inventory_tombstones', Array.from(set), false);
-          continue;
+        } catch (err) {
+          console.debug(`hydrateFromFirestoreNow note (${tombEntry.collectionName}):`, err);
         }
-        const deletedSet = this.getDeletedEntityIds();
-        const list: any[] = [];
-        snap.forEach(docSnap => {
-          const raw = docSnap.data();
-          const id = raw.id || docSnap.id;
-          if (raw.isDeleted === true || raw.status === 'DELETED') return;
-          if (deletedSet.has(docSnap.id) || deletedSet.has(id)) return;
-          list.push({ ...raw, id });
-        });
-        this.setItem(storageKey, list, false);
-      } catch (err) {
-        console.debug(`hydrateFromFirestoreNow note (${collectionName}):`, err);
       }
-    }
-    this.notify();
+
+      // Phase 2: All remaining catalog collections concurrently (skipping fresh TTL entries when !force)
+      const deletedSet = this.getDeletedEntityIds();
+      await Promise.allSettled(
+        collectionsToHydrate.slice(1).map(async ({ collectionName, storageKey }) => {
+          if (!force && masterDataCache.isFresh(collectionName)) {
+            performanceMonitor.recordCacheHit('hydrationTTL');
+            return;
+          }
+          performanceMonitor.recordCacheMiss('hydrationTTL');
+          try {
+            const snap = await getDocs(collection(firestoreDb, collectionName));
+            performanceMonitor.recordFirestoreRead(snap.size || 1);
+            masterDataCache.markHydrated(collectionName);
+            const list: any[] = [];
+            snap.forEach(docSnap => {
+              const raw = docSnap.data();
+              const id = raw.id || docSnap.id;
+              if (raw.isDeleted === true || raw.status === 'DELETED') return;
+              if (deletedSet.has(docSnap.id) || deletedSet.has(id)) return;
+              list.push({ ...raw, id });
+            });
+            this.setItem(storageKey, list, false);
+          } catch (err) {
+            console.debug(`hydrateFromFirestoreNow note (${collectionName}):`, err);
+          }
+        })
+      );
+      this.notify();
+    });
   }
 
   private async initFirestoreSync(): Promise<void> {
@@ -1857,7 +2358,10 @@ export class AppDatabase {
 
     try {
       // 0. Synchronize Authoritative Inventory Tombstones
-      onSnapshot(collection(firestoreDb, 'inventory_tombstones'), (snapshot) => {
+      performanceMonitor.registerListener('col:inventory_tombstones');
+      const tombUnsub = onSnapshot(collection(firestoreDb, 'inventory_tombstones'), (snapshot) => {
+        performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+        masterDataCache.markHydrated('inventory_tombstones');
         if (!snapshot.empty) {
           const current = this.getItem<string[]>('inventory_tombstones', []);
           const set = new Set(current);
@@ -1873,203 +2377,190 @@ export class AppDatabase {
       }, (err) => {
         console.debug('Firestore inventory_tombstones sync note:', err);
       });
-      // 1. Core Inventory & Catalog Collections
-      this.syncCollectionSafely<Product>('products', 'products');
-      this.syncCollectionSafely<Destination>('destinations', 'destinations');
-      this.syncCollectionSafely<Hotel>('hotels', 'hotels');
-      this.syncCollectionSafely<CityHub>('city_hubs', 'city_hubs');
-      this.syncCollectionSafely<DestinationRegionItem>('regions', 'regions');
-      this.syncCollectionSafely<MasterRegion>('master_regions', 'master_regions');
-      this.syncCollectionSafely<DestinationFAQ>('faqs', 'destination_faqs');
-      this.syncCollectionSafely<B2BPackage>('b2b_packages', 'b2b_packages');
-      this.syncCollectionSafely<VisaProduct>('visas', 'visas');
-      this.syncCollectionSafely<TravelProtectionPlan>('travel_protection_plans', 'travel_protection_plans');
-      this.syncCollectionSafely<VipGroundService>('vip_ground_services', 'vip_ground_services');
-      this.syncCollectionSafely<ConnectivityPlan>('connectivity_plans', 'connectivity_plans');
-      this.syncCollectionSafely<Promotion>('promotions', 'promotions');
-      this.syncCollectionSafely<GalleryImage>('gallery_items', 'gallery');
-      this.syncCollectionSafely<GoogleReview>('google_reviews', 'reviews');
-      this.syncCollectionSafely<BlogArticle>('blog_articles', 'blogs');
-      this.syncCollectionSafely<RailStation>('rail_stations', 'rail_stations');
-      this.syncCollectionSafely<RailRoute>('rail_routes', 'rail_routes');
-      this.syncCollectionSafely<RailRate>('rail_rates', 'rail_rates');
-      this.syncCollectionSafely<RailSeasonCalendarPeriod>('rail_seasons', 'rail_seasons');
-      onSnapshot(collection(firestoreDb, 'rail_markup_rules'), (snapshot) => {
-        if (!snapshot.empty) {
-          let ruleDoc: RailMarkupRule | null = null;
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data() as RailMarkupRule;
-            if (docSnap.id === 'markup-jp-rail-default' || !ruleDoc) {
-              ruleDoc = { ...INITIAL_RAIL_MARKUP_RULE, ...data, id: data.id || docSnap.id };
-            }
-          });
-          if (ruleDoc) {
-            this.setItem('rail_markup_rules', ruleDoc, true);
-          }
-        }
-      }, (err) => console.debug('Firestore rail_markup_rules sync note:', err?.message || err));
-      this.syncCollectionSafely<VehicleMaster>('master_vehicles', 'master_vehicles');
-      this.syncCollectionSafely<YachtMaster>('master_yachts', 'master_yachts');
-      this.syncCollectionSafely<FerryMaster>('master_ferries', 'master_ferries');
-      this.syncCollectionSafely<JapanRailCommercialProduct>('japan_rail_commercial_products', 'japan_rail_commercial_products');
-      this.syncCollectionSafely<SurchargeMaster>('surcharge_masters', 'surcharge_masters');
-      this.syncCollectionSafely<SurchargeProductMapping>('surcharge_product_mappings', 'surcharge_product_mappings');
-      this.syncCollectionSafely<SurchargeHistoryRecord>('surcharge_history', 'surcharge_history');
-
-      // Synchronize Email Automation Campaigns (Merges Firestore overrides with canonical system triggers)
-      onSnapshot(collection(firestoreDb, 'campaigns'), (snapshot) => {
-        const deletedSet = this.getDeletedEntityIds();
-        const remoteMap = new Map<string, EmailCampaignConfig>();
-        if (!snapshot.empty) {
-          snapshot.forEach(docSnap => {
-            const raw = docSnap.data() as EmailCampaignConfig;
-            const id = raw.id || docSnap.id;
-            if ((raw as any).isDeleted === true || (raw as any).status === 'DELETED') {
-              deletedSet.add(id);
-              return;
-            }
-            if (deletedSet.has(id) || deletedSet.has(`campaigns_${id}`)) return;
-            remoteMap.set(id, { ...raw, id });
-          });
-        }
-        const currentLocal = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
-        const mergedMap = new Map<string, EmailCampaignConfig>();
-        if (envService.allowDemoData()) {
-          INITIAL_CAMPAIGNS.forEach(initCamp => {
-            mergedMap.set(initCamp.id, { ...initCamp });
-          });
-        }
-        currentLocal.forEach(localCamp => {
-          if (localCamp && localCamp.id && !deletedSet.has(localCamp.id) && !deletedSet.has(`campaigns_${localCamp.id}`)) {
-            mergedMap.set(localCamp.id, { ...(mergedMap.get(localCamp.id) || {}), ...localCamp });
-          }
-        });
-        remoteMap.forEach((remoteCamp, id) => {
-          mergedMap.set(id, { ...(mergedMap.get(id) || {}), ...remoteCamp });
-        });
-        this.setItem('campaigns', Array.from(mergedMap.values()), true);
-      }, (err) => {
-        console.debug('Firestore campaigns sync note:', err?.message || err);
+      this.publicUnsubscribers.push(() => {
+        performanceMonitor.unregisterListener('col:inventory_tombstones');
+        try { tombUnsub(); } catch {}
       });
 
-      // Synchronize Marketing Automation Scheduled Jobs & Execution Logs
-      onSnapshot(collection(firestoreDb, 'automation_jobs'), (snapshot) => {
-        if (!snapshot.empty) {
-          const remoteJobs: any[] = [];
-          snapshot.forEach(docSnap => {
-            const raw = docSnap.data();
-            if (raw && (raw.jobId || docSnap.id)) {
-              remoteJobs.push({ ...raw, jobId: raw.jobId || docSnap.id });
-            }
-          });
-          if (remoteJobs.length > 0) {
-            const localJobs = this.getItem<any[]>('automation_jobs', []);
-            const map = new Map<string, any>();
-            localJobs.forEach(j => { if (j && j.jobId) map.set(j.jobId, j); });
-            remoteJobs.forEach(j => { map.set(j.jobId, { ...(map.get(j.jobId) || {}), ...j }); });
-            const merged = Array.from(map.values()).sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-            this.setItem('automation_jobs', merged, true);
-          }
-        }
-      }, (err) => console.debug('Firestore automation_jobs sync note:', err?.message || err));
+      // 1. Core Public Catalog & Authoritative Pricing Collections (Live real-time)
+      this.publicUnsubscribers.push(
+        this.syncCollectionSafely<Product>('products', 'products'),
+        this.syncCollectionSafely<Destination>('destinations', 'destinations'),
+        this.syncCollectionSafely<Hotel>('hotels', 'hotels'),
+        this.syncCollectionSafely<CityHub>('city_hubs', 'city_hubs'),
+        this.syncCollectionSafely<B2BPackage>('b2b_packages', 'b2b_packages'),
+        this.syncCollectionSafely<Promotion>('promotions', 'promotions'),
+        this.syncCollectionSafely<SurchargeMaster>('surcharge_masters', 'surcharge_masters'),
+        this.syncCollectionSafely<SurchargeProductMapping>('surcharge_product_mappings', 'surcharge_product_mappings')
+      );
 
-      onSnapshot(collection(firestoreDb, 'automation_logs'), (snapshot) => {
-        if (!snapshot.empty) {
-          const remoteLogs: any[] = [];
-          snapshot.forEach(docSnap => {
-            const raw = docSnap.data();
-            if (raw && (raw.id || docSnap.id)) {
-              remoteLogs.push({ ...raw, id: raw.id || docSnap.id });
-            }
-          });
-          if (remoteLogs.length > 0) {
-            const localLogs = this.getItem<any[]>('automation_logs', []);
-            const map = new Map<string, any>();
-            localLogs.forEach(l => { if (l && l.id) map.set(l.id, l); });
-            remoteLogs.forEach(l => { map.set(l.id, { ...(map.get(l.id) || {}), ...l }); });
-            const merged = Array.from(map.values()).sort((a, b) => new Date(b.executedAt || 0).getTime() - new Date(a.executedAt || 0).getTime());
-            this.setItem('automation_logs', merged, true);
-          }
-        }
-      }, (err) => console.debug('Firestore automation_logs sync note:', err?.message || err));
+      // 2. Read-mostly Reference, Navigation, Ancillary & Marketing Collections (One-shot parallel hydration)
+      setTimeout(() => {
+        void this.hydrateCollectionsOneShot([
+          { collectionName: 'regions', storageKey: 'regions' },
+          { collectionName: 'master_regions', storageKey: 'master_regions' },
+          { collectionName: 'visas', storageKey: 'visas' },
+          { collectionName: 'travel_protection_plans', storageKey: 'travel_protection_plans' },
+          { collectionName: 'vip_ground_services', storageKey: 'vip_ground_services' },
+          { collectionName: 'connectivity_plans', storageKey: 'connectivity_plans' },
+          { collectionName: 'gallery_items', storageKey: 'gallery' },
+          { collectionName: 'japan_rail_commercial_products', storageKey: 'japan_rail_commercial_products' },
+          { collectionName: 'faqs', storageKey: 'destination_faqs' },
+          { collectionName: 'google_reviews', storageKey: 'reviews' },
+          { collectionName: 'blog_articles', storageKey: 'blogs' },
+          { collectionName: 'rail_stations', storageKey: 'rail_stations' },
+          { collectionName: 'rail_routes', storageKey: 'rail_routes' },
+          { collectionName: 'rail_rates', storageKey: 'rail_rates' },
+          { collectionName: 'rail_seasons', storageKey: 'rail_seasons' },
+          { collectionName: 'master_vehicles', storageKey: 'master_vehicles' },
+          { collectionName: 'master_yachts', storageKey: 'master_yachts' },
+          { collectionName: 'master_ferries', storageKey: 'master_ferries' },
+          { collectionName: 'automation_jobs', storageKey: 'automation_jobs' },
+          { collectionName: 'automation_logs', storageKey: 'automation_logs' }
+        ]);
 
-      // Real-time Canonical Image Metadata Listener
-      onSnapshot(collection(firestoreDb, 'image_metadata'), (snapshot) => {
-        if (!snapshot.empty) {
-          const records: any[] = [];
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data && (data.imageId || docSnap.id)) {
-              records.push({ ...data, imageId: data.imageId || docSnap.id });
+        // Hydrate menu_items & custom_pages once with deleted tombstone filtering
+        getDocs(collection(firestoreDb, 'menu_items')).then((snapshot) => {
+          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+          masterDataCache.markHydrated('menu_items');
+          if (!snapshot.empty) {
+            const deletedIds = this.getDeletedMenuItemIds();
+            const list: MenuItemConfig[] = [];
+            snapshot.forEach(docSnap => {
+              const data = docSnap.data() as MenuItemConfig;
+              if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
+                list.push(data);
+              }
+            });
+            this.setItem('menu_items', list, true);
+          }
+        }).catch(() => {});
+
+        getDocs(collection(firestoreDb, 'custom_pages')).then((snapshot) => {
+          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+          masterDataCache.markHydrated('custom_pages');
+          if (!snapshot.empty) {
+            const deletedIds = this.getDeletedCustomPageIds();
+            const list: CustomPage[] = [];
+            snapshot.forEach(docSnap => {
+              const data = docSnap.data() as CustomPage;
+              if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
+                list.push(data);
+              }
+            });
+            this.setItem('custom_pages', list, true);
+          }
+        }).catch(() => {});
+
+        // Hydrate rail_markup_rules once cleanly
+        getDocs(collection(firestoreDb, 'rail_markup_rules')).then((snapshot) => {
+          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+          if (!snapshot.empty) {
+            let ruleDoc: RailMarkupRule | null = null;
+            snapshot.forEach(docSnap => {
+              const data = docSnap.data() as RailMarkupRule;
+              if (docSnap.id === 'markup-jp-rail-default' || !ruleDoc) {
+                ruleDoc = { ...INITIAL_RAIL_MARKUP_RULE, ...data, id: data.id || docSnap.id };
+              }
+            });
+            if (ruleDoc) this.setItem('rail_markup_rules', ruleDoc, true);
+          }
+        }).catch(() => {});
+
+        // Hydrate campaigns once with demo merge fallback
+        getDocs(collection(firestoreDb, 'campaigns')).then((snapshot) => {
+          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+          const deletedSet = this.getDeletedEntityIds();
+          const remoteMap = new Map<string, EmailCampaignConfig>();
+          if (!snapshot.empty) {
+            snapshot.forEach(docSnap => {
+              const raw = docSnap.data() as EmailCampaignConfig;
+              const id = raw.id || docSnap.id;
+              if ((raw as any).isDeleted === true || (raw as any).status === 'DELETED') {
+                deletedSet.add(id);
+                return;
+              }
+              if (deletedSet.has(id) || deletedSet.has(`campaigns_${id}`)) return;
+              remoteMap.set(id, { ...raw, id });
+            });
+          }
+          const seedCampaigns = this.getSeedBundle()?.INITIAL_CAMPAIGNS || [];
+          const currentLocal = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? seedCampaigns : []);
+          const mergedMap = new Map<string, EmailCampaignConfig>();
+          if (envService.allowDemoData()) {
+            seedCampaigns.forEach(initCamp => mergedMap.set(initCamp.id, { ...initCamp }));
+          }
+          currentLocal.forEach(localCamp => {
+            if (localCamp && localCamp.id && !deletedSet.has(localCamp.id) && !deletedSet.has(`campaigns_${localCamp.id}`)) {
+              mergedMap.set(localCamp.id, { ...(mergedMap.get(localCamp.id) || {}), ...localCamp });
             }
           });
-          if (records.length > 0) {
-            canonicalImageService.registerImagesFromSync(records);
+          remoteMap.forEach((remoteCamp, id) => {
+            mergedMap.set(id, { ...(mergedMap.get(id) || {}), ...remoteCamp });
+          });
+          this.setItem('campaigns', Array.from(mergedMap.values()), true);
+        }).catch(() => {});
+
+        // Hydrate Canonical Image Metadata once after initial paint
+        getDocs(collection(firestoreDb, 'image_metadata')).then((snapshot) => {
+          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+          if (!snapshot.empty) {
+            const records: any[] = [];
+            snapshot.forEach(docSnap => {
+              const data = docSnap.data();
+              if (data && (data.imageId || docSnap.id)) {
+                records.push({ ...data, imageId: data.imageId || docSnap.id });
+              }
+            });
+            if (records.length > 0) {
+              canonicalImageService.registerImagesFromSync(records);
+            }
           }
-        }
-      }, (err) => console.debug('Firestore image_metadata sync note:', err?.message || err));
+        }).catch(() => {});
+      }, 150);
 
       // Check if user is already authenticated at init
       if (auth.currentUser) {
         this.onAuthUserChanged(currentAuthUser, auth.currentUser);
       }
 
-      // 5. Navigation & Institutional Content with Local Deleted Tombstone Handling
-      onSnapshot(collection(firestoreDb, 'menu_items'), (snapshot) => {
-        if (!snapshot.empty) {
-          const deletedIds = this.getDeletedMenuItemIds();
-          const list: MenuItemConfig[] = [];
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data() as MenuItemConfig;
-            if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
-              list.push(data);
-            }
-          });
-          this.setItem('menu_items', list, true);
-        }
-      }, (err) => console.debug('Firestore menu_items sync note:', err?.message || err));
-
-      onSnapshot(collection(firestoreDb, 'custom_pages'), (snapshot) => {
-        if (!snapshot.empty) {
-          const deletedIds = this.getDeletedCustomPageIds();
-          const list: CustomPage[] = [];
-          snapshot.forEach(docSnap => {
-            const data = docSnap.data() as CustomPage;
-            if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
-              list.push(data);
-            }
-          });
-          this.setItem('custom_pages', list, true);
-        }
-      }, (err) => console.debug('Firestore custom_pages sync note:', err?.message || err));
-
-      // 6. Singleton Config Documents
-      onSnapshot(collection(firestoreDb, 'footer_config'), (snapshot) => {
-        if (!snapshot.empty) {
-          snapshot.forEach(docSnap => {
-            if (docSnap.id === 'main_footer') {
-              this.setItem('footer_config', docSnap.data() as FooterConfig, true);
-            }
-          });
+      // 6. Singleton Config Documents (targeted doc listeners instead of full collection scans)
+      performanceMonitor.registerListener('doc:footer_config/main_footer');
+      const footerUnsub = onSnapshot(doc(firestoreDb, 'footer_config', 'main_footer'), (docSnap) => {
+        performanceMonitor.recordFirestoreRead(1);
+        if (docSnap.exists()) {
+          this.setItem('footer_config', docSnap.data() as FooterConfig, true);
         }
       }, (err) => console.debug('Firestore footer_config sync note:', err?.message || err));
+      this.publicUnsubscribers.push(() => {
+        performanceMonitor.unregisterListener('doc:footer_config/main_footer');
+        try { footerUnsub(); } catch {}
+      });
 
-      onSnapshot(collection(firestoreDb, 'seo_settings'), (snapshot) => {
-        if (!snapshot.empty) {
-          snapshot.forEach(docSnap => {
-            if (docSnap.id === 'global_defaults') {
-              this.setItem('seo_settings', docSnap.data() as GlobalSEODefaults, true);
-            }
-          });
+      performanceMonitor.registerListener('doc:seo_settings/global_defaults');
+      const seoUnsub = onSnapshot(doc(firestoreDb, 'seo_settings', 'global_defaults'), (docSnap) => {
+        performanceMonitor.recordFirestoreRead(1);
+        if (docSnap.exists()) {
+          this.setItem('seo_settings', docSnap.data() as GlobalSEODefaults, true);
         }
       }, (err) => console.debug('Firestore seo_settings sync note:', err?.message || err));
+      this.publicUnsubscribers.push(() => {
+        performanceMonitor.unregisterListener('doc:seo_settings/global_defaults');
+        try { seoUnsub(); } catch {}
+      });
 
-      onSnapshot(doc(firestoreDb, 'homepage_config', 'main'), (docSnap) => {
+      performanceMonitor.registerListener('doc:homepage_config/main');
+      const homepageUnsub = onSnapshot(doc(firestoreDb, 'homepage_config', 'main'), (docSnap) => {
+        performanceMonitor.recordFirestoreRead(1);
         if (docSnap.exists()) {
           const remoteConfig = docSnap.data() as HomepageConfig;
           this.setItem('homepage_config', remoteConfig, true);
         }
       }, (err) => console.debug('Firestore homepage_config sync note:', err?.message || err));
+      this.publicUnsubscribers.push(() => {
+        performanceMonitor.unregisterListener('doc:homepage_config/main');
+        try { homepageUnsub(); } catch {}
+      });
 
     } catch (error) {
       console.warn('Firestore real-time listeners initialization note:', error);
@@ -2141,9 +2632,9 @@ export class AppDatabase {
       if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_history')) this.setItem('surcharge_history', []);
 
       try {
-        this.migrateLegacyProductSurchargesToCentralized();
+        this.purgeUnauthorizedDemoAndLegacySurchargesFromLocalState();
       } catch (e) {
-        console.warn('Surcharge migration note:', e);
+        console.warn('Surcharge cleanup note:', e);
       }
 
       try {
@@ -2158,6 +2649,37 @@ export class AppDatabase {
       }
       return;
     }
+
+    const cachedSeeds = getCachedDemoSeeds();
+    if (!cachedSeeds) {
+      void loadDemoSeedsAsync().then((seeds) => {
+        this.applyDemoSeedBundle(seeds);
+        this.notify();
+      }).catch(() => {});
+      return;
+    }
+    this.applyDemoSeedBundle(cachedSeeds);
+  }
+
+  private applyDemoSeedBundle(seeds: DemoSeedBundle): void {
+    const {
+      INITIAL_PRODUCTS,
+      DESTINATIONS,
+      INITIAL_MASTER_REGIONS,
+      INITIAL_PROMOTIONS,
+      INITIAL_BLOGS,
+      INITIAL_HOTELS,
+      INITIAL_CITY_HUBS,
+      INITIAL_FAQS,
+      INITIAL_GALLERY,
+      INITIAL_CAMPAIGNS,
+      INITIAL_ROSTER_RESOURCES,
+      INITIAL_VISAS,
+      INITIAL_TRAVEL_PROTECTION_PLANS,
+      INITIAL_VIP_GROUND_SERVICES,
+      INITIAL_CONNECTIVITY_PLANS,
+      INITIAL_LEADS
+    } = seeds;
 
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'master_regions')) {
       this.setItem('master_regions', INITIAL_MASTER_REGIONS);
@@ -2314,14 +2836,6 @@ export class AppDatabase {
       this.setItem('seo_settings', DEFAULT_GLOBAL_SEO_DEFAULTS);
     }
 
-    // MASTER PRODUCTION SAFETY:
-    // Strictly preserve all existing production users, bookings, leads, and quotations.
-    // Wildcard filtering, mass deletion, or wiping of real client records is strictly prohibited.
-
-    // AUTOMATIC MIGRATION: 
-    // 1. Rename 'Cruises' to 'Private Yacht' and enforce capacity-based vehicleConfig
-    // 2. Remove 'Hotels' from ProductCategory catalog (managed solely via Hotel Management)
-    // 3. Populate new Private Yacht products if missing
     try {
       const storedProducts = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
       let modified = false;
@@ -2381,7 +2895,6 @@ export class AppDatabase {
         return current;
       }).filter(p => (p.category as any) !== 'Hotels');
 
-      // Ensure new initial Private Yacht products are added
       INITIAL_PRODUCTS.forEach(initP => {
         if (initP.category === 'Private Yacht' && !updatedProducts.some(p => p.id === initP.id)) {
           updatedProducts.push(initP);
@@ -2396,8 +2909,6 @@ export class AppDatabase {
       console.warn('Migration note for products catalog:', e);
     }
 
-    // AUTOMATIC MIGRATION: 
-    // 4. Normalize hotel destination IDs to canonical format ('dest-xxx') and populate missing regionId/hubId
     try {
       const storedHotels = this.getItem<Hotel[]>('hotels', INITIAL_HOTELS);
       let hotelsModified = false;
@@ -2407,7 +2918,6 @@ export class AppDatabase {
 
       const normalizedHotels = storedHotels.map(hotel => {
         const h = { ...hotel };
-        // Check if destinationId is a slug like 'japan', 'united-kingdom', 'western-europe'
         if (h.destinationId && !h.destinationId.startsWith('dest-')) {
           const matchedDest = destinations.find(d => 
             d.slug.toLowerCase() === h.destinationId.toLowerCase() || 
@@ -2420,7 +2930,6 @@ export class AppDatabase {
             hotelsModified = true;
           }
         }
-        // Ensure regionId is populated
         if (!h.regionId && h.destinationId) {
           const matchedDest = destinations.find(d => d.id === h.destinationId || d.slug === h.destinationId);
           if (matchedDest?.regionId) {
@@ -2430,7 +2939,6 @@ export class AppDatabase {
             hotelsModified = true;
           }
         }
-        // Ensure hubId is populated if cityId matches a hub
         if (!h.hubId && (h.cityId || h.cityName)) {
           const matchedHub = hubs.find(hub => 
             hub.id.toLowerCase() === `hub-${(h.cityId || '').toLowerCase()}` ||
@@ -2453,21 +2961,19 @@ export class AppDatabase {
     }
 
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_masters')) {
-      this.setItem('surcharge_masters', INITIAL_SURCHARGE_MASTERS);
+      this.setItem('surcharge_masters', []);
     }
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_product_mappings')) {
-      const initProducts = this.getItem<Product[]>('products', INITIAL_PRODUCTS);
-      const initMappings = INITIAL_SURCHARGE_MASTERS.flatMap(s => buildMappingsForSurcharge(s, initProducts));
-      this.setItem('surcharge_product_mappings', initMappings);
+      this.setItem('surcharge_product_mappings', []);
     }
     if (!safeStorage.getItem(STORAGE_KEY_PREFIX + 'surcharge_history')) {
       this.setItem('surcharge_history', []);
     }
 
     try {
-      this.migrateLegacyProductSurchargesToCentralized();
+      this.purgeUnauthorizedDemoAndLegacySurchargesFromLocalState();
     } catch (e) {
-      console.warn('Initial centralized surcharge migration note:', e);
+      console.warn('Initial surcharge cleanup note:', e);
     }
 
     try {
@@ -5008,18 +5514,28 @@ export class AppDatabase {
   // PRODUCTS CRUD
   // ==========================================
   public getProducts(): Product[] {
-    const raw = this.getItem<Product[]>('products', envService.allowDemoData() ? INITIAL_PRODUCTS : []);
-    if (envService.allowDemoData()) {
-      // In demo mode only: ensure commercial Japan Rail products are present
+    const prodVer = masterDataCache.getVersion('products');
+    const railVer = masterDataCache.getVersion('japan_rail_commercial_products');
+    const tombVer = masterDataCache.getVersion('inventory_tombstones');
+    const combinedVer = prodVer * 100003 + railVer;
+    const cached = masterDataCache.getDerived<Product[]>('products_derived', combinedVer, tombVer);
+    if (cached) {
+      performanceMonitor.recordCacheHit('dbGetProducts');
+      return [...cached];
+    }
+    performanceMonitor.recordCacheMiss('dbGetProducts');
+
+    const seedProds = this.getSeedBundle()?.INITIAL_PRODUCTS || [];
+    const raw = this.getItem<Product[]>('products', seedProds);
+    if (envService.allowDemoData() && seedProds.length > 0) {
       const hasOrd = raw.some(p => p.id === 'RAIL-JP-ORD-RESERVED');
       const hasGrn = raw.some(p => p.id === 'RAIL-JP-GREEN-RESERVED');
       if (!hasOrd || !hasGrn) {
-        const missing = INITIAL_PRODUCTS.filter(p => (p.id === 'RAIL-JP-ORD-RESERVED' && !hasOrd) || (p.id === 'RAIL-JP-GREEN-RESERVED' && !hasGrn));
+        const missing = seedProds.filter(p => (p.id === 'RAIL-JP-ORD-RESERVED' && !hasOrd) || (p.id === 'RAIL-JP-GREEN-RESERVED' && !hasGrn));
         raw.unshift(...missing);
       }
     }
 
-    // Keep in lockstep with japan_rail_commercial_products collection (authoritative commercial rail master)
     const railCommercialList = this.getItem<JapanRailCommercialProduct[]>('japan_rail_commercial_products', []);
     if (Array.isArray(railCommercialList) && railCommercialList.length > 0) {
       for (const railProd of railCommercialList) {
@@ -5028,7 +5544,7 @@ export class AppDatabase {
           : 'RAIL-JP-ORD-RESERVED';
         const existingIdx = raw.findIndex(p => p.id === canonicalId);
         const railImg = railProd.imageUrl || (railProd as any).heroImage || (Array.isArray(railProd.images) ? railProd.images[0] : null);
-        
+
         if (existingIdx >= 0) {
           const existing = raw[existingIdx];
           const existingImg = existing.imageUrl || existing.heroImage || (Array.isArray(existing.images) ? existing.images[0] : null);
@@ -5074,8 +5590,11 @@ export class AppDatabase {
             infantNetPrice: 0,
             currency: railProd.nativeCurrency || 'JPY',
             nativeCurrency: railProd.nativeCurrency || 'JPY',
-            defaultMarkupPercent: railProd.pricingConfiguration?.marginValue || 12,
-            taxPercent: railProd.pricingConfiguration?.taxValue || 10,
+            defaultMarkupPercent: railProd.pricingConfiguration?.marginValue ?? 12,
+            b2bAgentMarkupPercent: railProd.pricingConfiguration?.marginValue ?? 12,
+            marginType: (railProd.pricingConfiguration?.marginType as any) || 'PERCENTAGE',
+            marginFixed: railProd.pricingConfiguration?.marginType === 'FIXED' ? (railProd.pricingConfiguration?.marginValue ?? 0) : 0,
+            taxPercent: railProd.pricingConfiguration?.taxValue ?? 10,
             commissionPercent: 0,
             serviceFeeFixed: 0,
             sellingPriceStartingFrom: railProd.pricingConfiguration?.supplierNett || 13970,
@@ -5099,27 +5618,68 @@ export class AppDatabase {
       }
     }
 
+    const marginConfigs = this.getItem<ProductMarginConfigRecord[]>('product_margin_configs', []);
+    const marginConfigMap = new Map<string, ProductMarginConfigRecord>();
+    marginConfigs.forEach(mc => {
+      if (mc && mc.productId) marginConfigMap.set(mc.productId, mc);
+    });
+
     const deletedSet = this.getDeletedEntityIds();
-    return raw
+    const built = raw
       .filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED')
       .map(p => {
         const configValidity = p.configuration?.configuration_data?.validity;
-        const configSurcharges = p.configuration?.configuration_data?.surcharges;
         const validFrom = (p.validity?.validFrom ?? p.validityFrom ?? configValidity?.validFrom ?? '').trim();
         const validTo = (p.validity?.validTo ?? p.validityTo ?? configValidity?.validTo ?? '').trim();
-        const surcharges = Array.isArray(p.surcharges)
-          ? p.surcharges
-          : Array.isArray(configSurcharges)
-          ? configSurcharges
-          : [];
+        const surcharges: InventorySurcharge[] = [];
         const cleanImages = canonicalImageService.extractPersistedProductImages(p);
         const isRail = p.id === 'RAIL-JP-ORD-RESERVED' || p.id === 'RAIL-JP-GREEN-RESERVED' || p.category === 'Rail' || p.category === 'Rail / Shinkansen';
         const primaryUrl = isRail ? (p.imageUrl || p.heroImage || cleanImages[0] || null) : (cleanImages[0] || p.imageUrl || p.heroImage || null);
         const finalImages = primaryUrl
           ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)]
           : cleanImages;
+
+        const linkedCfg = marginConfigMap.get(p.id);
+        const useCfg = Boolean(linkedCfg && (linkedCfg.version || 0) > (p.marginConfigVersion || 0));
+        const resolvedMarginType: 'PERCENTAGE' | 'FIXED' = useCfg
+          ? linkedCfg!.marginType
+          : (p.marginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE');
+        const resolvedB2BPct = useCfg
+          ? linkedCfg!.b2bAgentMarkupPercent
+          : (p.b2bAgentMarkupPercent !== undefined
+              ? Number(p.b2bAgentMarkupPercent)
+              : (p.defaultMarkupPercent !== undefined ? Number(p.defaultMarkupPercent) : undefined));
+        const resolvedDefaultPct = useCfg
+          ? linkedCfg!.defaultMarkupPercent
+          : (resolvedB2BPct !== undefined ? resolvedB2BPct : p.defaultMarkupPercent);
+        const resolvedFixed = useCfg
+          ? linkedCfg!.marginFixed
+          : (p.marginFixed !== undefined ? Number(p.marginFixed) : undefined);
+        const resolvedCommission = useCfg
+          ? linkedCfg!.commissionPercent
+          : (p.commissionPercent !== undefined ? Number(p.commissionPercent) : 0);
+        const resolvedMarginStatus = useCfg
+          ? linkedCfg!.status
+          : (p.marginStatus || undefined);
+        const resolvedMarginVersion = useCfg
+          ? linkedCfg!.version
+          : p.marginConfigVersion;
+
         return {
           ...p,
+          ...(resolvedB2BPct !== undefined ? { b2bAgentMarkupPercent: resolvedB2BPct } : {}),
+          ...(resolvedDefaultPct !== undefined ? { defaultMarkupPercent: resolvedDefaultPct } : {}),
+          marginType: resolvedMarginType,
+          ...(resolvedFixed !== undefined ? { marginFixed: resolvedFixed } : {}),
+          commissionPercent: resolvedCommission,
+          ...(resolvedMarginStatus ? { marginStatus: resolvedMarginStatus } : {}),
+          ...(resolvedMarginVersion !== undefined ? { marginConfigVersion: resolvedMarginVersion } : {}),
+          ...(useCfg && linkedCfg ? {
+            marginUpdatedAt: linkedCfg.updatedAt,
+            marginUpdatedBy: linkedCfg.updatedByUid,
+            marginUpdatedByName: linkedCfg.updatedByName,
+            marginUpdatedByEmail: linkedCfg.updatedByEmail
+          } : {}),
           images: finalImages,
           heroImage: primaryUrl,
           imageUrl: primaryUrl,
@@ -5143,6 +5703,9 @@ export class AppDatabase {
           surcharges
         };
       });
+
+    masterDataCache.setDerived('products_derived', combinedVer, tombVer, built);
+    return [...built];
   }
 
   // ==========================================
@@ -5151,7 +5714,7 @@ export class AppDatabase {
   // ==========================================
   public getVehicles(): VehicleMaster[] {
     const deleted = this.getDeletedEntityIds();
-    const raw = this.getItem<VehicleMaster[]>('master_vehicles', envService.allowDemoData() ? INITIAL_VEHICLES : []);
+    const raw = this.getItem<VehicleMaster[]>('master_vehicles', this.getSeedBundle()?.INITIAL_VEHICLES || []);
     return raw.filter(v => v && v.id && !deleted.has(v.id) && !deleted.has(`VehicleMaster_${v.id}`));
   }
 
@@ -5212,7 +5775,7 @@ export class AppDatabase {
 
   public getYachts(): YachtMaster[] {
     const deleted = this.getDeletedEntityIds();
-    const raw = this.getItem<YachtMaster[]>('master_yachts', envService.allowDemoData() ? INITIAL_YACHTS : []);
+    const raw = this.getItem<YachtMaster[]>('master_yachts', this.getSeedBundle()?.INITIAL_YACHTS || []);
     return raw.filter(y => y && y.id && !deleted.has(y.id) && !deleted.has(`YachtMaster_${y.id}`));
   }
 
@@ -5273,7 +5836,7 @@ export class AppDatabase {
 
   public getFerries(): FerryMaster[] {
     const deleted = this.getDeletedEntityIds();
-    const raw = this.getItem<FerryMaster[]>('master_ferries', envService.allowDemoData() ? INITIAL_FERRIES : []);
+    const raw = this.getItem<FerryMaster[]>('master_ferries', this.getSeedBundle()?.INITIAL_FERRIES || []);
     return raw.filter(f => f && f.id && !deleted.has(f.id) && !deleted.has(`FerryMaster_${f.id}`));
   }
 
@@ -5341,15 +5904,16 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_stations_${id}`) || deleted.has(`RailStation_${id}`);
 
     const stationsMap = new Map<string, RailStation>();
+    const seedStations = this.getSeedBundle()?.INITIAL_RAIL_STATIONS || [];
     if (envService.allowDemoData()) {
-      for (const initStation of INITIAL_RAIL_STATIONS) {
+      for (const initStation of seedStations) {
         if (initStation && initStation.stationId && !isDeleted(initStation.stationId)) {
           stationsMap.set(initStation.stationId, { ...initStation });
         }
       }
     }
 
-    const raw = this.getItem<RailStation[]>('rail_stations', envService.allowDemoData() ? INITIAL_RAIL_STATIONS : []);
+    const raw = this.getItem<RailStation[]>('rail_stations', seedStations);
     if (Array.isArray(raw)) {
       for (const s of raw) {
         if (s && s.stationId && !isDeleted(s.stationId)) {
@@ -5428,15 +5992,16 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_routes_${id}`) || deleted.has(`RailRoute_${id}`);
 
     const routesMap = new Map<string, RailRoute>();
+    const seedRoutes = this.getSeedBundle()?.INITIAL_RAIL_ROUTES || [];
     if (envService.allowDemoData()) {
-      for (const initRoute of INITIAL_RAIL_ROUTES) {
+      for (const initRoute of seedRoutes) {
         if (initRoute && initRoute.routeId && !isDeleted(initRoute.routeId)) {
           routesMap.set(initRoute.routeId, { ...initRoute });
         }
       }
     }
 
-    const raw = this.getItem<RailRoute[]>('rail_routes', envService.allowDemoData() ? INITIAL_RAIL_ROUTES : []);
+    const raw = this.getItem<RailRoute[]>('rail_routes', seedRoutes);
     if (Array.isArray(raw)) {
       for (const r of raw) {
         if (r && r.routeId && !isDeleted(r.routeId)) {
@@ -5515,15 +6080,16 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_rates_${id}`) || deleted.has(`RailRate_${id}`);
 
     const ratesMap = new Map<string, RailRate>();
+    const seedRates = this.getSeedBundle()?.INITIAL_RAIL_RATES || [];
     if (envService.allowDemoData()) {
-      for (const initRate of INITIAL_RAIL_RATES) {
+      for (const initRate of seedRates) {
         if (initRate && initRate.rateId && !isDeleted(initRate.rateId)) {
           ratesMap.set(initRate.rateId, { ...initRate });
         }
       }
     }
 
-    const raw = this.getItem<RailRate[]>('rail_rates', envService.allowDemoData() ? INITIAL_RAIL_RATES : []);
+    const raw = this.getItem<RailRate[]>('rail_rates', seedRates);
     if (Array.isArray(raw)) {
       for (const r of raw) {
         if (r && r.rateId && !isDeleted(r.rateId)) {
@@ -5716,15 +6282,16 @@ export class AppDatabase {
       deleted.has(id) || deleted.has(`rail_seasons_${id}`) || deleted.has(`RailSeason_${id}`);
 
     const seasonsMap = new Map<string, RailSeasonCalendarPeriod>();
+    const seedSeasons = this.getSeedBundle()?.INITIAL_RAIL_SEASON_CALENDAR || [];
     if (envService.allowDemoData()) {
-      for (const initSeason of INITIAL_RAIL_SEASON_CALENDAR) {
+      for (const initSeason of seedSeasons) {
         if (initSeason && initSeason.id && !isDeleted(initSeason.id)) {
           seasonsMap.set(initSeason.id, { ...initSeason });
         }
       }
     }
 
-    const raw = this.getItem<RailSeasonCalendarPeriod[]>('rail_seasons', envService.allowDemoData() ? INITIAL_RAIL_SEASON_CALENDAR : []);
+    const raw = this.getItem<RailSeasonCalendarPeriod[]>('rail_seasons', seedSeasons);
     if (Array.isArray(raw)) {
       for (const s of raw) {
         if (s && s.id && !isDeleted(s.id)) {
@@ -6356,11 +6923,7 @@ export class AppDatabase {
         ? product.validityTo
         : prev?.validity?.validTo || prev?.validityTo || ''
     ).trim();
-    const resolvedSurcharges = Array.isArray(product.surcharges)
-      ? product.surcharges
-      : Array.isArray(prev?.surcharges)
-      ? prev!.surcharges
-      : [];
+    const resolvedSurcharges: InventorySurcharge[] = [];
 
     const persistedImages = canonicalImageService.extractPersistedProductImages(product, prev);
     const primaryUrl = persistedImages[0] || null;
@@ -6412,6 +6975,49 @@ export class AppDatabase {
       prev
     );
 
+    const prevB2B = prev?.b2bAgentMarkupPercent ?? prev?.defaultMarkupPercent;
+    const incomingB2B = product.b2bAgentMarkupPercent;
+    const incomingDef = product.defaultMarkupPercent;
+    let canonicalMarginPct: number | undefined;
+    if (incomingB2B !== undefined && incomingDef !== undefined) {
+      if (incomingB2B !== prevB2B && incomingDef === prevB2B) {
+        canonicalMarginPct = Number(incomingB2B);
+      } else if (incomingDef !== prevB2B && incomingB2B === prevB2B) {
+        canonicalMarginPct = Number(incomingDef);
+      } else {
+        canonicalMarginPct = Number(incomingB2B);
+      }
+    } else if (incomingB2B !== undefined) {
+      canonicalMarginPct = Number(incomingB2B);
+    } else if (incomingDef !== undefined) {
+      canonicalMarginPct = Number(incomingDef);
+    } else if (prevB2B !== undefined) {
+      canonicalMarginPct = Number(prevB2B);
+    }
+    const resolvedMarginType: 'PERCENTAGE' | 'FIXED' =
+      product.marginType === 'FIXED' || (product.marginType === undefined && prev?.marginType === 'FIXED')
+        ? 'FIXED'
+        : 'PERCENTAGE';
+    const resolvedMarginFixed =
+      resolvedMarginType === 'FIXED'
+        ? Number(product.marginFixed !== undefined ? product.marginFixed : (prev?.marginFixed ?? 0))
+        : 0;
+    const resolvedCommission =
+      product.commissionPercent !== undefined && !Number.isNaN(Number(product.commissionPercent))
+        ? Number(product.commissionPercent)
+        : Number(prev?.commissionPercent ?? 0);
+    const marginChanged =
+      !prev ||
+      canonicalMarginPct !== prevB2B ||
+      resolvedMarginType !== (prev.marginType || 'PERCENTAGE') ||
+      resolvedMarginFixed !== (prev.marginFixed || 0) ||
+      resolvedCommission !== (prev.commissionPercent || 0);
+    const nextMarginVersion = Math.max(
+      Number(product.marginConfigVersion || 0),
+      Number(prev?.marginConfigVersion || 0) + (marginChanged ? 1 : 0),
+      marginChanged ? 1 : 0
+    );
+
     const savedProd: Product = {
       ...productWithMasterConfig,
       id: effectiveId,
@@ -6426,6 +7032,21 @@ export class AppDatabase {
       city: hierarchy.hub ? hierarchy.hub.name : (product.city || hierarchy.destination!.name),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
+      ...(canonicalMarginPct !== undefined && Number.isFinite(canonicalMarginPct) ? {
+        defaultMarkupPercent: canonicalMarginPct,
+        b2bAgentMarkupPercent: canonicalMarginPct
+      } : {}),
+      marginType: resolvedMarginType,
+      marginFixed: resolvedMarginFixed,
+      commissionPercent: resolvedCommission,
+      ...(product.marginStatus || prev?.marginStatus ? { marginStatus: product.marginStatus || prev?.marginStatus } : {}),
+      ...(nextMarginVersion > 0 ? { marginConfigVersion: nextMarginVersion } : {}),
+      ...(marginChanged ? {
+        marginUpdatedAt: nowIso,
+        marginUpdatedBy: user?.id || prev?.marginUpdatedBy || 'usr-admin-business',
+        marginUpdatedByName: user?.name || prev?.marginUpdatedByName || 'Administrator',
+        marginUpdatedByEmail: user?.email || prev?.marginUpdatedByEmail || 'business@theunbound.in'
+      } : {}),
       validityFrom: resolvedValidFrom,
       validityTo: resolvedValidTo,
       validity: {
@@ -6531,6 +7152,8 @@ export class AppDatabase {
     }
     canonicalImageService.notify();
     this.setItem('products', products);
+    this.syncAuthoritativeMarginCacheFromProduct(savedProd, prev, user, 'PRODUCT_MANAGEMENT', false);
+    pricingCache.clearAll();
     return savedProd;
   }
 
@@ -6601,6 +7224,14 @@ export class AppDatabase {
       const existingRailSnap = await getDoc(railDocRef);
       const existingRailData = existingRailSnap.exists() ? existingRailSnap.data() : {};
 
+      const existingRailPricing = (existingRailData.pricingConfiguration && typeof existingRailData.pricingConfiguration === 'object')
+        ? existingRailData.pricingConfiguration
+        : {};
+      const railMarginType = savedProd.marginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+      const railMarginValue = railMarginType === 'FIXED'
+        ? Number(savedProd.marginFixed ?? 0)
+        : Number(savedProd.b2bAgentMarkupPercent ?? savedProd.defaultMarkupPercent ?? existingRailPricing.marginValue ?? 12);
+
       const railCommercialDoc = {
         ...existingRailData,
         id: savedProd.id,
@@ -6614,6 +7245,11 @@ export class AppDatabase {
         heroImage: actualPrimary || '',
         images: persistedImages,
         nativeCurrency: savedProd.nativeCurrency || savedProd.currency || 'JPY',
+        pricingConfiguration: {
+          ...existingRailPricing,
+          marginType: railMarginType,
+          marginValue: railMarginValue
+        },
         status: savedProd.status,
         updatedAt: new Date().toISOString(),
         updatedBy: user?.name || user?.email || effectiveUid || 'Admin',
@@ -6700,7 +7336,204 @@ export class AppDatabase {
     canonicalImageService.extractAllImagesFromRecord(verifiedProd, 'PRODUCT', verifiedProd.id);
     canonicalImageService.notify();
     this.setItem('products', products);
+    this.syncAuthoritativeMarginCacheFromProduct(verifiedProd, prev, user, 'PRODUCT_MANAGEMENT', true);
+    pricingCache.clearAll();
     return verifiedProd;
+  }
+
+  private syncAuthoritativeMarginCacheFromProduct(
+    savedProd: Product,
+    prev: Product | null,
+    user: User | null,
+    source: 'MARGIN_GOVERNANCE' | 'PRODUCT_MANAGEMENT' | 'BULK_GOVERNANCE',
+    persistToFirestore: boolean
+  ): void {
+    try {
+      const mType: 'PERCENTAGE' | 'FIXED' = savedProd.marginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+      const pctVal = Number(savedProd.b2bAgentMarkupPercent ?? savedProd.defaultMarkupPercent ?? 0);
+      const fixedVal = Number(savedProd.marginFixed ?? 0);
+      const mVal = mType === 'FIXED' ? fixedVal : pctVal;
+      const commVal = Number(savedProd.commissionPercent ?? 0);
+      const mStatus: 'ACTIVE' | 'INACTIVE' = savedProd.marginStatus === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE';
+      const nowIso = savedProd.marginUpdatedAt || savedProd.updatedAt || new Date().toISOString();
+
+      const configs = this.getItem<ProductMarginConfigRecord[]>('product_margin_configs', []);
+      const existingIdx = configs.findIndex(c => c.productId === savedProd.id || c.id === savedProd.id);
+      const existingCfg = existingIdx >= 0 ? configs[existingIdx] : undefined;
+      const nextVersion = Math.max(Number(savedProd.marginConfigVersion || 1), Number(existingCfg?.version || 0) + (existingCfg ? 0 : 1));
+
+      const nextCfg: ProductMarginConfigRecord = {
+        id: savedProd.id,
+        productId: savedProd.id,
+        sku: savedProd.sku || savedProd.id,
+        productName: savedProd.name || savedProd.title || savedProd.id,
+        category: String(savedProd.category || ''),
+        destinationId: savedProd.destinationId || '',
+        destinationName: savedProd.destinationName || '',
+        regionId: savedProd.regionId,
+        regionName: savedProd.regionName,
+        hubId: savedProd.hubId,
+        city: savedProd.city,
+        supplierId: savedProd.supplierId,
+        supplierName: savedProd.supplierName,
+        currency: savedProd.nativeCurrency || savedProd.currency || 'USD',
+        marginType: mType,
+        marginValue: mVal,
+        b2bAgentMarkupPercent: mType === 'PERCENTAGE' ? mVal : Number(savedProd.b2bAgentMarkupPercent ?? 0),
+        defaultMarkupPercent: mType === 'PERCENTAGE' ? mVal : Number(savedProd.defaultMarkupPercent ?? 0),
+        marginFixed: mType === 'FIXED' ? mVal : 0,
+        commissionPercent: commVal,
+        isActive: mStatus === 'ACTIVE',
+        status: mStatus,
+        applicableScope: 'ALL_B2B',
+        version: nextVersion,
+        createdAt: existingCfg?.createdAt || nowIso,
+        updatedAt: nowIso,
+        updatedByUid: user?.id || auth.currentUser?.uid || savedProd.marginUpdatedBy || 'usr-admin-business',
+        updatedByEmail: user?.email || auth.currentUser?.email || savedProd.marginUpdatedByEmail || 'business@theunbound.in',
+        updatedByName: user?.name || savedProd.marginUpdatedByName || 'Administrator',
+        updatedByRole: user?.role || 'ADMIN',
+        changeReason: savedProd.marginLastChangeReason || (source === 'PRODUCT_MANAGEMENT' ? 'Synchronized from Product Management' : 'Updated via Margin Governance'),
+        changeSource: source,
+        schemaVersion: 1
+      };
+
+      if (existingIdx >= 0) configs[existingIdx] = nextCfg;
+      else configs.unshift(nextCfg);
+      this.setItem('product_margin_configs', configs, false);
+
+      const prevVal = prev
+        ? ((prev.marginType === 'FIXED' ? prev.marginFixed : (prev.b2bAgentMarkupPercent ?? prev.defaultMarkupPercent)) ?? null)
+        : null;
+      const prevComm = prev?.commissionPercent ?? null;
+      const changed =
+        !prev ||
+        prevVal !== mVal ||
+        (prev.marginType || 'PERCENTAGE') !== mType ||
+        prevComm !== commVal ||
+        (prev.marginStatus || 'ACTIVE') !== mStatus;
+
+      if (changed) {
+        const auditLog: ProductMarginAuditRecord = {
+          id: `PMA-${savedProd.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          productId: savedProd.id,
+          sku: savedProd.sku || savedProd.id,
+          productName: savedProd.name || savedProd.id,
+          action: existingCfg ? 'MARGIN_UPDATED' : 'MARGIN_CREATED',
+          previousMarginType: (prev?.marginType === 'FIXED' ? 'FIXED' : 'PERCENTAGE'),
+          newMarginType: mType,
+          previousMarginValue: prevVal,
+          newMarginValue: mVal,
+          previousCommissionPercent: prevComm,
+          newCommissionPercent: commVal,
+          previousStatus: existingCfg ? existingCfg.status : 'NOT_CONFIGURED',
+          newStatus: mStatus,
+          previousVersion: existingCfg?.version || 0,
+          newVersion: nextVersion,
+          reason: nextCfg.changeReason,
+          changeSource: source,
+          actorUid: nextCfg.updatedByUid,
+          actorEmail: nextCfg.updatedByEmail,
+          actorName: nextCfg.updatedByName,
+          actorRole: nextCfg.updatedByRole,
+          timestamp: nowIso
+        };
+        const logs = this.getItem<ProductMarginAuditRecord[]>('product_margin_audit_logs', []);
+        logs.unshift(auditLog);
+        this.setItem('product_margin_audit_logs', logs.slice(0, 500), false);
+
+        if (persistToFirestore && auth.currentUser) {
+          this.syncFirestoreDoc('product_margin_configs', nextCfg.productId, nextCfg);
+          this.syncFirestoreDoc('product_margin_audit_logs', auditLog.id, auditLog);
+        }
+      }
+    } catch (err) {
+      console.debug('[DB] Margin cache sync note:', err);
+    }
+  }
+
+  public getProductMarginConfigs(): ProductMarginConfigRecord[] {
+    return this.getItem<ProductMarginConfigRecord[]>('product_margin_configs', []);
+  }
+
+  public getProductMarginAuditLogs(productId?: string): ProductMarginAuditRecord[] {
+    const all = this.getItem<ProductMarginAuditRecord[]>('product_margin_audit_logs', []);
+    if (!productId) return all;
+    return all.filter(l => l.productId === productId);
+  }
+
+  public applySavedMarginGovernanceBatch(
+    updatedProducts: Product[],
+    updatedConfigs: ProductMarginConfigRecord[],
+    auditRecords: ProductMarginAuditRecord[] = []
+  ): void {
+    const prodList = this.getProducts();
+    const prodById = new Map<string, number>();
+    prodList.forEach((p, idx) => {
+      if (p?.id) prodById.set(p.id, idx);
+    });
+
+    updatedProducts.forEach((up) => {
+      if (!up || !up.id) return;
+      const idx = prodById.get(up.id);
+      if (idx !== undefined && idx >= 0) {
+        prodList[idx] = { ...prodList[idx], ...up };
+      } else {
+        prodList.unshift(up);
+      }
+    });
+
+    const cfgList = this.getItem<ProductMarginConfigRecord[]>('product_margin_configs', []);
+    const cfgById = new Map<string, number>();
+    cfgList.forEach((c, idx) => {
+      if (c?.productId) cfgById.set(c.productId, idx);
+    });
+    updatedConfigs.forEach((uc) => {
+      if (!uc || !uc.productId) return;
+      const idx = cfgById.get(uc.productId);
+      if (idx !== undefined && idx >= 0) {
+        cfgList[idx] = uc;
+      } else {
+        cfgList.unshift(uc);
+      }
+    });
+
+    if (auditRecords.length > 0) {
+      const existingLogs = this.getItem<ProductMarginAuditRecord[]>('product_margin_audit_logs', []);
+      const seenIds = new Set(existingLogs.map(l => l.id));
+      const mergedLogs = [...auditRecords.filter(r => !seenIds.has(r.id)), ...existingLogs].slice(0, 500);
+      this.setItem('product_margin_audit_logs', mergedLogs, false);
+    }
+
+    // Keep Japan Rail Commercial Products synchronized if any updated product is Rail
+    const railList = this.getJapanRailCommercialProducts();
+    let railChanged = false;
+    updatedProducts.forEach((up) => {
+      const isRail = up.id === 'RAIL-JP-ORD-RESERVED' || up.id === 'RAIL-JP-GREEN-RESERVED' || up.category === 'Rail' || up.category === 'Rail / Shinkansen';
+      if (!isRail) return;
+      const rIdx = railList.findIndex(r => r.id === up.id);
+      if (rIdx >= 0) {
+        railList[rIdx] = {
+          ...railList[rIdx],
+          pricingConfiguration: {
+            ...(railList[rIdx].pricingConfiguration || {}),
+            marginType: up.marginType || 'PERCENTAGE',
+            marginValue: up.marginType === 'FIXED' ? (up.marginFixed ?? 0) : (up.b2bAgentMarkupPercent ?? up.defaultMarkupPercent ?? 12)
+          } as any,
+          updatedAt: up.updatedAt || new Date().toISOString()
+        };
+        railChanged = true;
+      }
+    });
+    if (railChanged) {
+      this.setItem('japan_rail_commercial_products', railList, false);
+    }
+
+    this.setItem('product_margin_configs', cfgList, false);
+    this.setItem('products', prodList, true);
+    masterDataCache.bumpVersion('products');
+    masterDataCache.bumpVersion('product_margin_configs');
+    pricingCache.clearAll();
   }
 
   public saveProductConfiguration(
@@ -6965,7 +7798,7 @@ export class AppDatabase {
   // MASTER MACRO REGIONS CRUD (TIER 1: REGION)
   // ==========================================
   public getMasterRegions(): MasterRegion[] {
-    const raw = this.getItem<MasterRegion[]>('master_regions', envService.allowDemoData() ? INITIAL_MASTER_REGIONS : []);
+    const raw = this.getItem<MasterRegion[]>('master_regions', this.getSeedBundle()?.INITIAL_MASTER_REGIONS || []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(r => r && r.id && !deletedSet.has(r.id) && !deletedSet.has(`MasterRegion_${r.id}`) && !(r as any).isDeleted && (r as any).status !== 'DELETED');
   }
@@ -7104,8 +7937,18 @@ export class AppDatabase {
   // DESTINATIONS CRUD (TIER 2: DESTINATION)
   // ==========================================
   public getDestinations(): Destination[] {
-    const raw = this.getItem<Destination[]>('destinations', envService.allowDemoData() ? DESTINATIONS : []);
-    if (!Array.isArray(raw)) return envService.allowDemoData() ? DESTINATIONS : [];
+    const destVer = masterDataCache.getVersion('destinations');
+    const tombVer = masterDataCache.getVersion('inventory_tombstones');
+    const cached = masterDataCache.getDerived<Destination[]>('destinations_derived', destVer, tombVer);
+    if (cached) {
+      performanceMonitor.recordCacheHit('dbGetDestinations');
+      return [...cached];
+    }
+    performanceMonitor.recordCacheMiss('dbGetDestinations');
+
+    const seedDests = this.getSeedBundle()?.DESTINATIONS || [];
+    const raw = this.getItem<Destination[]>('destinations', seedDests);
+    if (!Array.isArray(raw)) return seedDests;
     const deletedSet = this.getDeletedEntityIds();
     const seen = new Set<string>();
     const deduped: Destination[] = [];
@@ -7120,7 +7963,8 @@ export class AppDatabase {
       if (keySlug) seen.add(keySlug);
       deduped.push(d);
     }
-    return deduped;
+    masterDataCache.setDerived('destinations_derived', destVer, tombVer, deduped);
+    return [...deduped];
   }
 
   public getDestinationBySlug(slug: string): Destination | undefined {
@@ -7137,20 +7981,26 @@ export class AppDatabase {
     }
     canonicalImageService.extractAllImagesFromRecord(destination, 'DESTINATION', destination.id);
     const destPrimaryDto = canonicalImageService.getCanonicalImageDto(destination, 'DESTINATION');
+    const normalizedStatus = (typeof destination.status === 'string' && destination.status.trim()
+      ? destination.status.trim().toUpperCase()
+      : 'INACTIVE') as Destination['status'];
     const enrichedDestination: Destination = {
       ...destination,
+      status: normalizedStatus,
+      isActive: normalizedStatus === 'ACTIVE',
+      visibilityStatus: normalizedStatus,
       heroImage: destPrimaryDto.url,
       primaryImageId: destPrimaryDto.imageId,
       primaryImage: destPrimaryDto as any
-    };
+    } as Destination;
     const destinations = this.getDestinations();
     const index = destinations.findIndex(d => d.id === destination.id);
     if (index >= 0) {
       destinations[index] = enrichedDestination;
-      this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destination.id, `Updated destination: ${destination.name}`);
+      this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destination.id, `Updated destination: ${destination.name} (${normalizedStatus})`);
     } else {
       destinations.push(enrichedDestination);
-      this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destination.id, `Added destination: ${destination.name}`);
+      this.logAudit(user, 'DESTINATION_UPDATED', 'Destination', destination.id, `Added destination: ${destination.name} (${normalizedStatus})`);
     }
     this.syncFirestoreDoc('destinations', destination.id, enrichedDestination);
     canonicalImageService.notify();
@@ -7191,7 +8041,12 @@ export class AppDatabase {
     const now = new Date().toISOString();
     const childRegions = this.getRegions().filter(r => r.destinationId === destId);
 
+    const normalizedStatus = (typeof destination.status === 'string' && destination.status.trim()
+      ? destination.status.trim().toUpperCase()
+      : 'INACTIVE') as Destination['status'];
+
     const recordToSave: Destination & {
+      visibilityStatus: string;
       updatedByRole: string;
       updatedByEmail: string;
       updatedBy: string;
@@ -7206,8 +8061,9 @@ export class AppDatabase {
       regionId: parentRegion?.id || destination.regionId || 'REG-001',
       regionName: parentRegion?.name || destination.regionName || 'East Asia',
       regions: childRegions,
-      status: destination.status || 'ACTIVE',
-      isActive: (destination.status || 'ACTIVE') === 'ACTIVE',
+      status: normalizedStatus,
+      isActive: normalizedStatus === 'ACTIVE',
+      visibilityStatus: normalizedStatus,
       createdBy: (destination as any).createdBy || user?.id || 'usr-admin-business',
       createdAt: (destination as any).createdAt || now,
       updatedBy: user?.id || 'usr-admin-business',
@@ -7292,7 +8148,7 @@ export class AppDatabase {
   // DESTINATION REGIONS CRUD (DESTINATION -> REGION)
   // ==========================================
   public getRegions(): DestinationRegionItem[] {
-    const initial = envService.allowDemoData() ? DESTINATIONS.flatMap(d => d.regions || []) : [];
+    const initial = (this.getSeedBundle()?.DESTINATIONS || []).flatMap(d => d.regions || []);
     const raw = this.getItem<DestinationRegionItem[]>('regions', initial);
     const deletedSet = this.getDeletedEntityIds();
     return (raw || []).filter(
@@ -7517,7 +8373,7 @@ export class AppDatabase {
   // PROMOTIONS & MARKETING CAMPAIGNS CRUD
   // ==========================================
   public getPromotions(): Promotion[] {
-    const raw = this.getItem<Promotion[]>('promotions', envService.allowDemoData() ? INITIAL_PROMOTIONS : []);
+    const raw = this.getItem<Promotion[]>('promotions', this.getSeedBundle()?.INITIAL_PROMOTIONS || []);
     const today = new Date().toISOString().split('T')[0];
     
     // Normalize status and active states
@@ -7661,7 +8517,7 @@ export class AppDatabase {
   // BLOGS CRUD
   // ==========================================
   public getBlogs(): BlogArticle[] {
-    return this.getItem<BlogArticle[]>('blogs', envService.allowDemoData() ? INITIAL_BLOGS : []);
+    return this.getItem<BlogArticle[]>('blogs', this.getSeedBundle()?.INITIAL_BLOGS || []);
   }
 
   public getBlogBySlug(slug: string): BlogArticle | undefined {
@@ -7928,7 +8784,7 @@ export class AppDatabase {
         items: [
           {
             id: 'item-jp-01',
-            product: INITIAL_PRODUCTS[0] || {
+            product: this.getSeedBundle()?.INITIAL_PRODUCTS?.[0] || {
               id: 'jp-tok-01',
               name: 'Tokyo Modern & Edo Heritage Private VIP Chauffeur Tour',
               destinationName: 'Japan',
@@ -8222,6 +9078,7 @@ export class AppDatabase {
     actionType: 
       | 'CREATED' 
       | 'EDITED' 
+      | 'AUTO_SAVED'
       | 'PRICING_UPDATED' 
       | 'SAVED' 
       | 'PROPOSAL_GENERATED' 
@@ -8248,6 +9105,14 @@ export class AppDatabase {
     const timestamp = new Date().toISOString();
     const userName = user?.name || quote.createdByName || 'Travel Consultant';
     const userRole = user?.role || 'B2B_AGENT';
+    const isAutoSave = actionType === 'AUTO_SAVED';
+    if (isAutoSave) {
+      // Strictly forbidden: quotation versions and persisted drafts must NEVER be autosaved.
+      const existingQuote = quotes.find(q => q.id === quote.id) || quote;
+      return (!canUserViewInternalCostBreakdown(user))
+        ? sanitizeQuoteForAgent(existingQuote)
+        : existingQuote;
+    }
 
     let currentVersion = quote.version || 1;
     let versionHistory = quote.versionHistory ? [...quote.versionHistory] : [];
@@ -8269,28 +9134,26 @@ export class AppDatabase {
     const createdByName = existingQuote?.createdByName || quote.createdByName || user?.name || 'TheUnbound Consultant';
     const createdByUserType = existingQuote?.createdByUserType || quote.createdByUserType || (user?.role as any) || 'B2B_AGENT';
 
-    if (existingIndex >= 0) {
-      if (actionType === 'EDITED' || actionType === 'PRICING_UPDATED') {
-        currentVersion += 1;
-        versionHistory.push({
-          version: currentVersion,
-          updatedAt: timestamp,
-          updatedBy: userName,
-          changesSummary: customDetails || `Updated itinerary: ${quote.items?.length || 0} services (${quote.currency} ${quote.totalSellingPrice})`,
-          totalSellingPrice: quote.totalSellingPrice
-        });
-      }
+    if (existingIndex >= 0 && existingQuote) {
+      // Version Governance: saveQuote NEVER auto-increments version for EDITED/PRICING_UPDATED/SAVED.
+      // Only explicit Save Draft (which passes an incremented snapshotVersion/latestVersion) advances version.
+      const existingVer =
+        existingQuote.latestVersion ||
+        existingQuote.version ||
+        existingQuote.snapshotVersion ||
+        1;
+      const incomingVer = quote.snapshotVersion || quote.authoritativeSnapshot?.versionNumber || quote.latestVersion || quote.version || existingVer;
+      currentVersion = incomingVer > existingVer ? incomingVer : existingVer;
     } else {
-      currentVersion = 1;
-      versionHistory = [
-        {
-          version: 1,
-          updatedAt: timestamp,
-          updatedBy: userName,
-          changesSummary: customDetails || `Initial quotation generated with ${quote.items?.length || 0} items`,
-          totalSellingPrice: quote.totalSellingPrice
-        }
-      ];
+      currentVersion = quote.version || 1;
+      if (versionHistory.length === 0) {
+        versionHistory = [
+          this.buildImmutableVersionRecord(quote, currentVersion, user, {
+            changesSummary: customDetails || `Initial quotation generated with ${quote.items?.length || 0} items`,
+            isLatest: true
+          })
+        ];
+      }
     }
 
     let defaultActionDetails = '';
@@ -8319,6 +9182,9 @@ export class AppDatabase {
         break;
       case 'CREATED':
         defaultActionDetails = `Created quote ${quote.quoteNumber} (v1) by ${userName} (${userRole})`;
+        break;
+      case 'AUTO_SAVED':
+        defaultActionDetails = `Auto-saved working draft ${quote.quoteNumber} (v${currentVersion})`;
         break;
       default:
         defaultActionDetails = customDetails || `Saved changes to quote ${quote.quoteNumber} (v${currentVersion})`;
@@ -8353,19 +9219,154 @@ export class AppDatabase {
         })
       : [];
 
-    const quoteWithSanitizedMarkups: Quotation = {
+    const rawAdminType = quote.adminManualMarginType ?? quote.admin_manual_margin_type ?? existingQuote?.adminManualMarginType ?? (existingQuote as any)?.admin_manual_margin_type;
+    const rawAdminVal = quote.adminManualMarginValue ?? quote.admin_manual_margin_value ?? existingQuote?.adminManualMarginValue ?? (existingQuote as any)?.admin_manual_margin_value;
+    const rawAdminMode = quote.adminMarginMode ?? quote.admin_margin_mode ?? existingQuote?.adminMarginMode ?? (existingQuote as any)?.admin_margin_mode ?? existingQuote?.pricingSnapshot?.adminMarginMode;
+
+    const hasAdminManualConfig = rawAdminVal !== undefined || rawAdminMode !== undefined || rawAdminType !== undefined;
+    const adminManualMarginType: 'PERCENTAGE' | 'FIXED' = rawAdminType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+    const adminMarginMode: 'REPLACE' | 'ADD' = rawAdminMode === 'REPLACE' ? 'REPLACE' : 'ADD';
+    const adminManualMarginValue = hasAdminManualConfig
+      ? validateAdminManualMargin(rawAdminVal, adminManualMarginType).sanitizedValue
+      : undefined;
+
+    const existingSourceItems =
+      existingQuote?.items &&
+      existingQuote.items.length > 0 &&
+      !existingQuote.items.some((ei: any) => Boolean(ei?.__dehydratedToVersionId))
+        ? existingQuote.items
+        : (existingQuote?.versionHistory?.[0]?.items || existingQuote?.items || []);
+    const existingItemById = new Map(existingSourceItems.map(ei => [ei.id, ei]));
+    const internalMergedItems = sanitizedItems.map(it => {
+      const ex = existingItemById.get(it.id);
+      if (!ex) return it;
+      if ((it as any).__dehydratedToVersionId || !it.product) {
+        const cleanStub = { ...it };
+        delete (cleanStub as any).__dehydratedToVersionId;
+        return {
+          ...ex,
+          ...cleanStub,
+          product: ex.product,
+          manualHotelDetails: ex.manualHotelDetails ?? it.manualHotelDetails,
+          calculation: (it as any).calculation?.totalNetCost !== undefined ? (it as any).calculation : ex.calculation
+        };
+      }
+      if (!canUserViewInternalCostBreakdown(user)) {
+        return {
+          ...it,
+          totalNetCost: (it as any).totalNetCost ?? (ex as any).totalNetCost,
+          product: ex.product ? { ...ex.product, ...(it.product || {}), adultNetPrice: ex.product.adultNetPrice, childNetPrice: ex.product.childNetPrice } : it.product,
+          manualHotelDetails: (ex.manualHotelDetails || it.manualHotelDetails)
+            ? { ...(ex.manualHotelDetails || {}), ...(it.manualHotelDetails || {}) }
+            : undefined,
+          calculation: (it as any).calculation?.totalNetCost !== undefined
+            ? (it as any).calculation
+            : (ex.calculation ? { ...ex.calculation, ...(it.calculation || {}), totalNetCost: ex.calculation.totalNetCost, markupAmount: ex.calculation.markupAmount, activeMarginMode: (ex.calculation as any).activeMarginMode } : (it as any).calculation)
+        };
+      }
+      return it;
+    });
+
+    const quoteAgencyCtx = resolveQuoteAgencyPricingContext(
+      {
+        companyId: (quote as any).companyId ?? (existingQuote as any)?.companyId,
+        agentAgency: quote.agentAgency ?? existingQuote?.agentAgency,
+        agentId: quote.agentId ?? existingQuote?.agentId ?? existingQuote?.createdBy,
+        createdBy: quote.createdBy ?? existingQuote?.createdBy,
+        productLevelMarginEnabled: quote.productLevelMarginEnabled ?? existingQuote?.productLevelMarginEnabled,
+        agentLevelMarginPercent: quote.agentLevelMarginPercent ?? existingQuote?.agentLevelMarginPercent,
+        activeMarginMode: quote.activeMarginMode ?? existingQuote?.activeMarginMode
+      },
+      user
+    );
+
+    const quoteForCentralCalc: Quotation = {
       ...quote,
-      items: sanitizedItems,
+      companyId: quoteAgencyCtx.companyId ?? (quote as any).companyId ?? (existingQuote as any)?.companyId,
+      agentAgency: quoteAgencyCtx.agencyName ?? quote.agentAgency ?? existingQuote?.agentAgency,
+      agentId: quoteAgencyCtx.agentId ?? quote.agentId ?? existingQuote?.agentId,
+      productLevelMarginEnabled: quoteAgencyCtx.productLevelMarginEnabled,
+      agentLevelMarginPercent: quoteAgencyCtx.agentLevelMarginPercent,
+      activeMarginMode: quoteAgencyCtx.activeMarginMode,
+      items: internalMergedItems,
       agentMarginType,
-      agentMarginValue: validatedMarginValue
+      agentMarginValue: validatedMarginValue,
+      ...(hasAdminManualConfig
+        ? {
+            adminManualMarginType,
+            adminManualMarginValue,
+            adminMarginMode
+          }
+        : {}),
+      ...(quote.authoritativeSnapshot ? {} : { authoritativeSnapshot: undefined }),
+      ...(quote.pricingSnapshot ? {} : { pricingSnapshot: undefined }),
+      ...(quote.currencyConversionSnapshot ? {} : { currencyConversionSnapshot: undefined })
     };
 
     const centralTotals = calculateQuoteTotal(
-      quoteWithSanitizedMarkups,
-      quoteWithSanitizedMarkups.activeOptionId,
+      quoteForCentralCalc,
+      quoteForCentralCalc.activeOptionId,
       undefined,
       quoteCurr
     );
+
+    const incomingAuthSnap = quote.authoritativeSnapshot;
+    const incomingAuthAdminMatches =
+      !hasAdminManualConfig ||
+      (
+        (incomingAuthSnap?.pricing?.adminMarginMode ?? 'ADD') === adminMarginMode &&
+        (incomingAuthSnap?.pricing?.adminManualMarginType ?? 'PERCENTAGE') === adminManualMarginType &&
+        Math.abs(Number(incomingAuthSnap?.pricing?.adminManualMarginValue ?? 0) - Number(adminManualMarginValue ?? 0)) < 0.0001
+      );
+    const incomingAuthMarginMode =
+      incomingAuthSnap?.pricing?.activeMarginMode ??
+      (incomingAuthSnap?.pricing?.productLevelMarginEnabled !== undefined
+        ? (incomingAuthSnap.pricing.productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL')
+        : undefined);
+    const incomingAuthAgencyMatches =
+      !incomingAuthMarginMode ||
+      (incomingAuthMarginMode === quoteAgencyCtx.activeMarginMode &&
+        (quoteAgencyCtx.productLevelMarginEnabled ||
+          incomingAuthSnap?.pricing?.agentLevelMarginPercent === undefined ||
+          Math.abs(Number(incomingAuthSnap.pricing.agentLevelMarginPercent) - quoteAgencyCtx.agentLevelMarginPercent) < 0.001));
+
+    const isSaveQuoteLocked = Boolean(
+      quote.isLocked ||
+      ['ISSUED', 'SENT', 'APPROVED', 'ACCEPTED', 'CONVERTED', 'BOOKED'].includes(String(quote.status || '').toUpperCase())
+    );
+    const saveQuoteVer = Number(quote.version || currentVersion || 0);
+    const incomingAuthVer = Number(incomingAuthSnap?.versionNumber || 0);
+    const incomingAuthVerMatches = !saveQuoteVer || !incomingAuthVer || saveQuoteVer === incomingAuthVer;
+    const incomingAuthOverridesMatch =
+      JSON.stringify(quote.surchargeOverrides || []) ===
+      JSON.stringify(incomingAuthSnap?.pricing?.surchargeOverrides || []);
+    const mergedHasProductMarkup = internalMergedItems.some(it => Number(it.agentAdditionalMarkupValue || 0) > 0);
+    const incomingAuthItemMarkupsMatch =
+      mergedHasProductMarkup === (Number(incomingAuthSnap?.pricing?.productLevelAgentMarkupTotal || 0) > 0);
+
+    const isAuthPricingValid = Boolean(
+      incomingAuthSnap?.pricing &&
+        incomingAuthSnap.pricing.currency === quoteCurr &&
+        (!quote.activeOptionId || !incomingAuthSnap.selectedOptionId || incomingAuthSnap.selectedOptionId === quote.activeOptionId) &&
+        (
+          (isSaveQuoteLocked && incomingAuthVerMatches && incomingAuthAdminMatches && incomingAuthOverridesMatch) ||
+          (
+            !isSaveQuoteLocked &&
+            incomingAuthVerMatches &&
+            incomingAuthSnap.itinerary?.itemsCount === internalMergedItems.length &&
+            (incomingAuthSnap.pricing.agentMarginType || 'PERCENTAGE') === agentMarginType &&
+            Math.abs(Number(incomingAuthSnap.pricing.agentMarginValue || 0) - validatedMarginValue) < 0.0001 &&
+            Math.abs(Number(incomingAuthSnap.pricing.overallDiscountPercent || 0) - Number(quote.overallDiscountPercent || 0)) < 0.0001 &&
+            incomingAuthAdminMatches &&
+            incomingAuthAgencyMatches &&
+            incomingAuthOverridesMatch &&
+            incomingAuthItemMarkupsMatch &&
+            (centralTotals.finalCustomerSellingPrice <= 0 ||
+              Math.abs(Number(incomingAuthSnap.pricing.finalCustomerSellingPrice || 0) - centralTotals.finalCustomerSellingPrice) <= 0.05)
+          )
+        )
+    );
+    const authPricing = isAuthPricingValid ? incomingAuthSnap!.pricing : undefined;
 
     const fallbackBasePrice = roundForCurr(
       quote.theUnboundBaseSellingPrice
@@ -8378,47 +9379,67 @@ export class AppDatabase {
         ?? 0
     );
 
-    const theUnboundBaseSellingPrice = centralTotals.theUnboundBaseSellingPrice > 0
-      ? centralTotals.theUnboundBaseSellingPrice
-      : fallbackBasePrice;
+    const theUnboundBaseSellingPrice = authPricing
+      ? authPricing.theUnboundBaseSellingPrice
+      : centralTotals.theUnboundBaseSellingPrice > 0
+        ? centralTotals.theUnboundBaseSellingPrice
+        : fallbackBasePrice;
 
-    const baseFinalSellingPrice = theUnboundBaseSellingPrice;
+    const baseFinalSellingPrice = authPricing ? authPricing.baseFinalSellingPrice : theUnboundBaseSellingPrice;
 
-    const productLevelAgentMarkupTotal = centralTotals.theUnboundBaseSellingPrice > 0
-      ? centralTotals.productLevelAgentMarkupTotal
-      : 0;
+    const productLevelAgentMarkupTotal = authPricing
+      ? (authPricing.productLevelAgentMarkupTotal ?? 0)
+      : centralTotals.theUnboundBaseSellingPrice > 0
+        ? centralTotals.productLevelAgentMarkupTotal
+        : 0;
 
-    const overallAgentMarkupAmount = centralTotals.theUnboundBaseSellingPrice > 0
-      ? centralTotals.overallAgentMarkupAmount
-      : (agentMarginType === 'PERCENTAGE'
-          ? roundForCurr(theUnboundBaseSellingPrice * (validatedMarginValue / 100))
-          : roundForCurr(validatedMarginValue));
+    const overallAgentMarkupAmount = authPricing
+      ? (authPricing.overallAgentMarkupAmount ?? 0)
+      : centralTotals.theUnboundBaseSellingPrice > 0
+        ? centralTotals.overallAgentMarkupAmount
+        : (agentMarginType === 'PERCENTAGE'
+            ? roundForCurr(theUnboundBaseSellingPrice * (validatedMarginValue / 100))
+            : roundForCurr(validatedMarginValue));
 
-    const agentMarginAmount = roundForCurr(productLevelAgentMarkupTotal + overallAgentMarkupAmount);
+    const agentMarginAmount = authPricing
+      ? authPricing.agentMarginAmount
+      : roundForCurr(productLevelAgentMarkupTotal + overallAgentMarkupAmount);
 
-    const finalCustomerSellingPrice = Math.max(
-      theUnboundBaseSellingPrice,
-      centralTotals.finalCustomerSellingPrice > 0
-        ? centralTotals.finalCustomerSellingPrice
-        : roundForCurr(theUnboundBaseSellingPrice + agentMarginAmount)
-    );
+    const finalCustomerSellingPrice = authPricing
+      ? authPricing.finalCustomerSellingPrice
+      : Math.max(
+          theUnboundBaseSellingPrice,
+          centralTotals.finalCustomerSellingPrice > 0
+            ? centralTotals.finalCustomerSellingPrice
+            : roundForCurr(theUnboundBaseSellingPrice + agentMarginAmount)
+        );
 
-    // Enrich items with authoritative Stage 1 & Stage 2 breakdown values
-    const BreakdownById = new Map(
-      (centralTotals.breakdown?.items || []).map(bi => [bi.itemId, bi])
-    );
-    const enrichedItems = sanitizedItems.map(it => {
-      const bi = BreakdownById.get(it.id);
-      if (!bi) return it;
-      return {
-        ...it,
-        theUnboundBaseSellingPrice: bi.theUnboundBaseSellingPrice,
-        agentAdditionalMarkupType: bi.agentAdditionalMarkupType,
-        agentAdditionalMarkupValue: bi.agentAdditionalMarkupValue,
-        agentAdditionalMarkupAmount: bi.agentAdditionalMarkupAmount,
-        finalCustomerSellingPrice: bi.finalCustomerSellingPrice
-      };
-    });
+    const resolvedHotelTotal = authPricing
+      ? authPricing.hotelAccommodationTotal
+      : centralTotals.hotelTotalSellingPrice;
+    const resolvedLandTotal = authPricing
+      ? authPricing.landPartTotal
+      : centralTotals.landPartTotalSellingPrice;
+    const resolvedSurchargesTotal = authPricing
+      ? authPricing.surchargesTotal
+      : (quote.surchargesTotal ?? quote.pricingSnapshot?.surchargesTotal ?? existingQuote?.surchargesTotal ?? 0);
+    const resolvedAppliedSurcharges = authPricing
+      ? authPricing.appliedSurcharges
+      : (quote.appliedSurcharges ?? quote.pricingSnapshot?.appliedSurcharges ?? existingQuote?.appliedSurcharges ?? []);
+    const resolvedSurchargeOverrides = authPricing
+      ? (authPricing.surchargeOverrides ?? quote.surchargeOverrides ?? existingQuote?.surchargeOverrides)
+      : (quote.surchargeOverrides ?? existingQuote?.surchargeOverrides);
+    const resolvedTaxesTotal = authPricing
+      ? authPricing.taxesTotal
+      : (quote.pricingSnapshot?.taxesTotal ?? quote.totalTaxes ?? existingQuote?.pricingSnapshot?.taxesTotal ?? 0);
+    const resolvedServiceFeesTotal = authPricing
+      ? authPricing.serviceFeesTotal
+      : (quote.pricingSnapshot?.serviceFeesTotal ?? existingQuote?.pricingSnapshot?.serviceFeesTotal ?? 0);
+    const resolvedDiscountsTotal = authPricing
+      ? authPricing.discountsTotal
+      : (centralTotals.discountAmount ?? quote.pricingSnapshot?.discountsTotal ?? existingQuote?.pricingSnapshot?.discountsTotal ?? 0);
+
+    const enrichedItems = sanitizedItems;
 
     const pricingCalculatedAt = quote.pricingCalculatedAt || timestamp;
 
@@ -8447,36 +9468,38 @@ export class AppDatabase {
       };
     }
 
-    activityLog.push({
-      id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      action: actionType,
-      timestamp,
-      userName,
-      userRole,
-      userType: createdByUserType,
-      details: customDetails || defaultActionDetails,
-      quoteId: quote.id,
-      quote_id: quote.id,
-      leadId: quote.leadId,
-      lead_id: quote.leadId,
-      userId: user?.id,
-      user_id: user?.id,
-      action_type: actionType,
-      previousMarginType: existingQuote?.agentMarginType,
-      previous_margin_type: existingQuote?.agentMarginType,
-      previousMarginValue: existingQuote?.agentMarginValue,
-      previous_margin_value: existingQuote?.agentMarginValue,
-      newMarginType: agentMarginType,
-      new_margin_type: agentMarginType,
-      newMarginValue: validatedMarginValue,
-      new_margin_value: validatedMarginValue,
-      previousFinalCustomerSellingPrice: existingQuote?.finalCustomerSellingPrice,
-      previous_final_customer_selling_price: existingQuote?.finalCustomerSellingPrice,
-      newFinalCustomerSellingPrice: finalCustomerSellingPrice,
-      new_final_customer_selling_price: finalCustomerSellingPrice,
-      pricingVersion: currentVersion,
-      pricing_version: currentVersion
-    });
+    if (!isAutoSave || activityLog.length === 0) {
+      activityLog.push({
+        id: `act-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        action: actionType as any,
+        timestamp,
+        userName,
+        userRole,
+        userType: createdByUserType,
+        details: customDetails || defaultActionDetails,
+        quoteId: quote.id,
+        quote_id: quote.id,
+        leadId: quote.leadId,
+        lead_id: quote.leadId,
+        userId: user?.id,
+        user_id: user?.id,
+        action_type: actionType,
+        previousMarginType: existingQuote?.agentMarginType,
+        previous_margin_type: existingQuote?.agentMarginType,
+        previousMarginValue: existingQuote?.agentMarginValue,
+        previous_margin_value: existingQuote?.agentMarginValue,
+        newMarginType: agentMarginType,
+        new_margin_type: agentMarginType,
+        newMarginValue: validatedMarginValue,
+        new_margin_value: validatedMarginValue,
+        previousFinalCustomerSellingPrice: existingQuote?.finalCustomerSellingPrice,
+        previous_final_customer_selling_price: existingQuote?.finalCustomerSellingPrice,
+        newFinalCustomerSellingPrice: finalCustomerSellingPrice,
+        new_final_customer_selling_price: finalCustomerSellingPrice,
+        pricingVersion: currentVersion,
+        pricing_version: currentVersion
+      });
+    }
 
     // Internal authoritative commercial preservation
     const authoritativeNetCost = centralTotals.totalNetCost > 0
@@ -8484,23 +9507,52 @@ export class AppDatabase {
       : (existingQuote?.totalNetCost ?? existingQuote?.internalNettCost ?? quote.totalNetCost ?? 0);
     const internalNettCost = authoritativeNetCost;
     const supplierCost = existingQuote?.supplierCost ?? authoritativeNetCost;
-    const internalMarkup = centralTotals.breakdown?.internalMarginAmount ?? existingQuote?.internalMarkup ?? 0;
     const agentMarkup = agentMarginAmount;
-    const internalProfit = Math.max(0, finalCustomerSellingPrice - authoritativeNetCost);
+    const internalProfit = Math.max(0, roundForCurr(finalCustomerSellingPrice - authoritativeNetCost));
 
-    const adminManualMarginType = quote.adminManualMarginType ?? quote.admin_manual_margin_type ?? existingQuote?.adminManualMarginType ?? (existingQuote as any)?.admin_manual_margin_type;
-    const adminManualMarginValue = quote.adminManualMarginValue ?? quote.admin_manual_margin_value ?? existingQuote?.adminManualMarginValue ?? (existingQuote as any)?.admin_manual_margin_value;
-    const adminMarginMode = quote.adminMarginMode ?? quote.admin_margin_mode ?? existingQuote?.adminMarginMode ?? (existingQuote as any)?.admin_margin_mode ?? existingQuote?.pricingSnapshot?.adminMarginMode ?? 'ADD';
-    const adminManualMarginAmount = quote.adminManualMarginAmount ?? quote.admin_manual_margin_amount ?? (
-      adminManualMarginValue !== undefined
-        ? (adminManualMarginType === 'FIXED' ? Math.round(adminManualMarginValue) : Math.round(authoritativeNetCost * (adminManualMarginValue / 100)))
-        : existingQuote?.adminManualMarginAmount
-    );
-    const revisedSellingPrice = quote.revisedSellingPrice ?? quote.revised_selling_price ?? (
-      adminManualMarginAmount !== undefined
-        ? (authoritativeNetCost + adminManualMarginAmount)
-        : existingQuote?.revisedSellingPrice
-    );
+    const resolvedInternalBreakdown = (canUserViewInternalCostBreakdown(user) || hasAdminManualConfig) && internalMergedItems.length > 0
+      ? calculateQuoteInternalBreakdown({
+          items: internalMergedItems as any,
+          targetCurrency: quoteCurr as CurrencyCode,
+          agentMarginType,
+          agentMarginValue: validatedMarginValue,
+          overallDiscountPercent: Number(quote.overallDiscountPercent || 0),
+          userRole: user?.role,
+          user,
+          companyId: quoteAgencyCtx.companyId,
+          agencyName: quoteAgencyCtx.agencyName,
+          productLevelMarginEnabled: quoteAgencyCtx.productLevelMarginEnabled,
+          customAgentMarginPercent: quoteAgencyCtx.agentLevelMarginPercent,
+          scope: quote.quotationScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND',
+          routeHubs: quote.routeHubs || [],
+          adminManualMarginType,
+          adminManualMarginValue,
+          adminMarginMode,
+          preserveHistoricalSnapshot: Boolean(quote.isLocked),
+          historicalSnapshot: authPricing?.currencyConversionSnapshot || quote.currencyConversionSnapshot,
+          surchargeOverrides: quote.surchargeOverrides
+        })
+      : undefined;
+
+    const internalMarkup = resolvedInternalBreakdown?.existingMarginAmount ?? existingQuote?.internalMarkup ?? 0;
+
+    const adminManualMarginAmount = hasAdminManualConfig
+      ? (resolvedInternalBreakdown?.adminManualMarginAmount !== undefined
+          ? roundForCurr(resolvedInternalBreakdown.adminManualMarginAmount)
+          : (quote.adminManualMarginAmount ?? quote.admin_manual_margin_amount ?? (
+              adminManualMarginValue !== undefined
+                ? (adminManualMarginType === 'FIXED'
+                    ? roundForCurr(adminManualMarginValue)
+                    : roundForCurr(authoritativeNetCost * (adminManualMarginValue / 100)))
+                : existingQuote?.adminManualMarginAmount
+            )))
+      : existingQuote?.adminManualMarginAmount;
+
+    const revisedSellingPrice = hasAdminManualConfig
+      ? (resolvedInternalBreakdown?.revisedSellingPrice !== undefined
+          ? roundForCurr(resolvedInternalBreakdown.revisedSellingPrice)
+          : (authPricing?.revisedSellingPrice ?? quote.revisedSellingPrice ?? quote.revised_selling_price ?? roundForCurr(baseFinalSellingPrice)))
+      : existingQuote?.revisedSellingPrice;
 
     const pricingSnapshot: PricingSnapshot = {
       theUnboundBaseSellingPrice,
@@ -8513,8 +9565,13 @@ export class AppDatabase {
       overallAgentMarkupAmount,
       totalAgentAdditionalMarkupAmount: agentMarginAmount,
       finalCustomerSellingPrice,
-      hotelAccommodationTotal: centralTotals.hotelTotalSellingPrice,
-      landPartTotal: centralTotals.landPartTotalSellingPrice,
+      hotelAccommodationTotal: resolvedHotelTotal,
+      landPartTotal: resolvedLandTotal,
+      surchargesTotal: resolvedSurchargesTotal,
+      appliedSurcharges: resolvedAppliedSurcharges,
+      taxesTotal: resolvedTaxesTotal,
+      serviceFeesTotal: resolvedServiceFeesTotal,
+      discountsTotal: resolvedDiscountsTotal,
       totalSellingPrice: finalCustomerSellingPrice,
       calculatedAt: timestamp,
       pricingVersion: currentVersion,
@@ -8525,15 +9582,50 @@ export class AppDatabase {
       adminManualMarginAmount,
       adminMarginMode,
       revisedSellingPrice,
-      adminBasePriceUpdatedNotification
+      adminBasePriceUpdatedNotification,
+      currencyConversionSnapshot: authPricing?.currencyConversionSnapshot || quote.currencyConversionSnapshot || quote.pricingSnapshot?.currencyConversionSnapshot
     };
 
-    const resolvedTermsForSave = resolveAuthoritativeCommercialTerms(quote).plainText;
+    const isExistingFinalisedTerms = Boolean(
+      existingQuote &&
+      (existingQuote.isLocked ||
+        existingQuote.termsStatus === 'QUOTATION_FINALISED' ||
+        (existingQuote.status as string) === 'ISSUED' ||
+        existingQuote.status === 'SENT' ||
+        existingQuote.status === 'APPROVED' ||
+        existingQuote.status === 'ACCEPTED' ||
+        existingQuote.status === 'CONVERTED') &&
+      existingQuote.commercialTermsSnapshot &&
+      existingQuote.commercialTermsSnapshot.entries.length > 0
+    );
+
+    const effectiveCommercialTermsSnapshot = isExistingFinalisedTerms
+      ? existingQuote!.commercialTermsSnapshot
+      : (quote.commercialTermsSnapshot ?? existingQuote?.commercialTermsSnapshot);
+
+    const effectiveTermsStatus = isExistingFinalisedTerms
+      ? 'QUOTATION_FINALISED'
+      : (quote.termsStatus ?? existingQuote?.termsStatus);
+
+    const resolvedTermsForSave = isExistingFinalisedTerms
+      ? (existingQuote!.termsAndConditions || resolveAuthoritativeCommercialTerms({ ...quote, commercialTermsSnapshot: effectiveCommercialTermsSnapshot }).plainText)
+      : resolveAuthoritativeCommercialTerms({ ...quote, commercialTermsSnapshot: effectiveCommercialTermsSnapshot }).plainText;
 
     const updatedQuote: Quotation = {
       ...quote,
+      companyId: quoteAgencyCtx.companyId ?? (quote as any).companyId ?? (existingQuote as any)?.companyId,
+      agentId: quote.agentId ?? existingQuote?.agentId ?? quoteAgencyCtx.agentId,
+      agentAgency: quote.agentAgency ?? existingQuote?.agentAgency ?? quoteAgencyCtx.agencyName,
+      productLevelMarginEnabled: resolvedInternalBreakdown?.productLevelMarginEnabled ?? quoteAgencyCtx.productLevelMarginEnabled,
+      agentLevelMarginPercent: resolvedInternalBreakdown?.configuredAgentLevelMarginPercent ?? quoteAgencyCtx.agentLevelMarginPercent,
+      activeMarginMode: resolvedInternalBreakdown?.activeMarginMode ?? quoteAgencyCtx.activeMarginMode,
+      activeOptionId: quote.activeOptionId ?? incomingAuthSnap?.selectedOptionId ?? existingQuote?.activeOptionId,
       termsAndConditions: resolvedTermsForSave,
-      items: enrichedItems,
+      commercialTermsSnapshot: effectiveCommercialTermsSnapshot,
+      termsStatus: effectiveTermsStatus,
+      missingTermsDestinations: isExistingFinalisedTerms ? [] : (quote.missingTermsDestinations ?? existingQuote?.missingTermsDestinations),
+      termsExceptionApproval: quote.termsExceptionApproval ?? existingQuote?.termsExceptionApproval,
+      items: internalMergedItems,
       overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? validatedMarginValue : quote.overallMarkupPercent,
       theUnboundBaseSellingPrice,
       baseFinalSellingPrice,
@@ -8562,8 +9654,11 @@ export class AppDatabase {
       finalCustomerSellingPrice,
       final_customer_selling_price: finalCustomerSellingPrice,
       totalSellingPrice: finalCustomerSellingPrice,
-      hotelAccommodationTotal: centralTotals.hotelTotalSellingPrice,
-      landPartTotal: centralTotals.landPartTotalSellingPrice,
+      hotelAccommodationTotal: resolvedHotelTotal,
+      landPartTotal: resolvedLandTotal,
+      surchargesTotal: resolvedSurchargesTotal,
+      appliedSurcharges: resolvedAppliedSurcharges,
+      surchargeOverrides: resolvedSurchargeOverrides,
       adminBasePriceUpdatedNotification,
       pricingCalculatedAt,
       pricing_calculated_at: pricingCalculatedAt,
@@ -8571,6 +9666,10 @@ export class AppDatabase {
       pricing_version: currentVersion,
       pricingSnapshot,
       pricing_snapshot: pricingSnapshot,
+      snapshotVersion: quote.snapshotVersion ?? incomingAuthSnap?.versionNumber ?? currentVersion,
+      snapshotHash: quote.snapshotHash ?? incomingAuthSnap?.snapshotHash ?? existingQuote?.snapshotHash,
+      authoritativeSnapshot: incomingAuthSnap ?? existingQuote?.authoritativeSnapshot,
+      generationHistory: quote.generationHistory ?? existingQuote?.generationHistory,
       updatedBy: userName,
       updated_by: userName,
       totalNetCost: authoritativeNetCost,
@@ -8597,80 +9696,82 @@ export class AppDatabase {
       quotes.unshift(updatedQuote);
     }
     
-    // Ensure authoritative QuoteVersionRecord snapshot exists for currentVersion
+    // Ensure authoritative QuoteVersionRecord snapshot exists for currentVersion without EVER mutating existing saved snapshots
     if (!updatedQuote.versionHistory) updatedQuote.versionHistory = [];
-    const vIdx = updatedQuote.versionHistory.findIndex(v => v.version === currentVersion);
-    const fullVersionRecord: QuoteVersionRecord = {
-      id: `${updatedQuote.id}-v${currentVersion}`,
-      version: currentVersion,
-      versionNumber: currentVersion,
-      quoteId: updatedQuote.id,
-      leadId: updatedQuote.leadId || updatedQuote.linkedLeadId,
-      previousVersionId: currentVersion > 1 ? `${updatedQuote.id}-v${currentVersion - 1}` : undefined,
-      updatedAt: timestamp,
-      createdAt: existingQuote?.createdAt || timestamp,
-      updatedBy: userName,
-      createdByName: updatedQuote.createdByName || userName,
-      title: updatedQuote.title,
-      destination: updatedQuote.destination,
-      travelStartDate: updatedQuote.travelStartDate,
-      travelEndDate: updatedQuote.travelEndDate,
-      totalPax: updatedQuote.totalPax || ((updatedQuote.adultsCount || 2) + (updatedQuote.childrenCount || 0) + (updatedQuote.infantsCount || 0)),
-      adultsCount: updatedQuote.adultsCount || 2,
-      childrenCount: updatedQuote.childrenCount || 0,
-      infantsCount: updatedQuote.infantsCount || 0,
-      currency: updatedQuote.currency || 'USD',
-      totalNetCost: updatedQuote.totalNetCost || 0,
-      totalSellingPrice: updatedQuote.totalSellingPrice || 0,
-      marginPercent: updatedQuote.overallMarkupPercent || 15,
-      marginAmount: updatedQuote.totalMargin || 0,
-      items: updatedQuote.items ? JSON.parse(JSON.stringify(updatedQuote.items)) : [],
-      status: updatedQuote.status || 'SAVED',
-      proposalStatus: (actionType === 'BOOKED' || actionType === 'CONVERTED') ? 'converted' :
-                      (actionType === 'DOWNLOADED' ? 'downloaded' :
-                      (actionType === 'SENT' || actionType === 'WHATSAPP_SHARED' ? 'shared' :
-                      (updatedQuote.status === 'ACCEPTED' ? 'accepted' : 'saved'))),
-      changesSummary: (vIdx >= 0 && updatedQuote.versionHistory[vIdx].changesSummary) ? updatedQuote.versionHistory[vIdx].changesSummary : defaultActionDetails,
-      agentNotes: typeof updatedQuote.agentNotes === 'string' ? updatedQuote.agentNotes : undefined,
-      termsAndConditions: updatedQuote.termsAndConditions,
-      bookingId: updatedQuote.bookingId,
-      brandingMode: updatedQuote.brandingMode || updatedQuote.brandingSnapshot?.mode || 'STANDARD',
-      brandingSnapshot: updatedQuote.brandingSnapshot,
-      sharedHistory: (vIdx >= 0 && updatedQuote.versionHistory[vIdx].sharedHistory) ? updatedQuote.versionHistory[vIdx].sharedHistory : []
-    };
+    const existingVersionIdx = updatedQuote.versionHistory.findIndex(v => (v.versionNumber || v.version) === currentVersion);
 
-    if (actionType === 'WHATSAPP_SHARED') {
-      if (!fullVersionRecord.sharedHistory) fullVersionRecord.sharedHistory = [];
-      fullVersionRecord.sharedHistory.push({ type: 'WHATSAPP', recipient: updatedQuote.clientPhone, timestamp });
-      fullVersionRecord.proposalStatus = 'shared';
-    } else if (actionType === 'SENT' || actionType === 'SENT_TO_CLIENT') {
-      if (!fullVersionRecord.sharedHistory) fullVersionRecord.sharedHistory = [];
-      fullVersionRecord.sharedHistory.push({ type: 'EMAIL', recipient: updatedQuote.clientEmail, timestamp });
-      fullVersionRecord.proposalStatus = 'shared';
-    } else if (actionType === 'DOWNLOADED') {
-      if (!fullVersionRecord.sharedHistory) fullVersionRecord.sharedHistory = [];
-      fullVersionRecord.sharedHistory.push({ type: 'DOWNLOAD', timestamp });
-      if (fullVersionRecord.proposalStatus !== 'converted' && fullVersionRecord.proposalStatus !== 'accepted') {
-        fullVersionRecord.proposalStatus = 'downloaded';
+    const isDeliveryTelemetryAction =
+      actionType === 'WHATSAPP_SHARED' ||
+      actionType === 'SENT' ||
+      actionType === 'SENT_TO_CLIENT' ||
+      actionType === 'DOWNLOADED' ||
+      actionType === 'PRINTED' ||
+      actionType === 'VIEWED_BY_CLIENT' ||
+      actionType === 'STATUS_CHANGED';
+
+    if (existingVersionIdx >= 0) {
+      // Preserve historical snapshot completely intact; only append operational share telemetry if requested
+      const existingVerRec = { ...updatedQuote.versionHistory[existingVersionIdx] };
+      if (actionType === 'WHATSAPP_SHARED') {
+        existingVerRec.sharedHistory = [
+          ...(existingVerRec.sharedHistory || []),
+          { type: 'WHATSAPP', recipient: updatedQuote.clientPhone, timestamp }
+        ];
+        existingVerRec.proposalStatus = 'shared';
+      } else if (actionType === 'SENT' || actionType === 'SENT_TO_CLIENT') {
+        existingVerRec.sharedHistory = [
+          ...(existingVerRec.sharedHistory || []),
+          { type: 'EMAIL', recipient: updatedQuote.clientEmail, timestamp }
+        ];
+        existingVerRec.proposalStatus = 'shared';
+      } else if (actionType === 'DOWNLOADED') {
+        existingVerRec.sharedHistory = [
+          ...(existingVerRec.sharedHistory || []),
+          { type: 'DOWNLOAD', timestamp }
+        ];
+        if (existingVerRec.proposalStatus !== 'converted' && existingVerRec.proposalStatus !== 'accepted') {
+          existingVerRec.proposalStatus = 'downloaded';
+        }
+      } else if (actionType === 'BOOKED' || actionType === 'CONVERTED') {
+        existingVerRec.proposalStatus = 'converted';
+        existingVerRec.bookingId = updatedQuote.bookingId || existingVerRec.bookingId;
       }
+      updatedQuote.versionHistory[existingVersionIdx] = existingVerRec;
+    } else if (!isDeliveryTelemetryAction) {
+      const fullVersionRecord = this.buildImmutableVersionRecord(updatedQuote, currentVersion, user, {
+        previousVersionId: currentVersion > 1 ? `${updatedQuote.id}__v${currentVersion - 1}` : undefined,
+        changesSummary: customDetails || defaultActionDetails,
+        isLatest: true
+      });
+      updatedQuote.versionHistory = updatedQuote.versionHistory.map(v => ({ ...v, isLatest: false }));
+      updatedQuote.versionHistory.unshift(fullVersionRecord);
     }
 
-    if (vIdx >= 0) {
-      updatedQuote.versionHistory[vIdx] = fullVersionRecord;
-    } else {
-      updatedQuote.versionHistory.push(fullVersionRecord);
-    }
+    updatedQuote.latestVersion = Math.max(
+      currentVersion,
+      ...updatedQuote.versionHistory.map(v => v.versionNumber || v.version || 0)
+    );
+    updatedQuote.versionCount = updatedQuote.versionHistory.length;
+    updatedQuote.latestVersionId = `${updatedQuote.id}__v${updatedQuote.latestVersion}`;
+    updatedQuote.latestSavedAt = updatedQuote.latestSavedAt || timestamp;
+    updatedQuote.latestSavedBy = updatedQuote.latestSavedBy || userName;
 
-    this.syncFirestoreDoc('quotations', updatedQuote.id, updatedQuote);
+    this.syncFirestoreDoc(
+      'quotations',
+      updatedQuote.id,
+      this.stripInternalCommercialKeysForFirestore(updatedQuote, user)
+    );
     this.setItem('saved_quotes', quotes);
     
-    this.logAudit(
-      user, 
-      existingIndex >= 0 ? 'SETTINGS_UPDATED' : 'BOOKING_CREATED', 
-      'Quotation', 
-      quote.id, 
-      `${actionType} quote ${quote.quoteNumber} v${currentVersion} (${quote.title}) for client ${quote.clientName} (Created by ${createdByName})`
-    );
+    if (!isAutoSave) {
+      this.logAudit(
+        user, 
+        existingIndex >= 0 ? 'SETTINGS_UPDATED' : 'BOOKING_CREATED', 
+        'Quotation', 
+        quote.id, 
+        `${actionType} quote ${quote.quoteNumber} v${currentVersion} (${quote.title}) for client ${quote.clientName} (Created by ${createdByName})`
+      );
+    }
 
     // Authoritative Customer Record deduplication & linking
     if (updatedQuote.clientEmail || (updatedQuote.clientName && updatedQuote.clientName !== 'Client Name Pending')) {
@@ -8745,11 +9846,15 @@ export class AppDatabase {
           quoteDate: timestamp,
           status: updatedQuote.status,
           totalNetCost: updatedQuote.totalNetCost || 0,
-          marginAmount: updatedQuote.totalMargin || 0,
+          marginAmount: updatedQuote.internalProfit ?? updatedQuote.totalMargin ?? 0,
           marginPercent: updatedQuote.overallMarkupPercent || 15,
-          taxAmount: updatedQuote.totalTaxes || 0,
-          feesAmount: 0,
-          finalSellingPrice: updatedQuote.totalSellingPrice || 0,
+          taxAmount: updatedQuote.authoritativeSnapshot?.pricing?.taxesTotal ?? updatedQuote.totalTaxes ?? 0,
+          feesAmount: updatedQuote.authoritativeSnapshot?.pricing?.serviceFeesTotal ?? updatedQuote.pricingSnapshot?.serviceFeesTotal ?? 0,
+          finalSellingPrice:
+            updatedQuote.authoritativeSnapshot?.pricing?.finalCustomerSellingPrice ??
+            updatedQuote.finalCustomerSellingPrice ??
+            updatedQuote.totalSellingPrice ??
+            0,
           currency: updatedQuote.currency,
           itemsCount: (updatedQuote.items || []).length
         };
@@ -8857,36 +9962,38 @@ export class AppDatabase {
       }
     });
 
-    // Live Admin Activity Stream notification
-    try {
-      const isAi = (updatedQuote.id && updatedQuote.id.toLowerCase().includes('ai')) || (updatedQuote.title && updatedQuote.title.toLowerCase().includes('ai')) || Boolean(updatedQuote.items && updatedQuote.items.some((i: any) => i.isAiGenerated));
-      const isDownloaded = actionType === 'DOWNLOADED' || actionType === 'PRINTED';
-      this.recordAdminActivity({
-        category: isAi ? 'AI_PLANNER' : 'QUOTE',
-        activityType: isAi ? 'AI_PLAN_GENERATED' : isDownloaded ? 'QUOTE_PDF_DOWNLOADED' : actionType === 'SENT' || actionType === 'SENT_TO_CLIENT' ? 'QUOTE_EMAIL_SENT' : isNewQuote ? 'QUOTE_CREATED' : 'QUOTE_UPDATED',
-        actorName: userName,
-        actorType: userRole === 'ADMIN' ? 'ADMIN' : userRole === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'B2B_AGENT',
-        severity: isDownloaded ? 'WARNING' : 'INFO',
-        actionRequired: isDownloaded,
-        actionLabel: isDownloaded ? 'Follow up Proposal' : 'View Quote',
-        summary: `${isAi ? 'AI Itinerary Plan' : isDownloaded ? 'Quote Downloaded (PDF)' : 'Proposal'}: [${updatedQuote.quoteNumber || updatedQuote.id}] ${updatedQuote.clientName} (${updatedQuote.currency} ${(updatedQuote.totalSellingPrice || 0).toLocaleString()})`,
-        details: {
-          customerName: updatedQuote.clientName,
-          destinationName: updatedQuote.destination,
-          totalAmount: updatedQuote.totalSellingPrice,
-          currency: updatedQuote.currency,
-          status: updatedQuote.status,
-          actionNeeded: isDownloaded ? 'Client downloaded proposal PDF; follow up within 24h SLA' : undefined
-        },
-        targetSection: 'LEAD_MANAGEMENT',
-        targetSubTab: 'QUOTES',
-        recordId: updatedQuote.id,
-        quoteId: updatedQuote.id,
-        entityId: updatedQuote.id,
-        entityType: 'Quotation'
-      });
-    } catch {
-      // Non-blocking
+    // Live Admin Activity Stream notification (skip repetitive auto-save ticks)
+    if (!isAutoSave) {
+      try {
+        const isAi = (updatedQuote.id && updatedQuote.id.toLowerCase().includes('ai')) || (updatedQuote.title && updatedQuote.title.toLowerCase().includes('ai')) || Boolean(updatedQuote.items && updatedQuote.items.some((i: any) => i.isAiGenerated));
+        const isDownloaded = actionType === 'DOWNLOADED' || actionType === 'PRINTED';
+        this.recordAdminActivity({
+          category: isAi ? 'AI_PLANNER' : 'QUOTE',
+          activityType: isAi ? 'AI_PLAN_GENERATED' : isDownloaded ? 'QUOTE_PDF_DOWNLOADED' : actionType === 'SENT' || actionType === 'SENT_TO_CLIENT' ? 'QUOTE_EMAIL_SENT' : isNewQuote ? 'QUOTE_CREATED' : 'QUOTE_UPDATED',
+          actorName: userName,
+          actorType: userRole === 'ADMIN' ? 'ADMIN' : userRole === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'B2B_AGENT',
+          severity: isDownloaded ? 'WARNING' : 'INFO',
+          actionRequired: isDownloaded,
+          actionLabel: isDownloaded ? 'Follow up Proposal' : 'View Quote',
+          summary: `${isAi ? 'AI Itinerary Plan' : isDownloaded ? 'Quote Downloaded (PDF)' : 'Proposal'}: [${updatedQuote.quoteNumber || updatedQuote.id}] ${updatedQuote.clientName} (${updatedQuote.currency} ${(updatedQuote.totalSellingPrice || 0).toLocaleString()})`,
+          details: {
+            customerName: updatedQuote.clientName,
+            destinationName: updatedQuote.destination,
+            totalAmount: updatedQuote.totalSellingPrice,
+            currency: updatedQuote.currency,
+            status: updatedQuote.status,
+            actionNeeded: isDownloaded ? 'Client downloaded proposal PDF; follow up within 24h SLA' : undefined
+          },
+          targetSection: 'LEAD_MANAGEMENT',
+          targetSubTab: 'QUOTES',
+          recordId: updatedQuote.id,
+          quoteId: updatedQuote.id,
+          entityId: updatedQuote.id,
+          entityType: 'Quotation'
+        });
+      } catch {
+        // Non-blocking
+      }
     }
 
     return (!canUserViewInternalCostBreakdown(user))
@@ -8901,8 +10008,1269 @@ export class AppDatabase {
     customDetails?: string
   ): Promise<Quotation> {
     const saved = this.saveQuote(quote, user, actionType, customDetails);
-    await this.syncFirestoreDocAsync('quotations', saved.id, saved);
+    const hasFirebaseSession = typeof window !== 'undefined' && Boolean(auth.currentUser);
+    const synced = await this.syncFirestoreDocAsync('quotations', saved.id, this.stripInternalCommercialKeysForFirestore(saved, user));
+    if (hasFirebaseSession && !synced) {
+      throw new Error(`Failed to persist quotation update (${saved.quoteNumber || saved.id}) to Firestore within timeout.`);
+    }
     return saved;
+  }
+
+  private stripInternalCommercialKeysForFirestore<T = any>(payload: T, user: User | null): T {
+    return stripRestrictedCommercialFieldsForRole(payload, canUserViewInternalCostBreakdown(user));
+  }
+
+  private buildImmutableVersionRecord(
+    quote: Quotation,
+    versionNumber: number,
+    user: User | null,
+    options: {
+      previousVersionId?: string;
+      changesSummary?: string;
+      clientSaveRequestId?: string;
+      restoredFromVersion?: number;
+      isLatest?: boolean;
+      timestamp?: string;
+    } = {}
+  ): QuoteVersionRecord {
+    const timestamp = options.timestamp || new Date().toISOString();
+    const userName = user?.name || quote.updatedBy || quote.createdByName || quote.agentName || 'Travel Consultant';
+    const userRole = user?.role || quote.createdByUserType || 'B2B_AGENT';
+    const safeClone = <T>(val: T): T => {
+      if (val === undefined || val === null) return val;
+      try {
+        return JSON.parse(JSON.stringify(val));
+      } catch {
+        return val;
+      }
+    };
+    const versionId = `${quote.id}__v${versionNumber}`;
+    return {
+      id: versionId,
+      version: versionNumber,
+      versionNumber,
+      quoteId: quote.id,
+      quoteNumber: quote.quoteNumber || quote.id,
+      leadId: quote.leadId || quote.linkedLeadId,
+      previousVersionId: options.previousVersionId || (versionNumber > 1 ? `${quote.id}__v${versionNumber - 1}` : undefined),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updatedBy: userName,
+      savedByUserId: user?.id || quote.createdBy || quote.agentId,
+      savedByName: userName,
+      savedByRole: userRole,
+      agentId: quote.agentId || user?.id,
+      userId: quote.createdBy || quote.agentId || user?.id,
+      createdByName: quote.createdByName || userName,
+      status: quote.status || 'SAVED',
+      proposalStatus:
+        quote.status === 'CONVERTED' || quote.status === 'BOOKED'
+          ? 'converted'
+          : quote.status === 'ACCEPTED'
+            ? 'accepted'
+            : quote.status === 'SENT' || quote.status === 'SENT_TO_CLIENT'
+              ? 'shared'
+              : 'saved',
+      changesSummary:
+        options.changesSummary ||
+        (options.restoredFromVersion
+          ? `Saved v${versionNumber} (restored from v${options.restoredFromVersion})`
+          : `Saved draft v${versionNumber} with ${quote.items?.length || 0} services (${quote.currency || 'USD'} ${(quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0).toLocaleString()})`),
+      title: quote.title,
+      destination: quote.destination,
+      clientName: quote.clientName,
+      clientEmail: quote.clientEmail,
+      clientPhone: quote.clientPhone,
+      clientCompany: quote.clientCompany,
+      nationality: quote.nationality,
+      travelStyle: quote.travelStyle,
+      mealPlanPreference: quote.mealPlanPreference,
+      travelStartDate: quote.travelStartDate,
+      travelEndDate: quote.travelEndDate,
+      totalPax: quote.totalPax || ((quote.adultsCount || 2) + (quote.childrenCount || 0) + (quote.infantsCount || 0)),
+      adultsCount: quote.adultsCount || 2,
+      childrenCount: quote.childrenCount || 0,
+      infantsCount: quote.infantsCount || 0,
+      childAges: safeClone(quote.childAges),
+      currency: quote.currency || 'USD',
+      totalNetCost: quote.totalNetCost || 0,
+      totalSellingPrice: quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0,
+      finalCustomerSellingPrice: quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0,
+      theUnboundBaseSellingPrice: quote.theUnboundBaseSellingPrice ?? quote.baseFinalSellingPrice,
+      agentMarginType: quote.agentMarginType,
+      agentMarginValue: quote.agentMarginValue,
+      agentMarginAmount: quote.agentMarginAmount,
+      overallDiscountPercent: quote.overallDiscountPercent,
+      marginPercent: quote.overallMarkupPercent || 15,
+      marginAmount: quote.totalMargin || 0,
+      companyId: (quote as any).companyId,
+      agentAgency: quote.agentAgency,
+      productLevelMarginEnabled: quote.productLevelMarginEnabled,
+      agentLevelMarginPercent: quote.agentLevelMarginPercent,
+      activeMarginMode: quote.activeMarginMode,
+      ...(quote.adminMarginMode || quote.adminManualMarginValue !== undefined
+        ? {
+            adminManualMarginType: quote.adminManualMarginType,
+            adminManualMarginValue: quote.adminManualMarginValue,
+            adminManualMarginAmount: quote.adminManualMarginAmount,
+            adminMarginMode: quote.adminMarginMode,
+            revisedSellingPrice: quote.revisedSellingPrice
+          }
+        : {}),
+      items: safeClone(quote.items || []),
+      routeHubs: safeClone(quote.routeHubs || []),
+      dayThemes: safeClone(quote.dayThemes),
+      dayDescriptions: safeClone(quote.dayDescriptions),
+      dayOverviews: safeClone(quote.dayOverviews),
+      dayNotes: safeClone(quote.dayNotes),
+      itineraryOverview: quote.itineraryOverview,
+      inclusions: safeClone(quote.inclusions),
+      exclusions: safeClone(quote.exclusions),
+      importantInformation: quote.importantInformation,
+      cancellationPolicy: quote.cancellationPolicy,
+      options: safeClone(quote.options),
+      activeOptionId: quote.activeOptionId,
+      quotationScope: quote.quotationScope || quote.scope,
+      pricingSnapshot: safeClone(quote.pricingSnapshot),
+      currencyConversionSnapshot: safeClone(quote.currencyConversionSnapshot),
+      commercialTermsSnapshot: safeClone(quote.commercialTermsSnapshot),
+      authoritativeSnapshot: safeClone(quote.authoritativeSnapshot),
+      passengerBreakdown: safeClone(quote.passengerBreakdown),
+      roomingConfig: safeClone(quote.roomingConfig),
+      agentNotes: typeof quote.agentNotes === 'string' ? quote.agentNotes : undefined,
+      termsAndConditions: quote.termsAndConditions,
+      brandingMode: quote.brandingMode || quote.brandingSnapshot?.mode || 'STANDARD',
+      brandingSnapshot: safeClone(quote.brandingSnapshot),
+      bookingId: quote.bookingId,
+      bookingReference: quote.bookingReference,
+      snapshotHash: quote.snapshotHash || quote.authoritativeSnapshot?.snapshotHash,
+      clientSaveRequestId: options.clientSaveRequestId,
+      restoredFromVersion: options.restoredFromVersion,
+      isLatest: Boolean(options.isLatest),
+      isImmutable: true,
+      sharedHistory: []
+    };
+  }
+
+  /**
+   * Returns stored split section & compacted master debug state for verification and diagnostics.
+   */
+  public getSplitVersionDebugSnapshot(quoteId: string, versionNumber?: number): {
+    manifest?: QuoteVersionRecord;
+    sectionDocs: QuotationVersionSectionDocument[];
+    compactedMaster?: { doc: Record<string, any>; estimatedBytes: number };
+  } {
+    const versions = this.getQuotationVersions(quoteId, null);
+    const targetVer = versionNumber || versions[0]?.version || 1;
+    const versionId = `${quoteId}__v${targetVer}`;
+    return {
+      manifest: this.memorySplitVersionManifests.get(versionId),
+      sectionDocs: deepCloneSafe(this.memorySplitVersionSections.get(versionId) || []),
+      compactedMaster: this.lastCompactedFirestoreMasterByQuoteId.get(quoteId)
+    };
+  }
+
+  /**
+   * Canonical EXPLICIT "Save Draft" quotation version creator with Split-Document Storage Architecture (V2).
+   * - Single-flight per quoteId lock + clientSaveRequestId idempotency.
+   * - Staged commit: PREPARING manifest -> modular/chunked `sections/*` docs (<= 800 KiB each) ->
+   *   completeness & integrity verification -> COMMITTED manifest -> compacted master quotation doc (<= 800 KiB).
+   * - Fail-closed rollback: on any section/manifest error, marks version FAILED, leaves `latestVersion`
+   *   & local caches untouched so retry creates the exact sequential version without duplicates or gaps.
+   */
+  public async saveQuotationExplicitVersionAsync(params: {
+    quote: Quotation;
+    user: User | null;
+    clientSaveRequestId: string;
+    changesSummary?: string;
+    restoredFromVersion?: number;
+    testHooks?: {
+      failAfterSectionIndex?: number;
+      maxDocBytesOverride?: number;
+      storageUploader?: BinaryAssetUploadHandler;
+      enableStorageUpload?: boolean;
+      persistenceAdapter?: SplitVersionPersistenceAdapter;
+    };
+  }): Promise<{
+    quote: Quotation;
+    versionRecord: QuoteVersionRecord;
+    versionNumber: number;
+    deduplicated: boolean;
+  }> {
+    const targetQuoteId =
+      (params.quote.id && String(params.quote.id).trim()) ||
+      (params.quote.quoteNumber && String(params.quote.quoteNumber).trim()) ||
+      `quote-${Date.now()}`;
+    const reqKey = `${targetQuoteId}:${params.clientSaveRequestId}`;
+
+    // Idempotency return for rapid duplicate submissions with the same clientSaveRequestId
+    const cached = this.explicitQuoteSaveCache.get(reqKey);
+    if (cached && Date.now() - cached.timestamp < 120_000) {
+      return { ...cached.result, deduplicated: true };
+    }
+
+    const previousLock = this.explicitQuoteSaveLocks.get(targetQuoteId) || Promise.resolve();
+    let releaseLock!: () => void;
+    const currentLock = new Promise<void>(resolve => {
+      releaseLock = resolve;
+    });
+    const chainedLock = previousLock.then(() => currentLock, () => currentLock);
+    this.explicitQuoteSaveLocks.set(targetQuoteId, chainedLock);
+
+    try {
+      await previousLock.catch(() => undefined);
+
+      // Re-check idempotency after waiting on the quote lock
+      const postLockCached = this.explicitQuoteSaveCache.get(reqKey);
+      if (postLockCached && Date.now() - postLockCached.timestamp < 120_000) {
+        return { ...postLockCached.result, deduplicated: true };
+      }
+
+      const { user, changesSummary, restoredFromVersion, testHooks } = params;
+      const timestamp = new Date().toISOString();
+      const userName = user?.name || params.quote.createdByName || params.quote.agentName || 'Travel Consultant';
+      const userRole = user?.role || 'B2B_AGENT';
+      const maxDocBytes = Math.min(
+        SAFE_DOC_BYTE_THRESHOLD,
+        testHooks?.maxDocBytesOverride ?? SAFE_DOC_BYTE_THRESHOLD
+      );
+
+      const allQuotes = this.getAllSavedQuotes();
+      const existingIdx = allQuotes.findIndex(q => q.id === targetQuoteId);
+      const existingQuote = existingIdx >= 0 ? allQuotes[existingIdx] : null;
+      const localVersions = this.getQuotationVersions(targetQuoteId, null).filter(
+        v => v.manifestStatus !== 'FAILED' && v.manifestStatus !== 'PREPARING'
+      );
+
+      // Remote idempotency check in Firestore subcollection (only committed versions deduplicate)
+      const useFirestoreTx = typeof window !== 'undefined' && Boolean(auth.currentUser);
+      if (useFirestoreTx && params.clientSaveRequestId) {
+        try {
+          const dupQ = query(
+            collection(firestoreDb, 'quotations', targetQuoteId, 'versions'),
+            where('clientSaveRequestId', '==', params.clientSaveRequestId)
+          );
+          const dupSnap = await withBoundedTimeout(getDocs(dupQ), 8000, 'Firestore duplicate save check', 'FIRESTORE_READ_TIMEOUT');
+          if (!dupSnap.empty) {
+            for (const d of dupSnap.docs) {
+              const rawManifest = d.data() as QuoteVersionRecord;
+              if (rawManifest.manifestStatus === 'COMMITTED' || !rawManifest.manifestStatus) {
+                const verNum = Number(rawManifest.versionNumber || rawManifest.version || 1);
+                const fullVer =
+                  rawManifest.storageFormat === 'SPLIT_SECTIONS_V2'
+                    ? (await withBoundedTimeout(this.loadQuotationVersionFullAsync(targetQuoteId, verNum, user), 10000, 'Load deduplicated version')) || rawManifest
+                    : rawManifest;
+                const currentQ = this.getQuoteByIdAuthorized(targetQuoteId, user) || existingQuote || params.quote;
+                const dedupResult = {
+                  quote: !canUserViewInternalCostBreakdown(user) ? sanitizeQuoteForAgent(currentQ) : currentQ,
+                  versionRecord: !canUserViewInternalCostBreakdown(user) ? sanitizeQuoteVersionForAgent(fullVer) : fullVer,
+                  versionNumber: verNum,
+                  deduplicated: true
+                };
+                this.explicitQuoteSaveCache.set(reqKey, { timestamp: Date.now(), result: dedupResult });
+                return dedupResult;
+              }
+            }
+          }
+        } catch (dupErr) {
+          console.debug('[DB] Pre-save clientSaveRequestId check note:', dupErr);
+        }
+      }
+
+      const computeMaxVer = (q?: Partial<Quotation> | null, extraVers: QuoteVersionRecord[] = []) => {
+        const committedSummaryNums = (q?.versionSummaries || [])
+          .filter(s => s.manifestStatus !== 'FAILED' && s.manifestStatus !== 'PREPARING')
+          .map(s => Number(s.versionNumber || s.version || 0));
+        const committedHistoryNums = (q?.versionHistory || [])
+          .filter(v => v.manifestStatus !== 'FAILED' && v.manifestStatus !== 'PREPARING')
+          .map(v => Number(v.versionNumber || v.version || 0));
+        const extraNums = extraVers
+          .filter(v => v.manifestStatus !== 'FAILED' && v.manifestStatus !== 'PREPARING')
+          .map(v => Number(v.versionNumber || v.version || 0));
+        const nums = [
+          Number(q?.latestVersion || 0),
+          Number(q?.version || 0),
+          Number(q?.snapshotVersion || 0),
+          ...committedSummaryNums,
+          ...committedHistoryNums,
+          ...extraNums
+        ].filter(n => Number.isFinite(n) && n > 0);
+        return nums.length > 0 ? Math.max(...nums) : 0;
+      };
+
+      const quoteCurr = (params.quote.currency || existingQuote?.currency || 'USD').toUpperCase().trim();
+      const roundForCurr = (val: number) =>
+        quoteCurr === 'JPY' || quoteCurr === 'THB'
+          ? Math.round(val)
+          : Math.round((val + Number.EPSILON) * 100) / 100;
+
+      const agentMarginType: AgentMarginType = (params.quote.agentMarginType ?? params.quote.agent_margin_type ?? existingQuote?.agentMarginType ?? 'PERCENTAGE') as AgentMarginType;
+      const rawMarginValue = params.quote.agentMarginValue ?? params.quote.agent_margin_value ?? existingQuote?.agentMarginValue ?? (params.quote.overallMarkupPercent ?? 0);
+      const marginValidation = validateAgentAdditionalMarkup(rawMarginValue);
+      const validatedMarginValue = roundForCurr(Math.max(0, marginValidation.sanitizedValue));
+
+      const sanitizedItems = Array.isArray(params.quote.items)
+        ? params.quote.items.map(it => {
+            if (it.agentAdditionalMarkupValue !== undefined) {
+              const itemValCheck = validateAgentAdditionalMarkup(it.agentAdditionalMarkupValue);
+              return {
+                ...it,
+                agentAdditionalMarkupType: it.agentAdditionalMarkupType || 'PERCENTAGE',
+                agentAdditionalMarkupValue: roundForCurr(Math.max(0, itemValCheck.sanitizedValue))
+              };
+            }
+            return it;
+          })
+        : [];
+
+      const expAgencyCtx = resolveQuoteAgencyPricingContext(
+        {
+          companyId: (params.quote as any).companyId ?? (existingQuote as any)?.companyId,
+          agentAgency: params.quote.agentAgency ?? existingQuote?.agentAgency,
+          agentId: params.quote.agentId ?? existingQuote?.agentId ?? existingQuote?.createdBy,
+          createdBy: params.quote.createdBy ?? existingQuote?.createdBy,
+          productLevelMarginEnabled: params.quote.productLevelMarginEnabled ?? existingQuote?.productLevelMarginEnabled,
+          agentLevelMarginPercent: params.quote.agentLevelMarginPercent ?? existingQuote?.agentLevelMarginPercent,
+          activeMarginMode: params.quote.activeMarginMode ?? existingQuote?.activeMarginMode
+        },
+        user
+      );
+
+      const rawExpAdminTypeEarly = params.quote.adminManualMarginType ?? (params.quote as any).admin_manual_margin_type ?? existingQuote?.adminManualMarginType;
+      const rawExpAdminValEarly = params.quote.adminManualMarginValue ?? (params.quote as any).admin_manual_margin_value ?? existingQuote?.adminManualMarginValue;
+      const rawExpAdminModeEarly = params.quote.adminMarginMode ?? (params.quote as any).admin_margin_mode ?? existingQuote?.adminMarginMode ?? existingQuote?.pricingSnapshot?.adminMarginMode;
+      const hasExpAdminEarly = rawExpAdminValEarly !== undefined || rawExpAdminModeEarly !== undefined || rawExpAdminTypeEarly !== undefined;
+      const expAdminTypeEarly: 'PERCENTAGE' | 'FIXED' = rawExpAdminTypeEarly === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+      const expAdminModeEarly: 'REPLACE' | 'ADD' = rawExpAdminModeEarly === 'REPLACE' ? 'REPLACE' : 'ADD';
+      const expAdminValEarly = hasExpAdminEarly
+        ? validateAdminManualMargin(rawExpAdminValEarly, expAdminTypeEarly).sanitizedValue
+        : undefined;
+
+      const existingExpSourceItems =
+        existingQuote?.items &&
+        existingQuote.items.length > 0 &&
+        !existingQuote.items.some((ei: any) => Boolean(ei?.__dehydratedToVersionId))
+          ? existingQuote.items
+          : (existingQuote?.versionHistory?.[0]?.items || existingQuote?.items || []);
+      const existingExpItemById = new Map(existingExpSourceItems.map(ei => [ei.id, ei]));
+      const mergedExpItems = sanitizedItems.map(it => {
+        const ex = existingExpItemById.get(it.id);
+        if (!ex) return it;
+        if ((it as any).__dehydratedToVersionId || !it.product) {
+          const cleanStub = { ...it };
+          delete (cleanStub as any).__dehydratedToVersionId;
+          return {
+            ...ex,
+            ...cleanStub,
+            product: ex.product,
+            manualHotelDetails: ex.manualHotelDetails ?? it.manualHotelDetails,
+            calculation: (it as any).calculation?.totalNetCost !== undefined ? (it as any).calculation : ex.calculation
+          };
+        }
+        if (!canUserViewInternalCostBreakdown(user)) {
+          return {
+            ...it,
+            totalNetCost: (it as any).totalNetCost ?? (ex as any).totalNetCost,
+            product: ex.product ? { ...ex.product, ...(it.product || {}), adultNetPrice: ex.product.adultNetPrice, childNetPrice: ex.product.childNetPrice } : it.product,
+            manualHotelDetails: (ex.manualHotelDetails || it.manualHotelDetails)
+              ? { ...(ex.manualHotelDetails || {}), ...(it.manualHotelDetails || {}) }
+              : undefined,
+            calculation: (it as any).calculation?.totalNetCost !== undefined
+              ? (it as any).calculation
+              : (ex.calculation ? { ...ex.calculation, ...(it.calculation || {}), totalNetCost: ex.calculation.totalNetCost, markupAmount: ex.calculation.markupAmount, activeMarginMode: (ex.calculation as any).activeMarginMode } : (it as any).calculation)
+          };
+        }
+        return it;
+      });
+
+      const centralTotals = calculateQuoteTotal(
+        {
+          ...params.quote,
+          id: targetQuoteId,
+          companyId: expAgencyCtx.companyId ?? (params.quote as any).companyId,
+          agentAgency: expAgencyCtx.agencyName ?? params.quote.agentAgency,
+          agentId: expAgencyCtx.agentId ?? params.quote.agentId,
+          productLevelMarginEnabled: expAgencyCtx.productLevelMarginEnabled,
+          agentLevelMarginPercent: expAgencyCtx.agentLevelMarginPercent,
+          activeMarginMode: expAgencyCtx.activeMarginMode,
+          items: mergedExpItems,
+          agentMarginType,
+          agentMarginValue: validatedMarginValue,
+          ...(hasExpAdminEarly
+            ? {
+                adminManualMarginType: expAdminTypeEarly,
+                adminManualMarginValue: expAdminValEarly,
+                adminMarginMode: expAdminModeEarly
+              }
+            : {})
+        },
+        params.quote.activeOptionId,
+        undefined,
+        quoteCurr
+      );
+
+      const expAuthSnap = params.quote.authoritativeSnapshot;
+      const expAuthAdminMatches =
+        !hasExpAdminEarly ||
+        (
+          (expAuthSnap?.pricing?.adminMarginMode ?? 'ADD') === expAdminModeEarly &&
+          (expAuthSnap?.pricing?.adminManualMarginType ?? 'PERCENTAGE') === expAdminTypeEarly &&
+          Math.abs(Number(expAuthSnap?.pricing?.adminManualMarginValue ?? 0) - Number(expAdminValEarly ?? 0)) < 0.0001
+        );
+      const expAuthMarginMode =
+        expAuthSnap?.pricing?.activeMarginMode ??
+        (expAuthSnap?.pricing?.productLevelMarginEnabled !== undefined
+          ? (expAuthSnap.pricing.productLevelMarginEnabled ? 'PRODUCT_LEVEL' : 'AGENT_LEVEL')
+          : undefined);
+      const expAuthAgencyMatches =
+        !expAuthMarginMode ||
+        (expAuthMarginMode === expAgencyCtx.activeMarginMode &&
+          (expAgencyCtx.productLevelMarginEnabled ||
+            expAuthSnap?.pricing?.agentLevelMarginPercent === undefined ||
+            Math.abs(Number(expAuthSnap.pricing.agentLevelMarginPercent) - expAgencyCtx.agentLevelMarginPercent) < 0.001));
+      const isExpLocked = Boolean(
+        params.quote.isLocked ||
+        ['ISSUED', 'SENT', 'APPROVED', 'ACCEPTED', 'CONVERTED', 'BOOKED'].includes(String(params.quote.status || '').toUpperCase())
+      );
+      const expAuthOverridesMatch =
+        JSON.stringify(params.quote.surchargeOverrides || []) ===
+        JSON.stringify(expAuthSnap?.pricing?.surchargeOverrides || []);
+      const expHasProductMarkup = mergedExpItems.some(it => Number(it.agentAdditionalMarkupValue || 0) > 0);
+      const expAuthItemMarkupsMatch =
+        expHasProductMarkup === (Number(expAuthSnap?.pricing?.productLevelAgentMarkupTotal || 0) > 0);
+
+      const isExpAuthPricingValid = Boolean(
+        expAuthSnap?.pricing?.currency === quoteCurr &&
+        (
+          (isExpLocked && expAuthAdminMatches && expAuthOverridesMatch) ||
+          (
+            !isExpLocked &&
+            expAuthSnap.itinerary?.itemsCount === mergedExpItems.length &&
+            (expAuthSnap.pricing.agentMarginType || 'PERCENTAGE') === agentMarginType &&
+            Math.abs(Number(expAuthSnap.pricing.agentMarginValue || 0) - validatedMarginValue) < 0.0001 &&
+            Math.abs(Number(expAuthSnap.pricing.overallDiscountPercent || 0) - Number(params.quote.overallDiscountPercent || 0)) < 0.0001 &&
+            expAuthAdminMatches &&
+            expAuthAgencyMatches &&
+            expAuthOverridesMatch &&
+            expAuthItemMarkupsMatch &&
+            (centralTotals.finalCustomerSellingPrice <= 0 ||
+              Math.abs(Number(expAuthSnap.pricing.finalCustomerSellingPrice || 0) - centralTotals.finalCustomerSellingPrice) <= 0.05)
+          )
+        )
+      );
+      const authPricing = isExpAuthPricingValid ? expAuthSnap!.pricing : undefined;
+
+      const theUnboundBaseSellingPrice = authPricing
+        ? authPricing.theUnboundBaseSellingPrice
+        : centralTotals.theUnboundBaseSellingPrice > 0
+          ? centralTotals.theUnboundBaseSellingPrice
+          : roundForCurr(params.quote.theUnboundBaseSellingPrice ?? params.quote.baseFinalSellingPrice ?? params.quote.totalSellingPrice ?? 0);
+      const productLevelAgentMarkupTotal = authPricing ? (authPricing.productLevelAgentMarkupTotal ?? 0) : (centralTotals.productLevelAgentMarkupTotal ?? 0);
+      const overallAgentMarkupAmount = authPricing
+        ? (authPricing.overallAgentMarkupAmount ?? 0)
+        : (centralTotals.overallAgentMarkupAmount ?? (agentMarginType === 'PERCENTAGE' ? roundForCurr(theUnboundBaseSellingPrice * (validatedMarginValue / 100)) : roundForCurr(validatedMarginValue)));
+      const agentMarginAmount = authPricing ? authPricing.agentMarginAmount : roundForCurr(productLevelAgentMarkupTotal + overallAgentMarkupAmount);
+      const finalCustomerSellingPrice = authPricing
+        ? authPricing.finalCustomerSellingPrice
+        : Math.max(theUnboundBaseSellingPrice, centralTotals.finalCustomerSellingPrice > 0 ? centralTotals.finalCustomerSellingPrice : roundForCurr(theUnboundBaseSellingPrice + agentMarginAmount));
+
+      const authoritativeNetCost = centralTotals.totalNetCost > 0
+        ? centralTotals.totalNetCost
+        : (params.quote.totalNetCost ?? params.quote.internalNettCost ?? existingQuote?.totalNetCost ?? existingQuote?.internalNettCost ?? 0);
+
+      let resolvedClientUserId = params.quote.clientUserId;
+      if (!resolvedClientUserId && params.quote.clientEmail) {
+        const matched = this.getUsers().find(u => u.email.toLowerCase().trim() === params.quote.clientEmail?.toLowerCase().trim());
+        if (matched) resolvedClientUserId = matched.id;
+      }
+
+      const createdBy = existingQuote?.createdBy || params.quote.createdBy || user?.id || 'usr-anonymous';
+      const createdByName = existingQuote?.createdByName || params.quote.createdByName || user?.name || 'TheUnbound Consultant';
+      const createdByUserType = existingQuote?.createdByUserType || params.quote.createdByUserType || (user?.role as any) || 'B2B_AGENT';
+
+      // Offload any oversized inline base64 binary assets (> 2 KB) cleanly before splitting
+      const assetOffloadResult = await offloadInlineBinaryAssets(
+        {
+          quote: { ...params.quote, items: mergedExpItems }
+        },
+        targetQuoteId,
+        {
+          minByteThreshold: 2048,
+          uploadHandler: testHooks?.storageUploader,
+          enableStorageUpload: testHooks?.enableStorageUpload ?? (useFirestoreTx || Boolean(testHooks?.storageUploader))
+        }
+      );
+      const preparedInputQuote: Quotation = assetOffloadResult.payload.quote;
+      const preparedItems = preparedInputQuote.items || mergedExpItems;
+
+      const rawExpAdminType = preparedInputQuote.adminManualMarginType ?? (preparedInputQuote as any).admin_manual_margin_type ?? existingQuote?.adminManualMarginType;
+      const rawExpAdminVal = preparedInputQuote.adminManualMarginValue ?? (preparedInputQuote as any).admin_manual_margin_value ?? existingQuote?.adminManualMarginValue;
+      const rawExpAdminMode = preparedInputQuote.adminMarginMode ?? (preparedInputQuote as any).admin_margin_mode ?? existingQuote?.adminMarginMode ?? existingQuote?.pricingSnapshot?.adminMarginMode;
+      const hasExpAdminConfig = rawExpAdminVal !== undefined || rawExpAdminMode !== undefined || rawExpAdminType !== undefined;
+      const expAdminType: 'PERCENTAGE' | 'FIXED' = rawExpAdminType === 'FIXED' ? 'FIXED' : 'PERCENTAGE';
+      const expAdminMode: 'REPLACE' | 'ADD' = rawExpAdminMode === 'REPLACE' ? 'REPLACE' : 'ADD';
+      const expAdminVal = hasExpAdminConfig
+        ? validateAdminManualMargin(rawExpAdminVal, expAdminType).sanitizedValue
+        : undefined;
+      const expInternalBreakdown = (canUserViewInternalCostBreakdown(user) || hasExpAdminConfig) && preparedItems.length > 0
+        ? calculateQuoteInternalBreakdown({
+            items: preparedItems as any,
+            targetCurrency: quoteCurr as CurrencyCode,
+            agentMarginType,
+            agentMarginValue: validatedMarginValue,
+            overallDiscountPercent: Number(preparedInputQuote.overallDiscountPercent || 0),
+            userRole: user?.role,
+            user,
+            companyId: expAgencyCtx.companyId,
+            agencyName: expAgencyCtx.agencyName,
+            productLevelMarginEnabled: expAgencyCtx.productLevelMarginEnabled,
+            customAgentMarginPercent: expAgencyCtx.agentLevelMarginPercent,
+            scope: preparedInputQuote.quotationScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND',
+            routeHubs: preparedInputQuote.routeHubs || [],
+            adminManualMarginType: expAdminType,
+            adminManualMarginValue: expAdminVal,
+            adminMarginMode: expAdminMode,
+            preserveHistoricalSnapshot: Boolean(preparedInputQuote.isLocked),
+            historicalSnapshot: authPricing?.currencyConversionSnapshot || preparedInputQuote.currencyConversionSnapshot,
+            surchargeOverrides: preparedInputQuote.surchargeOverrides
+          })
+        : undefined;
+      const expAdminAmount = hasExpAdminConfig
+        ? roundForCurr(
+            expInternalBreakdown?.adminManualMarginAmount ??
+            preparedInputQuote.adminManualMarginAmount ??
+            (expAdminType === 'FIXED' ? (expAdminVal || 0) : (authoritativeNetCost * ((expAdminVal || 0) / 100)))
+          )
+        : undefined;
+      const expRevisedSellingPrice = hasExpAdminConfig
+        ? roundForCurr(
+            expInternalBreakdown?.revisedSellingPrice ??
+            preparedInputQuote.revisedSellingPrice ??
+            theUnboundBaseSellingPrice
+          )
+        : undefined;
+
+      const buildMasterAndVersionForNumber = (targetVer: number, priorVersions: QuoteVersionRecord[]) => {
+        const priorImmutableList = priorVersions
+          .filter(v => (v.versionNumber || v.version) !== targetVer)
+          .map(v => ({ ...v, isLatest: false }));
+
+        const pricingSnapshot: PricingSnapshot = {
+          ...(preparedInputQuote.pricingSnapshot || {}),
+          theUnboundBaseSellingPrice,
+          baseFinalSellingPrice: theUnboundBaseSellingPrice,
+          currency: quoteCurr as CurrencyCode,
+          agentMarginType,
+          agentMarginValue: validatedMarginValue,
+          agentMarginAmount,
+          productLevelAgentMarkupTotal,
+          overallAgentMarkupAmount,
+          totalAgentAdditionalMarkupAmount: agentMarginAmount,
+          finalCustomerSellingPrice,
+          hotelAccommodationTotal: authPricing ? authPricing.hotelAccommodationTotal : centralTotals.hotelTotalSellingPrice,
+          landPartTotal: authPricing ? authPricing.landPartTotal : centralTotals.landPartTotalSellingPrice,
+          surchargesTotal: authPricing ? authPricing.surchargesTotal : (expInternalBreakdown?.surchargesTotal ?? preparedInputQuote.surchargesTotal ?? 0),
+          appliedSurcharges: authPricing ? authPricing.appliedSurcharges : (expInternalBreakdown?.appliedSurcharges ?? preparedInputQuote.appliedSurcharges ?? []),
+          taxesTotal: authPricing ? authPricing.taxesTotal : (expInternalBreakdown?.taxAmount ?? preparedInputQuote.totalTaxes ?? 0),
+          serviceFeesTotal: authPricing ? authPricing.serviceFeesTotal : (expInternalBreakdown?.serviceFee ?? preparedInputQuote.pricingSnapshot?.serviceFeesTotal ?? 0),
+          discountsTotal: authPricing ? authPricing.discountsTotal : (centralTotals.discountAmount ?? 0),
+          totalSellingPrice: finalCustomerSellingPrice,
+          calculatedAt: timestamp,
+          pricingVersion: targetVer,
+          itemsCount: preparedItems.length,
+          totalPax: preparedInputQuote.totalPax || ((preparedInputQuote.adultsCount || 2) + (preparedInputQuote.childrenCount || 0) + (preparedInputQuote.infantsCount || 0)),
+          ...(hasExpAdminConfig
+            ? {
+                adminManualMarginType: expAdminType,
+                adminManualMarginValue: expAdminVal,
+                adminManualMarginAmount: expAdminAmount,
+                adminMarginMode: expAdminMode,
+                revisedSellingPrice: expRevisedSellingPrice
+              }
+            : {}),
+          currencyConversionSnapshot: authPricing?.currencyConversionSnapshot || preparedInputQuote.currencyConversionSnapshot || preparedInputQuote.pricingSnapshot?.currencyConversionSnapshot
+        };
+
+        const resolvedTerms = resolveAuthoritativeCommercialTerms({
+          ...preparedInputQuote,
+          commercialTermsSnapshot: preparedInputQuote.commercialTermsSnapshot ?? existingQuote?.commercialTermsSnapshot
+        }).plainText;
+
+        const nextActivityLog: QuoteActivityRecord[] = [
+          ...(preparedInputQuote.activityLog || existingQuote?.activityLog || []),
+          {
+            id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            action: existingQuote ? 'SAVED' : 'CREATED',
+            timestamp,
+            userName,
+            userRole,
+            userType: createdByUserType,
+            details:
+              changesSummary ||
+              (restoredFromVersion
+                ? `Saved draft v${targetVer} (restored from v${restoredFromVersion})`
+                : `Explicitly saved draft v${targetVer} (${quoteCurr} ${finalCustomerSellingPrice.toLocaleString()})`),
+            quoteId: targetQuoteId,
+            quote_id: targetQuoteId,
+            leadId: preparedInputQuote.leadId || preparedInputQuote.linkedLeadId,
+            lead_id: preparedInputQuote.leadId || preparedInputQuote.linkedLeadId,
+            userId: user?.id,
+            user_id: user?.id,
+            action_type: existingQuote ? 'EXPLICIT_SAVE_DRAFT' : 'CREATED',
+            newMarginType: agentMarginType,
+            newMarginValue: validatedMarginValue,
+            newFinalCustomerSellingPrice: finalCustomerSellingPrice,
+            pricingVersion: targetVer
+          }
+        ];
+
+        const baseAuthSnap = preparedInputQuote.authoritativeSnapshot
+          ? { ...preparedInputQuote.authoritativeSnapshot, versionNumber: targetVer, updatedAt: timestamp }
+          : undefined;
+
+        const baseMaster: Quotation = {
+          ...preparedInputQuote,
+          id: targetQuoteId,
+          quoteId: targetQuoteId,
+          quoteNumber: preparedInputQuote.quoteNumber || targetQuoteId,
+          companyId: expAgencyCtx.companyId ?? (preparedInputQuote as any).companyId ?? (existingQuote as any)?.companyId,
+          agentId: preparedInputQuote.agentId ?? existingQuote?.agentId ?? expAgencyCtx.agentId,
+          agentAgency: preparedInputQuote.agentAgency ?? existingQuote?.agentAgency ?? expAgencyCtx.agencyName,
+          productLevelMarginEnabled: expInternalBreakdown?.productLevelMarginEnabled ?? expAgencyCtx.productLevelMarginEnabled,
+          agentLevelMarginPercent: expInternalBreakdown?.configuredAgentLevelMarginPercent ?? expAgencyCtx.agentLevelMarginPercent,
+          activeMarginMode: expInternalBreakdown?.activeMarginMode ?? expAgencyCtx.activeMarginMode,
+          version: targetVer,
+          versionNumber: targetVer,
+          snapshotVersion: targetVer,
+          latestVersion: targetVer,
+          latestVersionId: `${targetQuoteId}__v${targetVer}`,
+          latestSavedAt: timestamp,
+          latestSavedBy: userName,
+          versionCount: priorImmutableList.length + 1,
+          isLatestVersion: true,
+          restoredFromVersion: undefined,
+          items: preparedItems,
+          status: (preparedInputQuote.status === 'DRAFT' || !preparedInputQuote.status) ? 'SAVED' : preparedInputQuote.status,
+          proposalStatus: preparedInputQuote.proposalStatus || 'saved',
+          termsAndConditions: resolvedTerms,
+          theUnboundBaseSellingPrice,
+          baseFinalSellingPrice: theUnboundBaseSellingPrice,
+          base_final_selling_price: theUnboundBaseSellingPrice,
+          baseFinalSellingPriceCurrency: quoteCurr as CurrencyCode,
+          ...(hasExpAdminConfig
+            ? {
+                adminManualMarginType: expAdminType,
+                admin_manual_margin_type: expAdminType,
+                adminManualMarginValue: expAdminVal,
+                admin_manual_margin_value: expAdminVal,
+                adminManualMarginAmount: expAdminAmount,
+                admin_manual_margin_amount: expAdminAmount,
+                adminMarginMode: expAdminMode,
+                admin_margin_mode: expAdminMode,
+                revisedSellingPrice: expRevisedSellingPrice,
+                revised_selling_price: expRevisedSellingPrice
+              }
+            : {}),
+          agentMarginType,
+          agent_margin_type: agentMarginType,
+          agentMarginValue: validatedMarginValue,
+          agent_margin_value: validatedMarginValue,
+          agentMarginAmount,
+          agent_margin_amount: agentMarginAmount,
+          productLevelAgentMarkupTotal,
+          overallAgentMarkupAmount,
+          totalAgentAdditionalMarkupAmount: agentMarginAmount,
+          finalCustomerSellingPrice,
+          final_customer_selling_price: finalCustomerSellingPrice,
+          totalSellingPrice: finalCustomerSellingPrice,
+          hotelAccommodationTotal: pricingSnapshot.hotelAccommodationTotal,
+          landPartTotal: pricingSnapshot.landPartTotal,
+          surchargesTotal: pricingSnapshot.surchargesTotal,
+          appliedSurcharges: pricingSnapshot.appliedSurcharges,
+          pricingCalculatedAt: timestamp,
+          pricingVersion: targetVer,
+          pricingSnapshot,
+          pricing_snapshot: pricingSnapshot,
+          authoritativeSnapshot: baseAuthSnap,
+          totalNetCost: authoritativeNetCost,
+          internalNettCost: authoritativeNetCost,
+          supplierCost: existingQuote?.supplierCost ?? authoritativeNetCost,
+          internalMarkup: expInternalBreakdown?.existingMarginAmount ?? existingQuote?.internalMarkup ?? 0,
+          agentMarkup: agentMarginAmount,
+          totalMargin: Math.max(0, roundForCurr(finalCustomerSellingPrice - authoritativeNetCost)),
+          internalProfit: Math.max(0, roundForCurr(finalCustomerSellingPrice - authoritativeNetCost)),
+          createdBy,
+          createdByName,
+          createdByUserType,
+          updatedBy: userName,
+          updated_by: userName,
+          clientUserId: resolvedClientUserId,
+          activityLog: nextActivityLog,
+          updatedAt: timestamp,
+          lastActivityAt: timestamp,
+          createdAt: preparedInputQuote.createdAt || existingQuote?.createdAt || timestamp
+        };
+
+        const versionRec = this.buildImmutableVersionRecord(baseMaster, targetVer, user, {
+          previousVersionId: targetVer > 1 ? `${targetQuoteId}__v${targetVer - 1}` : undefined,
+          changesSummary,
+          clientSaveRequestId: params.clientSaveRequestId,
+          restoredFromVersion,
+          isLatest: true,
+          timestamp
+        });
+
+        baseMaster.versionHistory = [versionRec, ...priorImmutableList].sort(
+          (a, b) => (b.versionNumber || b.version || 0) - (a.versionNumber || a.version || 0)
+        );
+        baseMaster.versionSummaries = baseMaster.versionHistory.map(v => buildCompactVersionSummary(v));
+        return { baseMaster, versionRec };
+      };
+
+      // Step 1: Determine next sequential committed version number
+      let nextVersion = computeMaxVer(existingQuote, localVersions) + 1;
+      let mergedPriorVersions = [...localVersions];
+      const remoteCommittedSplitNums = new Set<number>();
+
+      // Seed split tracking from in-memory manifests so offline & test flows also backfill legacy arrays cleanly
+      localVersions.forEach(lv => {
+        if (lv.storageFormat === 'SPLIT_SECTIONS_V2' && lv.manifestStatus === 'COMMITTED') {
+          remoteCommittedSplitNums.add(Number(lv.versionNumber || lv.version || 0));
+        }
+      });
+
+      if (useFirestoreTx) {
+        const quoteRef = doc(firestoreDb, 'quotations', targetQuoteId);
+        const [remoteQuoteSnap, remoteVersSnap] = await withBoundedTimeout(
+          Promise.all([
+            getDoc(quoteRef),
+            getDocs(collection(firestoreDb, 'quotations', targetQuoteId, 'versions'))
+          ]),
+          12000,
+          'Read latest quotation versions from Firestore',
+          'FIRESTORE_READ_TIMEOUT'
+        );
+        const remoteData = remoteQuoteSnap.exists() ? (remoteQuoteSnap.data() as Quotation) : null;
+        const remoteCommittedVers: QuoteVersionRecord[] = [];
+        const staleAttemptIds: string[] = [];
+
+        remoteVersSnap.forEach(d => {
+          const v = d.data() as QuoteVersionRecord;
+          if ((v as any).isDeleted) return;
+          if (v.manifestStatus === 'FAILED' || v.manifestStatus === 'PREPARING') {
+            staleAttemptIds.push(d.id);
+            return;
+          }
+          const vNum = Number(v.versionNumber || v.version || 1);
+          if (v.storageFormat === 'SPLIT_SECTIONS_V2' && v.manifestStatus === 'COMMITTED') {
+            remoteCommittedSplitNums.add(vNum);
+          }
+          remoteCommittedVers.push({
+            ...v,
+            id: v.id || d.id,
+            quoteId: v.quoteId || targetQuoteId,
+            version: vNum,
+            versionNumber: vNum
+          });
+        });
+
+        const remoteMax = computeMaxVer(remoteData, remoteCommittedVers);
+        const localMax = computeMaxVer(existingQuote, localVersions);
+        nextVersion = Math.max(remoteMax, localMax, 0) + 1;
+
+        const mergedPriorMap = new Map<number, QuoteVersionRecord>();
+        const ingestCandidate = (v: QuoteVersionRecord, isSummaryStub = false) => {
+          if (v.manifestStatus === 'FAILED' || v.manifestStatus === 'PREPARING') return;
+          const vNum = Number(v.versionNumber || v.version || 0);
+          if (vNum <= 0) return;
+          const candidate = isSummaryStub ? ({ ...v, __isSummaryStub: true } as any) : { ...v, isLatest: false };
+          const prev = mergedPriorMap.get(vNum) as any;
+          if (!prev) {
+            mergedPriorMap.set(vNum, candidate);
+            return;
+          }
+          const prevIsStub = Boolean(prev.__isSummaryStub);
+          if (prevIsStub && !isSummaryStub) {
+            mergedPriorMap.set(vNum, candidate);
+          }
+        };
+
+        remoteCommittedVers.forEach(v => ingestCandidate(v, false));
+        (remoteData?.versionHistory || []).forEach(v => ingestCandidate(v, false));
+        localVersions.forEach(v => ingestCandidate(v, false));
+        (existingQuote?.versionHistory || []).forEach(v => ingestCandidate(v, false));
+        (remoteData?.versionSummaries || []).forEach(s =>
+          ingestCandidate({ ...s, quoteId: targetQuoteId } as unknown as QuoteVersionRecord, true)
+        );
+        mergedPriorVersions = Array.from(mergedPriorMap.values());
+
+        // Clean up any abandoned FAILED/PREPARING version doc matching target versionId so sequence stays clean
+        const targetVerIdCleanup = `${targetQuoteId}__v${nextVersion}`;
+        if (staleAttemptIds.includes(targetVerIdCleanup)) {
+          await withBoundedTimeout(
+            this.cleanupFailedOrPreparingVersionDocAsync(targetQuoteId, targetVerIdCleanup),
+            8000,
+            'Clean up stale preparing version',
+            'FIRESTORE_CLEANUP_TIMEOUT'
+          ).catch(() => undefined);
+        }
+      }
+
+      // Step 2: Build canonical master + full immutable QuoteVersionRecord
+      const firebaseAuthUid = typeof window !== 'undefined' ? auth.currentUser?.uid : undefined;
+      const built = buildMasterAndVersionForNumber(nextVersion, mergedPriorVersions);
+      const persistedMasterQuote: Quotation = {
+        ...built.baseMaster,
+        agentId: built.baseMaster.agentId || firebaseAuthUid || user?.id,
+        userId: firebaseAuthUid || (built.baseMaster as any).userId || built.baseMaster.agentId || user?.id
+      };
+      const fullVersionRecord: QuoteVersionRecord = {
+        ...built.versionRec,
+        agentId: built.versionRec.agentId || firebaseAuthUid || user?.id,
+        userId: firebaseAuthUid || built.versionRec.userId || user?.id
+      };
+
+      // Step 3: Split QuoteVersionRecord into modular sections + dynamic sub-chunks (guaranteeing <= maxDocBytes per doc)
+      // Sanitize internal commercial fields BEFORE computing section contentHashes when saved by an external B2B agent
+      const masterForSplit = canUserViewInternalCostBreakdown(user)
+        ? persistedMasterQuote
+        : this.stripInternalCommercialKeysForFirestore(persistedMasterQuote, user);
+      const versionForSplit = canUserViewInternalCostBreakdown(user)
+        ? fullVersionRecord
+        : this.stripInternalCommercialKeysForFirestore(fullVersionRecord, user);
+
+      const splitResult = splitQuotationVersionIntoSections(masterForSplit, versionForSplit, {
+        user,
+        maxDocBytes,
+        manifestStatus: 'PREPARING'
+      });
+
+      const stagedManifest = cleanForFirestore(
+        this.stripInternalCommercialKeysForFirestore(
+          {
+            ...splitResult.manifest,
+            agentId: splitResult.manifest.agentId || fullVersionRecord.agentId,
+            userId: firebaseAuthUid || splitResult.manifest.userId || fullVersionRecord.userId,
+            manifestStatus: 'PREPARING',
+            updatedByRole: userRole,
+            updatedByEmail: (typeof window !== 'undefined' ? auth.currentUser?.email : undefined) || user?.email || '',
+            isDeleted: false
+          },
+          user
+        )
+      );
+
+      // Step 4: Pre-flight size assertions on manifest, ALL section/chunk docs, and compacted master doc
+      const manifestEstBytes = estimateFirestoreDocumentBytes(
+        stagedManifest,
+        `quotations/${targetQuoteId}/versions/${stagedManifest.id}`
+      );
+      if (manifestEstBytes > maxDocBytes || manifestEstBytes >= FIRESTORE_MAX_DOC_BYTES) {
+        throw new Error(
+          `Split version manifest "${stagedManifest.id}" exceeds safety threshold (${manifestEstBytes} bytes > ${maxDocBytes} bytes).`
+        );
+      }
+
+      const preparedSectionPayloads = splitResult.sectionDocs.map(secDoc => {
+        const sanitizedSec = cleanForFirestore(
+          this.stripInternalCommercialKeysForFirestore(
+            {
+              ...secDoc,
+              agentId: secDoc.agentId || fullVersionRecord.agentId,
+              userId: firebaseAuthUid || secDoc.userId || fullVersionRecord.userId
+            },
+            user
+          )
+        );
+        const secEstBytes = estimateFirestoreDocumentBytes(
+          sanitizedSec,
+          `quotations/${targetQuoteId}/versions/${stagedManifest.id}/sections/${sanitizedSec.sectionId}`
+        );
+        if (secEstBytes > maxDocBytes || secEstBytes >= FIRESTORE_MAX_DOC_BYTES) {
+          throw new Error(
+            `Section document "${sanitizedSec.sectionId}" exceeds Firestore safety cap (${secEstBytes} bytes > ${maxDocBytes} bytes).`
+          );
+        }
+        return { doc: sanitizedSec as QuotationVersionSectionDocument, estimatedBytes: secEstBytes };
+      });
+
+      const compactMaster = compactMasterQuotationForFirestore(
+        persistedMasterQuote,
+        persistedMasterQuote.versionSummaries || [],
+        persistedMasterQuote.latestVersionId
+      );
+      const compactedMasterPayload = cleanForFirestore(
+        this.stripInternalCommercialKeysForFirestore(
+          {
+            ...compactMaster.masterDoc,
+            agentId: compactMaster.masterDoc.agentId || fullVersionRecord.agentId,
+            userId: firebaseAuthUid || compactMaster.masterDoc.userId || fullVersionRecord.userId,
+            updatedByRole: userRole,
+            updatedByEmail: (typeof window !== 'undefined' ? auth.currentUser?.email : undefined) || user?.email || '',
+            isDeleted: false
+          },
+          user
+        )
+      );
+      const compactedMasterEstBytes = estimateFirestoreDocumentBytes(
+        compactedMasterPayload,
+        `quotations/${targetQuoteId}`
+      );
+      if (compactedMasterEstBytes > maxDocBytes || compactedMasterEstBytes >= FIRESTORE_MAX_DOC_BYTES) {
+        throw new Error(
+          `Compacted master quotation "${targetQuoteId}" exceeds Firestore safety cap (${compactedMasterEstBytes} bytes).`
+        );
+      }
+
+      // Step 5: Staged Commit Pipeline (PREPARING -> write sections -> real Firestore readback verification -> COMMITTED -> update master)
+      const versionDocId = stagedManifest.id!;
+      this.memorySplitVersionManifests.set(versionDocId, stagedManifest);
+
+      let stagedSectionWrites: QuotationVersionSectionDocument[] = [];
+      let committedManifestFinal!: QuoteVersionRecord;
+
+      try {
+        if (useFirestoreTx) {
+          const versionRef = doc(firestoreDb, 'quotations', targetQuoteId, 'versions', versionDocId);
+          await withBoundedTimeout(
+            setDoc(versionRef, stagedManifest),
+            12000,
+            `Stage version manifest ${versionDocId}`,
+            'FIRESTORE_WRITE_TIMEOUT'
+          );
+
+          for (let i = 0; i < preparedSectionPayloads.length; i += 1) {
+            if (testHooks?.failAfterSectionIndex !== undefined && i >= testHooks.failAfterSectionIndex) {
+              throw new Error(`Simulated section write failure at section index ${i} (${preparedSectionPayloads[i].doc.sectionId})`);
+            }
+            const secPayload = preparedSectionPayloads[i].doc;
+            const secRef = doc(firestoreDb, 'quotations', targetQuoteId, 'versions', versionDocId, 'sections', secPayload.sectionId);
+            let wrote = false;
+            let lastErr: any = null;
+            for (let attempt = 1; attempt <= 2 && !wrote; attempt += 1) {
+              try {
+                await withBoundedTimeout(
+                  setDoc(secRef, secPayload),
+                  12000,
+                  `Write split section ${secPayload.sectionId}`,
+                  'FIRESTORE_WRITE_TIMEOUT'
+                );
+                wrote = true;
+              } catch (err) {
+                lastErr = err;
+                if (attempt === 1) await new Promise(r => setTimeout(r, 150));
+              }
+            }
+            if (!wrote) {
+              throw lastErr || new Error(`Failed writing section ${secPayload.sectionId}`);
+            }
+            stagedSectionWrites.push(secPayload);
+          }
+
+          // Real Firestore Readback Verification BEFORE setting manifestStatus = COMMITTED
+          const readBackSnap = await withBoundedTimeout(
+            getDocs(collection(firestoreDb, 'quotations', targetQuoteId, 'versions', versionDocId, 'sections')),
+            12000,
+            `Verify readback of ${versionDocId} sections`,
+            'FIRESTORE_VERIFY_TIMEOUT'
+          );
+          const expectedIds = new Set(preparedSectionPayloads.map(p => p.doc.sectionId));
+          const verifiedReadBack = readBackSnap.docs
+            .map(d => d.data() as QuotationVersionSectionDocument)
+            .filter(d => d && expectedIds.has(d.sectionId));
+          if (verifiedReadBack.length !== preparedSectionPayloads.length) {
+            throw new Error(
+              `Firestore readback verification failed: persisted ${verifiedReadBack.length} of ${preparedSectionPayloads.length} expected sections.`
+            );
+          }
+          stagedSectionWrites = verifiedReadBack;
+        } else {
+          // Offline / test runtime executes exact same staged failure & section-count verification
+          for (let i = 0; i < preparedSectionPayloads.length; i += 1) {
+            if (testHooks?.failAfterSectionIndex !== undefined && i >= testHooks.failAfterSectionIndex) {
+              throw new Error(`Simulated section write failure at section index ${i} (${preparedSectionPayloads[i].doc.sectionId})`);
+            }
+            stagedSectionWrites.push(preparedSectionPayloads[i].doc);
+          }
+        }
+
+        // Completeness & round-trip integrity check BEFORE committing
+        if (stagedSectionWrites.length !== preparedSectionPayloads.length) {
+          throw new Error(
+            `Section write verification failed: wrote ${stagedSectionWrites.length} of ${preparedSectionPayloads.length} sections.`
+          );
+        }
+
+        const committedAt = new Date().toISOString();
+        committedManifestFinal = {
+          ...stagedManifest,
+          manifestStatus: 'COMMITTED',
+          committedAt,
+          isLatest: true,
+          updatedAt: committedAt
+        };
+        reconstructQuotationVersionFromSections(committedManifestFinal, stagedSectionWrites, {
+          verifyIntegrity: true
+        });
+
+        // Critical Backfill Safeguard: Before compacting `quotations/{targetQuoteId}` (`versionHistory: []`),
+        // ensure every legacy prior version (e.g. embedded v1..v3 or prior SINGLE_DOC_V1) is stored & round-trip verified as SPLIT_SECTIONS_V2.
+        await this.backfillPriorLegacyVersionsToSplitStorageAsync({
+          quoteId: targetQuoteId,
+          masterQuote: persistedMasterQuote,
+          priorVersions: mergedPriorVersions,
+          alreadyCommittedSplitNums: remoteCommittedSplitNums,
+          user,
+          userRole,
+          maxDocBytes,
+          useFirestoreTx,
+          persistenceAdapter: testHooks?.persistenceAdapter
+        });
+
+        if (useFirestoreTx) {
+          const versionRef = doc(firestoreDb, 'quotations', targetQuoteId, 'versions', versionDocId);
+          const quoteRef = doc(firestoreDb, 'quotations', targetQuoteId);
+          await withBoundedTimeout(
+            setDoc(
+              versionRef,
+              cleanForFirestore({
+                manifestStatus: 'COMMITTED',
+                committedAt,
+                isLatest: true,
+                updatedAt: committedAt
+              }),
+              { merge: true }
+            ),
+            12000,
+            `Commit version manifest ${versionDocId}`,
+            'FIRESTORE_COMMIT_TIMEOUT'
+          );
+          await withBoundedTimeout(
+            setDoc(quoteRef, compactedMasterPayload, { merge: true }),
+            12000,
+            `Update master quotation pointer ${targetQuoteId}`,
+            'FIRESTORE_COMMIT_TIMEOUT'
+          );
+        }
+      } catch (stageErr: any) {
+        const failReason = stageErr?.message || 'Staged split-document save aborted.';
+        const failedAt = new Date().toISOString();
+        const failedManifest: QuoteVersionRecord = {
+          ...stagedManifest,
+          manifestStatus: 'FAILED',
+          failureReason: failReason,
+          isLatest: false,
+          updatedAt: failedAt
+        };
+        this.memorySplitVersionManifests.set(versionDocId, failedManifest);
+        if (useFirestoreTx) {
+          try {
+            const versionRef = doc(firestoreDb, 'quotations', targetQuoteId, 'versions', versionDocId);
+            await withBoundedTimeout(
+              setDoc(
+                versionRef,
+                cleanForFirestore({
+                  manifestStatus: 'FAILED',
+                  failureReason: failReason,
+                  isLatest: false,
+                  updatedAt: failedAt
+                }),
+                { merge: true }
+              ),
+              5000,
+              `Mark ${versionDocId} FAILED`
+            );
+          } catch {
+            // Best-effort FAILED status transition
+          }
+        }
+        throw stageErr;
+      }
+
+      // Step 6: Commit succeeded — update local caches & split version store ONLY AFTER DB commit
+      this.memorySplitVersionManifests.set(versionDocId, committedManifestFinal);
+      this.memorySplitVersionSections.set(versionDocId, stagedSectionWrites);
+      this.lastCompactedFirestoreMasterByQuoteId.set(targetQuoteId, {
+        doc: compactedMasterPayload,
+        estimatedBytes: compactedMasterEstBytes
+      });
+
+      const finalizedFullVersion: QuoteVersionRecord = {
+        ...fullVersionRecord,
+        storageFormat: 'SPLIT_SECTIONS_V2',
+        schemaVersion: committedManifestFinal.schemaVersion,
+        manifestStatus: 'COMMITTED',
+        committedAt: committedManifestFinal.committedAt,
+        sections: committedManifestFinal.sections,
+        sectionIds: committedManifestFinal.sectionIds,
+        sectionCount: committedManifestFinal.sectionCount,
+        chunkCount: committedManifestFinal.chunkCount,
+        sectionsIntegrityHash: committedManifestFinal.sectionsIntegrityHash,
+        totalReconstructedBytes: committedManifestFinal.totalReconstructedBytes,
+        hasHydratedSections: true
+      };
+      this.hydratedSplitVersionCache.set(versionDocId, finalizedFullVersion);
+
+      const finalizedVersionHistory = [
+        finalizedFullVersion,
+        ...(persistedMasterQuote.versionHistory || []).filter(v => (v.versionNumber || v.version) !== nextVersion)
+      ].sort((a, b) => (b.versionNumber || b.version || 0) - (a.versionNumber || a.version || 0));
+
+      persistedMasterQuote.versionHistory = finalizedVersionHistory;
+      persistedMasterQuote.versionSummaries = finalizedVersionHistory.map(v => buildCompactVersionSummary(v));
+
+      const updatedQuotesList = [...allQuotes];
+      if (existingIdx >= 0) {
+        updatedQuotesList[existingIdx] = persistedMasterQuote;
+      } else {
+        updatedQuotesList.unshift(persistedMasterQuote);
+      }
+      this.setItem('saved_quotes', updatedQuotesList);
+      this.setItem(`quote_versions_${targetQuoteId}`, finalizedVersionHistory);
+
+      // Customer & CRM Lead linking ONLY after save confirmation
+      if (persistedMasterQuote.clientEmail || (persistedMasterQuote.clientName && persistedMasterQuote.clientName !== 'Client Name Pending')) {
+        const customerRecord = this.findOrCreateCustomerRecord({
+          agentId: createdByUserType === 'B2B_AGENT' ? (user?.id || persistedMasterQuote.agentId) : undefined,
+          name: persistedMasterQuote.clientName,
+          email: persistedMasterQuote.clientEmail,
+          phone: persistedMasterQuote.clientPhone,
+          company: persistedMasterQuote.clientCompany || user?.agencyName,
+          source: 'B2B_QUOTE_CREATION',
+          notes: typeof persistedMasterQuote.agentNotes === 'string' ? persistedMasterQuote.agentNotes : undefined,
+          isQuote: true
+        });
+        if (customerRecord) {
+          persistedMasterQuote.customerId = customerRecord.id;
+        }
+      }
+
+      const requestedLeadRef = (persistedMasterQuote.leadId ?? persistedMasterQuote.linkedLeadId ?? '').trim();
+      if (requestedLeadRef) {
+        const allLeads = this.getLeads();
+        const targetLead = allLeads.find(l => l.id === requestedLeadRef || l.leadNumber === requestedLeadRef);
+        if (targetLead) {
+          const mappedProducts: LeadProductItem[] = (persistedMasterQuote.items || []).map((item, idx) => ({
+            id: `lp-${persistedMasterQuote.id}-${idx}`,
+            productId: item.product?.id || `prod-${idx}`,
+            productName: item.product?.name || 'Custom Travel Service',
+            category: (item.product?.productType as any) || 'SERVICE',
+            destinationName: item.product?.destinationName || persistedMasterQuote.destination || 'Japan',
+            city: item.product?.city,
+            travelDate: item.travelDate,
+            quantity: 1,
+            adults: item.pax?.adults || 2,
+            children: item.pax?.children || 0,
+            infants: item.pax?.infants || 0,
+            unitNetCost: (item.calculation as any)?.totalNetCost || 0,
+            unitSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
+            totalNetCost: (item.calculation as any)?.totalNetCost || 0,
+            totalSellingPrice: item.calculation?.finalTotalSellingPrice || (item.calculation as any)?.sellingPriceFinal || 0,
+            marginPercent: (item.calculation as any)?.markupRate ? Math.round((item.calculation as any).markupRate * 100) : 15,
+            currency: persistedMasterQuote.currency || 'USD',
+            status: 'CONFIRMED',
+            selectedAddonNames: item.selectedAddonIds || []
+          }));
+          const quoteSnapshot: LeadQuoteSnapshot = {
+            quoteId: persistedMasterQuote.id,
+            quoteNumber: persistedMasterQuote.quoteNumber,
+            version: nextVersion,
+            quoteDate: timestamp,
+            status: persistedMasterQuote.status,
+            totalNetCost: persistedMasterQuote.totalNetCost || 0,
+            marginAmount: persistedMasterQuote.internalProfit ?? persistedMasterQuote.totalMargin ?? 0,
+            marginPercent: persistedMasterQuote.overallMarkupPercent || 15,
+            taxAmount: persistedMasterQuote.authoritativeSnapshot?.pricing?.taxesTotal ?? persistedMasterQuote.totalTaxes ?? 0,
+            feesAmount: persistedMasterQuote.authoritativeSnapshot?.pricing?.serviceFeesTotal ?? persistedMasterQuote.pricingSnapshot?.serviceFeesTotal ?? 0,
+            finalSellingPrice:
+              persistedMasterQuote.authoritativeSnapshot?.pricing?.finalCustomerSellingPrice ??
+              persistedMasterQuote.finalCustomerSellingPrice ??
+              persistedMasterQuote.totalSellingPrice ??
+              0,
+            currency: persistedMasterQuote.currency,
+            itemsCount: (persistedMasterQuote.items || []).length
+          };
+          const quoteVersions: LeadQuoteVersion[] = finalizedVersionHistory.map(v => ({
+            version: v.version,
+            createdAt: v.updatedAt,
+            createdBy: v.updatedBy,
+            createdByUserType: (v.savedByRole as any) || 'B2B_AGENT',
+            totalItems: (v.items || persistedMasterQuote.items || []).length,
+            totalNetCost: v.totalNetCost || 0,
+            totalSellingPrice: v.totalSellingPrice,
+            marginPercent: v.marginPercent || persistedMasterQuote.overallMarkupPercent || 15,
+            taxTotal: persistedMasterQuote.totalTaxes || 0,
+            currency: v.currency || persistedMasterQuote.currency,
+            changesSummary: v.changesSummary
+          }));
+          const linkedLead = this.captureLeadFromSource({
+            leadId: targetLead.id,
+            contactName: persistedMasterQuote.clientName || targetLead.contactName,
+            email: persistedMasterQuote.clientEmail || targetLead.email,
+            phone: persistedMasterQuote.clientPhone || targetLead.phone,
+            agencyName: persistedMasterQuote.clientCompany || targetLead.agencyName,
+            companyName: persistedMasterQuote.clientCompany || targetLead.companyName,
+            userId: resolvedClientUserId || targetLead.userId || user?.id,
+            userType: createdByUserType === 'B2B_AGENT' ? 'B2B_AGENT' : 'BUYER',
+            b2bAgentId: createdByUserType === 'B2B_AGENT' ? user?.id : targetLead.b2bAgentId,
+            source: 'QUOTATION_SAVED',
+            destinationName: persistedMasterQuote.destination || targetLead.destinationName,
+            travelDates: persistedMasterQuote.travelStartDate && persistedMasterQuote.travelEndDate ? `${persistedMasterQuote.travelStartDate} to ${persistedMasterQuote.travelEndDate}` : targetLead.travelDates,
+            travelStartDate: persistedMasterQuote.travelStartDate || targetLead.travelStartDate,
+            travelEndDate: persistedMasterQuote.travelEndDate || targetLead.travelEndDate,
+            paxAdults: persistedMasterQuote.adultsCount || persistedMasterQuote.totalPax || targetLead.paxAdults || 2,
+            paxChildren: persistedMasterQuote.childrenCount !== undefined ? persistedMasterQuote.childrenCount : (targetLead.paxChildren || 0),
+            travelRequirements: (typeof persistedMasterQuote.agentNotes === 'string' ? persistedMasterQuote.agentNotes : '') || persistedMasterQuote.title || targetLead.travelRequirements || 'Quotation customized for client',
+            estimatedBudget: persistedMasterQuote.totalSellingPrice,
+            currency: persistedMasterQuote.currency,
+            quoteId: persistedMasterQuote.id,
+            quoteNumber: persistedMasterQuote.quoteNumber,
+            quoteVersion: nextVersion,
+            quoteSnapshot,
+            quoteVersions,
+            requestedProducts: mappedProducts
+          }, user);
+          persistedMasterQuote.leadId = linkedLead.id;
+          persistedMasterQuote.linkedLeadId = linkedLead.id;
+          (persistedMasterQuote as any).leadNumber = linkedLead.leadNumber;
+        }
+      }
+
+      this.logAudit(
+        user,
+        existingQuote ? 'SETTINGS_UPDATED' : 'BOOKING_CREATED',
+        'Quotation',
+        persistedMasterQuote.id,
+        `EXPLICIT_SAVE_DRAFT quote ${persistedMasterQuote.quoteNumber} v${nextVersion} (${persistedMasterQuote.title})`
+      );
+
+      this.quotationSaveListeners.forEach(listener => {
+        try {
+          listener(persistedMasterQuote, user, !existingQuote, existingQuote ? 'SAVED' : 'CREATED');
+        } catch {}
+      });
+
+      const returnedQuote = !canUserViewInternalCostBreakdown(user)
+        ? sanitizeQuoteForAgent(persistedMasterQuote)
+        : persistedMasterQuote;
+      const returnedVersion = !canUserViewInternalCostBreakdown(user)
+        ? sanitizeQuoteVersionForAgent(finalizedFullVersion)
+        : finalizedFullVersion;
+
+      const finalResult = {
+        quote: returnedQuote,
+        versionRecord: returnedVersion,
+        versionNumber: nextVersion,
+        deduplicated: false
+      };
+      this.explicitQuoteSaveCache.set(reqKey, { timestamp: Date.now(), result: finalResult });
+      return finalResult;
+    } finally {
+      releaseLock();
+      if (this.explicitQuoteSaveLocks.get(targetQuoteId) === chainedLock) {
+        this.explicitQuoteSaveLocks.delete(targetQuoteId);
+      }
+    }
   }
 
   public deleteQuote(quoteId: string, user: User | null): boolean {
@@ -9160,9 +11528,11 @@ export class AppDatabase {
     if (idx < 0) return null;
 
     const timestamp = new Date().toISOString();
+    const isFinalStatus = (status as string) === 'ISSUED' || status === 'SENT' || status === 'APPROVED' || status === 'ACCEPTED' || status === 'CONVERTED';
     quotes[idx] = {
       ...quotes[idx],
       status,
+      ...(isFinalStatus && quotes[idx].commercialTermsSnapshot ? { termsStatus: 'QUOTATION_FINALISED' as const } : {}),
       updatedAt: timestamp,
       lastActivityAt: timestamp,
       activityLog: [
@@ -9267,10 +11637,50 @@ export class AppDatabase {
     const bookingRef = `TUB-BK-${new Date().getFullYear()}-${randomRef}`;
     const newBookingId = `bk-${Date.now()}-${randomRef}`;
 
+    const rawBookAdminVal = quote.adminManualMarginValue ?? (quote as any).admin_manual_margin_value;
+    const hasBookAdmin = rawBookAdminVal !== undefined || quote.adminMarginMode !== undefined || (quote as any).admin_margin_mode !== undefined;
+    const bookAdminMode = ((quote.adminMarginMode ?? (quote as any).admin_margin_mode) === 'REPLACE') ? 'REPLACE' : 'ADD';
+    const bookAdminType = ((quote.adminManualMarginType ?? (quote as any).admin_manual_margin_type) === 'FIXED') ? 'FIXED' : 'PERCENTAGE';
+    const bookAdminVal = Math.max(0, Number(rawBookAdminVal || 0));
+    const bookVer = Number(quote.version || quote.latestVersion || 0);
+    const bookAuthSnap = quote.authoritativeSnapshot;
+    const bookAuthVer = Number(bookAuthSnap?.versionNumber || 0);
+    const bookAuthAdminMatches =
+      !hasBookAdmin ||
+      (
+        (bookAuthSnap?.pricing?.adminMarginMode ?? 'ADD') === bookAdminMode &&
+        (bookAuthSnap?.pricing?.adminManualMarginType ?? 'PERCENTAGE') === bookAdminType &&
+        Math.abs(Number(bookAuthSnap?.pricing?.adminManualMarginValue ?? 0) - bookAdminVal) < 0.0001
+      );
+    const authPricing =
+      bookAuthSnap?.pricing &&
+      bookAuthSnap.pricing.currency === quote.currency &&
+      (!bookVer || !bookAuthVer || bookVer === bookAuthVer) &&
+      (!quote.activeOptionId || !bookAuthSnap.selectedOptionId || bookAuthSnap.selectedOptionId === quote.activeOptionId) &&
+      bookAuthAdminMatches &&
+      (bookAuthSnap.pricing.agentMarginType || 'PERCENTAGE') === (quote.agentMarginType || 'PERCENTAGE') &&
+      Math.abs(Number(bookAuthSnap.pricing.agentMarginValue ?? 0) - Number(quote.agentMarginValue ?? quote.overallMarkupPercent ?? 0)) < 0.0001 &&
+      Math.abs(Number(bookAuthSnap.pricing.overallDiscountPercent ?? 0) - Number(quote.overallDiscountPercent ?? 0)) < 0.0001
+        ? bookAuthSnap.pricing
+        : undefined;
     const centralBookingTotals = calculateQuoteTotal(quote, quote.activeOptionId, undefined, quote.currency);
-    const effectiveTotalAmount = centralBookingTotals.finalCustomerSellingPrice > 0
-      ? centralBookingTotals.finalCustomerSellingPrice
-      : (quote.finalCustomerSellingPrice || quote.final_customer_selling_price || quote.totalSellingPrice);
+    const effectiveTotalAmount = authPricing
+      ? authPricing.finalCustomerSellingPrice
+      : centralBookingTotals.finalCustomerSellingPrice > 0
+        ? centralBookingTotals.finalCustomerSellingPrice
+        : (quote.finalCustomerSellingPrice || quote.final_customer_selling_price || quote.totalSellingPrice);
+    const effectiveHotelTotal = authPricing
+      ? authPricing.hotelAccommodationTotal
+      : (quote.hotelAccommodationTotal ?? centralBookingTotals.hotelTotalSellingPrice ?? 0);
+    const effectiveLandTotal = authPricing
+      ? authPricing.landPartTotal
+      : (quote.landPartTotal ?? centralBookingTotals.landPartTotalSellingPrice ?? effectiveTotalAmount);
+    const effectiveSurchargesTotal = authPricing
+      ? authPricing.surchargesTotal
+      : (quote.surchargesTotal ?? quote.pricingSnapshot?.surchargesTotal ?? 0);
+    const effectiveAppliedSurcharges = authPricing
+      ? authPricing.appliedSurcharges
+      : (quote.appliedSurcharges ?? quote.pricingSnapshot?.appliedSurcharges ?? []);
 
     const isAgent = user?.role === 'B2B_AGENT';
     const submittedByUserId = user?.id || quote.agentId || quote.createdBy || 'usr-b2b';
@@ -9307,7 +11717,7 @@ export class AppDatabase {
     const internalNettCost = authoritativeNetCost;
     const supplierCost = quote.supplierCost ?? authoritativeNetCost;
     const internalMarkup = quote.internalMarkup ?? 0;
-    const agentMarkup = quote.agentMarginAmount ?? 0;
+    const agentMarkup = authPricing ? authPricing.agentMarginAmount : (quote.agentMarginAmount ?? 0);
     const internalProfit = Math.max(0, effectiveTotalAmount - authoritativeNetCost);
 
     const newBookingDraft: Booking = {
@@ -9317,6 +11727,10 @@ export class AppDatabase {
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
       linkedQuoteId: quote.id,
+      sourceQuoteId: quote.id,
+      sourceQuoteVersionId: `${quote.id}-v${quote.snapshotVersion || quote.version || 1}`,
+      sourceSnapshotVersion: quote.snapshotVersion || quote.authoritativeSnapshot?.versionNumber || quote.version || 1,
+      sourceSnapshotHash: quote.snapshotHash || quote.authoritativeSnapshot?.snapshotHash,
       linkedLeadId: quote.leadId,
       leadId: quote.leadId,
       customerId: customerRecord?.id || quote.customerId,
@@ -9375,11 +11789,19 @@ export class AppDatabase {
       },
       confirmationNotice: 'Your booking has been submitted and ground allocation is underway with a 24-48h confirmation SLA.',
       pricingSnapshot: quote.pricingSnapshot || quote.pricing_snapshot,
-      baseFinalSellingPrice: quote.baseFinalSellingPrice || quote.base_final_selling_price,
-      agentMarginType: quote.agentMarginType || quote.agent_margin_type,
-      agentMarginValue: quote.agentMarginValue || quote.agent_margin_value,
-      agentMarginAmount: quote.agentMarginAmount || quote.agent_margin_amount,
+      baseFinalSellingPrice: authPricing ? authPricing.baseFinalSellingPrice : (quote.baseFinalSellingPrice || quote.base_final_selling_price),
+      agentMarginType: authPricing ? authPricing.agentMarginType : (quote.agentMarginType || quote.agent_margin_type),
+      agentMarginValue: authPricing ? authPricing.agentMarginValue : (quote.agentMarginValue || quote.agent_margin_value),
+      agentMarginAmount: agentMarkup,
       finalCustomerSellingPrice: effectiveTotalAmount,
+      hotelAccommodationTotal: effectiveHotelTotal,
+      landPartTotal: effectiveLandTotal,
+      surchargesTotal: effectiveSurchargesTotal,
+      appliedSurcharges: effectiveAppliedSurcharges,
+      brandingMode: quote.brandingMode,
+      brandingSnapshot: quote.brandingSnapshot,
+      commercialTermsSnapshot: quote.commercialTermsSnapshot,
+      termsAndConditions: quote.termsAndConditions,
       notificationEmailsSent: [
         {
           recipient: quote.clientEmail || 'client@theunbound.in',
@@ -9407,6 +11829,14 @@ export class AppDatabase {
           destinationName: item.product?.destinationName || quote.destination || 'Japan',
           city: item.product?.city || 'Tokyo',
           category: item.product?.category || item.product?.productType || 'Activity',
+          productType: item.product?.productType,
+          service_type: (item as any).service_type,
+          itemType: (item as any).itemType,
+          hotelId: (item as any).hotelId || (item.product as any)?.hotelId,
+          isHotel: Boolean((item as any).isHotel || (item as any).isManualHotel || item.product?.isManualHotel),
+          isManualHotel: Boolean((item as any).isManualHotel || item.product?.isManualHotel),
+          manualHotelDetails: (item as any).manualHotelDetails,
+          accommodationType: (item as any).accommodationType || item.product?.accommodationType,
           travelDate: item.travelDate || quote.travelStartDate || new Date().toISOString().split('T')[0],
           adults: item.pax?.adults ?? 2,
           children: item.pax?.children ?? 0,
@@ -9418,7 +11848,11 @@ export class AppDatabase {
           totalPrice: itemFinalSellingPrice,
           currency: quote.currency || 'USD',
           supplierStatus: 'PENDING_DISPATCH' as const,
-          supplierNotes: item.notes
+          supplierNotes: item.notes,
+          inclusions: item.contentSnapshot?.inclusions || item.product?.inclusions,
+          exclusions: item.contentSnapshot?.exclusions || item.product?.exclusions,
+          visaSnapshot: item.visaSnapshot,
+          contentSnapshot: item.contentSnapshot
         };
       })
     };
@@ -9529,6 +11963,8 @@ export class AppDatabase {
       }
     });
 
+    this.dispatchCashbackHook(newBookingDraft, 'BOOKING_CREATED', user);
+
     return (user?.role === 'B2B_AGENT' || user?.role === 'BUYER')
       ? this.sanitizeBookingForExternalUser(newBookingDraft)
       : newBookingDraft;
@@ -9538,7 +11974,7 @@ export class AppDatabase {
   // B2B READY-MADE PACKAGES MANAGEMENT
   // ==========================================
   public getPackages(user?: User | null): B2BPackage[] {
-    const raw = this.getItem<B2BPackage[]>('b2b_packages', envService.allowDemoData() ? INITIAL_B2B_PACKAGES : []);
+    const raw = this.getItem<B2BPackage[]>('b2b_packages', this.getSeedBundle()?.INITIAL_B2B_PACKAGES || []);
     const deletedSet = this.getDeletedEntityIds();
     const isRestricted = user && (user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'BUYER' || !canUserViewInternalCostBreakdown(user));
     return raw
@@ -10191,6 +12627,11 @@ export class AppDatabase {
       currency: Booking['currency'];
       totalAmount: number;
       totalNetCost?: number;
+      hotelAccommodationTotal?: number;
+      landPartTotal?: number;
+      pricingSnapshot?: PricingSnapshot;
+      sourceSnapshotVersion?: number;
+      sourceSnapshotHash?: string;
       travelStartDate: string;
       travelEndDate: string;
       agentId?: string;
@@ -10230,6 +12671,9 @@ export class AppDatabase {
     let agentMarkup = 0;
     let internalProfit = 0;
     let supplierCost = 0;
+    let quotePricingSnapshot: PricingSnapshot | undefined = data.pricingSnapshot;
+    let quoteHotelTotal: number | undefined = data.hotelAccommodationTotal;
+    let quoteLandTotal: number | undefined = data.landPartTotal;
 
     if (data.quoteId) {
       const rawQuote = this.getRawQuoteById(data.quoteId);
@@ -10239,11 +12683,32 @@ export class AppDatabase {
         agentMarkup = rawQuote.agentMarkup || 0;
         internalProfit = Math.max(0, (data.totalAmount || 0) - (internalNettCost || 0));
         supplierCost = rawQuote.supplierCost || internalNettCost;
+        quotePricingSnapshot = quotePricingSnapshot ?? rawQuote.pricingSnapshot ?? rawQuote.pricing_snapshot;
+        quoteHotelTotal = quoteHotelTotal ?? rawQuote.hotelAccommodationTotal;
+        quoteLandTotal = quoteLandTotal ?? rawQuote.landPartTotal;
       }
     } else {
       internalProfit = Math.max(0, (data.totalAmount || 0) - (internalNettCost || 0));
       supplierCost = internalNettCost;
     }
+
+    const derivedSplit =
+      quoteLandTotal === undefined && quoteHotelTotal === undefined
+        ? calculateEligibleBookingComponents({
+            items: data.items,
+            totalAmount: data.totalAmount,
+            finalCustomerSellingPrice: data.totalAmount,
+            pricingSnapshot: quotePricingSnapshot
+          })
+        : null;
+    const resolvedHotelTotal =
+      quoteHotelTotal !== undefined
+        ? quoteHotelTotal
+        : (derivedSplit?.verificationStatus === 'VERIFIED' ? derivedSplit.hotelAccommodationTotal : undefined);
+    const resolvedLandTotal =
+      quoteLandTotal !== undefined
+        ? quoteLandTotal
+        : (derivedSplit?.verificationStatus === 'VERIFIED' ? derivedSplit.landPartTotal : undefined);
 
     const randomRef = Math.floor(1000 + Math.random() * 9000);
     const bookingReference = `TUB-BK-2026-${randomRef}`;
@@ -10416,6 +12881,12 @@ export class AppDatabase {
       items: data.items,
       currency: data.currency,
       totalAmount: data.totalAmount,
+      finalCustomerSellingPrice: data.totalAmount,
+      hotelAccommodationTotal: resolvedHotelTotal,
+      landPartTotal: resolvedLandTotal,
+      pricingSnapshot: quotePricingSnapshot,
+      sourceSnapshotVersion: data.sourceSnapshotVersion,
+      sourceSnapshotHash: data.sourceSnapshotHash,
       totalNetCost: internalNettCost,
       internalNettCost,
       supplierCost,
@@ -10616,6 +13087,8 @@ export class AppDatabase {
       console.warn('Admin activity log for booking create:', e);
     }
 
+    this.dispatchCashbackHook(newBookingDraft, 'BOOKING_CREATED', user);
+
     return (user.role === 'B2B_AGENT' || user.role === 'BUYER')
       ? this.sanitizeBookingForExternalUser(newBookingDraft)
       : newBookingDraft;
@@ -10712,6 +13185,66 @@ export class AppDatabase {
       }
     });
 
+    this.dispatchCashbackHook(
+      b,
+      status === 'CANCELLED' ? 'BOOKING_CANCELLED' : 'BOOKING_STATUS_CHANGED',
+      user,
+      { reason }
+    );
+
+    return b;
+  }
+
+  public recordBookingRefund(
+    bookingId: string,
+    refundAmount: number,
+    isFullRefund: boolean,
+    reason: string,
+    user: User | null,
+    options?: {
+      affectedComponent?: 'LAND' | 'HOTEL' | 'MIXED' | 'AUTO';
+      landRefundAmount?: number;
+      hotelRefundAmount?: number;
+    }
+  ): Booking | null {
+    if (user && isExternalUser(user)) {
+      throw new Error('Unauthorized: Refund recording is restricted to Finance and Admin staff.');
+    }
+    const all = this.getAllBookings();
+    const index = all.findIndex((b) => b.id === bookingId || b.bookingReference === bookingId);
+    if (index === -1) return null;
+
+    const b = all[index];
+    const timestamp = new Date().toISOString();
+    b.paymentStatus = isFullRefund ? 'REFUNDED' : 'PARTIALLY_PAID';
+    b.updatedAt = timestamp;
+    if (!b.timeline) b.timeline = [];
+    b.timeline.unshift({
+      id: `tl-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      title: isFullRefund ? 'Full Booking Refund Recorded' : 'Partial Booking Refund Recorded',
+      description: `${b.currency} ${Math.round(refundAmount * 100) / 100} refunded. Reason: ${reason || 'Commercial adjustment'}.`,
+      timestamp,
+      type: 'PAYMENT',
+      actorName: user?.name || 'Finance Team',
+      actorRole: user?.role || 'ADMIN'
+    });
+    this.setItem('bookings', all);
+    this.syncFirestoreDoc('bookings', b.id, b);
+    this.logAudit(
+      user,
+      'PAYMENT_RECORDED',
+      'Booking',
+      b.id,
+      `Recorded ${isFullRefund ? 'full' : 'partial'} refund of ${b.currency} ${refundAmount} on ${b.bookingReference}: ${reason}`
+    );
+    this.dispatchCashbackHook(b, 'BOOKING_REFUNDED', user, {
+      refundAmount,
+      isFullRefund,
+      reason,
+      affectedComponent: options?.affectedComponent,
+      landRefundAmount: options?.landRefundAmount,
+      hotelRefundAmount: options?.hotelRefundAmount
+    });
     return b;
   }
 
@@ -10814,6 +13347,12 @@ export class AppDatabase {
     }
     this.syncFirestoreDoc('bookings', updatedBooking.id, updatedBooking);
     this.setItem('bookings', all);
+
+    this.dispatchCashbackHook(
+      updatedBooking,
+      updatedBooking.status === 'CANCELLED' ? 'BOOKING_CANCELLED' : 'BOOKING_UPDATED',
+      user
+    );
 
     // Auto-trigger SLA & Google Calendar dispatch listeners
     const isNew = index < 0;
@@ -14001,20 +16540,28 @@ export class AppDatabase {
 
     // Map items from quote to booking items
     const bookingItems: BookingItem[] = (quote.items || []).map((item, idx) => ({
-      id: `bi-${Date.now()}-${idx}`,
+      id: item.id || `bi-${Date.now()}-${idx}`,
       productId: item.productId || item.product?.id || `prod-${idx}`,
       productName: item.product?.name || item.customTitle || item.title || 'Confirmed Service',
       destination: quote.destination,
       destinationName: quote.destination,
       city: item.product?.city || 'Tokyo',
-      category: (item.product?.productType as any) || 'GROUND_SERVICE',
+      category: item.product?.category || (item.product?.productType as any) || 'GROUND_SERVICE',
+      productType: item.product?.productType,
+      service_type: (item as any).service_type,
+      itemType: (item as any).itemType,
+      hotelId: (item as any).hotelId || (item.product as any)?.hotelId,
+      isHotel: Boolean((item as any).isHotel || (item as any).isManualHotel || item.product?.isManualHotel),
+      isManualHotel: Boolean((item as any).isManualHotel || item.product?.isManualHotel),
+      manualHotelDetails: (item as any).manualHotelDetails,
+      accommodationType: (item as any).accommodationType || item.product?.accommodationType,
       travelDate: item.travelDate || quote.travelStartDate || new Date().toISOString().split('T')[0],
       adults: item.pax?.adults || quote.adultsCount || 2,
       children: item.pax?.children || quote.childrenCount || 0,
       infants: item.pax?.infants || quote.infantsCount || 0,
       totalPax: (item.pax?.adults || 2) + (item.pax?.children || 0),
-      unitSellingPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
-      totalPrice: item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
+      unitSellingPrice: item.finalCustomerSellingPrice || item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
+      totalPrice: item.finalCustomerSellingPrice || item.calculation?.finalTotalSellingPrice || item.calculation?.sellingPriceFinal || 0,
       currency: quote.currency || 'USD',
       supplierConfirmationStatus: 'Confirmed',
       operationalStatus: 'Processing',
@@ -14024,16 +16571,29 @@ export class AppDatabase {
       meetingPoint: options?.pickupLocation || 'Hotel Lobby / Airport Arrival Terminal'
     }));
 
+    const bookingTotals = calculateQuoteTotal(quote, quote.activeOptionId, undefined, quote.currency);
+    const authoritativeBookingAmount = bookingTotals.finalCustomerSellingPrice > 0
+      ? bookingTotals.finalCustomerSellingPrice
+      : (quote.authoritativeSnapshot?.pricing?.finalCustomerSellingPrice ?? quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0);
+
     const newBooking = this.createBooking({
       quoteId: quote.id,
       quoteNumber: quote.quoteNumber,
-      sourceQuoteVersionId: quote.versionHistory && quote.versionHistory.length > 0 ? quote.versionHistory[quote.versionHistory.length - 1].id : `${quote.id}-v${quote.versionNumber || 1}`,
+      sourceQuoteVersionId:
+        quote.latestVersionId ||
+        (quote.versionHistory && quote.versionHistory.length > 0 ? quote.versionHistory[0].id : undefined) ||
+        `${quote.id}__v${quote.latestVersion || quote.versionNumber || quote.version || 1}`,
       leadId: quote.leadId || quote.linkedLeadId,
       destinationName: quote.destination,
       travelStartDate: quote.travelStartDate || new Date().toISOString().split('T')[0],
       travelEndDate: quote.travelEndDate || new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
       currency: quote.currency || 'USD',
-      totalAmount: quote.totalSellingPrice || 0,
+      totalAmount: authoritativeBookingAmount,
+      hotelAccommodationTotal: bookingTotals.hotelTotalSellingPrice,
+      landPartTotal: bookingTotals.landPartTotalSellingPrice,
+      pricingSnapshot: quote.pricingSnapshot || quote.pricing_snapshot,
+      sourceSnapshotVersion: quote.snapshotVersion ?? quote.authoritativeSnapshot?.versionNumber,
+      sourceSnapshotHash: quote.snapshotHash ?? quote.authoritativeSnapshot?.snapshotHash,
       customer: {
         leadTravelerName: options?.leadTravelerName || quote.clientName || 'Lead Traveler',
         bookerName: quote.clientName,
@@ -14145,136 +16705,861 @@ export class AppDatabase {
     );
   }
 
-  public getQuoteVersionsForLead(leadId: string): QuoteVersionRecord[] {
-    const quotes = this.getAllSavedQuotes().filter(q => 
-      q.leadId === leadId || 
-      q.linkedLeadId === leadId
-    );
-    const versionMap = new Map<string, QuoteVersionRecord>();
-
-    // 1. Process quote documents (authoritative concrete records)
-    quotes.forEach(q => {
-      const verNum = q.version || 1;
-      const key = `${q.quoteNumber?.split('-v')[0] || q.id}-v${verNum}`;
-      const record: QuoteVersionRecord = {
-        id: q.id,
-        version: verNum,
-        versionNumber: verNum,
-        quoteId: q.id,
-        leadId: q.leadId || leadId,
-        createdAt: q.createdAt,
-        updatedAt: q.updatedAt || q.createdAt,
-        updatedBy: q.createdByName || q.agentName || 'Travel Consultant',
-        createdByName: q.createdByName || q.agentName,
-        status: q.status,
-        changesSummary: q.parentQuoteId ? `Version ${verNum} branched from parent quotation` : `Authoritative proposal version ${verNum}`,
-        totalSellingPrice: q.finalCustomerSellingPrice || q.totalSellingPrice || 0,
-        currency: q.currency || 'USD',
-        totalNetCost: q.totalNetCost || q.internalNettCost || 0,
-        marginPercent: q.overallMarkupPercent || 15,
-        marginAmount: q.agentMarginAmount || q.totalMargin || 0,
-        items: q.items || [],
-        title: q.title,
-        destination: q.destination,
-        travelStartDate: q.travelStartDate,
-        travelEndDate: q.travelEndDate,
-        totalPax: q.totalPax,
-        adultsCount: q.adultsCount,
-        childrenCount: q.childrenCount,
-        infantsCount: q.infantsCount
-      };
-      versionMap.set(key, record);
-
-      // Also incorporate any embedded version history snapshots not already present
-      if (q.versionHistory && Array.isArray(q.versionHistory)) {
-        q.versionHistory.forEach(v => {
-          const vKey = `${q.quoteNumber?.split('-v')[0] || q.id}-v${v.version}`;
-          if (!versionMap.has(vKey)) {
-            versionMap.set(vKey, {
-              ...v,
-              id: v.id || `vh-${q.id}-v${v.version}`,
-              version: v.version,
-              versionNumber: v.version,
-              quoteId: v.quoteId || q.id,
-              leadId: v.leadId || q.leadId || leadId,
-              createdAt: v.createdAt || v.updatedAt || q.createdAt,
-              updatedAt: v.updatedAt || q.updatedAt,
-              updatedBy: v.updatedBy || q.createdByName || 'Partner Agent',
-              currency: v.currency || q.currency || 'USD',
-              totalSellingPrice: v.totalSellingPrice ?? q.totalSellingPrice ?? 0,
-              totalNetCost: v.totalNetCost ?? q.totalNetCost ?? 0,
-              items: v.items && v.items.length > 0 ? v.items : q.items
-            });
-          }
-        });
+  private async cleanupFailedOrPreparingVersionDocAsync(quoteId: string, versionId: string): Promise<void> {
+    if (!quoteId || !versionId) return;
+    if (typeof window === 'undefined' || !auth.currentUser) return;
+    try {
+      const secSnap = await getDocs(collection(firestoreDb, 'quotations', quoteId, 'versions', versionId, 'sections'));
+      for (const sDoc of secSnap.docs) {
+        await deleteDoc(sDoc.ref).catch(() => undefined);
       }
+      await deleteDoc(doc(firestoreDb, 'quotations', quoteId, 'versions', versionId)).catch(() => undefined);
+    } catch (err) {
+      console.debug(`[DB] cleanupFailedOrPreparingVersionDocAsync note (${versionId}):`, err);
+    }
+  }
+
+  private applyVersionFieldsToMasterQuotation(q: Quotation, verRec: QuoteVersionRecord): Quotation {
+    const resolvedVer = verRec.versionNumber || verRec.version || q.version || 1;
+    const resolvedFinalSelling =
+      verRec.finalCustomerSellingPrice ??
+      verRec.totalSellingPrice ??
+      verRec.authoritativeSnapshot?.pricing?.finalCustomerSellingPrice ??
+      verRec.pricingSnapshot?.finalCustomerSellingPrice ??
+      q.finalCustomerSellingPrice ??
+      q.totalSellingPrice;
+    const resolvedBaseSelling =
+      verRec.theUnboundBaseSellingPrice ??
+      verRec.pricingSnapshot?.theUnboundBaseSellingPrice ??
+      verRec.pricingSnapshot?.baseFinalSellingPrice ??
+      verRec.authoritativeSnapshot?.pricing?.theUnboundBaseSellingPrice ??
+      q.theUnboundBaseSellingPrice;
+    return {
+      ...q,
+      version: resolvedVer,
+      versionNumber: resolvedVer,
+      snapshotVersion: resolvedVer,
+      snapshotHash: verRec.snapshotHash ?? q.snapshotHash,
+      status: (verRec.status as QuoteStatus) ?? q.status,
+      isLocked: (verRec as any).isLocked ?? q.isLocked,
+      currency: verRec.currency ?? q.currency,
+      quotationScope: verRec.quotationScope ?? q.quotationScope,
+      scope: verRec.quotationScope ?? q.scope,
+      items: verRec.items && verRec.items.length > 0 ? verRec.items : q.items,
+      routeHubs: verRec.routeHubs && verRec.routeHubs.length > 0 ? verRec.routeHubs : q.routeHubs,
+      options: verRec.options ?? q.options,
+      activeOptionId: verRec.activeOptionId ?? q.activeOptionId,
+      dayThemes: verRec.dayThemes ?? q.dayThemes,
+      dayDescriptions: verRec.dayDescriptions ?? q.dayDescriptions,
+      dayOverviews: verRec.dayOverviews ?? q.dayOverviews,
+      dayNotes: verRec.dayNotes ?? q.dayNotes,
+      itineraryOverview: verRec.itineraryOverview ?? q.itineraryOverview,
+      inclusions: verRec.inclusions ?? q.inclusions,
+      exclusions: verRec.exclusions ?? q.exclusions,
+      importantInformation: verRec.importantInformation ?? q.importantInformation,
+      cancellationPolicy: verRec.cancellationPolicy ?? q.cancellationPolicy,
+      passengerBreakdown: verRec.passengerBreakdown ?? q.passengerBreakdown,
+      roomingConfig: verRec.roomingConfig ?? q.roomingConfig,
+      pricingSnapshot: verRec.pricingSnapshot ?? q.pricingSnapshot,
+      currencyConversionSnapshot: verRec.currencyConversionSnapshot ?? q.currencyConversionSnapshot,
+      commercialTermsSnapshot: verRec.commercialTermsSnapshot ?? q.commercialTermsSnapshot,
+      authoritativeSnapshot: verRec.authoritativeSnapshot ?? q.authoritativeSnapshot,
+      termsAndConditions: verRec.termsAndConditions ?? q.termsAndConditions,
+      brandingMode: verRec.brandingMode ?? q.brandingMode,
+      brandingSnapshot: verRec.brandingSnapshot ?? q.brandingSnapshot,
+      companyId: (verRec as any).companyId ?? (q as any).companyId,
+      agentAgency: (verRec as any).agentAgency ?? q.agentAgency,
+      productLevelMarginEnabled: verRec.productLevelMarginEnabled ?? q.productLevelMarginEnabled,
+      agentLevelMarginPercent: verRec.agentLevelMarginPercent ?? q.agentLevelMarginPercent,
+      activeMarginMode: verRec.activeMarginMode ?? q.activeMarginMode,
+      adminManualMarginType: verRec.adminManualMarginType ?? verRec.pricingSnapshot?.adminManualMarginType ?? q.adminManualMarginType,
+      adminManualMarginValue: verRec.adminManualMarginValue ?? verRec.pricingSnapshot?.adminManualMarginValue ?? q.adminManualMarginValue,
+      adminManualMarginAmount: verRec.adminManualMarginAmount ?? verRec.pricingSnapshot?.adminManualMarginAmount ?? q.adminManualMarginAmount,
+      adminMarginMode: verRec.adminMarginMode ?? verRec.pricingSnapshot?.adminMarginMode ?? q.adminMarginMode,
+      revisedSellingPrice: verRec.revisedSellingPrice ?? verRec.pricingSnapshot?.revisedSellingPrice ?? q.revisedSellingPrice,
+      agentMarginType: verRec.agentMarginType ?? q.agentMarginType,
+      agentMarginValue: verRec.agentMarginValue ?? q.agentMarginValue,
+      agentMarginAmount: verRec.agentMarginAmount ?? q.agentMarginAmount,
+      overallDiscountPercent: verRec.overallDiscountPercent ?? q.overallDiscountPercent,
+      theUnboundBaseSellingPrice: resolvedBaseSelling,
+      baseFinalSellingPrice: resolvedBaseSelling,
+      totalNetCost: verRec.totalNetCost ?? q.totalNetCost,
+      totalSellingPrice: resolvedFinalSelling,
+      finalCustomerSellingPrice: resolvedFinalSelling,
+      surchargesTotal: verRec.pricingSnapshot?.surchargesTotal ?? verRec.authoritativeSnapshot?.pricing?.surchargesTotal ?? q.surchargesTotal,
+      appliedSurcharges: verRec.pricingSnapshot?.appliedSurcharges ?? verRec.authoritativeSnapshot?.pricing?.appliedSurcharges ?? q.appliedSurcharges,
+      hotelAccommodationTotal: verRec.pricingSnapshot?.hotelAccommodationTotal ?? verRec.authoritativeSnapshot?.pricing?.hotelAccommodationTotal ?? q.hotelAccommodationTotal,
+      landPartTotal: verRec.pricingSnapshot?.landPartTotal ?? verRec.authoritativeSnapshot?.pricing?.landPartTotal ?? q.landPartTotal
+    };
+  }
+
+  public async hydrateMasterQuotationFromVersionAsync(
+    quoteId: string,
+    versionIdOrNumber: string | number,
+    user: User | null = null
+  ): Promise<Quotation | null> {
+    if (!quoteId || !versionIdOrNumber) return null;
+    const cacheKey = `${quoteId}:${versionIdOrNumber}`;
+    const inFlight = this.pendingMasterHydrations.get(cacheKey);
+    if (inFlight) return inFlight;
+
+    const task = (async (): Promise<Quotation | null> => {
+      try {
+        const verNum =
+          typeof versionIdOrNumber === 'number'
+            ? versionIdOrNumber
+            : Number(String(versionIdOrNumber).split('__v').pop() || 0) || 1;
+        const loadedVer = await this.loadQuotationVersionFullAsync(quoteId, verNum, user);
+        if (!loadedVer) return null;
+        const existingQuotes = this.getAllSavedQuotes();
+        const idx = existingQuotes.findIndex(q => q.id === quoteId);
+        if (idx < 0) return null;
+        const hydrated = this.applyVersionFieldsToMasterQuotation(existingQuotes[idx], loadedVer);
+        existingQuotes[idx] = hydrated;
+        this.setItem('saved_quotes', existingQuotes, false);
+        return this.getQuoteByIdAuthorized(quoteId, user);
+      } finally {
+        this.pendingMasterHydrations.delete(cacheKey);
+      }
+    })();
+
+    this.pendingMasterHydrations.set(cacheKey, task);
+    return task;
+  }
+
+  /**
+   * Non-destructively backfills any legacy embedded (`SINGLE_DOC_V1` / `quote.versionHistory`) prior versions
+   * into `SPLIT_SECTIONS_V2` manifests + `sections/*` and verifies lossless reconstruction BEFORE the master
+   * quotation document is compacted (`versionHistory: []`).
+   */
+  private async backfillPriorLegacyVersionsToSplitStorageAsync(params: {
+    quoteId: string;
+    masterQuote: Quotation;
+    priorVersions: QuoteVersionRecord[];
+    alreadyCommittedSplitNums: Set<number>;
+    user: User | null;
+    userRole: string;
+    maxDocBytes: number;
+    useFirestoreTx: boolean;
+    persistenceAdapter?: SplitVersionPersistenceAdapter;
+  }): Promise<void> {
+    const {
+      quoteId,
+      masterQuote,
+      priorVersions,
+      alreadyCommittedSplitNums,
+      user,
+      userRole,
+      maxDocBytes,
+      useFirestoreTx,
+      persistenceAdapter
+    } = params;
+    const migratedAt = new Date().toISOString();
+    const allowInternalCosts = canUserViewInternalCostBreakdown(user);
+    const sanitizedMasterQuote = stripRestrictedCommercialFieldsForRole(masterQuote, allowInternalCosts);
+
+    for (const prior of priorVersions) {
+      if ((prior as any).__isSummaryStub) continue;
+      if (prior.manifestStatus === 'FAILED' || prior.manifestStatus === 'PREPARING') continue;
+      const vNum = Number(prior.versionNumber || prior.version || 0);
+      if (vNum <= 0) continue;
+
+      const verId = `${quoteId}__v${vNum}`;
+      const alreadyInMemory = this.memorySplitVersionManifests.get(verId);
+      if (
+        alreadyCommittedSplitNums.has(vNum) ||
+        (alreadyInMemory?.storageFormat === 'SPLIT_SECTIONS_V2' && alreadyInMemory?.manifestStatus === 'COMMITTED')
+      ) {
+        continue;
+      }
+
+      const firebaseUid = typeof window !== 'undefined' ? auth.currentUser?.uid : undefined;
+      const enrichedPrior: QuoteVersionRecord = {
+        ...prior,
+        id: verId,
+        quoteId,
+        version: vNum,
+        versionNumber: vNum,
+        agentId: prior.agentId || masterQuote.agentId || firebaseUid || user?.id,
+        userId: firebaseUid || prior.userId || masterQuote.userId || user?.id,
+        isLatest: false,
+        isImmutable: true,
+        migrationStatus: prior.migrationStatus || 'MIGRATED_FROM_V1',
+        migratedAt: prior.migratedAt || migratedAt
+      };
+
+      // Sanitize BEFORE computing section hashes / contentHashes when saved by a B2B agent
+      const sanitizedPrior = stripRestrictedCommercialFieldsForRole(enrichedPrior, allowInternalCosts);
+
+      const split = splitQuotationVersionIntoSections(sanitizedMasterQuote, sanitizedPrior, {
+        maxDocBytes,
+        manifestStatus: 'PREPARING',
+        preserveHistoricalIsolation: true
+      });
+
+      const stagedPriorManifest = cleanForFirestore(
+        stripRestrictedCommercialFieldsForRole(
+          {
+            ...split.manifest,
+            manifestStatus: 'PREPARING',
+            updatedByRole: userRole,
+            migrationStatus: 'MIGRATED_FROM_V1',
+            migrationState: 'IN_PROGRESS',
+            migratedAt
+          },
+          allowInternalCosts
+        )
+      ) as QuoteVersionRecord;
+
+      const manifestBytes = estimateFirestoreDocumentBytes(
+        stagedPriorManifest,
+        `quotations/${quoteId}/versions/${verId}`
+      );
+      if (manifestBytes > maxDocBytes || manifestBytes >= FIRESTORE_MAX_DOC_BYTES) {
+        throw new Error(
+          `Legacy backfill manifest "${verId}" exceeds Firestore safety cap (${manifestBytes} bytes > ${maxDocBytes} bytes).`
+        );
+      }
+
+      const priorSections = split.sectionDocs.map(secDoc => {
+        const sanitizedSec = cleanForFirestore(
+          stripRestrictedCommercialFieldsForRole(
+            {
+              ...secDoc,
+              agentId: secDoc.agentId || sanitizedPrior.agentId,
+              userId: secDoc.userId || sanitizedPrior.userId
+            },
+            allowInternalCosts
+          )
+        ) as QuotationVersionSectionDocument;
+        const secEst = estimateFirestoreDocumentBytes(
+          sanitizedSec,
+          `quotations/${quoteId}/versions/${verId}/sections/${sanitizedSec.sectionId}`
+        );
+        if (secEst > maxDocBytes || secEst >= FIRESTORE_MAX_DOC_BYTES) {
+          throw new Error(
+            `Legacy backfill section "${sanitizedSec.sectionId}" (${verId}) exceeds safety cap (${secEst} bytes).`
+          );
+        }
+        return sanitizedSec;
+      });
+
+      const committedAt = prior.committedAt || prior.updatedAt || migratedAt;
+      let finalCommittedManifest: QuoteVersionRecord;
+      let finalCommittedSections: QuotationVersionSectionDocument[];
+
+      if (useFirestoreTx || persistenceAdapter) {
+        try {
+          const { persistVerifiedSplitVersionAsync } = await import('./quotationVersionMigration');
+          const persisted = await persistVerifiedSplitVersionAsync({
+            quoteId,
+            versionId: verId,
+            originalLogicalVersion: sanitizedPrior,
+            stagedManifest: stagedPriorManifest,
+            sectionDocs: priorSections,
+            isLatest: false,
+            committedAt,
+            migrationStatus: 'MIGRATED_FROM_V1',
+            adapter: persistenceAdapter
+          });
+          finalCommittedManifest = persisted.committedManifest;
+          finalCommittedSections = persisted.readBackSections;
+        } catch (err: any) {
+          if (useFirestoreTx) {
+            await setDoc(
+              doc(firestoreDb, 'quotations', quoteId),
+              cleanForFirestore({
+                migrationState: 'VERIFICATION_FAILED',
+                versionMigrationStates: {
+                  ...(masterQuote.versionMigrationStates || {}),
+                  [verId]: {
+                    state: 'VERIFICATION_FAILED',
+                    updatedAt: new Date().toISOString(),
+                    error: err?.message || 'Verification failed',
+                    failingFieldPaths:
+                      err?.verificationReport?.failingFieldPaths?.map((f: any) => f.path) || []
+                  }
+                }
+              }),
+              { merge: true }
+            ).catch(() => undefined);
+          }
+          throw err;
+        }
+      } else {
+        const verifiedAt = new Date().toISOString();
+        finalCommittedManifest = {
+          ...stagedPriorManifest,
+          manifestStatus: 'COMMITTED',
+          migrationStatus: 'MIGRATED_FROM_V1',
+          migrationState: 'COMMITTED',
+          committedAt,
+          verifiedAt,
+          isLatest: false
+        };
+        finalCommittedSections = priorSections;
+
+        // Mandatory 12-domain canonical round-trip lossless verification before approving master compaction
+        const reconstructed = reconstructQuotationVersionFromSections(
+          finalCommittedManifest,
+          finalCommittedSections,
+          { verifyIntegrity: true }
+        );
+        const verificationReport = verifyVersionRoundTripIntegrity({
+          originalVersion: sanitizedPrior,
+          reconstructedVersion: reconstructed,
+          manifest: finalCommittedManifest,
+          sectionDocs: finalCommittedSections
+        });
+        if (!verificationReport.passed) {
+          const topPaths = verificationReport.failingFieldPaths
+            .slice(0, 8)
+            .map(f => `${f.path} (${f.reason})`)
+            .join('; ');
+          const err: any = new Error(
+            `Legacy backfill round-trip verification failed for ${verId}. Hash ${verificationReport.originalCanonicalHash} vs ${verificationReport.reconstructedCanonicalHash}. Failing paths: ${topPaths}`
+          );
+          err.verificationReport = verificationReport;
+          throw err;
+        }
+      }
+
+      this.memorySplitVersionManifests.set(verId, finalCommittedManifest);
+      this.memorySplitVersionSections.set(verId, finalCommittedSections);
+      this.hydratedSplitVersionCache.set(verId, {
+        ...sanitizedPrior,
+        storageFormat: 'SPLIT_SECTIONS_V2',
+        manifestStatus: 'COMMITTED',
+        migrationStatus: 'MIGRATED_FROM_V1',
+        migrationState: 'COMMITTED',
+        committedAt: finalCommittedManifest.committedAt,
+        verifiedAt: finalCommittedManifest.verifiedAt,
+        sections: finalCommittedManifest.sections,
+        sectionIds: finalCommittedManifest.sectionIds,
+        sectionCount: finalCommittedManifest.sectionCount,
+        chunkCount: finalCommittedManifest.chunkCount,
+        sectionsIntegrityHash: finalCommittedManifest.sectionsIntegrityHash,
+        totalReconstructedBytes: finalCommittedManifest.totalReconstructedBytes,
+        hasHydratedSections: true
+      });
+      alreadyCommittedSplitNums.add(vNum);
+    }
+  }
+
+  /**
+   * Idempotent background migration runner for authenticated sessions.
+   * Detects legacy quotations containing embedded `versionHistory` arrays that have not yet been
+   * migrated to `SPLIT_SECTIONS_V2` and executes `migrateSingleQuotationInFirestoreAsync` safely.
+   */
+  public async migrateLegacyQuotationsIfNeededAsync(quotes: Quotation[], user: User | null): Promise<void> {
+    if (typeof window === 'undefined' || !auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+    const isStaff = Boolean(user && isInternalStaff(user));
+    const candidates = (quotes || []).filter(q => {
+      if (!q?.id) return false;
+      if (this.migratedLegacyQuoteIds.has(q.id) || this.pendingLegacyQuoteMigrations.has(q.id)) return false;
+      const hasEmbedded = Array.isArray(q.versionHistory) && q.versionHistory.length > 0;
+      if (!hasEmbedded || q.migrationStatus === 'MIGRATED_FROM_V1') return false;
+      if (isStaff) return true;
+      return q.agentId === uid || q.userId === uid || q.createdBy === uid;
     });
 
-    const versions = Array.from(versionMap.values());
-    return versions.sort((a, b) => (b.version || 0) - (a.version || 0));
+    for (const candidate of candidates) {
+      const task = (async () => {
+        try {
+          const { migrateSingleQuotationInFirestoreAsync } = await import('./quotationVersionMigration');
+          await migrateSingleQuotationInFirestoreAsync(candidate.id, { user });
+          this.migratedLegacyQuoteIds.add(candidate.id);
+        } catch (err) {
+          console.debug(`[DB] Background quotation migration note (${candidate.id}):`, err);
+        } finally {
+          this.pendingLegacyQuoteMigrations.delete(candidate.id);
+        }
+      })();
+      this.pendingLegacyQuoteMigrations.set(candidate.id, task);
+      await task;
+    }
+  }
+
+  /**
+   * Loads full authoritative snapshot for a single quotation version (reconstructing SPLIT_SECTIONS_V2
+   * sections + chunks from Firestore or memory cache, or returning legacy SINGLE_DOC_V1 directly).
+   * Caches hydrated records in memory to eliminate duplicate Firestore reads.
+   */
+  public async loadQuotationVersionFullAsync(
+    quoteId: string,
+    versionNumberOrId: number | string,
+    user: User | null = null,
+    options: { bypassCache?: boolean } = {}
+  ): Promise<QuoteVersionRecord | null> {
+    if (!quoteId) return null;
+    const rawQuote = this.getAllSavedQuotes().find(q => q.id === quoteId || q.quoteNumber === quoteId);
+    const resolvedQuoteId = rawQuote?.id || quoteId;
+    const verNum =
+      typeof versionNumberOrId === 'number'
+        ? versionNumberOrId
+        : Number(String(versionNumberOrId).split('__v').pop() || 0);
+    const resolvedVersionId =
+      typeof versionNumberOrId === 'string' && versionNumberOrId.includes('__v')
+        ? versionNumberOrId
+        : `${resolvedQuoteId}__v${verNum}`;
+
+    if (!options.bypassCache) {
+      const memHydrated = this.hydratedSplitVersionCache.get(resolvedVersionId);
+      if (memHydrated) {
+        return user === null || canUserViewInternalCostBreakdown(user)
+          ? memHydrated
+          : sanitizeQuoteVersionForAgent(memHydrated);
+      }
+    }
+
+    // Check existing merged versions first
+    let allVersions = this.getQuotationVersions(resolvedQuoteId, null);
+    let manifest = allVersions.find(v => v.id === resolvedVersionId || (verNum > 0 && v.version === verNum));
+
+    // Fetch manifest directly from Firestore if not cached locally
+    if ((!manifest || !manifest.storageFormat) && typeof window !== 'undefined' && auth.currentUser) {
+      try {
+        const mSnap = await getDoc(doc(firestoreDb, 'quotations', resolvedQuoteId, 'versions', resolvedVersionId));
+        performanceMonitor.recordFirestoreRead(1);
+        if (mSnap.exists()) {
+          const mData = mSnap.data() as QuoteVersionRecord;
+          if (!(mData as any).isDeleted && mData.manifestStatus !== 'FAILED' && mData.manifestStatus !== 'PREPARING') {
+            manifest = {
+              ...mData,
+              id: mData.id || mSnap.id,
+              quoteId: mData.quoteId || resolvedQuoteId,
+              version: Number(mData.versionNumber || mData.version || verNum || 1),
+              versionNumber: Number(mData.versionNumber || mData.version || verNum || 1)
+            };
+          }
+        }
+      } catch (err) {
+        console.debug(`[DB] loadQuotationVersionFullAsync manifest fetch note (${resolvedVersionId}):`, err);
+      }
+    }
+
+    if (!manifest) return null;
+
+    let fullRecord: QuoteVersionRecord = manifest;
+    if (manifest.storageFormat === 'SPLIT_SECTIONS_V2' && !manifest.hasHydratedSections) {
+      let sectionDocs: QuotationVersionSectionDocument[] = [];
+      const memSecs = this.memorySplitVersionSections.get(manifest.id || resolvedVersionId);
+      if (memSecs && memSecs.length > 0 && !options.bypassCache) {
+        sectionDocs = memSecs;
+      } else if (typeof window !== 'undefined' && auth.currentUser) {
+        const secSnap = await getDocs(
+          collection(firestoreDb, 'quotations', resolvedQuoteId, 'versions', manifest.id || resolvedVersionId, 'sections')
+        );
+        performanceMonitor.recordFirestoreRead(secSnap.size || 1);
+        sectionDocs = secSnap.docs.map(d => d.data() as QuotationVersionSectionDocument);
+        if (sectionDocs.length > 0) {
+          this.memorySplitVersionSections.set(manifest.id || resolvedVersionId, sectionDocs);
+        }
+      }
+
+      if (sectionDocs.length > 0) {
+        fullRecord = reconstructQuotationVersionFromSections(manifest, sectionDocs, {
+          verifyIntegrity: true
+        });
+      }
+    } else if (!manifest.storageFormat || manifest.storageFormat === 'SINGLE_DOC_V1') {
+      fullRecord = { ...manifest, hasHydratedSections: true };
+    }
+
+    this.hydratedSplitVersionCache.set(resolvedVersionId, fullRecord);
+
+    // Overlay onto cached `quote_versions_{quoteId}` without overwriting other versions
+    const existingSub = this.getItem<QuoteVersionRecord[]>(`quote_versions_${resolvedQuoteId}`, []);
+    const sIdx = existingSub.findIndex(v => (v.id && v.id === resolvedVersionId) || v.version === fullRecord.version);
+    const nextSub = [...existingSub];
+    if (sIdx >= 0) nextSub[sIdx] = fullRecord;
+    else nextSub.unshift(fullRecord);
+    this.setItem(`quote_versions_${resolvedQuoteId}`, nextSub, false);
+
+    return user === null || canUserViewInternalCostBreakdown(user)
+      ? fullRecord
+      : sanitizeQuoteVersionForAgent(fullRecord);
+  }
+
+  /**
+   * Targeted section-level loader for partial reads (e.g. fetching pricing + terms without full item lists).
+   */
+  public async loadQuotationVersionSectionsAsync(
+    quoteId: string,
+    versionNumberOrId: number | string,
+    logicalSections: QuotationVersionSectionId[],
+    user: User | null = null
+  ): Promise<QuotationVersionSectionDocument[]> {
+    const verNum =
+      typeof versionNumberOrId === 'number'
+        ? versionNumberOrId
+        : Number(String(versionNumberOrId).split('__v').pop() || 0);
+    const versionId =
+      typeof versionNumberOrId === 'string' && versionNumberOrId.includes('__v')
+        ? versionNumberOrId
+        : `${quoteId}__v${verNum}`;
+
+    let sectionDocs = this.memorySplitVersionSections.get(versionId) || [];
+    if (sectionDocs.length === 0 && typeof window !== 'undefined' && auth.currentUser) {
+      const snap = await getDocs(
+        collection(firestoreDb, 'quotations', quoteId, 'versions', versionId, 'sections')
+      );
+      performanceMonitor.recordFirestoreRead(snap.size || 1);
+      sectionDocs = snap.docs.map(d => d.data() as QuotationVersionSectionDocument);
+      this.memorySplitVersionSections.set(versionId, sectionDocs);
+    }
+
+    const filtered = sectionDocs.filter(s => logicalSections.includes(s.logicalSection));
+    return user === null || canUserViewInternalCostBreakdown(user)
+      ? filtered
+      : (this.stripInternalCommercialKeysForFirestore(filtered, user) as QuotationVersionSectionDocument[]);
+  }
+
+  /**
+   * Fetches immutable saved versions from `/quotations/{quoteId}/versions` in Firestore,
+   * filters out uncommitted PREPARING / FAILED saves, preserves already-hydrated sections, and caches cleanly.
+   */
+  public async fetchQuotationVersionsFromFirestoreAsync(quoteId: string, user: User | null = null): Promise<QuoteVersionRecord[]> {
+    if (!quoteId) return [];
+    if (typeof window !== 'undefined' && auth.currentUser) {
+      try {
+        const snap = await getDocs(collection(firestoreDb, 'quotations', quoteId, 'versions'));
+        performanceMonitor.recordFirestoreRead(snap.size || 1);
+        if (!snap.empty) {
+          const prevCached = this.getItem<QuoteVersionRecord[]>(`quote_versions_${quoteId}`, []);
+          const prevMap = new Map<string, QuoteVersionRecord>();
+          prevCached.forEach(p => {
+            if (p.id) prevMap.set(p.id, p);
+          });
+
+          const remoteList: QuoteVersionRecord[] = [];
+          snap.forEach(docSnap => {
+            const raw = docSnap.data() as QuoteVersionRecord;
+            if ((raw as any).isDeleted === true) return;
+            if (raw.manifestStatus === 'FAILED' || raw.manifestStatus === 'PREPARING') return;
+            const verId = raw.id || docSnap.id;
+            const hydrated = this.hydratedSplitVersionCache.get(verId) || prevMap.get(verId);
+            if (hydrated && hydrated.hasHydratedSections && raw.storageFormat === 'SPLIT_SECTIONS_V2') {
+              remoteList.push({
+                ...raw,
+                ...hydrated,
+                id: verId,
+                quoteId: raw.quoteId || quoteId,
+                version: Number(raw.versionNumber || raw.version || 1),
+                versionNumber: Number(raw.versionNumber || raw.version || 1)
+              });
+            } else {
+              remoteList.push({
+                ...raw,
+                id: verId,
+                quoteId: raw.quoteId || quoteId,
+                version: Number(raw.versionNumber || raw.version || 1),
+                versionNumber: Number(raw.versionNumber || raw.version || 1)
+              });
+            }
+          });
+          this.setItem(`quote_versions_${quoteId}`, remoteList, false);
+        }
+      } catch (err) {
+        console.debug(`[DB] fetchQuotationVersionsFromFirestoreAsync note (${quoteId}):`, err);
+      }
+    }
+    return this.getQuotationVersions(quoteId, user);
+  }
+
+  /**
+   * Canonical per-quotation version history reader (strictly isolated to `quoteId`).
+   * Merges hydrated split versions, cached Firestore manifests, compacted `versionSummaries`,
+   * legacy `quote.versionHistory`, and synthesizes v1 if missing.
+   * Filters out uncommitted `PREPARING`/`FAILED` attempts and enforces strict B2B cost redaction.
+   */
+  public getQuotationVersions(quoteId: string, user: User | null = null): QuoteVersionRecord[] {
+    if (!quoteId) return [];
+    const rawQuote = this.getAllSavedQuotes().find(q => q.id === quoteId || q.quoteNumber === quoteId);
+    const resolvedQuoteId = rawQuote?.id || quoteId;
+    const subcolCached = this.getItem<QuoteVersionRecord[]>(`quote_versions_${resolvedQuoteId}`, []);
+    const embeddedHistory = rawQuote?.versionHistory || [];
+    const compactedSummaries = (rawQuote?.versionSummaries || []).map(
+      s => ({ ...s, quoteId: resolvedQuoteId }) as unknown as QuoteVersionRecord
+    );
+
+    const versionMap = new Map<number, QuoteVersionRecord>();
+    const normalizeRecord = (raw: QuoteVersionRecord): QuoteVersionRecord => {
+      const vNum = Number(raw.versionNumber || raw.version || 1);
+      const verId = raw.id || `${resolvedQuoteId}__v${vNum}`;
+      const hydrated = this.hydratedSplitVersionCache.get(verId);
+      const mergedRaw = hydrated ? { ...raw, ...hydrated } : raw;
+      const isSplitManifestOnly =
+        mergedRaw.storageFormat === 'SPLIT_SECTIONS_V2' && !mergedRaw.hasHydratedSections;
+      return {
+        ...mergedRaw,
+        id: verId,
+        quoteId: mergedRaw.quoteId || resolvedQuoteId,
+        quoteNumber: mergedRaw.quoteNumber || rawQuote?.quoteNumber || resolvedQuoteId,
+        leadId: mergedRaw.leadId || rawQuote?.leadId || rawQuote?.linkedLeadId,
+        version: vNum,
+        versionNumber: vNum,
+        createdAt: mergedRaw.createdAt || mergedRaw.updatedAt || rawQuote?.createdAt || new Date().toISOString(),
+        updatedAt: mergedRaw.updatedAt || mergedRaw.createdAt || rawQuote?.updatedAt || new Date().toISOString(),
+        updatedBy: mergedRaw.savedByName || mergedRaw.updatedBy || rawQuote?.createdByName || rawQuote?.agentName || 'Travel Consultant',
+        savedByName: mergedRaw.savedByName || mergedRaw.updatedBy || rawQuote?.createdByName || rawQuote?.agentName || 'Travel Consultant',
+        savedByRole: mergedRaw.savedByRole || rawQuote?.createdByUserType || 'B2B_AGENT',
+        currency: mergedRaw.currency || rawQuote?.currency || 'USD',
+        totalSellingPrice:
+          mergedRaw.totalSellingPrice ??
+          mergedRaw.authoritativeSnapshot?.pricing?.finalCustomerSellingPrice ??
+          rawQuote?.finalCustomerSellingPrice ??
+          rawQuote?.totalSellingPrice ??
+          0,
+        items:
+          Array.isArray(mergedRaw.items) && mergedRaw.items.length > 0
+            ? mergedRaw.items
+            : isSplitManifestOnly
+              ? []
+              : (rawQuote?.items || []),
+        routeHubs:
+          Array.isArray(mergedRaw.routeHubs) && mergedRaw.routeHubs.length > 0
+            ? mergedRaw.routeHubs
+            : isSplitManifestOnly
+              ? []
+              : (rawQuote?.routeHubs || []),
+        isImmutable: true
+      };
+    };
+
+    const mergeIntoMap = (candidate: QuoteVersionRecord) => {
+      if (candidate.manifestStatus === 'FAILED' || candidate.manifestStatus === 'PREPARING') return;
+      const norm = normalizeRecord(candidate);
+      const existing = versionMap.get(norm.version);
+      if (!existing) {
+        versionMap.set(norm.version, norm);
+        return;
+      }
+      const existingScore =
+        (existing.hasHydratedSections ? 100 : 0) +
+        (existing.items?.length || 0) +
+        (existing.routeHubs?.length || 0) +
+        (existing.authoritativeSnapshot ? 10 : 0) +
+        (existing.commercialTermsSnapshot ? 5 : 0);
+      const candidateScore =
+        (norm.hasHydratedSections ? 100 : 0) +
+        (norm.items?.length || 0) +
+        (norm.routeHubs?.length || 0) +
+        (norm.authoritativeSnapshot ? 10 : 0) +
+        (norm.commercialTermsSnapshot ? 5 : 0);
+      if (candidateScore >= existingScore) {
+        versionMap.set(norm.version, { ...existing, ...norm });
+      }
+    };
+
+    compactedSummaries.forEach(mergeIntoMap);
+    embeddedHistory.forEach(mergeIntoMap);
+    subcolCached.forEach(mergeIntoMap);
+
+    if (rawQuote) {
+      const masterVer = Number(rawQuote.latestVersion || rawQuote.version || 1);
+      if (!versionMap.has(masterVer)) {
+        mergeIntoMap(
+          this.buildImmutableVersionRecord(rawQuote, masterVer, null, {
+            changesSummary: rawQuote.parentQuoteId
+              ? `Saved proposal v${masterVer}`
+              : `Saved quotation v${masterVer}`,
+            timestamp: rawQuote.latestSavedAt || rawQuote.updatedAt || rawQuote.createdAt
+          })
+        );
+      }
+    }
+
+    const sorted = Array.from(versionMap.values()).sort((a, b) => (b.version || 0) - (a.version || 0));
+    const highestVer = sorted[0]?.version || 0;
+    const isInternalAllowed = user === null ? true : canUserViewInternalCostBreakdown(user);
+
+    return sorted.map(v => {
+      const withFlag: QuoteVersionRecord = {
+        ...v,
+        isLatest: v.version === highestVer
+      };
+      return isInternalAllowed ? withFlag : sanitizeQuoteVersionForAgent(withFlag);
+    });
+  }
+
+  /**
+   * Canonical Lead Management Version History grouped STRICTLY per quotation (`quoteId`).
+   * Guarantees distinct quotations belonging to the same lead are NEVER merged or mixed.
+   */
+  public getQuoteVersionsGroupedByQuoteForLead(
+    leadId: string,
+    user: User | null = null
+  ): GroupedLeadQuotationVersions[] {
+    const quotes = this.getQuotesForLead(leadId, user);
+    return quotes
+      .map(q => {
+        const versions = this.getQuotationVersions(q.id, user);
+        const latestVer = versions[0]?.version || q.latestVersion || q.version || 1;
+        return {
+          quoteId: q.id,
+          quoteNumber: q.quoteNumber || q.id,
+          quotation: q,
+          latestVersionNumber: latestVer,
+          totalVersions: versions.length,
+          versions
+        };
+      })
+      .sort((a, b) => {
+        const timeA = new Date(a.quotation.updatedAt || a.quotation.createdAt || 0).getTime();
+        const timeB = new Date(b.quotation.updatedAt || b.quotation.createdAt || 0).getTime();
+        return timeB - timeA;
+      });
+  }
+
+  public getQuoteVersionsForLead(leadId: string, user: User | null = null): QuoteVersionRecord[] {
+    const effectiveUser = user ?? currentAuthUser;
+    const grouped = this.getQuoteVersionsGroupedByQuoteForLead(leadId, effectiveUser);
+    const seenKeys = new Set<string>();
+    const allVersions: QuoteVersionRecord[] = [];
+    grouped.forEach(group => {
+      group.versions.forEach(v => {
+        const uniqueKey = `${group.quoteId}__v${v.version}`;
+        if (!seenKeys.has(uniqueKey)) {
+          seenKeys.add(uniqueKey);
+          allVersions.push(v);
+        }
+      });
+    });
+    return allVersions.sort((a, b) => {
+      const timeDiff = new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return (b.version || 0) - (a.version || 0);
+    });
+  }
+
+  /**
+   * Async version of `prepareRestoredWorkingQuote` that guarantees split-document sections are loaded first.
+   */
+  public async prepareRestoredWorkingQuoteAsync(
+    quoteId: string,
+    targetVersion: number,
+    user: User | null
+  ): Promise<Quotation | null> {
+    await this.loadQuotationVersionFullAsync(quoteId, targetVersion, user).catch(() => null);
+    return this.prepareRestoredWorkingQuote(quoteId, targetVersion, user);
+  }
+
+  /**
+   * Pure non-persisting builder that constructs a working draft Quotation from a historical saved version.
+   * NEVER writes to Firestore or mutates saved quotations; user must explicitly click Save Draft
+   * to create the next sequential version (max + 1).
+   */
+  public prepareRestoredWorkingQuote(
+    quoteId: string,
+    targetVersion: number,
+    user: User | null
+  ): Quotation | null {
+    const authorizedQuote = this.getQuoteByIdAuthorized(quoteId, user);
+    if (!authorizedQuote) return null;
+
+    const baseQuote = this.getRawQuoteById(authorizedQuote.id) || authorizedQuote;
+    const rawVersions = this.getQuotationVersions(baseQuote.id, null);
+    const snapshot = rawVersions.find(v => (v.versionNumber || v.version) === targetVersion);
+    if (!snapshot) return null;
+
+    const cloneVal = <T>(val: T): T => {
+      if (val === undefined || val === null) return val;
+      try {
+        return JSON.parse(JSON.stringify(val));
+      } catch {
+        return val;
+      }
+    };
+
+    const highestVersion = rawVersions[0]?.version || baseQuote.latestVersion || baseQuote.version || 1;
+    const restoredPricingSnapshot = cloneVal(snapshot.pricingSnapshot ?? baseQuote.pricingSnapshot);
+    const restoredTheUnboundBase =
+      snapshot.theUnboundBaseSellingPrice ??
+      snapshot.pricingSnapshot?.theUnboundBaseSellingPrice ??
+      snapshot.pricingSnapshot?.baseFinalSellingPrice ??
+      baseQuote.theUnboundBaseSellingPrice;
+    const restoredWorking: Quotation = {
+      ...baseQuote,
+      title: snapshot.title || baseQuote.title,
+      destination: snapshot.destination || baseQuote.destination,
+      clientName: snapshot.clientName || baseQuote.clientName,
+      clientEmail: snapshot.clientEmail ?? baseQuote.clientEmail,
+      clientPhone: snapshot.clientPhone ?? baseQuote.clientPhone,
+      clientCompany: snapshot.clientCompany ?? baseQuote.clientCompany,
+      nationality: snapshot.nationality ?? baseQuote.nationality,
+      travelStyle: snapshot.travelStyle ?? baseQuote.travelStyle,
+      mealPlanPreference: snapshot.mealPlanPreference ?? baseQuote.mealPlanPreference,
+      travelStartDate: snapshot.travelStartDate || baseQuote.travelStartDate,
+      travelEndDate: snapshot.travelEndDate || baseQuote.travelEndDate,
+      totalPax: snapshot.totalPax ?? baseQuote.totalPax,
+      adultsCount: snapshot.adultsCount ?? baseQuote.adultsCount,
+      childrenCount: snapshot.childrenCount ?? baseQuote.childrenCount,
+      infantsCount: snapshot.infantsCount ?? baseQuote.infantsCount,
+      childAges: cloneVal(snapshot.childAges ?? baseQuote.childAges),
+      currency: snapshot.currency || baseQuote.currency,
+      items: cloneVal(snapshot.items && snapshot.items.length > 0 ? snapshot.items : baseQuote.items),
+      routeHubs: cloneVal(snapshot.routeHubs && snapshot.routeHubs.length > 0 ? snapshot.routeHubs : (baseQuote.routeHubs || [])),
+      dayThemes: cloneVal(snapshot.dayThemes ?? baseQuote.dayThemes),
+      dayDescriptions: cloneVal(snapshot.dayDescriptions ?? baseQuote.dayDescriptions),
+      dayOverviews: cloneVal(snapshot.dayOverviews ?? baseQuote.dayOverviews),
+      dayNotes: cloneVal(snapshot.dayNotes ?? baseQuote.dayNotes),
+      itineraryOverview: snapshot.itineraryOverview ?? baseQuote.itineraryOverview,
+      inclusions: cloneVal(snapshot.inclusions ?? baseQuote.inclusions),
+      exclusions: cloneVal(snapshot.exclusions ?? baseQuote.exclusions),
+      importantInformation: snapshot.importantInformation ?? baseQuote.importantInformation,
+      cancellationPolicy: snapshot.cancellationPolicy ?? baseQuote.cancellationPolicy,
+      options: cloneVal(snapshot.options ?? baseQuote.options),
+      activeOptionId: snapshot.activeOptionId ?? baseQuote.activeOptionId,
+      quotationScope: snapshot.quotationScope ?? baseQuote.quotationScope,
+      passengerBreakdown: cloneVal(snapshot.passengerBreakdown ?? baseQuote.passengerBreakdown),
+      roomingConfig: cloneVal(snapshot.roomingConfig ?? baseQuote.roomingConfig),
+      agentNotes: snapshot.agentNotes ?? baseQuote.agentNotes,
+      commercialTermsSnapshot: cloneVal(snapshot.commercialTermsSnapshot ?? baseQuote.commercialTermsSnapshot),
+      termsAndConditions: snapshot.termsAndConditions ?? baseQuote.termsAndConditions,
+      currencyConversionSnapshot: cloneVal(snapshot.currencyConversionSnapshot ?? baseQuote.currencyConversionSnapshot),
+      pricingSnapshot: restoredPricingSnapshot,
+      pricing_snapshot: restoredPricingSnapshot,
+      authoritativeSnapshot: cloneVal(snapshot.authoritativeSnapshot ?? baseQuote.authoritativeSnapshot),
+      theUnboundBaseSellingPrice: restoredTheUnboundBase,
+      baseFinalSellingPrice: restoredTheUnboundBase,
+      base_final_selling_price: restoredTheUnboundBase,
+      totalNetCost: snapshot.totalNetCost ?? baseQuote.totalNetCost,
+      adminManualMarginType: snapshot.adminManualMarginType ?? snapshot.pricingSnapshot?.adminManualMarginType ?? baseQuote.adminManualMarginType,
+      adminManualMarginValue: snapshot.adminManualMarginValue ?? snapshot.pricingSnapshot?.adminManualMarginValue ?? baseQuote.adminManualMarginValue,
+      adminManualMarginAmount: snapshot.adminManualMarginAmount ?? snapshot.pricingSnapshot?.adminManualMarginAmount ?? baseQuote.adminManualMarginAmount,
+      adminMarginMode: snapshot.adminMarginMode ?? snapshot.pricingSnapshot?.adminMarginMode ?? baseQuote.adminMarginMode ?? 'ADD',
+      revisedSellingPrice: snapshot.revisedSellingPrice ?? snapshot.pricingSnapshot?.revisedSellingPrice ?? baseQuote.revisedSellingPrice,
+      companyId: (snapshot as any).companyId ?? (baseQuote as any).companyId,
+      agentAgency: (snapshot as any).agentAgency ?? baseQuote.agentAgency,
+      agentId: (snapshot as any).agentId ?? baseQuote.agentId,
+      productLevelMarginEnabled: (snapshot as any).productLevelMarginEnabled ?? baseQuote.productLevelMarginEnabled,
+      agentLevelMarginPercent: (snapshot as any).agentLevelMarginPercent ?? baseQuote.agentLevelMarginPercent,
+      activeMarginMode: (snapshot as any).activeMarginMode ?? baseQuote.activeMarginMode,
+      agentMarginType: snapshot.agentMarginType ?? baseQuote.agentMarginType,
+      agentMarginValue: snapshot.agentMarginValue ?? baseQuote.agentMarginValue,
+      agentMarginAmount: snapshot.agentMarginAmount ?? baseQuote.agentMarginAmount,
+      overallDiscountPercent: snapshot.overallDiscountPercent ?? baseQuote.overallDiscountPercent,
+      totalSellingPrice: snapshot.totalSellingPrice ?? baseQuote.totalSellingPrice,
+      finalCustomerSellingPrice: snapshot.totalSellingPrice ?? baseQuote.finalCustomerSellingPrice,
+      brandingMode: snapshot.brandingMode ?? baseQuote.brandingMode,
+      brandingSnapshot: cloneVal(snapshot.brandingSnapshot ?? baseQuote.brandingSnapshot),
+      isLocked: false,
+      version: highestVersion,
+      latestVersion: highestVersion,
+      versionCount: rawVersions.length,
+      restoredFromVersion: targetVersion
+    };
+
+    return (!canUserViewInternalCostBreakdown(user))
+      ? sanitizeQuoteForAgent(restoredWorking)
+      : restoredWorking;
   }
 
   public restoreQuotationVersion(quoteId: string, targetVersion: number, user: User | null): Quotation | null {
-    const parentQuote = this.getQuoteByIdAuthorized(quoteId, user);
-    if (!parentQuote) return null;
-
-    const allQuotes = this.getAllSavedQuotes();
-    const baseNumber = parentQuote.quoteNumber ? parentQuote.quoteNumber.split('-v')[0] : '';
-    const targetQuoteDoc = allQuotes.find(q => 
-      (q.version === targetVersion || q.versionNumber === targetVersion) &&
-      (q.id === quoteId || q.parentQuoteId === parentQuote.id || parentQuote.parentQuoteId === q.id || (baseNumber && q.quoteNumber?.startsWith(baseNumber)))
-    );
-
-    const snapshot = targetQuoteDoc || parentQuote.versionHistory?.find(v => v.version === targetVersion);
-
-    const existingVersions = allQuotes
-      .filter(q => baseNumber && q.quoteNumber?.startsWith(baseNumber))
-      .map(q => q.version || 1);
-    const maxExisting = existingVersions.length > 0 ? Math.max(...existingVersions) : (parentQuote.version || 1);
-    const nextVersion = maxExisting + 1;
-    const newQuoteNumber = `${baseNumber || 'UBQ-2026'}-v${nextVersion}`;
-    const timestamp = new Date().toISOString();
-    const userName = user?.name || parentQuote.agentName || 'Travel Consultant';
-
-    const restoredQuote: Quotation = {
-      ...parentQuote,
-      ...(targetQuoteDoc || {}),
-      id: `quote-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      quoteNumber: newQuoteNumber,
-      version: nextVersion,
-      parentQuoteId: parentQuote.id,
-      isLocked: false,
-      status: 'DRAFT',
-      title: `${snapshot?.title || parentQuote.title} (Restored from v${targetVersion})`,
-      items: snapshot?.items && snapshot.items.length > 0 ? JSON.parse(JSON.stringify(snapshot.items)) : JSON.parse(JSON.stringify(parentQuote.items)),
-      totalSellingPrice: snapshot?.totalSellingPrice || parentQuote.totalSellingPrice,
-      totalNetCost: snapshot?.totalNetCost || parentQuote.totalNetCost,
-      currency: snapshot?.currency || parentQuote.currency,
-      travelStartDate: snapshot?.travelStartDate || parentQuote.travelStartDate,
-      travelEndDate: snapshot?.travelEndDate || parentQuote.travelEndDate,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-      lastActivityAt: timestamp,
-      createdByName: userName,
-      activityLog: [
-        ...(parentQuote.activityLog || []),
-        {
-          id: `act-${Date.now()}`,
-          action: 'VERSION_BRANCHED',
-          timestamp,
-          userName,
-          userRole: user?.role,
-          userType: (user?.role as any) || 'ADMIN',
-          details: `Restored Version ${targetVersion} into new active Version ${nextVersion} (#${newQuoteNumber})`
-        }
-      ]
-    };
-
-    allQuotes.unshift(restoredQuote);
-    this.setItem('saved_quotes', allQuotes);
-    this.syncFirestoreDoc('quotations', restoredQuote.id, restoredQuote);
-    this.logAudit(user, 'QUOTE_CREATED', 'Quotation', restoredQuote.id, `Restored Version ${targetVersion} as ${newQuoteNumber}`);
-    return restoredQuote;
+    // Non-persisting restore: strictly loads targetVersion into working state without autosaving.
+    return this.prepareRestoredWorkingQuote(quoteId, targetVersion, user);
   }
 
   public getFinancialSummaryForLead(leadId: string, user: User | null) {
@@ -14501,9 +17786,20 @@ export class AppDatabase {
   // HOTEL MANAGEMENT (B2B Rates, Room Types, Blackout)
   // ==========================================
   public getHotels(): Hotel[] {
-    const raw = this.getItem<Hotel[]>('hotels', envService.allowDemoData() ? INITIAL_HOTELS : []);
+    const ver = masterDataCache.getVersion('hotels');
+    const tombVer = masterDataCache.getVersion('inventory_tombstones');
+    const cached = masterDataCache.getDerived<Hotel[]>('hotels_derived', ver, tombVer);
+    if (cached) {
+      performanceMonitor.recordCacheHit('dbGetHotels');
+      return [...cached];
+    }
+    performanceMonitor.recordCacheMiss('dbGetHotels');
+
+    const raw = this.getItem<Hotel[]>('hotels', this.getSeedBundle()?.INITIAL_HOTELS || []);
     const deletedSet = this.getDeletedEntityIds();
-    return raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`Hotel_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
+    const filtered = raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`Hotel_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
+    masterDataCache.setDerived('hotels_derived', ver, tombVer, filtered);
+    return [...filtered];
   }
 
   public getHotelById(id: string): Hotel | undefined {
@@ -14691,9 +17987,20 @@ export class AppDatabase {
   // DESTINATION CITIES / HUBS MANAGEMENT
   // ==========================================
   public getCityHubs(): CityHub[] {
-    const raw = this.getItem<CityHub[]>('city_hubs', envService.allowDemoData() ? INITIAL_CITY_HUBS : []);
+    const ver = masterDataCache.getVersion('city_hubs');
+    const tombVer = masterDataCache.getVersion('inventory_tombstones');
+    const cached = masterDataCache.getDerived<CityHub[]>('city_hubs_derived', ver, tombVer);
+    if (cached) {
+      performanceMonitor.recordCacheHit('dbGetCityHubs');
+      return [...cached];
+    }
+    performanceMonitor.recordCacheMiss('dbGetCityHubs');
+
+    const raw = this.getItem<CityHub[]>('city_hubs', this.getSeedBundle()?.INITIAL_CITY_HUBS || []);
     const deletedSet = this.getDeletedEntityIds();
-    return raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`CityHub_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
+    const filtered = raw.filter(h => h && h.id && !deletedSet.has(h.id) && !deletedSet.has(`CityHub_${h.id}`) && !(h as any).isDeleted && (h as any).status !== 'DELETED');
+    masterDataCache.setDerived('city_hubs_derived', ver, tombVer, filtered);
+    return [...filtered];
   }
 
   public getCityHubsByDestination(destinationIdOrSlug: string): CityHub[] {
@@ -14872,7 +18179,7 @@ export class AppDatabase {
   // DESTINATION FAQs MANAGEMENT
   // ==========================================
   public getDestinationFAQs(destinationId?: string): DestinationFAQ[] {
-    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', envService.allowDemoData() ? INITIAL_FAQS : []);
+    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', this.getSeedBundle()?.INITIAL_FAQS || []);
     if (destinationId && destinationId !== 'all') {
       return faqs.filter(f => f.destinationId === destinationId);
     }
@@ -14880,7 +18187,7 @@ export class AppDatabase {
   }
 
   public saveDestinationFAQ(faq: DestinationFAQ, user: User | null): void {
-    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', envService.allowDemoData() ? INITIAL_FAQS : []);
+    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', this.getSeedBundle()?.INITIAL_FAQS || []);
     const index = faqs.findIndex(f => f.id === faq.id);
     if (index >= 0) {
       faqs[index] = faq;
@@ -14894,7 +18201,7 @@ export class AppDatabase {
   }
 
   public deleteDestinationFAQ(faqId: string, user: User | null): void {
-    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', envService.allowDemoData() ? INITIAL_FAQS : []);
+    const faqs = this.getItem<DestinationFAQ[]>('destination_faqs', this.getSeedBundle()?.INITIAL_FAQS || []);
     const target = faqs.find(f => f.id === faqId);
     this.setItem('destination_faqs', faqs.filter(f => f.id !== faqId));
     this.deleteFirestoreDoc('faqs', faqId);
@@ -14907,7 +18214,7 @@ export class AppDatabase {
   // HAPPY CUSTOMER GALLERY MANAGEMENT
   // ==========================================
   public getGalleryImages(): GalleryImage[] {
-    const raw = this.getItem<GalleryImage[]>('gallery', envService.allowDemoData() ? INITIAL_GALLERY : []);
+    const raw = this.getItem<GalleryImage[]>('gallery', this.getSeedBundle()?.INITIAL_GALLERY || []);
     return (raw || []).map(img => {
       const active = img.isActive !== false && img.isPublished !== false;
       const desc = img.description || img.caption || '';
@@ -15377,8 +18684,9 @@ export class AppDatabase {
   public getLeads(): TravelLead[] {
     let raw = this.getItem<TravelLead[]>('leads', []);
     if (!raw || raw.length === 0) {
-      if (envService.allowDemoData()) {
-        raw = INITIAL_LEADS;
+      const seedLeads = this.getSeedBundle()?.INITIAL_LEADS;
+      if (envService.allowDemoData() && seedLeads && seedLeads.length > 0) {
+        raw = seedLeads;
         this.setItem('leads', raw);
       } else {
         return [];
@@ -18057,11 +21365,12 @@ export class AppDatabase {
   // ==========================================
   public getEmailCampaigns(): EmailCampaignConfig[] {
     const deletedSet = this.getDeletedEntityIds();
-    const rawList = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? INITIAL_CAMPAIGNS : []);
+    const seedCampaigns = this.getSeedBundle()?.INITIAL_CAMPAIGNS || [];
+    const rawList = this.getItem<EmailCampaignConfig[]>('campaigns', seedCampaigns);
     const mergedMap = new Map<string, EmailCampaignConfig>();
 
     if (envService.allowDemoData()) {
-      INITIAL_CAMPAIGNS.forEach(initItem => {
+      seedCampaigns.forEach(initItem => {
         if (initItem && initItem.id) {
           mergedMap.set(initItem.id, { ...initItem });
         }
@@ -18246,7 +21555,7 @@ export class AppDatabase {
   // ROSTER RESOURCES & OPERATIONS CMS
   // ==========================================
   public getResources(): RosterResource[] {
-    return this.getItem<RosterResource[]>('roster_resources', envService.allowDemoData() ? INITIAL_ROSTER_RESOURCES : []);
+    return this.getItem<RosterResource[]>('roster_resources', this.getSeedBundle()?.INITIAL_ROSTER_RESOURCES || []);
   }
 
   public getResourceById(id: string): RosterResource | undefined {
@@ -18308,6 +21617,7 @@ export class AppDatabase {
   // GOOGLE REVIEWS GBP SEARCH & IMPORTER
   // ==========================================
   public async searchAndImportGoogleReviews(businessQueryOrUrl: string, user: User | null): Promise<{ added: number; updated: number; reviews: GoogleReview[]; businessName: string; error?: string }> {
+    const { googleBusinessService } = await import('./googleBusinessService');
     const resolved = googleBusinessService.resolveMapsUrl(businessQueryOrUrl);
     
     // Save URL to configuration
@@ -18339,6 +21649,7 @@ export class AppDatabase {
   // GOOGLE REVIEWS GBP SYNC
   // ==========================================
   public async syncGoogleReviewsFromGBP(user: User | null): Promise<GoogleReview[]> {
+    const { googleBusinessService } = await import('./googleBusinessService');
     const syncResult = await googleBusinessService.syncGoogleReviews(user);
     return syncResult.reviews;
   }
@@ -19930,7 +23241,7 @@ export class AppDatabase {
   // VISA PRODUCTS & CHECKLIST MANAGEMENT
   // ==========================================
   public getVisas(): VisaProduct[] {
-    const raw = this.getItem<VisaProduct[]>('visas', envService.allowDemoData() ? INITIAL_VISAS : []);
+    const raw = this.getItem<VisaProduct[]>('visas', this.getSeedBundle()?.INITIAL_VISAS || []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(v => v && v.id && !deletedSet.has(v.id) && !deletedSet.has(`Visa_${v.id}`) && !deletedSet.has(`visas_${v.id}`) && !(v as any).isDeleted && (v as any).status !== 'DELETED');
   }
@@ -20065,7 +23376,7 @@ export class AppDatabase {
   // TRAVEL PROTECTION & INTERNATIONAL MEDICAL
   // ==========================================
   public getTravelProtectionPlans(): TravelProtectionPlan[] {
-    const raw = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', envService.allowDemoData() ? INITIAL_TRAVEL_PROTECTION_PLANS : []);
+    const raw = this.getItem<TravelProtectionPlan[]>('travel_protection_plans', this.getSeedBundle()?.INITIAL_TRAVEL_PROTECTION_PLANS || []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`TravelProtectionPlan_${p.id}`) && !deletedSet.has(`travel_protection_plans_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED');
   }
@@ -20164,7 +23475,7 @@ export class AppDatabase {
   // VIP GROUND SERVICES
   // ==========================================
   public getVipGroundServices(): VipGroundService[] {
-    const raw = this.getItem<VipGroundService[]>('vip_ground_services', envService.allowDemoData() ? INITIAL_VIP_GROUND_SERVICES : []);
+    const raw = this.getItem<VipGroundService[]>('vip_ground_services', this.getSeedBundle()?.INITIAL_VIP_GROUND_SERVICES || []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(s => s && s.id && !deletedSet.has(s.id) && !deletedSet.has(`VipGroundService_${s.id}`) && !deletedSet.has(`vip_ground_services_${s.id}`) && !(s as any).isDeleted && (s as any).status !== 'DELETED');
   }
@@ -20263,7 +23574,7 @@ export class AppDatabase {
   // 5G CONNECTIVITY & eSIM PACKAGES
   // ==========================================
   public getConnectivityPlans(): ConnectivityPlan[] {
-    const raw = this.getItem<ConnectivityPlan[]>('connectivity_plans', envService.allowDemoData() ? INITIAL_CONNECTIVITY_PLANS : []);
+    const raw = this.getItem<ConnectivityPlan[]>('connectivity_plans', this.getSeedBundle()?.INITIAL_CONNECTIVITY_PLANS || []);
     const deletedSet = this.getDeletedEntityIds();
     return raw.filter(c => c && c.id && !deletedSet.has(c.id) && !deletedSet.has(`ConnectivityPlan_${c.id}`) && !deletedSet.has(`connectivity_plans_${c.id}`) && !(c as any).isDeleted && (c as any).status !== 'DELETED');
   }
@@ -23980,9 +27291,190 @@ export class AppDatabase {
   // CENTRALIZED SURCHARGE MANAGEMENT (FINANCE & ADMINISTRATION)
   // ==========================================
 
+  private assertSurchargeAdminPermission(actor?: User | null): User | null {
+    const resolvedActor = actor !== undefined ? actor : currentAuthUser;
+    if (!resolvedActor) {
+      return null;
+    }
+    const role = (resolvedActor.role || '').toUpperCase();
+    const isExternal =
+      role === 'B2B_AGENT' ||
+      role === 'AGENT' ||
+      role === 'AGENCY_OWNER' ||
+      role === 'BUYER' ||
+      role === 'VIEWER' ||
+      role === 'PUBLIC';
+    if (isExternal) {
+      throw new Error('Unauthorized: Only Admin or authorized Finance administrators may manage centralized surcharges.');
+    }
+    if (
+      !isMasterAdmin(resolvedActor) &&
+      role !== 'ADMIN' &&
+      role !== 'SUPER_ADMIN' &&
+      !canUserAccessCMSModule(resolvedActor, 'SURCHARGE_MANAGEMENT')
+    ) {
+      throw new Error('Unauthorized: Missing Finance & Administration -> Surcharge Management permission.');
+    }
+    return resolvedActor;
+  }
+
   /**
-   * Safely migrates any legacy product-level surcharges (`product.surcharges`) into
-   * centralized `surcharge_masters`, `surcharge_product_mappings`, and `surcharge_history`
+   * Builds a unified cross-inventory catalog (Products, Hotels, Rail, Visas, Travel Protection,
+   * VIP Ground, Connectivity Plans) for centralized surcharge targeting, mappings, and metrics.
+   */
+  public getUnifiedSurchargeInventoryCatalog(): Product[] {
+    const products = this.getProducts();
+    const existingIds = new Set(products.map(p => p.id));
+    const extras: Product[] = [];
+
+    const pushExtra = (item: Partial<Product> & { id: string; name: string }) => {
+      if (!item.id || existingIds.has(item.id)) return;
+      existingIds.add(item.id);
+      extras.push({
+        sku: item.sku || item.id,
+        category: item.category || 'Private Tours',
+        productType: item.productType || item.category || 'Private Tours',
+        destinationId: item.destinationId || '',
+        destinationName: item.destinationName || item.country || 'Japan',
+        country: item.country || item.destinationName || 'Japan',
+        city: item.city || '',
+        currency: item.currency || 'JPY',
+        nativeCurrency: item.nativeCurrency || item.currency || 'JPY',
+        status: item.status || 'ACTIVE',
+        ...item
+      } as Product);
+    };
+
+    try {
+      this.getHotels().forEach(h => {
+        const hAny = h as any;
+        if (hAny?.isDeleted) return;
+        pushExtra({
+          id: h.id,
+          sku: h.id,
+          name: h.name,
+          category: 'Hotels' as Product['category'],
+          productType: 'Hotel & Resort',
+          destinationId: h.destinationId || '',
+          destinationName: hAny.destinationName || h.country || 'Japan',
+          country: h.country || 'Japan',
+          city: h.city || '',
+          currency: (h.currency as CurrencyCode) || 'JPY',
+          status: (h.status === 'PUBLISHED' ? 'ACTIVE' : (h.status as any)) || 'ACTIVE',
+          validityFrom: h.validityFrom,
+          validityTo: h.validityTo
+        });
+      });
+    } catch {}
+
+    try {
+      this.getJapanRailCommercialProducts().forEach(r => {
+        const railAny = r as any;
+        pushExtra({
+          id: r.id,
+          sku: r.productCode || r.id,
+          name: railAny.commercialName || railAny.name || r.productName || 'Shinkansen Pass',
+          category: 'Rail / Shinkansen' as Product['category'],
+          productType: 'Rail & Transportation',
+          destinationId: 'dest-japan',
+          destinationName: 'Japan',
+          country: 'Japan',
+          city: 'Tokyo / Kyoto / Osaka',
+          currency: (railAny.currency as CurrencyCode) || 'JPY',
+          status: (r.status as any) || 'ACTIVE',
+          validityFrom: r.validityFrom,
+          validityTo: r.validityTo
+        });
+      });
+    } catch {}
+
+    try {
+      this.getVisas().forEach(v => {
+        const visaAny = v as any;
+        pushExtra({
+          id: v.id,
+          sku: v.id,
+          name: visaAny.title || v.listingName || visaAny.name || `${v.country} ${v.visaType}`,
+          category: 'Visa & Ancillary Services' as Product['category'],
+          productType: 'Visa Services',
+          destinationId: v.destinationId || '',
+          destinationName: visaAny.destinationName || v.country || 'Global',
+          country: v.country || visaAny.destinationName || 'Global',
+          currency: (v.currency as CurrencyCode) || 'INR',
+          status: (v.status as any) || 'ACTIVE',
+          validityFrom: v.validityFrom,
+          validityTo: v.validityTo
+        });
+      });
+    } catch {}
+
+    try {
+      this.getTravelProtectionPlans().forEach(tp => {
+        const tpAny = tp as any;
+        pushExtra({
+          id: tp.id,
+          sku: tpAny.code || tpAny.planCode || tp.id,
+          name: tpAny.name || tpAny.planName || 'Travel Protection',
+          category: 'Visa & Ancillary Services' as Product['category'],
+          productType: 'Travel Protection',
+          destinationId: tp.destinationId || '',
+          destinationName: tpAny.destinationName || tpAny.country || 'Japan',
+          country: tpAny.country || tpAny.destinationName || 'Japan',
+          currency: (tp.currency as CurrencyCode) || 'INR',
+          status: (tp.status === 'INACTIVE' ? 'DRAFT' : (tp.status as any)) || 'ACTIVE',
+          validityFrom: tp.validityFrom,
+          validityTo: tp.validityTo
+        });
+      });
+    } catch {}
+
+    try {
+      this.getVipGroundServices().forEach(vip => {
+        const vipAny = vip as any;
+        pushExtra({
+          id: vip.id,
+          sku: vipAny.code || vipAny.serviceCode || vip.id,
+          name: vip.name,
+          category: 'Visa & Ancillary Services' as Product['category'],
+          productType: 'VIP Ground Service',
+          destinationId: vip.destinationId || '',
+          destinationName: vipAny.destinationName || vipAny.country || 'Japan',
+          country: vipAny.country || vipAny.destinationName || 'Japan',
+          currency: (vip.currency as CurrencyCode) || 'JPY',
+          status: (vip.status === 'INACTIVE' ? 'DRAFT' : (vip.status as any)) || 'ACTIVE',
+          validityFrom: vip.validityFrom,
+          validityTo: vip.validityTo
+        });
+      });
+    } catch {}
+
+    try {
+      this.getConnectivityPlans().forEach(cp => {
+        const cpAny = cp as any;
+        pushExtra({
+          id: cp.id,
+          sku: cpAny.code || cpAny.planCode || cp.id,
+          name: cp.name,
+          category: 'Visa & Ancillary Services' as Product['category'],
+          productType: 'Connectivity / eSIM',
+          destinationId: cpAny.destinationId || '',
+          destinationName: cpAny.destinationName || cpAny.country || 'Japan',
+          country: cpAny.country || cpAny.destinationName || 'Japan',
+          currency: (cp.currency as CurrencyCode) || 'INR',
+          status: (cp.status === 'INACTIVE' ? 'DRAFT' : (cp.status as any)) || 'ACTIVE',
+          validityFrom: cp.validityFrom,
+          validityTo: cp.validityTo
+        });
+      });
+    } catch {}
+
+    return [...products, ...extras];
+  }
+
+  /**
+   * Safely migrates any legacy inline inventory surcharges (Products, Hotels, Visas,
+   * Travel Protection, VIP Ground, Connectivity, Rail Commercial Products) into centralized
+   * `surcharge_masters`, `surcharge_product_mappings`, and `surcharge_history`
    * without deleting historical data or modifying existing quotation snapshots.
    */
   public migrateLegacyProductSurchargesToCentralized(): {
@@ -23990,53 +27482,257 @@ export class AppDatabase {
     totalSurcharges: number;
   } {
     const products = this.getProducts();
+    const unifiedCatalog = this.getUnifiedSurchargeInventoryCatalog();
     const existingMasters = this.getItem<SurchargeMaster[]>('surcharge_masters', envService.allowDemoData() ? INITIAL_SURCHARGE_MASTERS : []);
     const existingMappings = this.getItem<SurchargeProductMapping[]>('surcharge_product_mappings', []);
     const existingHistory = this.getItem<SurchargeHistoryRecord[]>('surcharge_history', []);
 
-    const { migratedMasters, historyRecords } = migrateLegacyProductSurcharges(
-      products,
-      existingMasters
-    );
+    const prodMigration = migrateLegacyProductSurcharges(products, existingMasters);
+    let runningMasters = [...existingMasters, ...prodMigration.migratedMasters];
+    const allMigratedMasters: SurchargeMaster[] = [...prodMigration.migratedMasters];
+    const allHistoryRecords: SurchargeHistoryRecord[] = [...prodMigration.historyRecords];
 
-    if (migratedMasters.length > 0) {
-      const mergedMasters = [...existingMasters, ...migratedMasters];
-      const newMappings = migratedMasters.flatMap(s => buildMappingsForSurcharge(s, products));
+    const extraLegacyRecords: LegacyInventorySurchargeSource[] = [];
+    try {
+      this.getHotels().forEach(h => {
+        if (Array.isArray(h.surcharges) && h.surcharges.length > 0) {
+          extraLegacyRecords.push({
+            id: h.id,
+            name: h.name,
+            sku: h.id,
+            category: 'Hotels',
+            productType: 'Hotel & Resort',
+            destinationId: h.destinationId,
+            destinationName: (h as any).destinationName || h.country || 'Japan',
+            country: h.country || 'Japan',
+            city: h.city,
+            currency: h.currency || 'JPY',
+            validityFrom: h.validityFrom,
+            validityTo: h.validityTo,
+            surcharges: h.surcharges
+          });
+        }
+      });
+    } catch {}
+    try {
+      this.getVisas().forEach(v => {
+        const visaAny = v as any;
+        if (Array.isArray(v.surcharges) && v.surcharges.length > 0) {
+          extraLegacyRecords.push({
+            id: v.id,
+            name: visaAny.title || v.listingName || visaAny.name || 'Visa Service',
+            sku: v.id,
+            category: 'Visa & Ancillary Services',
+            productType: 'Visa Services',
+            destinationId: v.destinationId,
+            destinationName: visaAny.destinationName || v.country || 'Global',
+            country: v.country || visaAny.destinationName || 'Global',
+            currency: v.currency || 'INR',
+            validityFrom: v.validityFrom,
+            validityTo: v.validityTo,
+            surcharges: v.surcharges
+          });
+        }
+      });
+    } catch {}
+    try {
+      this.getTravelProtectionPlans().forEach(tp => {
+        const tpAny = tp as any;
+        if (Array.isArray(tp.surcharges) && tp.surcharges.length > 0) {
+          extraLegacyRecords.push({
+            id: tp.id,
+            name: tpAny.name || tpAny.planName || 'Travel Protection',
+            sku: tpAny.code || tpAny.planCode || tp.id,
+            category: 'Visa & Ancillary Services',
+            productType: 'Travel Protection',
+            destinationId: tp.destinationId,
+            destinationName: tpAny.destinationName || tpAny.country || 'Japan',
+            country: tpAny.country || tpAny.destinationName || 'Japan',
+            currency: tp.currency || 'INR',
+            validityFrom: tp.validityFrom,
+            validityTo: tp.validityTo,
+            surcharges: tp.surcharges
+          });
+        }
+      });
+    } catch {}
+    try {
+      this.getVipGroundServices().forEach(vip => {
+        const vipAny = vip as any;
+        if (Array.isArray(vip.surcharges) && vip.surcharges.length > 0) {
+          extraLegacyRecords.push({
+            id: vip.id,
+            name: vip.name,
+            sku: vipAny.code || vipAny.serviceCode || vip.id,
+            category: 'Visa & Ancillary Services',
+            productType: 'VIP Ground Service',
+            destinationId: vip.destinationId,
+            destinationName: vipAny.destinationName || vipAny.country || 'Japan',
+            country: vipAny.country || vipAny.destinationName || 'Japan',
+            currency: vip.currency || 'JPY',
+            validityFrom: vip.validityFrom,
+            validityTo: vip.validityTo,
+            surcharges: vip.surcharges
+          });
+        }
+      });
+    } catch {}
+    try {
+      this.getConnectivityPlans().forEach(cp => {
+        const cpAny = cp as any;
+        if (Array.isArray(cp.surcharges) && cp.surcharges.length > 0) {
+          extraLegacyRecords.push({
+            id: cp.id,
+            name: cp.name,
+            sku: cpAny.code || cpAny.planCode || cp.id,
+            category: 'Visa & Ancillary Services',
+            productType: 'Connectivity / eSIM',
+            destinationId: cpAny.destinationId,
+            destinationName: cpAny.destinationName || cpAny.country || 'Japan',
+            country: cpAny.country || cpAny.destinationName || 'Japan',
+            currency: cp.currency || 'INR',
+            validityFrom: cp.validityFrom,
+            validityTo: cp.validityTo,
+            surcharges: cp.surcharges
+          });
+        }
+      });
+    } catch {}
+    try {
+      this.getJapanRailCommercialProducts().forEach(rail => {
+        const railAny = rail as any;
+        if (Array.isArray(rail.surcharges) && rail.surcharges.length > 0) {
+          extraLegacyRecords.push({
+            id: rail.id,
+            name: railAny.commercialName || railAny.name || rail.productName,
+            sku: rail.productCode || rail.id,
+            category: 'Rail / Shinkansen',
+            productType: 'Rail & Transportation',
+            destinationId: 'dest-japan',
+            destinationName: 'Japan',
+            country: 'Japan',
+            currency: railAny.currency || 'JPY',
+            validityFrom: rail.validityFrom,
+            validityTo: rail.validityTo,
+            surcharges: rail.surcharges
+          });
+        }
+      });
+    } catch {}
+
+    if (extraLegacyRecords.length > 0) {
+      const extraMig = migrateLegacyMultiInventorySurcharges(extraLegacyRecords, runningMasters);
+      if (extraMig.migratedMasters.length > 0) {
+        runningMasters = [...runningMasters, ...extraMig.migratedMasters];
+        allMigratedMasters.push(...extraMig.migratedMasters);
+        allHistoryRecords.push(...extraMig.historyRecords);
+      }
+    }
+
+    if (allMigratedMasters.length > 0) {
+      const newMappings = allMigratedMasters.flatMap(s => buildMappingsForSurcharge(s, unifiedCatalog));
       const mergedMappings = [...existingMappings, ...newMappings];
-      const mergedHistory = [...historyRecords, ...existingHistory];
+      const mergedHistory = [...allHistoryRecords, ...existingHistory];
 
-      this.setItem('surcharge_masters', mergedMasters, false);
+      this.setItem('surcharge_masters', runningMasters, false);
       this.setItem('surcharge_product_mappings', mergedMappings, false);
       this.setItem('surcharge_history', mergedHistory, false);
 
-      migratedMasters.forEach(s => this.syncFirestoreDoc('surcharge_masters', s.id, s));
+      allMigratedMasters.forEach(s => this.syncFirestoreDoc('surcharge_masters', s.id, s));
       newMappings.forEach(m => this.syncFirestoreDoc('surcharge_product_mappings', m.id, m));
-      historyRecords.forEach(h => this.syncFirestoreDoc('surcharge_history', h.id, h));
+      allHistoryRecords.forEach(h => this.syncFirestoreDoc('surcharge_history', h.id, h));
     } else if (existingMappings.length === 0 && existingMasters.length > 0) {
-      const rebuiltMappings = existingMasters.flatMap(s => buildMappingsForSurcharge(s, products));
+      const rebuiltMappings = existingMasters.flatMap(s => buildMappingsForSurcharge(s, unifiedCatalog));
       this.setItem('surcharge_product_mappings', rebuiltMappings, false);
     }
 
     return {
-      migratedCount: migratedMasters.length,
-      totalSurcharges: existingMasters.length + migratedMasters.length
+      migratedCount: allMigratedMasters.length,
+      totalSurcharges: existingMasters.length + allMigratedMasters.length
     };
   }
 
+  public purgeUnauthorizedDemoAndLegacySurchargesFromLocalState(): void {
+    const rawMasters = this.getItem<SurchargeMaster[]>('surcharge_masters', []);
+    if (Array.isArray(rawMasters) && rawMasters.length > 0) {
+      const cleanedMasters = rawMasters.filter(s => s && !isUnauthorizedLegacyOrDemoSurcharge(s));
+      if (cleanedMasters.length !== rawMasters.length) {
+        this.setItem('surcharge_masters', cleanedMasters, true);
+      }
+    }
+    const rawMappings = this.getItem<SurchargeProductMapping[]>('surcharge_product_mappings', []);
+    if (Array.isArray(rawMappings) && rawMappings.length > 0) {
+      const validIds = new Set(
+        this.getItem<SurchargeMaster[]>('surcharge_masters', []).map(s => s.id)
+      );
+      const cleanedMappings = rawMappings.filter(m => m && validIds.has(m.surchargeId));
+      if (cleanedMappings.length !== rawMappings.length) {
+        this.setItem('surcharge_product_mappings', cleanedMappings, false);
+      }
+    }
+    const rawProducts = this.getItem<Product[]>('products', []);
+    if (Array.isArray(rawProducts) && rawProducts.length > 0) {
+      let modified = false;
+      const cleanedProducts = rawProducts.map(p => {
+        const hasInline = Array.isArray(p?.surcharges) && p.surcharges.length > 0;
+        const hasCfgInline =
+          Array.isArray(p?.configuration?.configuration_data?.surcharges) &&
+          p.configuration!.configuration_data!.surcharges!.length > 0;
+        if (!hasInline && !hasCfgInline) return p;
+        modified = true;
+        return {
+          ...p,
+          surcharges: [],
+          ...(p.configuration?.configuration_data
+            ? {
+                configuration: {
+                  ...p.configuration,
+                  configuration_data: {
+                    ...p.configuration.configuration_data,
+                    surcharges: []
+                  }
+                }
+              }
+            : {})
+        };
+      });
+      if (modified) {
+        this.setItem('products', cleanedProducts, false);
+      }
+    }
+  }
+
   public getSurchargeMasters(includeArchived: boolean = true): SurchargeMaster[] {
-    const raw = this.getItem<SurchargeMaster[]>('surcharge_masters', envService.allowDemoData() ? INITIAL_SURCHARGE_MASTERS : []);
+    const ver = masterDataCache.getVersion('surcharge_masters');
+    const tombVer = masterDataCache.getVersion('inventory_tombstones');
+    const cacheKey = includeArchived ? 'surcharge_masters_all' : 'surcharge_masters_active';
+    const cached = masterDataCache.getDerived<SurchargeMaster[]>(cacheKey, ver, tombVer);
+    if (cached) {
+      performanceMonitor.recordCacheHit('dbGetSurcharges');
+      return [...cached];
+    }
+    performanceMonitor.recordCacheMiss('dbGetSurcharges');
+
+    const raw = this.getItem<SurchargeMaster[]>('surcharge_masters', []);
     const deletedSet = this.getDeletedEntityIds();
     const list = (Array.isArray(raw) ? raw : [])
-      .filter(s => s && s.id && !deletedSet.has(s.id) && !deletedSet.has(`surcharge_masters_${s.id}`))
+      .filter(
+        s =>
+          s &&
+          s.id &&
+          !isUnauthorizedLegacyOrDemoSurcharge(s) &&
+          !deletedSet.has(s.id) &&
+          !deletedSet.has(`surcharge_masters_${s.id}`)
+      )
       .map(s => ({
         ...s,
         linkedProductIds: Array.isArray(s.linkedProductIds) ? s.linkedProductIds : []
       }));
 
-    if (!includeArchived) {
-      return list.filter(s => s.status !== 'ARCHIVED');
-    }
-    return list;
+    const active = list.filter(s => s.status !== 'ARCHIVED');
+    masterDataCache.setDerived('surcharge_masters_all', ver, tombVer, list);
+    masterDataCache.setDerived('surcharge_masters_active', ver, tombVer, active);
+    return [...(includeArchived ? list : active)];
   }
 
   public getSurchargeMasterById(id: string): SurchargeMaster | undefined {
@@ -24044,18 +27740,41 @@ export class AppDatabase {
     return this.getSurchargeMasters(true).find(s => s.id === id || s.code === id);
   }
 
-  public getSurchargesForProduct(productId: string): SurchargeMaster[] {
-    if (!productId) return [];
-    return this.getSurchargeMasters(false).filter(
-      s => Array.isArray(s.linkedProductIds) && s.linkedProductIds.includes(productId)
-    );
+  public getSurchargesForProduct(
+    productId: string,
+    scopeMeta?: {
+      category?: string;
+      productType?: string;
+      destinationId?: string;
+      destinationName?: string;
+      country?: string;
+    }
+  ): SurchargeMaster[] {
+    if (!productId && !scopeMeta) return [];
+    const catalogMatch = productId
+      ? this.getUnifiedSurchargeInventoryCatalog().find(p => p.id === productId)
+      : undefined;
+    const pseudoProduct: Partial<Product> = {
+      id: productId || catalogMatch?.id || '',
+      category: (scopeMeta?.category || catalogMatch?.category || 'Private Tours') as Product['category'],
+      productType: scopeMeta?.productType || catalogMatch?.productType || '',
+      destinationId: scopeMeta?.destinationId || catalogMatch?.destinationId || '',
+      destinationName: scopeMeta?.destinationName || catalogMatch?.destinationName || '',
+      country: scopeMeta?.country || catalogMatch?.country || ''
+    };
+    return this.getSurchargeMasters(false).filter(s => {
+      if (productId && Array.isArray(s.linkedProductIds) && s.linkedProductIds.includes(productId)) {
+        return true;
+      }
+      return doesSurchargeMatchProductScope(s, pseudoProduct);
+    });
   }
 
   public getSurchargeProductMappings(surchargeId?: string): SurchargeProductMapping[] {
     const raw = this.getItem<SurchargeProductMapping[]>('surcharge_product_mappings', []);
     if (!Array.isArray(raw) || raw.length === 0) {
-      const products = this.getProducts();
-      const rebuilt = this.getSurchargeMasters(true).flatMap(s => buildMappingsForSurcharge(s, products));
+      const catalog = this.getUnifiedSurchargeInventoryCatalog();
+      const rebuilt = this.getSurchargeMasters(true).flatMap(s => buildMappingsForSurcharge(s, catalog));
       return surchargeId ? rebuilt.filter(m => m.surchargeId === surchargeId) : rebuilt;
     }
     return surchargeId ? raw.filter(m => m.surchargeId === surchargeId) : raw;
@@ -24072,8 +27791,8 @@ export class AppDatabase {
 
   public getSurchargeDashboardMetrics(): SurchargeDashboardMetrics {
     const surcharges = this.getSurchargeMasters(true);
-    const products = this.getProducts();
-    return calculateSurchargeDashboardMetrics(surcharges, products);
+    const catalog = this.getUnifiedSurchargeInventoryCatalog();
+    return calculateSurchargeDashboardMetrics(surcharges, catalog);
   }
 
   public saveSurchargeMaster(
@@ -24081,6 +27800,7 @@ export class AppDatabase {
     actor?: User | null,
     changeSummary?: string
   ): SurchargeMaster {
+    this.assertSurchargeAdminPermission(actor);
     const existingList = this.getSurchargeMasters(true);
     const existingIdx = existingList.findIndex(s => s.id === surcharge.id);
     const existing = existingIdx >= 0 ? existingList[existingIdx] : undefined;
@@ -24117,10 +27837,10 @@ export class AppDatabase {
     this.setItem('surcharge_masters', nextList, true);
     this.syncFirestoreDoc('surcharge_masters', savedRecord.id, savedRecord);
 
-    // Rebuild and synchronize product mappings for this surcharge
-    const products = this.getProducts();
+    // Rebuild and synchronize product mappings for this surcharge across unified inventory
+    const unifiedCatalog = this.getUnifiedSurchargeInventoryCatalog();
     const otherMappings = this.getSurchargeProductMappings().filter(m => m.surchargeId !== savedRecord.id);
-    const newMappings = buildMappingsForSurcharge(savedRecord, products);
+    const newMappings = buildMappingsForSurcharge(savedRecord, unifiedCatalog);
     const updatedMappings = [...otherMappings, ...newMappings];
     this.setItem('surcharge_product_mappings', updatedMappings, false);
     newMappings.forEach(m => this.syncFirestoreDoc('surcharge_product_mappings', m.id, m));
@@ -24172,7 +27892,34 @@ export class AppDatabase {
     return savedRecord;
   }
 
+  public toggleSurchargeMasterStatus(
+    surchargeId: string,
+    nextStatus: 'ACTIVE' | 'INACTIVE',
+    actor?: User | null,
+    reason?: string
+  ): SurchargeMaster | null {
+    this.assertSurchargeAdminPermission(actor);
+    const source = this.getSurchargeMasterById(surchargeId);
+    if (!source) return null;
+
+    const updated: SurchargeMaster = {
+      ...source,
+      status: nextStatus,
+      isActive: nextStatus === 'ACTIVE'
+    };
+
+    return this.saveSurchargeMaster(
+      updated,
+      actor,
+      reason ||
+        `Centralized surcharge "${source.name}" (${source.surchargeCode || source.code || source.id}) ${
+          nextStatus === 'ACTIVE' ? 'activated' : 'deactivated'
+        } by Finance & Administration.`
+    );
+  }
+
   public duplicateSurchargeMaster(surchargeId: string, actor?: User | null): SurchargeMaster | null {
+    this.assertSurchargeAdminPermission(actor);
     const source = this.getSurchargeMasterById(surchargeId);
     if (!source) return null;
 
@@ -24203,6 +27950,7 @@ export class AppDatabase {
     actor?: User | null,
     reason?: string
   ): SurchargeMaster | null {
+    this.assertSurchargeAdminPermission(actor);
     const source = this.getSurchargeMasterById(surchargeId);
     if (!source) return null;
 
@@ -24224,8 +27972,8 @@ export class AppDatabase {
     if (!surcharge) return null;
     const quotes = this.getAllSavedQuotes();
     const bookings = this.getBookings();
-    const products = this.getProducts();
-    return inspectSurchargeUsage(surcharge, quotes, bookings, products);
+    const catalog = this.getUnifiedSurchargeInventoryCatalog();
+    return inspectSurchargeUsage(surcharge, quotes, bookings, catalog);
   }
 
   public deleteSurchargeMaster(
@@ -24233,21 +27981,22 @@ export class AppDatabase {
     actor?: User | null,
     reason?: string
   ): { success: boolean; error?: string; inspection?: SurchargeUsageInspection } {
+    try {
+      this.assertSurchargeAdminPermission(actor);
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Unauthorized: Only administrators can delete surcharge configurations.' };
+    }
+
     const surcharge = this.getSurchargeMasterById(surchargeId);
     if (!surcharge) {
       return { success: false, error: 'Surcharge configuration not found.' };
     }
 
     const actorRole = actor?.role || currentAuthUser?.role || 'ADMIN';
-    const isAuthorizedAdmin = actorRole === 'ADMIN' || (actor as any)?.category === 'INTERNAL';
-    if (!isAuthorizedAdmin) {
-      return { success: false, error: 'Unauthorized: Only administrators can permanently delete surcharge configurations.' };
-    }
-
     const quotes = this.getAllSavedQuotes();
     const bookings = this.getBookings();
-    const products = this.getProducts();
-    const inspection = inspectSurchargeUsage(surcharge, quotes, bookings, products);
+    const catalog = this.getUnifiedSurchargeInventoryCatalog();
+    const inspection = inspectSurchargeUsage(surcharge, quotes, bookings, catalog);
 
     if (!inspection.canDelete) {
       return {

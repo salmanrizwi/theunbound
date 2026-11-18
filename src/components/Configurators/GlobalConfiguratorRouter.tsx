@@ -6,6 +6,7 @@ import {
   ProductCategoryEnum
 } from '../../services/configuratorRegistry';
 import { AlertCircle } from 'lucide-react';
+import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 
 // The 11 Dedicated Configurators
 import { PrivateTourConfigurator } from './PrivateTourConfigurator';
@@ -94,6 +95,47 @@ export const GlobalConfiguratorRouter: React.FC<GlobalConfiguratorRouterProps> =
         </div>
       </div>
     );
+  }
+
+  const isB2BPortalContext =
+    portalOrigin === 'B2B_AGENT' || portalOrigin === 'B2B_QUOTE_BUILDER' || portalOrigin === 'CART';
+
+  if (isB2BPortalContext && !existingQuoteItemId) {
+    const rawTarget =
+      'product' in itemOrProduct && itemOrProduct.product
+        ? itemOrProduct.product
+        : (itemOrProduct as any);
+    let entityType: 'PRODUCT' | 'HOTEL' | 'VISA' | 'PROTECTION' | 'VIP_GROUND' | 'CONNECTIVITY' = 'PRODUCT';
+    if (resolved.categoryEnum === 'HOTELS') {
+      entityType = 'HOTEL';
+    } else if (resolved.categoryEnum === 'VISA_ANCILLARY') {
+      if ('visaType' in rawTarget || String(rawTarget?.sku || '').startsWith('VSA-')) entityType = 'VISA';
+      else if ('serviceName' in rawTarget) entityType = 'PROTECTION';
+      else if ('serviceType' in rawTarget) entityType = 'VIP_GROUND';
+      else if ('dataAllowance' in rawTarget) entityType = 'CONNECTIVITY';
+    }
+    const isManualHotelEntry = rawTarget?.accommodationType === 'manual';
+    if (!isManualHotelEntry && !inventoryVisibilityService.isEntityAccessibleInB2B(entityType, rawTarget)) {
+      return (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 text-center shadow-2xl border border-slate-200 animate-in fade-in">
+            <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-3">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-slate-900 mb-2">Service Unavailable</h3>
+            <p className="text-xs text-slate-600 mb-5 leading-relaxed">
+              This service is mapped to a destination that is currently inactive and cannot be configured or added in the B2B Agent Portal.
+            </p>
+            <button
+              onClick={onClose}
+              className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      );
+    }
   }
 
   const handleSuccess = (configuredItem: any, details?: any) => {

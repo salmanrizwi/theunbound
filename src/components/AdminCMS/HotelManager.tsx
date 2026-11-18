@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { AppDatabase } from '../../services/db';
 import { Hotel, HotelRoomType, HotelRate, HotelDailyPriceOverride, Destination, MealPlanCode, DestinationRegionItem, CityHub, MasterRegion } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -65,7 +65,22 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   const [selectedDestinationFilter, setSelectedDestinationFilter] = useState<string>('all');
   const [selectedCityHubFilter, setSelectedCityHubFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const hotelPageSize = 24;
   const [isEditing, setIsEditing] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPage(1);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedRegionFilter, selectedDestinationFilter, selectedCityHubFilter]);
   const [editingHotel, setEditingHotel] = useState<Partial<Hotel> | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'DETAILS' | 'ROOMS' | 'LOCATION' | 'CALENDAR_PRICING' | 'SEO'>('DETAILS');
@@ -107,7 +122,16 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   const [hierarchyError, setHierarchyError] = useState<string | null>(null);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections([
+      'hotels',
+      'hotel_rooms',
+      'hotel_rates',
+      'hotel_meal_plans',
+      'master_regions',
+      'regions',
+      'city_hubs',
+      'inventory_tombstones'
+    ], () => {
       const updatedHotels = db.getHotels();
       setHotels(updatedHotels);
       setMasterRegions(db.getMasterRegions());
@@ -117,7 +141,7 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
         setCalendarHotelId(updatedHotels[0].id);
       }
     });
-  }, [calendarHotelId]);
+  }, [calendarHotelId, db]);
 
   // Set default calendar room when hotel changes
   useEffect(() => {
@@ -138,33 +162,42 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
     ? destinations
     : destinations.filter(d => d.regionId === selectedRegionFilter);
 
-  const availableHubsForFilter = cityHubs.filter(h => {
+  const availableHubsForFilter = useMemo(() => cityHubs.filter(h => {
     const matchesReg = selectedRegionFilter === 'all' || h.regionId === selectedRegionFilter;
     const matchesDest = selectedDestinationFilter === 'all' || h.destinationId === selectedDestinationFilter;
     return matchesReg && matchesDest;
-  });
+  }), [cityHubs, selectedRegionFilter, selectedDestinationFilter]);
 
-  const filteredHotels = hotels.filter(h => {
+  const filteredHotels = useMemo(() => {
     const targetDest = destinations.find(d => d.id === selectedDestinationFilter || d.slug === selectedDestinationFilter);
-    const matchesReg = selectedRegionFilter === 'all' || 
-                       h.regionId === selectedRegionFilter ||
-                       (targetDest && targetDest.regionId === selectedRegionFilter);
-    const matchesDest = selectedDestinationFilter === 'all' || 
-                        h.destinationId === selectedDestinationFilter || 
-                        (targetDest && (h.destinationId === targetDest.id || h.destinationId === targetDest.slug || (h.country || '').toLowerCase() === (targetDest.name || '').toLowerCase()));
-    const matchesHub = selectedCityHubFilter === 'all' || 
-                       h.hubId === selectedCityHubFilter || 
-                       h.cityId === selectedCityHubFilter ||
-                       (h.cityName || '').toLowerCase() === (selectedCityHubFilter || '').toLowerCase();
-    const q = (searchQuery || '').toLowerCase();
-    const matchesSearch = !q ||
-                          (h.name || '').toLowerCase().includes(q) || 
-                          (h.code || '').toLowerCase().includes(q) ||
-                          (h.cityName || '').toLowerCase().includes(q) ||
-                          (h.regionName || '').toLowerCase().includes(q) ||
-                          (h.destinationName || '').toLowerCase().includes(q);
-    return matchesReg && matchesDest && matchesHub && matchesSearch;
-  });
+    const q = (debouncedSearchQuery || '').toLowerCase().trim();
+    return hotels.filter(h => {
+      const matchesReg = selectedRegionFilter === 'all' || 
+                         h.regionId === selectedRegionFilter ||
+                         (targetDest && targetDest.regionId === selectedRegionFilter);
+      const matchesDest = selectedDestinationFilter === 'all' || 
+                          h.destinationId === selectedDestinationFilter || 
+                          (targetDest && (h.destinationId === targetDest.id || h.destinationId === targetDest.slug || (h.country || '').toLowerCase() === (targetDest.name || '').toLowerCase()));
+      const matchesHub = selectedCityHubFilter === 'all' || 
+                         h.hubId === selectedCityHubFilter || 
+                         h.cityId === selectedCityHubFilter ||
+                         (h.cityName || '').toLowerCase() === (selectedCityHubFilter || '').toLowerCase();
+      const matchesSearch = !q ||
+                            (h.name || '').toLowerCase().includes(q) || 
+                            (h.code || '').toLowerCase().includes(q) ||
+                            (h.cityName || '').toLowerCase().includes(q) ||
+                            (h.regionName || '').toLowerCase().includes(q) ||
+                            (h.destinationName || '').toLowerCase().includes(q);
+      return matchesReg && matchesDest && matchesHub && matchesSearch;
+    });
+  }, [hotels, destinations, selectedRegionFilter, selectedDestinationFilter, selectedCityHubFilter, debouncedSearchQuery]);
+
+  const totalHotelPages = Math.max(1, Math.ceil(filteredHotels.length / hotelPageSize));
+  const paginatedHotels = useMemo(() => {
+    const safePage = Math.min(currentPage, totalHotelPages);
+    const start = (safePage - 1) * hotelPageSize;
+    return filteredHotels.slice(start, start + hotelPageSize);
+  }, [filteredHotels, currentPage, totalHotelPages]);
 
   const activeCalendarHotel = hotels.find(h => h.id === calendarHotelId) || hotels[0];
   const activeCalendarRoom = activeCalendarHotel?.roomTypes.find(r => r.id === calendarRoomId) || activeCalendarHotel?.roomTypes[0];
@@ -341,12 +374,12 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
     };
 
     setHierarchyError(null);
-    // Validate Hotel Validity & Surcharges
+    // Validate Hotel Validity
     const hotelValidityCheck = validateInventoryValidityAndSurcharges({
       validity: completeHotel.validity,
       validityFrom: completeHotel.validityFrom,
       validityTo: completeHotel.validityTo,
-      surcharges: completeHotel.surcharges,
+      surcharges: [],
       requireValidity: completeHotel.status === 'PUBLISHED' || (completeHotel.status as string) === 'ACTIVE',
       nativeCurrency: completeHotel.currency || 'USD'
     });
@@ -355,14 +388,14 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
       return;
     }
 
-    // Validate each Room Rate's Validity & Surcharges
+    // Validate each Room Rate's Validity
     for (const rm of completeHotel.roomTypes || []) {
       for (const rt of rm.rates || []) {
         const rateCheck = validateInventoryValidityAndSurcharges({
           validity: rt.validity,
           validityFrom: rt.validityFrom,
           validityTo: rt.validityTo,
-          surcharges: rt.surcharges,
+          surcharges: [],
           requireValidity: true,
           nativeCurrency: rt.currency || completeHotel.currency || 'USD'
         });
@@ -1008,9 +1041,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
             </div>
           </div>
 
-          {/* Hotel Cards Grid */}
+          {/* Hotel Cards Grid (Paginated) */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredHotels.map(hotel => {
+            {paginatedHotels.map(hotel => {
               const maxRoomOccupancy = Math.max(...(hotel.roomTypes.map(r => r.maxOccupancy || (r.maxAdults + r.maxChildren) || 3)), 3);
               const maxChildrenAllowed = Math.max(...(hotel.roomTypes.map(r => r.maxChildren ?? 2)), 2);
               const maxChildAge = Math.max(...(hotel.roomTypes.map(r => r.maxChildAge ?? 12)), 12);
@@ -1021,7 +1054,9 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                     <div className="relative h-48 overflow-hidden bg-slate-100">
                       <img 
                         src={hotel.heroImage} 
-                        alt={hotel.name} 
+                        alt={hotel.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
                       />
                       <div className="absolute top-3 left-3 bg-slate-900/85 backdrop-blur-md text-white text-[11px] font-bold px-3 py-1 rounded-xl flex items-center space-x-1.5 shadow-sm">
@@ -1138,6 +1173,39 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
               );
             })}
           </div>
+
+          {filteredHotels.length > hotelPageSize && (
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-200 text-xs text-slate-600">
+              <span>
+                Showing <strong>{((Math.min(currentPage, totalHotelPages) - 1) * hotelPageSize) + 1}</strong> to{' '}
+                <strong>{Math.min(Math.min(currentPage, totalHotelPages) * hotelPageSize, filteredHotels.length)}</strong> of{' '}
+                <strong>{filteredHotels.length}</strong> properties
+              </span>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer flex items-center space-x-1"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Prev</span>
+                </button>
+                <span className="font-mono font-bold px-2">
+                  Page {Math.min(currentPage, totalHotelPages)} of {totalHotelPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalHotelPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalHotelPages, p + 1))}
+                  className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 cursor-pointer flex items-center space-x-1"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -2350,10 +2418,17 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                 />
               )}
 
-              {/* Authoritative Hotel Validity Period & Repeatable Surcharges */}
+              {/* Authoritative Hotel Validity Period & Centralized Surcharge Governance */}
               {editingHotel && (
                 <div className="pt-4 border-t border-slate-200">
                   <InventoryValidityAndSurchargesSection
+                    productId={editingHotel.id}
+                    productName={editingHotel.name}
+                    category="Hotels"
+                    productType="Hotel & Resort"
+                    destinationId={editingHotel.destinationId}
+                    destinationName={(editingHotel as any).destinationName || editingHotel.country}
+                    country={editingHotel.country}
                     validFrom={
                       editingHotel.validity?.validFrom ??
                       editingHotel.validityFrom ??
@@ -2366,7 +2441,6 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                       editingHotel.roomTypes?.[0]?.rates?.[0]?.validityTo ??
                       '2026-12-31'
                     }
-                    surcharges={editingHotel.surcharges || []}
                     nativeCurrency={editingHotel.currency || 'USD'}
                     defaultApplicationBasis="PER_ROOM_NIGHT"
                     categoryLabel={`Hotel & Accommodation — ${editingHotel.name || 'Property'}`}
@@ -2379,16 +2453,6 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                               validityFrom: validFrom,
                               validityTo: validTo,
                               validity
-                            }
-                          : null
-                      )
-                    }
-                    onChangeSurcharges={nextSurcharges =>
-                      setEditingHotel(prev =>
-                        prev
-                          ? {
-                              ...prev,
-                              surcharges: nextSurcharges
                             }
                           : null
                       )

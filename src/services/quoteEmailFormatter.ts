@@ -911,6 +911,40 @@ export function renderProposalViewHtmlEmail(
                   </table>
                 </div>
 
+                <!-- 8B. PACKAGE INCLUSIONS, EXCLUSIONS & POLICY NOTES -->
+                ${model.inclusions.length > 0 || model.exclusions.length > 0 || model.importantInformation || model.cancellationPolicy ? `
+                  <div style="margin-top: 10px; margin-bottom: 10px; font-size: 10px;">
+                    ${model.inclusions.length > 0 ? `
+                      <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 10px 14px; margin-bottom: 8px;">
+                        <div style="font-weight: 900; color: #064e3b; text-transform: uppercase; font-size: 10px; margin-bottom: 4px;">✓ Package Inclusions</div>
+                        <ul style="margin: 0; padding-left: 18px; color: #065f46; line-height: 1.45;">
+                          ${model.inclusions.map(inc => `<li style="margin-bottom: 2px;">${cleanInlineFormattedText(inc)}</li>`).join('')}
+                        </ul>
+                      </div>
+                    ` : ''}
+                    ${model.exclusions.length > 0 ? `
+                      <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px; padding: 10px 14px; margin-bottom: 8px;">
+                        <div style="font-weight: 900; color: #881337; text-transform: uppercase; font-size: 10px; margin-bottom: 4px;">✕ Package Exclusions</div>
+                        <ul style="margin: 0; padding-left: 18px; color: #9f1239; line-height: 1.45;">
+                          ${model.exclusions.map(exc => `<li style="margin-bottom: 2px;">${cleanInlineFormattedText(exc)}</li>`).join('')}
+                        </ul>
+                      </div>
+                    ` : ''}
+                    ${model.importantInformation ? `
+                      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 14px; margin-bottom: 8px;">
+                        <div style="font-weight: 900; color: #0f172a; text-transform: uppercase; font-size: 10px; margin-bottom: 3px;">Important Information</div>
+                        <div style="color: #475569; line-height: 1.45;">${formatPdfOrEmailDescription(model.importantInformation)}</div>
+                      </div>
+                    ` : ''}
+                    ${model.cancellationPolicy ? `
+                      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 14px;">
+                        <div style="font-weight: 900; color: #0f172a; text-transform: uppercase; font-size: 10px; margin-bottom: 3px;">Cancellation Policy</div>
+                        <div style="color: #475569; line-height: 1.45;">${formatPdfOrEmailDescription(model.cancellationPolicy)}</div>
+                      </div>
+                    ` : ''}
+                  </div>
+                ` : ''}
+
                 <!-- 9. POLICIES CONTAINER (Exact PDF Policies Box) -->
                 <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; margin-top: 10px; margin-bottom: 10px; font-size: 10px;">
                   <div style="font-weight: 900; color: #78350f; text-transform: uppercase; font-size: 10px; margin-bottom: 5px;">

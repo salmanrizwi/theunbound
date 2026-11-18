@@ -66,6 +66,8 @@ export const AllDestinationsHero: React.FC<AllDestinationsHeroProps> = ({
                 <img
                   src={dest.heroImage}
                   alt={dest.name}
+                  loading="lazy"
+                  decoding="async"
                   className="w-full h-full object-cover group-hover:scale-108 transition-transform duration-700 ease-out"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-slate-950/40 to-transparent" />

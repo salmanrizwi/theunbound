@@ -277,6 +277,8 @@ export const ItineraryTimelineView: React.FC<ItineraryTimelineViewProps> = ({
                                 <img
                                   src={item.product.images[0] || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800&auto=format&fit=crop'}
                                   alt={item.product.name}
+                                  loading="lazy"
+                                  decoding="async"
                                   className="w-14 h-14 rounded-lg object-cover shrink-0"
                                 />
 
@@ -392,6 +394,8 @@ export const ItineraryTimelineView: React.FC<ItineraryTimelineViewProps> = ({
                       <img
                         src={prod.images[0]}
                         alt={prod.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-10 h-10 rounded-lg object-cover shrink-0"
                       />
                       <div className="min-w-0">

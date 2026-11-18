@@ -22,6 +22,7 @@ import { FinalCTA } from '../components/FinalCTA';
 import { Sparkles, MapPin, Compass, ShieldCheck, HelpCircle, ChevronDown, ChevronUp, Globe2, Layers, CheckCircle2, Clock, Building2, FileText, Award, Lock, ArrowRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { canUserAccessB2BInventory } from '../services/permissionEngine';
+import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
 
 interface DestinationPageProps {
   destination: Destination | null;
@@ -208,7 +209,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
   const [inspectingHotel, setInspectingHotel] = useState<Hotel | null>(null);
 
   useEffect(() => {
-    return db.subscribe(() => {
+    return db.subscribeToCollections(['city_hubs', 'hotels', 'homepage_config', 'inventory_tombstones'], () => {
       setCityHubs(db.getCityHubs());
       setHotels(db.getHotels());
       setHomepageConfig(db.getHomepageConfig());
@@ -244,7 +245,10 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
 
   // Products belonging to current destination (and optional selected region) or all destinations
   const safeProducts = products || [];
-  const safeAllDestinations = allDestinations || [];
+  const safeAllDestinations = useMemo(
+    () => (allDestinations || []).filter(d => inventoryVisibilityService.isDestinationActiveForB2B(d)),
+    [allDestinations]
+  );
 
   const destinationProducts = useMemo(() => {
     if (isAllDestinations) {
@@ -439,6 +443,27 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
     if (target) target.scrollIntoView({ behavior: 'smooth' });
   };
 
+  if (!isAllDestinations && !inventoryVisibilityService.isDestinationActiveForB2B(destination)) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center p-6">
+        <div className="bg-white rounded-3xl border border-slate-200 max-w-md w-full p-8 text-center space-y-4 shadow-sm">
+          <Compass className="w-10 h-10 text-slate-300 mx-auto" />
+          <h2 className="text-lg font-black text-slate-900">Destination Unavailable</h2>
+          <p className="text-xs text-slate-500">
+            This destination is currently not Active in the B2B Agent Portal.
+          </p>
+          <button
+            type="button"
+            onClick={() => onSelectDestination('all')}
+            className="px-5 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold cursor-pointer"
+          >
+            Browse Active Destinations
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] pb-12 sm:pb-20 space-y-5 sm:space-y-8">
       {/* 1. Hero Banner: All Destinations vs Single Destination - Full Width */}
@@ -446,7 +471,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
         <div className="w-full">
           {isAllDestinations ? (
             <AllDestinationsHero
-              destinations={allDestinations}
+              destinations={safeAllDestinations}
               config={homepageConfig}
               onSelectDestination={onSelectDestination}
               onExploreProducts={scrollToProducts}
@@ -454,7 +479,7 @@ export const DestinationPage: React.FC<DestinationPageProps> = ({
           ) : (
             <DestinationHero
               destination={destination}
-              allDestinations={allDestinations}
+              allDestinations={safeAllDestinations}
               onSelectDestination={onSelectDestination}
               onExploreProducts={scrollToProducts}
             />

@@ -4,7 +4,7 @@ import {
   VisaProduct, 
   Destination, 
   StructuredVisaRequirement, 
-  VisaAssistanceService,
+  VisaInclusionExclusionEntry,
   TravelProtectionPlan,
   VipGroundService,
   ConnectivityPlan,
@@ -21,7 +21,6 @@ import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
 import { 
   createDefaultRequirementsForVisa, 
-  createDefaultAssistanceServices,
   filterApplicableRequirements,
   generateCustomerVisaChecklist
 } from '../../services/visaRequirementService';
@@ -226,7 +225,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   // Generic Service Workspace Drawer State
   const [isServiceDrawerOpen, setIsServiceDrawerOpen] = useState(false);
   const [serviceDrawerCategory, setServiceDrawerCategory] = useState<'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY'>('VISA');
-  const [workspaceTab, setWorkspaceTab] = useState<'BASIC' | 'COVERAGE' | 'CONFIG' | 'REQUIREMENTS' | 'PRICING' | 'ASSISTANCE' | 'UPSELLS' | 'CUSTOMER_PREVIEW' | 'SEO'>('PRICING');
+  const [workspaceTab, setWorkspaceTab] = useState<'BASIC' | 'COVERAGE' | 'CONFIG' | 'REQUIREMENTS' | 'INCLUSIONS_EXCLUSIONS' | 'PRICING' | 'UPSELLS' | 'CUSTOMER_PREVIEW' | 'SEO'>('PRICING');
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
@@ -259,9 +258,13 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   const [editingRequirement, setEditingRequirement] = useState<StructuredVisaRequirement | null>(null);
   const [requirementDuplicateWarning, setRequirementDuplicateWarning] = useState<string | null>(null);
 
-  // Assistance Service Modal State
-  const [isAssistanceModalOpen, setIsAssistanceModalOpen] = useState(false);
-  const [editingAssistance, setEditingAssistance] = useState<VisaAssistanceService | null>(null);
+  // Visa Inclusions & Exclusions Modal State (Inside Visa Workspace)
+  const [inclusionExclusionModal, setInclusionExclusionModal] = useState<{
+    kind: 'INCLUSION' | 'EXCLUSION';
+    entry: VisaInclusionExclusionEntry;
+    isNew: boolean;
+  } | null>(null);
+  const [inclusionExclusionError, setInclusionExclusionError] = useState<string | null>(null);
 
   // Delete target modal
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string; type: 'VISA' | 'PROTECTION' | 'VIP' | 'CONNECTIVITY' } | null>(null);
@@ -479,7 +482,9 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
           'Last 3 to 6 months bank statements'
         ],
         structuredRequirements: createDefaultRequirementsForVisa(newId, defaultDest.name, 'Tourist E-Visa'),
-        assistanceServices: createDefaultAssistanceServices(newId),
+        inclusions: [],
+        exclusions: [],
+        inclusionsExclusionsVersion: 1,
         requirementVersion: 1,
         submissionSteps: [
           'Upload traveler details and scanned credentials',
@@ -804,7 +809,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
         validity: { validFrom: effectiveValidFrom, validTo: effectiveValidTo },
         validityFrom: effectiveValidFrom,
         validityTo: effectiveValidTo,
-        surcharges: activeEntity.surcharges || [],
+        surcharges: [],
         requireValidity: (activeEntity.status || 'ACTIVE') === 'ACTIVE',
         nativeCurrency: pricingForm.currency || activeEntity.currency || 'USD'
       });
@@ -1131,6 +1136,196 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
     };
     setEditingVisa(updatedVisa);
     db.saveVisa(updatedVisa, user);
+  };
+
+  // --------------------------------------------------------------------------
+  // ADMIN-MANAGED INCLUSIONS & EXCLUSIONS ACTIONS (FOR VISA SERVICES)
+  // --------------------------------------------------------------------------
+  const persistVisaInclusionsExclusions = async (
+    nextInclusions: VisaInclusionExclusionEntry[],
+    nextExclusions: VisaInclusionExclusionEntry[],
+    auditDescription: string
+  ) => {
+    if (!editingVisa) return;
+    const now = new Date().toISOString();
+    const normalizedInclusions = [...nextInclusions]
+      .sort((a, b) => a.displayOrder - b.displayOrder)
+      .map((item, idx) => ({ ...item, displayOrder: idx + 1 }));
+    const normalizedExclusions = [...nextExclusions]
+      .sort((a, b) => a.displayOrder - b.displayOrder)
+      .map((item, idx) => ({ ...item, displayOrder: idx + 1 }));
+
+    const updatedVisa: VisaProduct = {
+      ...editingVisa,
+      inclusions: normalizedInclusions,
+      exclusions: normalizedExclusions,
+      inclusionsExclusionsVersion: (editingVisa.inclusionsExclusionsVersion || 1) + 1,
+      updatedAt: now
+    };
+    setEditingVisa(updatedVisa);
+    try {
+      const saved = await db.saveVisaAsync(updatedVisa, user);
+      setVisas(db.getVisas());
+      setEditingVisa(saved);
+      db.logAudit(
+        user || null,
+        'PRODUCT_UPDATED',
+        'VisaProduct',
+        saved.id,
+        `${auditDescription} (${saved.country} - ${saved.visaType}, config v${saved.inclusionsExclusionsVersion || 1})`
+      );
+    } catch (err: any) {
+      setSaveError(err?.message || 'Failed to save Visa inclusions/exclusions.');
+    }
+  };
+
+  const handleOpenAddInclusionExclusion = (kind: 'INCLUSION' | 'EXCLUSION') => {
+    if (!editingVisa) return;
+    const currentList = kind === 'INCLUSION' ? (editingVisa.inclusions || []) : (editingVisa.exclusions || []);
+    const now = new Date().toISOString();
+    setInclusionExclusionError(null);
+    setInclusionExclusionModal({
+      kind,
+      isNew: true,
+      entry: {
+        id: `${kind === 'INCLUSION' ? 'INC' : 'EXC'}-${editingVisa.id}-${Date.now().toString(36).toUpperCase()}`,
+        title: '',
+        description: '',
+        displayOrder: currentList.length + 1,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now
+      }
+    });
+  };
+
+  const handleOpenEditInclusionExclusion = (kind: 'INCLUSION' | 'EXCLUSION', entry: VisaInclusionExclusionEntry) => {
+    setInclusionExclusionError(null);
+    setInclusionExclusionModal({
+      kind,
+      isNew: false,
+      entry: { ...entry }
+    });
+  };
+
+  const handleSaveInclusionExclusionModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingVisa || !inclusionExclusionModal) return;
+    const trimmedTitle = inclusionExclusionModal.entry.title.trim();
+    if (!trimmedTitle) {
+      setInclusionExclusionError('Title or short description is required.');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const cleanedEntry: VisaInclusionExclusionEntry = {
+      ...inclusionExclusionModal.entry,
+      title: trimmedTitle,
+      description: inclusionExclusionModal.entry.description?.trim() || '',
+      updatedAt: now
+    };
+
+    const currentInclusions = [...(editingVisa.inclusions || [])];
+    const currentExclusions = [...(editingVisa.exclusions || [])];
+
+    if (inclusionExclusionModal.kind === 'INCLUSION') {
+      const idx = currentInclusions.findIndex(item => item.id === cleanedEntry.id);
+      if (idx >= 0) currentInclusions[idx] = cleanedEntry;
+      else currentInclusions.push(cleanedEntry);
+      await persistVisaInclusionsExclusions(
+        currentInclusions,
+        currentExclusions,
+        inclusionExclusionModal.isNew ? `Added visa inclusion "${trimmedTitle}"` : `Updated visa inclusion "${trimmedTitle}"`
+      );
+    } else {
+      const idx = currentExclusions.findIndex(item => item.id === cleanedEntry.id);
+      if (idx >= 0) currentExclusions[idx] = cleanedEntry;
+      else currentExclusions.push(cleanedEntry);
+      await persistVisaInclusionsExclusions(
+        currentInclusions,
+        currentExclusions,
+        inclusionExclusionModal.isNew ? `Added visa exclusion "${trimmedTitle}"` : `Updated visa exclusion "${trimmedTitle}"`
+      );
+    }
+
+    setInclusionExclusionModal(null);
+    setInclusionExclusionError(null);
+  };
+
+  const handleReorderInclusionExclusion = async (
+    kind: 'INCLUSION' | 'EXCLUSION',
+    entryId: string,
+    direction: 'UP' | 'DOWN'
+  ) => {
+    if (!editingVisa) return;
+    const currentInclusions = [...(editingVisa.inclusions || [])].sort((a, b) => a.displayOrder - b.displayOrder);
+    const currentExclusions = [...(editingVisa.exclusions || [])].sort((a, b) => a.displayOrder - b.displayOrder);
+    const list = kind === 'INCLUSION' ? currentInclusions : currentExclusions;
+    const index = list.findIndex(item => item.id === entryId);
+    if (index < 0) return;
+    if (direction === 'UP' && index === 0) return;
+    if (direction === 'DOWN' && index === list.length - 1) return;
+
+    const targetIndex = direction === 'UP' ? index - 1 : index + 1;
+    const temp = list[index];
+    list[index] = list[targetIndex];
+    list[targetIndex] = temp;
+    list.forEach((item, idx) => {
+      item.displayOrder = idx + 1;
+      item.updatedAt = new Date().toISOString();
+    });
+
+    await persistVisaInclusionsExclusions(
+      currentInclusions,
+      currentExclusions,
+      `Reordered visa ${kind.toLowerCase()} "${temp.title}"`
+    );
+  };
+
+  const handleToggleInclusionExclusionActive = async (kind: 'INCLUSION' | 'EXCLUSION', entryId: string) => {
+    if (!editingVisa) return;
+    const now = new Date().toISOString();
+    let toggledTitle = '';
+    let nextStatus = true;
+
+    const currentInclusions = (editingVisa.inclusions || []).map(item => {
+      if (kind === 'INCLUSION' && item.id === entryId) {
+        toggledTitle = item.title;
+        nextStatus = !item.isActive;
+        return { ...item, isActive: nextStatus, updatedAt: now };
+      }
+      return item;
+    });
+    const currentExclusions = (editingVisa.exclusions || []).map(item => {
+      if (kind === 'EXCLUSION' && item.id === entryId) {
+        toggledTitle = item.title;
+        nextStatus = !item.isActive;
+        return { ...item, isActive: nextStatus, updatedAt: now };
+      }
+      return item;
+    });
+
+    await persistVisaInclusionsExclusions(
+      currentInclusions,
+      currentExclusions,
+      `${nextStatus ? 'Activated' : 'Deactivated'} visa ${kind.toLowerCase()} "${toggledTitle}"`
+    );
+  };
+
+  const handleDeleteInclusionExclusion = async (kind: 'INCLUSION' | 'EXCLUSION', entryId: string) => {
+    if (!editingVisa) return;
+    const currentInclusions = [...(editingVisa.inclusions || [])];
+    const currentExclusions = [...(editingVisa.exclusions || [])];
+    const target = (kind === 'INCLUSION' ? currentInclusions : currentExclusions).find(i => i.id === entryId);
+
+    const nextInclusions = kind === 'INCLUSION' ? currentInclusions.filter(i => i.id !== entryId) : currentInclusions;
+    const nextExclusions = kind === 'EXCLUSION' ? currentExclusions.filter(i => i.id !== entryId) : currentExclusions;
+
+    await persistVisaInclusionsExclusions(
+      nextInclusions,
+      nextExclusions,
+      `Deleted visa ${kind.toLowerCase()} "${target?.title || entryId}"`
+    );
   };
 
 
@@ -1767,6 +1962,21 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                         >
                           <FileText className="w-4 h-4 text-slate-400" />
                           <span>5. Requirements ({editingVisa?.structuredRequirements?.length || 0})</span>
+                        </button>
+                      )}
+
+                      {serviceDrawerCategory === 'VISA' && (
+                        <button
+                          type="button"
+                          onClick={() => setWorkspaceTab('INCLUSIONS_EXCLUSIONS')}
+                          className={`w-full text-left p-3.5 transition-all text-xs font-bold flex items-center space-x-2.5 cursor-pointer ${
+                            workspaceTab === 'INCLUSIONS_EXCLUSIONS'
+                              ? 'bg-[#00C6A6]/10 text-slate-950 font-black border-l-4 border-[#00C6A6]'
+                              : 'hover:bg-slate-50 text-slate-600'
+                          }`}
+                        >
+                          <CheckSquare className="w-4 h-4 text-slate-400" />
+                          <span>6. Inclusions &amp; Exclusions ({(editingVisa?.inclusions?.length || 0) + (editingVisa?.exclusions?.length || 0)})</span>
                         </button>
                       )}
 
@@ -2644,6 +2854,250 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
               )}
 
               {/* ================================================================= */}
+              {/* WORKSPACE TAB 6: INCLUSIONS & EXCLUSIONS (FOR VISA SERVICES)      */}
+              {/* ================================================================= */}
+              {workspaceTab === 'INCLUSIONS_EXCLUSIONS' && serviceDrawerCategory === 'VISA' && editingVisa && (
+                <div className="space-y-6">
+                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-black text-slate-900">
+                        Product-Specific Visa Inclusions &amp; Exclusions
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Managed exclusively for <strong>{editingVisa.country} — {editingVisa.visaType}</strong> (Config v{editingVisa.inclusionsExclusionsVersion || 1}). Active entries appear dynamically in Quote Builder Step 5 and are immutably snapshotted on saved quotations.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* A. INCLUSIONS */}
+                  <div className="bg-white rounded-2xl border border-emerald-200 p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-emerald-100 pb-3">
+                      <div>
+                        <h5 className="text-xs font-black text-emerald-950 uppercase tracking-wider flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                          <span>A. Inclusions ({(editingVisa.inclusions || []).length})</span>
+                        </h5>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Services, fee coverage, or deliverables explicitly included in this Visa product.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAddInclusionExclusion('INCLUSION')}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Inclusion</span>
+                      </button>
+                    </div>
+
+                    {(editingVisa.inclusions || []).length === 0 ? (
+                      <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                        No inclusions configured for this Visa product yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {[...(editingVisa.inclusions || [])]
+                          .sort((a, b) => a.displayOrder - b.displayOrder)
+                          .map((entry, idx, arr) => (
+                            <div
+                              key={entry.id}
+                              className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                                entry.isActive !== false
+                                  ? 'bg-emerald-50/40 border-emerald-200'
+                                  : 'bg-slate-50 border-slate-200 opacity-65'
+                              }`}
+                            >
+                              <div className="space-y-1 min-w-0">
+                                <div className="flex items-center flex-wrap gap-2">
+                                  <span className="w-5 h-5 rounded-full bg-white border border-emerald-200 text-emerald-900 font-black text-[10px] flex items-center justify-center font-mono shrink-0">
+                                    {idx + 1}
+                                  </span>
+                                  <span className="font-bold text-slate-900">{entry.title}</span>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                      entry.isActive !== false
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-slate-200 text-slate-600'
+                                    }`}
+                                  >
+                                    {entry.isActive !== false ? 'Active' : 'Inactive'}
+                                  </span>
+                                </div>
+                                {entry.description && (
+                                  <p className="text-[11px] text-slate-600 pl-7">{entry.description}</p>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleInclusionExclusionActive('INCLUSION', entry.id)}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                                    entry.isActive !== false
+                                      ? 'bg-white border-emerald-300 text-emerald-800 hover:bg-emerald-100'
+                                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {entry.isActive !== false ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderInclusionExclusion('INCLUSION', entry.id, 'UP')}
+                                  disabled={idx === 0}
+                                  className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="Move Up"
+                                >
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderInclusionExclusion('INCLUSION', entry.id, 'DOWN')}
+                                  disabled={idx === arr.length - 1}
+                                  className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="Move Down"
+                                >
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditInclusionExclusion('INCLUSION', entry)}
+                                  className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                                  title="Edit Inclusion"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteInclusionExclusion('INCLUSION', entry.id)}
+                                  className="p-1.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-600 cursor-pointer"
+                                  title="Delete Inclusion"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* B. EXCLUSIONS */}
+                  <div className="bg-white rounded-2xl border border-rose-200 p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-rose-100 pb-3">
+                      <div>
+                        <h5 className="text-xs font-black text-rose-950 uppercase tracking-wider flex items-center gap-1.5">
+                          <AlertCircle className="w-4 h-4 text-rose-600" />
+                          <span>B. Exclusions ({(editingVisa.exclusions || []).length})</span>
+                        </h5>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Items, surcharges, or conditions explicitly excluded from this Visa product.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAddInclusionExclusion('EXCLUSION')}
+                        className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Exclusion</span>
+                      </button>
+                    </div>
+
+                    {(editingVisa.exclusions || []).length === 0 ? (
+                      <div className="p-4 rounded-xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs text-slate-500">
+                        No exclusions configured for this Visa product yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {[...(editingVisa.exclusions || [])]
+                          .sort((a, b) => a.displayOrder - b.displayOrder)
+                          .map((entry, idx, arr) => (
+                            <div
+                              key={entry.id}
+                              className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs ${
+                                entry.isActive !== false
+                                  ? 'bg-rose-50/40 border-rose-200'
+                                  : 'bg-slate-50 border-slate-200 opacity-65'
+                              }`}
+                            >
+                              <div className="space-y-1 min-w-0">
+                                <div className="flex items-center flex-wrap gap-2">
+                                  <span className="w-5 h-5 rounded-full bg-white border border-rose-200 text-rose-900 font-black text-[10px] flex items-center justify-center font-mono shrink-0">
+                                    {idx + 1}
+                                  </span>
+                                  <span className="font-bold text-slate-900">{entry.title}</span>
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                                      entry.isActive !== false
+                                        ? 'bg-rose-100 text-rose-800'
+                                        : 'bg-slate-200 text-slate-600'
+                                    }`}
+                                  >
+                                    {entry.isActive !== false ? 'Active' : 'Inactive'}
+                                  </span>
+                                </div>
+                                {entry.description && (
+                                  <p className="text-[11px] text-slate-600 pl-7">{entry.description}</p>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleInclusionExclusionActive('EXCLUSION', entry.id)}
+                                  className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                                    entry.isActive !== false
+                                      ? 'bg-white border-rose-300 text-rose-800 hover:bg-rose-100'
+                                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {entry.isActive !== false ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderInclusionExclusion('EXCLUSION', entry.id, 'UP')}
+                                  disabled={idx === 0}
+                                  className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="Move Up"
+                                >
+                                  <ChevronUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReorderInclusionExclusion('EXCLUSION', entry.id, 'DOWN')}
+                                  disabled={idx === arr.length - 1}
+                                  className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="Move Down"
+                                >
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditInclusionExclusion('EXCLUSION', entry)}
+                                  className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 cursor-pointer"
+                                  title="Edit Exclusion"
+                                >
+                                  <Edit className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteInclusionExclusion('EXCLUSION', entry.id)}
+                                  className="p-1.5 rounded-lg bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-600 cursor-pointer"
+                                  title="Delete Exclusion"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ================================================================= */}
               {/* WORKSPACE TAB: CUSTOMER CHECKLIST PREVIEW                         */}
               {/* ================================================================= */}
               {workspaceTab === 'CUSTOMER_PREVIEW' && serviceDrawerCategory === 'VISA' && editingVisa && (
@@ -2728,12 +3182,23 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                   }
                 };
 
+                const resolvedProductName =
+                  currentEntity.name ||
+                  currentEntity.serviceName ||
+                  (currentEntity.country ? `${currentEntity.country} ${currentEntity.visaType || 'Visa'}` : categoryLabel);
+
                 return (
                   <div className="pt-4 border-t border-slate-200">
                     <InventoryValidityAndSurchargesSection
+                      productId={currentEntity.id}
+                      productName={resolvedProductName}
+                      category="Visa & Ancillary Services"
+                      productType={categoryLabel}
+                      destinationId={currentEntity.destinationId}
+                      destinationName={currentEntity.destinationName || currentEntity.country}
+                      country={currentEntity.country}
                       validFrom={currentEntity.validity?.validFrom ?? currentEntity.validityFrom ?? '2026-01-01'}
                       validTo={currentEntity.validity?.validTo ?? currentEntity.validityTo ?? '2027-12-31'}
-                      surcharges={currentEntity.surcharges || []}
                       nativeCurrency={pricingForm.currency || currentEntity.currency || 'USD'}
                       defaultApplicationBasis={defaultBasis}
                       categoryLabel={categoryLabel}
@@ -2743,11 +3208,6 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                           validityFrom: validFrom,
                           validityTo: validTo,
                           validity
-                        })
-                      }
-                      onChangeSurcharges={nextSurcharges =>
-                        updateCurrentEntity({
-                          surcharges: nextSurcharges
                         })
                       }
                     />
@@ -2928,6 +3388,135 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                 className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-black shadow-xs cursor-pointer"
               >
                 Save Requirement
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: ADD / EDIT VISA INCLUSION OR EXCLUSION ENTRY                       */}
+      {/* ========================================================================= */}
+      {inclusionExclusionModal && (
+        <div className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+          <form onSubmit={handleSaveInclusionExclusionModal} className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 border border-slate-200 shadow-2xl animate-scaleUp my-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <h3 className="text-sm font-black text-slate-900">
+                {inclusionExclusionModal.isNew ? 'Add' : 'Edit'} Visa {inclusionExclusionModal.kind === 'INCLUSION' ? 'Inclusion' : 'Exclusion'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setInclusionExclusionModal(null);
+                  setInclusionExclusionError(null);
+                }}
+                className="p-1 rounded-xl text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {inclusionExclusionError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 font-medium flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{inclusionExclusionError}</span>
+              </div>
+            )}
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Title / Short Description *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={inclusionExclusionModal.entry.title}
+                  onChange={e =>
+                    setInclusionExclusionModal({
+                      ...inclusionExclusionModal,
+                      entry: { ...inclusionExclusionModal.entry, title: e.target.value }
+                    })
+                  }
+                  placeholder={
+                    inclusionExclusionModal.kind === 'INCLUSION'
+                      ? 'e.g. Consular Embassy Fee & Online Filing Support'
+                      : 'e.g. Courier Passport Return Outside Metro Area'
+                  }
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Detailed Description (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  value={inclusionExclusionModal.entry.description || ''}
+                  onChange={e =>
+                    setInclusionExclusionModal({
+                      ...inclusionExclusionModal,
+                      entry: { ...inclusionExclusionModal.entry, description: e.target.value }
+                    })
+                  }
+                  placeholder="Optional clarification shown in Quote Builder, Proposal Preview, PDF, and Email"
+                  className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Display Order</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={inclusionExclusionModal.entry.displayOrder}
+                    onChange={e =>
+                      setInclusionExclusionModal({
+                        ...inclusionExclusionModal,
+                        entry: { ...inclusionExclusionModal.entry, displayOrder: Math.max(1, Number(e.target.value) || 1) }
+                      })
+                    }
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Status</label>
+                  <select
+                    value={inclusionExclusionModal.entry.isActive !== false ? 'ACTIVE' : 'INACTIVE'}
+                    onChange={e =>
+                      setInclusionExclusionModal({
+                        ...inclusionExclusionModal,
+                        entry: { ...inclusionExclusionModal.entry, isActive: e.target.value === 'ACTIVE' }
+                      })
+                    }
+                    className="w-full px-3.5 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 outline-none cursor-pointer"
+                  >
+                    <option value="ACTIVE">Active (Visible in Quote Builder)</option>
+                    <option value="INACTIVE">Inactive (Hidden from New Quotes)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setInclusionExclusionModal(null);
+                  setInclusionExclusionError(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 text-xs font-black shadow-xs cursor-pointer"
+              >
+                Save {inclusionExclusionModal.kind === 'INCLUSION' ? 'Inclusion' : 'Exclusion'}
               </button>
             </div>
           </form>

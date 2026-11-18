@@ -10,6 +10,7 @@ import {
   isMasterAdmin, 
   canRevokeAdminPermissions 
 } from '../../services/permissionEngine';
+import { cashbackService } from '../../services/cashbackService';
 import { 
   Users, 
   ShieldCheck, 
@@ -107,7 +108,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   };
 
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections(['system_users', 'companies'], () => {
       refreshUsers();
     });
     return () => unsub();
@@ -757,6 +758,21 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                               Wholesale Net Rates
                             </span>
                           )}
+                          {(() => {
+                            const cbCfg = cashbackService.getUserConfiguration(u.id);
+                            if (!cbCfg) return null;
+                            return (
+                              <span
+                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded w-fit ${
+                                  cbCfg.isEligible && cbCfg.status === 'ACTIVE'
+                                    ? 'bg-emerald-50 text-emerald-700'
+                                    : 'bg-slate-100 text-slate-500'
+                                }`}
+                              >
+                                Cashback: {cbCfg.isEligible ? `${cbCfg.cashbackPercent}% (${cbCfg.status})` : 'Off'}
+                              </span>
+                            );
+                          })()}
                         </div>
                       </td>
 

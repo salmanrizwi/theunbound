@@ -99,9 +99,19 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
 
   const [allBookings, setAllBookings] = useState<Booking[]>(getAccessibleBookings);
 
-  // Subscribe to real-time updates
+  // Subscribe to real-time booking operations updates
   useEffect(() => {
-    const unsub = db.subscribe(() => {
+    const unsub = db.subscribeToCollections([
+      'bookings',
+      'calendar_tasks',
+      'b2b_tasks',
+      'invoices',
+      'uploaded_invoices',
+      'vouchers',
+      'job_sheets',
+      'suppliers',
+      'supplier_requests'
+    ], () => {
       setAllBookings(getAccessibleBookings());
       setRefreshKey(prev => prev + 1);
     });

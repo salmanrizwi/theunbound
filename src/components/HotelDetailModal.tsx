@@ -219,6 +219,8 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
               <img
                 src={galleryImages[activePhotoIdx] || hotel.heroImage}
                 alt={hotel.name}
+                loading="eager"
+                decoding="async"
                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent pointer-events-none" />
@@ -276,7 +278,7 @@ export const HotelDetailModal: React.FC<HotelDetailModalProps> = ({
                       activePhotoIdx === idx ? 'border-[#00C6A6] ring-2 ring-[#00C6A6]/30' : 'border-transparent opacity-70 hover:opacity-100'
                     }`}
                   >
-                    <img src={img} alt={`${hotel.name} ${idx + 1}`} className="w-full h-full object-cover" />
+                    <img src={img} alt={`${hotel.name} ${idx + 1}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                   </button>
                 ))}
               </div>

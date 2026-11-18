@@ -10,6 +10,8 @@ import {
   UserRole
 } from '../../types';
 import { canUserAccessSystemAnalysis } from '../../services/permissionEngine';
+import { performanceMonitor } from '../../services/performanceMonitor';
+import { backgroundJobService } from '../../services/backgroundJobService';
 import { 
   Activity, 
   Users, 
@@ -58,7 +60,7 @@ interface SystemAnalysisProps {
 }
 
 type TimeRangeFilter = 'TODAY' | '7D' | '30D' | '90D' | 'ALL';
-type ActiveSubView = 'USERS_MATRIX' | 'USER_JOURNEY' | 'EVENT_STREAM' | 'FUNNEL_ANALYSIS';
+type ActiveSubView = 'USERS_MATRIX' | 'USER_JOURNEY' | 'EVENT_STREAM' | 'FUNNEL_ANALYSIS' | 'PERFORMANCE';
 
 export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
   onNavigate,
@@ -88,6 +90,25 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
     });
     return () => unsub();
   }, [db]);
+
+  const [perfTick, setPerfTick] = useState(0);
+  useEffect(() => {
+    if (activeSubView !== 'PERFORMANCE') return;
+    const unsubPerf = performanceMonitor.subscribe(() => setPerfTick(t => t + 1));
+    const unsubJobs = backgroundJobService.subscribe(() => setPerfTick(t => t + 1));
+    return () => {
+      unsubPerf();
+      unsubJobs();
+    };
+  }, [activeSubView]);
+
+  const perfSummary = useMemo(() => {
+    return activeSubView === 'PERFORMANCE' ? performanceMonitor.getSummary() : null;
+  }, [activeSubView, perfTick, dbTick]);
+
+  const backgroundJobsList = useMemo(() => {
+    return activeSubView === 'PERFORMANCE' ? backgroundJobService.getJobs() : [];
+  }, [activeSubView, perfTick]);
 
   // Permission checks
   const canViewSystemAnalysis = useMemo(() => {
@@ -613,6 +634,19 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
           >
             <TrendingUp className="w-4 h-4" />
             <span>Funnel &amp; Pipeline Conversion</span>
+          </button>
+
+          <button
+            id="subview-tab-performance"
+            onClick={() => setActiveSubView('PERFORMANCE')}
+            className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeSubView === 'PERFORMANCE'
+                ? 'bg-slate-900 text-[#00E5C0] shadow-xs'
+                : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200/80'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Portal Performance &amp; Diagnostics</span>
           </button>
         </div>
       </div>
@@ -1751,6 +1785,162 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                     </div>
                   ));
                 })()}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SUB-VIEW 5: PORTAL PERFORMANCE & DIAGNOSTICS                              */}
+      {/* ========================================================================= */}
+      {activeSubView === 'PERFORMANCE' && perfSummary && (
+        <div className="space-y-6 animate-fadeIn">
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Portal Performance &amp; Diagnostics</h3>
+                <p className="text-xs text-slate-500">
+                  Live session instrumentation for Quote Builder latency, Firestore read/listener footprint, pricing/FX caches, auto-save health, and background export jobs.
+                </p>
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={() => setPerfTick(t => t + 1)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer flex items-center space-x-1"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Refresh Snapshot</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    performanceMonitor.reset();
+                    setPerfTick(t => t + 1);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                >
+                  Reset Session Counters
+                </button>
+              </div>
+            </div>
+
+            {/* Key Infrastructure Counters */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Firestore Listeners</span>
+                <div className="text-xl font-black font-mono text-slate-900">{perfSummary.activeListeners}</div>
+                <div className="text-[10px] text-slate-500 truncate" title={perfSummary.activeListenerLabels.join(', ')}>
+                  {perfSummary.activeListenerLabels.length > 0 ? perfSummary.activeListenerLabels.join(', ') : 'No active streams'}
+                </div>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Firestore Reads / Writes</span>
+                <div className="text-xl font-black font-mono text-slate-900">
+                  {perfSummary.firestoreReads} <span className="text-slate-400 text-sm">/</span> {perfSummary.firestoreWrites}
+                </div>
+                <div className="text-[10px] text-slate-500">Session cumulative operations</div>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Auto-Save Health</span>
+                <div className="text-xl font-black font-mono text-emerald-700">
+                  {perfSummary.autoSave.succeeded} / {perfSummary.autoSave.totalSaves}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  Skipped: {perfSummary.autoSave.skippedNoDirty} · Avg: {perfSummary.autoSave.avgDurationMs}ms · Fails: {perfSummary.autoSave.failed}
+                </div>
+              </div>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">JS Heap Memory</span>
+                <div className="text-xl font-black font-mono text-slate-900">
+                  {perfSummary.memory.usedJSHeapMB !== undefined ? `${perfSummary.memory.usedJSHeapMB} MB` : 'N/A'}
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  {perfSummary.memory.totalJSHeapMB !== undefined ? `Allocated: ${perfSummary.memory.totalJSHeapMB} MB` : 'Browser API unavailable'}
+                </div>
+              </div>
+            </div>
+
+            {/* Category Timings Table */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Measured Execution Latencies</h4>
+              <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold border-b border-slate-200">
+                    <tr>
+                      <th className="py-2.5 px-4">Operation Category</th>
+                      <th className="py-2.5 px-4 text-right">Samples</th>
+                      <th className="py-2.5 px-4 text-right">Avg (ms)</th>
+                      <th className="py-2.5 px-4 text-right">P95 (ms)</th>
+                      <th className="py-2.5 px-4 text-right">Max (ms)</th>
+                      <th className="py-2.5 px-4 text-right">Last (ms)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {(Object.entries(perfSummary.timings) as Array<[string, { count: number; avgMs: number; p95Ms: number; maxMs: number; lastMs: number }]>).map(([cat, m]) => (
+                      <tr key={cat} className="hover:bg-slate-50/60">
+                        <td className="py-2.5 px-4 font-bold text-slate-800 font-mono text-[11px]">{cat}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-slate-600">{m.count}</td>
+                        <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-900">{m.avgMs}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-slate-700">{m.p95Ms}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-slate-700">{m.maxMs}</td>
+                        <td className="py-2.5 px-4 text-right font-mono text-teal-700 font-bold">{m.lastMs}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Caches & Background Export Jobs */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <div className="p-4 rounded-2xl border border-slate-200 space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">In-Memory Cache Hit Ratios</h4>
+                {perfSummary.caches.length === 0 ? (
+                  <p className="text-xs text-slate-400">No cache hits or misses recorded yet in this session.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {perfSummary.caches.map(c => (
+                      <div key={c.name} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                        <span className="font-mono font-bold text-slate-800">{c.name}</span>
+                        <div className="flex items-center space-x-3 font-mono text-[11px]">
+                          <span className="text-emerald-700 font-bold">{c.hitRatePercent}% Hit</span>
+                          <span className="text-slate-500">H:{c.hits} / M:{c.misses} / E:{c.evictions}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 rounded-2xl border border-slate-200 space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Background Export &amp; Document Jobs</h4>
+                {backgroundJobsList.length === 0 ? (
+                  <p className="text-xs text-slate-400">No PDF/Excel background export jobs run in this session yet.</p>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {backgroundJobsList.slice(0, 10).map(job => (
+                      <div key={job.jobId} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                        <div className="min-w-0">
+                          <span className="font-bold text-slate-800 block truncate">{job.label}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {job.jobType} · Attempts: {job.attempts}
+                          </span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          job.status === 'COMPLETED'
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : job.status === 'FAILED'
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                        }`}>
+                          {job.status} ({job.progressPercent}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>

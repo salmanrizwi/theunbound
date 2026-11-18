@@ -87,7 +87,19 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   const [imageTick, setImageTick] = useState(0);
 
   useEffect(() => {
-    const unsubDb = db.subscribe(() => setImageTick(t => t + 1));
+    const unsubDb = db.subscribeToCollections([
+      'destinations',
+      'city_hubs',
+      'products',
+      'hotels',
+      'b2b_packages',
+      'visas',
+      'travel_protection_plans',
+      'vip_ground_services',
+      'connectivity_plans',
+      'product_margin_configs',
+      'inventory_tombstones'
+    ], () => setImageTick(t => t + 1));
     const unsubImg = canonicalImageService.subscribe(() => setImageTick(t => t + 1));
     return () => {
       unsubDb();
@@ -112,17 +124,39 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   const [selectedVisaForModal, setSelectedVisaForModal] = useState<VisaProduct | null>(null);
   const [modalExistingItemId, setModalExistingItemId] = useState<string | undefined>(undefined);
 
-  const isUserAdmin = user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER';
-
-  // Authoritative destination visibility
+  // Authoritative B2B Destination Visibility: strictly ACTIVE destinations ONLY (excludes COMING_SOON, INACTIVE, DRAFT, ARCHIVED, DISABLED)
   const visibleDestinationsList = useMemo(() => {
-    return destinations.filter(dest => {
-      if (dest.slug === 'all') return false;
-      const status = inventoryVisibilityService.getDestinationComputedStatus(dest);
-      if (status === 'HIDDEN' && !isUserAdmin) return false;
-      return true;
-    });
-  }, [destinations, isUserAdmin]);
+    const activeDests = inventoryVisibilityService.getB2BActiveDestinations();
+    if (destinations && destinations.length > 0) {
+      const propActive = destinations.filter(
+        dest => dest.slug !== 'all' && inventoryVisibilityService.isDestinationActiveForB2B(dest)
+      );
+      if (propActive.length > 0 || activeDests.length === 0) {
+        return propActive;
+      }
+    }
+    return activeDests;
+  }, [destinations, imageTick]);
+
+  const activeCityHubs = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveHubs();
+  }, [cityHubs, visibleDestinationsList, imageTick]);
+
+  const activeProducts = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveProducts();
+  }, [products, visibleDestinationsList, imageTick]);
+
+  const activeHotels = useMemo(() => {
+    return inventoryVisibilityService.getB2BActiveHotels();
+  }, [hotels, visibleDestinationsList, imageTick]);
+
+  // Clear selected destination/hub context immediately if destination becomes non-active
+  useEffect(() => {
+    if (selectedDestinationContext && !inventoryVisibilityService.isDestinationActiveForB2B(selectedDestinationContext)) {
+      setSelectedDestinationContext(null);
+      setSelectedHubContext(null);
+    }
+  }, [visibleDestinationsList, selectedDestinationContext]);
 
   const handleOpenConfigureProduct = (prod: Product) => {
     const existing = items.find(it => it.product.id === prod.id || it.product.sku === prod.sku);
@@ -153,15 +187,16 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
 
   // Context Navigation Handlers
   const handleSelectDestinationForHubs = (dest: Destination) => {
+    if (!inventoryVisibilityService.isDestinationActiveForB2B(dest)) return;
     setSelectedDestinationContext(dest);
     setSelectedHubContext(null);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSelectHub = (hub: CityHub) => {
-    // If destination context not set, resolve from hub
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('HUB', hub)) return;
     if (!selectedDestinationContext) {
-      const parentDest = destinations.find(d => 
+      const parentDest = visibleDestinationsList.find(d => 
         d.id === hub.destinationId || 
         (d.name || '').toLowerCase() === (hub.destinationName || '').toLowerCase()
       );
@@ -184,24 +219,24 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Master Search Categorization Engine
+  // Master Search Categorization Engine (strictly scoped to ACTIVE destinations)
   const searchResults = useMemo(() => {
     const q = masterSearchQuery.trim().toLowerCase();
     if (!q) return null;
 
-    const matchedDestinations = destinations.filter(d => 
+    const matchedDestinations = visibleDestinationsList.filter(d => 
       (d.name || '').toLowerCase().includes(q) || 
       (d.country || '').toLowerCase().includes(q) ||
       (d.description || '').toLowerCase().includes(q)
     );
 
-    const matchedHubs = cityHubs.filter(h => 
+    const matchedHubs = activeCityHubs.filter(h => 
       (h.name || '').toLowerCase().includes(q) || 
       (h.destinationName && h.destinationName.toLowerCase().includes(q)) ||
       (h.stateProvince && h.stateProvince.toLowerCase().includes(q))
     );
 
-    const matchedProducts = products.filter(p => 
+    const matchedProducts = activeProducts.filter(p => 
       (p.name || '').toLowerCase().includes(q) ||
       (p.city || '').toLowerCase().includes(q) ||
       (p.country || '').toLowerCase().includes(q) ||
@@ -209,7 +244,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
       (p.sku && p.sku.toLowerCase().includes(q))
     );
 
-    const matchedHotels = hotels.filter(h => 
+    const matchedHotels = activeHotels.filter(h => 
       (h.name || '').toLowerCase().includes(q) ||
       (h.cityName && h.cityName.toLowerCase().includes(q)) ||
       (h.city && h.city.toLowerCase().includes(q))
@@ -222,7 +257,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
       (pkg.routeSummary && pkg.routeSummary.some(r => r && r.toLowerCase().includes(q)))
     );
 
-    const matchedVisas = db.getVisas().filter(v => v.status === 'ACTIVE' && (
+    const matchedVisas = inventoryVisibilityService.getB2BActiveVisas().filter(v => (
       (v.country || '').toLowerCase().includes(q) ||
       (v.visaType || '').toLowerCase().includes(q)
     ));
@@ -244,27 +279,27 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
       visas: matchedVisas,
       totalCount
     };
-  }, [masterSearchQuery, destinations, cityHubs, products, hotels, packages]);
+  }, [masterSearchQuery, visibleDestinationsList, activeCityHubs, activeProducts, activeHotels, packages, imageTick]);
 
   // Real Count Calculation Helper per Destination
   const getDestinationMetrics = (destName: string, destId: string) => {
     const destNameLower = (destName || '').toLowerCase();
     
     // Hubs count
-    const destHubs = cityHubs.filter(h => 
+    const destHubs = activeCityHubs.filter(h => 
       h.destinationId === destId || 
       (h.destinationName && h.destinationName.toLowerCase() === destNameLower)
     );
 
     // Products count
-    const destProducts = products.filter(p => 
+    const destProducts = activeProducts.filter(p => 
       p.destinationId === destId || 
       (p.destinationName || '').toLowerCase().includes(destNameLower) ||
       (p.country || '').toLowerCase().includes(destNameLower)
     );
 
     // Hotels count
-    const destHotels = hotels.filter(h => 
+    const destHotels = activeHotels.filter(h => 
       h.destinationId === destId || 
       (h.cityName && destProducts.some(p => (p.city || '').toLowerCase() === h.cityName.toLowerCase()))
     );
@@ -279,11 +314,11 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   // Real Count Helper per Hub
   const getHubMetrics = (hub: CityHub) => {
     const hubNameLower = (hub.name || '').toLowerCase();
-    const hubProducts = products.filter(p => 
+    const hubProducts = activeProducts.filter(p => 
       p.hubId === hub.id || 
       (p.city && p.city.toLowerCase() === hubNameLower)
     );
-    const hubHotels = hotels.filter(h => 
+    const hubHotels = activeHotels.filter(h => 
       h.cityHubId === hub.id || 
       (h.cityName && h.cityName.toLowerCase() === hubNameLower) ||
       (h.city && h.city.toLowerCase() === hubNameLower)
@@ -827,9 +862,6 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {visibleDestinationsList.map(dest => {
               const metrics = getDestinationMetrics(dest.name, dest.id);
-              const destStatus = inventoryVisibilityService.getDestinationComputedStatus(dest);
-              const isComingSoon = destStatus === 'COMING_SOON';
-              const isHidden = destStatus === 'HIDDEN';
 
               return (
                 <div
@@ -841,6 +873,8 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                     <img
                       src={canonicalImageService.resolveDestinationImage(dest)}
                       alt={dest.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
                       onError={(e) => {
@@ -854,19 +888,9 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                       <span className="px-3 py-1 rounded-full bg-slate-900/90 backdrop-blur-xs text-white text-[11px] font-bold">
                         {dest.country}
                       </span>
-                      {isComingSoon ? (
-                        <span className="px-2.5 py-0.5 rounded-full bg-amber-400 text-slate-950 text-[10px] font-black uppercase">
-                          Coming Soon
-                        </span>
-                      ) : isHidden ? (
-                        <span className="px-2.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black uppercase">
-                          Hidden (0 Inventory)
-                        </span>
-                      ) : (
-                        <span className="px-2.5 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[10px] font-black uppercase">
-                          Active DMC Office
-                        </span>
-                      )}
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#00C6A6] text-slate-950 text-[10px] font-black uppercase">
+                        Active DMC Office
+                      </span>
                     </div>
 
                     {/* Bottom Title & Counts */}
@@ -885,29 +909,17 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                   {/* Body & Actions */}
                   <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                     <p className="text-xs text-slate-600 leading-relaxed line-clamp-2">
-                      {isComingSoon
-                        ? `Ground operations and direct contracting in ${dest.name} are currently in preparation. Direct allotments will be published upon launch.`
-                        : dest.description || `Comprehensive luxury DMC services, private excursions, and 5-star contracted inventory across ${dest.name}.`}
+                      {dest.description || `Comprehensive luxury DMC services, private excursions, and 5-star contracted inventory across ${dest.name}.`}
                     </p>
 
                     {/* Action Buttons */}
                     <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
-                      {isComingSoon ? (
-                        <button
-                          disabled
-                          className="w-full py-2.5 px-3 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 font-bold text-xs flex items-center justify-center space-x-1.5 opacity-80 cursor-not-allowed"
-                        >
-                          <Clock className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Coming Soon</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => onOpenCreateQuoteWithDestination ? onOpenCreateQuoteWithDestination(dest.slug || dest.id) : onNavigate('create-quote')}
-                          className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer shadow-xs"
-                        >
-                          <span>Create Quote</span>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => onOpenCreateQuoteWithDestination ? onOpenCreateQuoteWithDestination(dest.slug || dest.id) : onNavigate('create-quote')}
+                        className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00b395] text-slate-950 font-black text-xs transition-all flex items-center justify-center cursor-pointer shadow-xs"
+                      >
+                        <span>Create Quote</span>
+                      </button>
 
                       <button
                         onClick={() => handleSelectDestinationForHubs(dest)}
@@ -1010,6 +1022,8 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                     <img
                       src={canonicalImageService.resolveHotelImage(hotel)}
                       alt={hotel.name}
+                      loading="lazy"
+                      decoding="async"
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       referrerPolicy="no-referrer"
                       onError={(e) => {
@@ -1111,6 +1125,8 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                   <img
                     src={canonicalImageService.resolvePackageImage(pkg)}
                     alt={pkg.title}
+                    loading="lazy"
+                    decoding="async"
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     referrerPolicy="no-referrer"
                     onError={(e) => {

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Product, CurrencyCode, Destination, ProductCategory, SUPPORTED_CURRENCIES } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, calculateSellingPrice, calculateUnifiedPrice } from '../../services/pricingEngine';
+import { MarginCommissionGovernanceView } from './MarginCommissionGovernanceView';
 import { 
   DollarSign, 
   Search, 
@@ -24,9 +25,10 @@ const safeNumVal = (val: any, fallback: any = ''): any => (val !== undefined && 
 
 interface PricingManagerProps {
   destinations: Destination[];
+  activeMode?: 'PRICING' | 'MARGINS' | 'TAX_FEES';
 }
 
-export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) => {
+export const PricingManager: React.FC<PricingManagerProps> = ({ destinations, activeMode = 'PRICING' }) => {
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
   const [products, setProducts] = useState<Product[]>(() => db.getProducts());
@@ -44,15 +46,34 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
     setProducts(db.getProducts());
   };
 
+  useEffect(() => {
+    const unsubProd = db.ensureCollectionSynced('products', 'products');
+    const unsubCfg = db.ensureCollectionSynced('product_margin_configs', 'product_margin_configs');
+    const unsubStore = db.subscribeToCollections(['products', 'product_margin_configs'], () => {
+      setProducts(db.getProducts());
+    });
+    return () => {
+      unsubProd();
+      unsubCfg();
+      unsubStore();
+    };
+  }, [db]);
+
   const handleProductChange = (productId: string, field: keyof Product, value: any) => {
     setProducts(prev =>
       prev.map(p => {
         if (p.id !== productId) return p;
         const updated = { ...p, [field]: value };
+        if (field === 'defaultMarkupPercent' || field === 'b2bAgentMarkupPercent') {
+          updated.defaultMarkupPercent = value;
+          updated.b2bAgentMarkupPercent = value;
+          updated.marginType = 'PERCENTAGE';
+          updated.marginFixed = 0;
+        }
         
         // Recalculate selling price starting from
         const net = Number(updated.adultNetPrice) || 0;
-        const markup = Number(updated.defaultMarkupPercent ?? updated.buyerMarkupPercent) || 20;
+        const markup = Number(updated.b2bAgentMarkupPercent ?? updated.defaultMarkupPercent ?? updated.buyerMarkupPercent) || 20;
         const tax = Number(updated.taxPercent) || 0;
         const fee = Number(updated.serviceFeeFixed) || 0;
         
@@ -104,7 +125,9 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
         return {
           ...p,
           defaultMarkupPercent: globalMarkupAdjust,
-          buyerMarkupPercent: globalMarkupAdjust,
+          b2bAgentMarkupPercent: globalMarkupAdjust,
+          marginType: 'PERCENTAGE',
+          marginFixed: 0,
           sellingPriceStartingFrom: computedSelling !== null ? computedSelling : 0
         };
       })
@@ -121,6 +144,23 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
     return matchesSearch && matchesDest && matchesSeason && matchesCat;
   });
 
+  const modeHeading =
+    activeMode === 'MARGINS'
+      ? 'Margin & Commission Governance'
+      : activeMode === 'TAX_FEES'
+        ? 'Tax & Service Fee Administration'
+        : 'Commercial Pricing & Tariff Master';
+  const modeSubheading =
+    activeMode === 'MARGINS'
+      ? 'Configure default agency markups, tiered profit margins, and global commission adjustments across all inventory categories.'
+      : activeMode === 'TAX_FEES'
+        ? 'Manage statutory tax percentages, fixed handling fees, and net-to-selling tariff rules across all catalog items.'
+        : 'Administer native currencies, wholesale net costs, agent margins, statutory taxes, and validity calendars across all inventory categories.';
+
+  if (activeMode === 'MARGINS') {
+    return <MarginCommissionGovernanceView destinations={destinations} />;
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -128,11 +168,11 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
         <div>
           <div className="flex items-center space-x-2 text-[#00C6A6] text-xs font-bold uppercase tracking-wider mb-1">
             <DollarSign className="w-4 h-4" />
-            <span>Dynamic Commercial Pricing Engine</span>
+            <span>Finance & Administration</span>
           </div>
-          <h2 className="text-xl font-bold text-slate-900">Commercial Pricing & Tariff Master</h2>
+          <h2 className="text-xl font-bold text-slate-900">{modeHeading}</h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Administer native currencies, wholesale net costs, agent margins, statutory taxes, and validity calendars across all inventory categories.
+            {modeSubheading}
           </p>
         </div>
 
@@ -335,10 +375,9 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations }) 
                         <input
                           type="number"
                           min="0"
-                          value={product.defaultMarkupPercent ?? product.buyerMarkupPercent ?? 20}
+                          value={product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? product.buyerMarkupPercent ?? 20}
                           onChange={e => {
                             handleProductChange(product.id, 'defaultMarkupPercent', Number(e.target.value));
-                            handleProductChange(product.id, 'buyerMarkupPercent', Number(e.target.value));
                           }}
                           className="w-16 py-1 px-2 bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold rounded font-mono text-xs focus:bg-white"
                         />

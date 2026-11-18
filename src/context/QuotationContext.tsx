@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
 import { calculateProductPrice, calculateProductPriceForAgent, resolveInventoryValidity, evaluateInventoryValidity, roundCurrencyAmount, buildQuotationCurrencySnapshot } from '../services/pricingEngine';
 import { currencyEngine } from '../services/currencyEngine';
@@ -12,6 +12,15 @@ import { japanRailJourneyService } from '../services/rail/JapanRailJourneyServic
 import { canUserViewInternalCostBreakdown } from '../services/permissionEngine';
 import { transformPackageToQuoteState } from '../services/packageToQuoteTransformer';
 import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../constants/commercialQuotationTerms';
+import { shouldExcludeHotelItemByNoAccommodation } from '../utils/hubStayMatching';
+import {
+  buildDestinationVisibilityIndex,
+  resolveDestinationIdToken,
+  resolveHubParentDestinationId,
+  analyzeQuotationDestinationEligibility,
+  QuotationDestinationReviewResult
+} from '../services/destinationVisibility';
+import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
 
 interface QuotationContextType {
   items: QuoteItem[];
@@ -47,6 +56,8 @@ interface QuotationContextType {
       visaSnapshot?: any;
       metadata?: Record<string, any>;
       hubId?: string;
+      itineraryHubOccurrenceId?: string;
+      accommodationStayId?: string;
       hotelId?: string;
       roomTypeId?: string;
       mealPlanCode?: any;
@@ -190,8 +201,13 @@ interface QuotationContextType {
   savedQuotes: Quotation[];
   saveCurrentQuote: () => Quotation | null;
   loadSavedQuote: (quote: Quotation) => void;
-  loadPackageIntoQuote: (pkg: B2BPackage) => void;
+  loadPackageIntoQuote: (pkg: B2BPackage) => boolean | void;
   deleteSavedQuote: (quoteId: string) => void;
+
+  // Destination Visibility & Historical Draft Review
+  draftDestinationReview: QuotationDestinationReviewResult;
+  destinationVisibilityError: string | null;
+  clearDestinationVisibilityError: () => void;
 }
 
 const STORAGE_KEY_SAVED_QUOTES = 'theunbound_saved_quotes';
@@ -200,6 +216,17 @@ const QuotationContext = createContext<QuotationContextType | undefined>(undefin
 
 export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
+  const [destinationVisibilityError, setDestinationVisibilityError] = useState<string | null>(null);
+  const clearDestinationVisibilityError = useCallback(() => setDestinationVisibilityError(null), []);
+  const [visRevision, setVisRevision] = useState(0);
+
+  useEffect(() => {
+    const unsub = inventoryVisibilityService.subscribe(() => {
+      setVisRevision(v => v + 1);
+    });
+    return unsub;
+  }, []);
+
   const [items, setItems] = useState<QuoteItem[]>(() => {
     try {
       if (typeof window !== 'undefined') {
@@ -261,22 +288,46 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const isQuoteDrawerOpen = isQuoteDrawerOpenState;
 
-  // Sync items to storage for session and cross-page persistence
-  useEffect(() => {
+  // Sync items to storage for session and cross-page persistence (debounced to prevent blocking main thread on multi-day edits)
+  const latestItemsRef = useRef<QuoteItem[]>(items);
+  latestItemsRef.current = items;
+  const itemsDirtyRef = useRef<boolean>(false);
+
+  const flushItemsToStorage = useCallback((targetItems: QuoteItem[]) => {
+    if (typeof window === 'undefined') return;
     try {
-      if (typeof window !== 'undefined') {
-        const serialized = JSON.stringify(items);
-        try {
-          sessionStorage.setItem('theunbound_cart_items', serialized);
-        } catch {}
-        try {
-          localStorage.setItem('theunbound_cart_items', serialized);
-        } catch {}
-      }
+      const serialized = JSON.stringify(targetItems);
+      try {
+        sessionStorage.setItem('theunbound_cart_items', serialized);
+      } catch {}
+      try {
+        localStorage.setItem('theunbound_cart_items', serialized);
+      } catch {}
+      itemsDirtyRef.current = false;
     } catch (e) {
       console.warn('Cart items storage sync note:', e);
     }
-  }, [items]);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    itemsDirtyRef.current = true;
+    const handleFlush = () => flushItemsToStorage(latestItemsRef.current);
+    const timer = window.setTimeout(handleFlush, 300);
+    window.addEventListener('pagehide', handleFlush);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pagehide', handleFlush);
+    };
+  }, [items, flushItemsToStorage]);
+
+  useEffect(() => {
+    return () => {
+      if (itemsDirtyRef.current) {
+        flushItemsToStorage(latestItemsRef.current);
+      }
+    };
+  }, [flushItemsToStorage]);
   
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
@@ -311,30 +362,30 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [currentVersion, setCurrentVersion] = useState(1);
   const [isLocked, setIsLocked] = useState(false);
 
-  const clearPriceRefreshNotice = () => setPriceRefreshNotice(null);
+  const clearPriceRefreshNotice = useCallback(() => setPriceRefreshNotice(null), []);
 
   const setQuotationDates = useCallback((startDate: string, endDate: string) => {
     setTravelStartDate(startDate);
     setTravelEndDate(endDate);
   }, []);
 
-  const setClientDetails = (name: string, email: string, phone?: string, company?: string) => {
+  const setClientDetails = useCallback((name: string, email: string, phone?: string, company?: string) => {
     setClientName(name);
     setClientEmail(email);
     if (phone) setClientPhone(phone);
     if (company) setClientCompany(company);
-  };
+  }, []);
 
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
   const isAgent = user?.role === 'B2B_AGENT' || !canViewInternalCosts;
   const pricingTier = user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C';
 
-  const calculateItemPrice = (prod: Product, params: any) => {
+  const calculateItemPrice = useCallback((prod: Product, params: any) => {
     if (!canViewInternalCosts) {
       return calculateProductPriceForAgent(prod, params) as any;
     }
     return calculateProductPrice(prod, params);
-  };
+  }, [canViewInternalCosts]);
 
   const buildCommercialPricingSnapshot = (
     prod: Product,
@@ -368,14 +419,25 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return db.getQuotesForUser(user);
   });
 
-  // Sync savedQuotes when user changes or DB updates
+  // Sync savedQuotes ONLY when quotation collections or user change (never on unrelated audit_logs/CMS updates)
   useEffect(() => {
     const db = AppDatabase.getInstance();
+    const buildQuoteListSig = (list: Quotation[]) =>
+      list
+        .map((q) => `${q.id}:${q.version || 1}:${q.latestVersion || q.version || 1}:${q.status || ''}:${q.snapshotHash || ''}:${q.updatedAt || ''}`)
+        .join('|');
+
     const refreshQuotes = () => {
-      setSavedQuotes(db.getQuotesForUser(user));
+      const next = db.getQuotesForUser(user);
+      setSavedQuotes((prev) => {
+        if (prev.length === next.length && buildQuoteListSig(prev) === buildQuoteListSig(next)) {
+          return prev;
+        }
+        return next;
+      });
     };
     refreshQuotes();
-    const unsub = db.subscribe(refreshQuotes);
+    const unsub = db.subscribeToCollections(['saved_quotes', 'quotations'], refreshQuotes);
     return () => {
       unsub();
     };
@@ -419,11 +481,16 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         const calculation = calculateItemPrice(productWithContext, {
           productId: item.product.id,
+          productName: item.product.name,
+          itemId: item.id,
           pricingTier,
           adults: item.pax.adults,
           children: item.pax.children,
           infants: item.pax.infants,
           travelDate: item.travelDate,
+          serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
+          nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
+          roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
@@ -435,7 +502,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   }, [currency, pricingTier, isAgent, isLocked, fxRateTick]);
 
-  const addProductToQuote = (
+  const addProductToQuote = useCallback((
     product: Product,
     options?: {
       adults?: number;
@@ -459,6 +526,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       visaSnapshot?: any;
       metadata?: Record<string, any>;
       hubId?: string;
+      itineraryHubOccurrenceId?: string;
+      accommodationStayId?: string;
       hotelId?: string;
       roomTypeId?: string;
       mealPlanCode?: any;
@@ -475,6 +544,25 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       vehicleCapacitySnapshot?: number;
     }
   ) => {
+    // Enforce active destination check when adding new products in B2B Quote / Cart
+    const db = AppDatabase.getInstance();
+    const deletedSet = db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
+    const prodDestId =
+      resolveDestinationIdToken(product.destinationId, visIndex) ||
+      resolveDestinationIdToken(product.destinationName, visIndex) ||
+      resolveDestinationIdToken((product as any).destination, visIndex) ||
+      resolveDestinationIdToken(product.country, visIndex) ||
+      resolveHubParentDestinationId((product as any).hubId || product.city || options?.hubId, visIndex);
+
+    if (!prodDestId || !visIndex.activeDestinationIds.has(prodDestId)) {
+      const msg = `"${product.name || 'This service'}" cannot be added because its destination is not currently Active.`;
+      setDestinationVisibilityError(msg);
+      console.warn('[QuotationContext] Blocked adding item from non-active destination:', product.name, prodDestId);
+      return;
+    }
+    setDestinationVisibilityError(null);
+
     const adults = options?.adults ?? Math.max(1, product.minPax);
     const children = options?.children ?? 0;
     const infants = options?.infants ?? 0;
@@ -483,20 +571,30 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const serviceTime = options?.serviceTime;
     const notes = options?.notes;
 
+    const newItemId = `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+    const serviceEndDate = options?.checkOutDate || options?.manualHotelDetails?.checkOutDate || (product as any).manualHotelDetails?.checkOutDate;
+    const itemNights = options?.nights || options?.manualHotelDetails?.numberOfNights || (product as any).manualHotelDetails?.numberOfNights || (product as any).nights;
+    const itemRooms = options?.roomsCount || options?.manualHotelDetails?.numberOfRooms || (product as any).manualHotelDetails?.numberOfRooms || (product as any).roomsCount;
+
     const calculation = calculateItemPrice(product, {
       productId: product.id,
+      productName: product.name,
+      itemId: newItemId,
       pricingTier,
       adults,
       children,
       infants,
       travelDate,
+      serviceEndDate,
+      nights: itemNights,
+      roomsCount: itemRooms,
       targetCurrency: currency,
       selectedAddonIds
     });
     const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
 
     const newItem: QuoteItem = {
-      id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      id: newItemId,
       product: effectiveProduct,
       pax: { adults, children, infants },
       travelDate,
@@ -504,7 +602,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       notes,
       selectedAddonIds,
       calculation,
-      hubId: options?.hubId || options?.manualHotelDetails?.hubId || (effectiveProduct as any).manualHotelDetails?.hubId,
+      hubId: options?.hubId || options?.itineraryHubOccurrenceId || options?.manualHotelDetails?.hubId || (effectiveProduct as any).manualHotelDetails?.hubId,
+      itineraryHubOccurrenceId: options?.itineraryHubOccurrenceId || options?.hubId || options?.manualHotelDetails?.itineraryHubOccurrenceId || options?.manualHotelDetails?.hubId,
+      accommodationStayId: options?.accommodationStayId || options?.manualHotelDetails?.accommodationStayId,
       hotelId: options?.hotelId || (effectiveProduct.productType === 'HOTEL' && !options?.isManualHotel && effectiveProduct.accommodationType !== 'manual' ? effectiveProduct.id : undefined),
       roomTypeId: options?.roomTypeId,
       mealPlanCode: options?.mealPlanCode,
@@ -540,6 +640,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       vehicleCapacitySnapshot: options?.vehicleCapacitySnapshot || options?.configuration_snapshot?.masterCapacity || options?.configuration_snapshot?.maxCapacity || (effectiveProduct as any).vehicleCapacitySnapshot,
       metadata: {
         ...(options?.metadata || {}),
+        itineraryHubOccurrenceId: options?.itineraryHubOccurrenceId || options?.hubId || options?.metadata?.itineraryHubOccurrenceId,
+        accommodationStayId: options?.accommodationStayId || options?.metadata?.accommodationStayId,
         master_product_id: options?.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
         service_id: options?.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
         vehicleId: options?.vehicleId || options?.configuration_snapshot?.vehicleId || options?.metadata?.vehicleId,
@@ -553,23 +655,28 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     if (options?.openDrawer !== false && !isInsideB2BQuoteBuilder()) {
       setIsQuoteDrawerOpen(true);
     }
-  };
+  }, [calculateItemPrice, currency, isAgent, pricingTier, setIsQuoteDrawerOpen, travelStartDate]);
 
-  const removeProductFromQuote = (itemId: string) => {
+  const removeProductFromQuote = useCallback((itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
-  };
+  }, []);
 
-  const updateItemPax = (itemId: string, pax: { adults: number; children: number; infants: number }) => {
+  const updateItemPax = useCallback((itemId: string, pax: { adults: number; children: number; infants: number }) => {
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
         const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
+          productName: item.product.name,
+          itemId: item.id,
           pricingTier,
           adults: pax.adults,
           children: pax.children,
           infants: pax.infants,
           travelDate: item.travelDate,
+          serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
+          nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
+          roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
@@ -584,19 +691,24 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return updated;
       })
     );
-  };
+  }, [calculateItemPrice, currency, pricingTier]);
 
-  const updateItemTravelDate = (itemId: string, date: string) => {
+  const updateItemTravelDate = useCallback((itemId: string, date: string) => {
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
         const calculation = calculateItemPrice(item.product, {
           productId: item.product.id,
+          productName: item.product.name,
+          itemId: item.id,
           pricingTier,
           adults: item.pax.adults,
           children: item.pax.children,
           infants: item.pax.infants,
           travelDate: date,
+          serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
+          nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
+          roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
@@ -611,9 +723,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return updated;
       })
     );
-  };
+  }, [calculateItemPrice, currency, pricingTier]);
 
-  const updateItemServiceTime = (itemId: string, time: string) => {
+  const updateItemServiceTime = useCallback((itemId: string, time: string) => {
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
@@ -622,9 +734,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return updated;
       })
     );
-  };
+  }, []);
 
-  const updateItemFull = (
+  const updateItemFull = useCallback((
     itemId: string,
     updates: {
       travelDate?: string;
@@ -670,9 +782,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return updated;
       })
     );
-  };
+  }, [calculateItemPrice, currency, pricingTier]);
 
-  const updateQuoteItem = (
+  const updateQuoteItem = useCallback((
     itemId: string,
     updatedProduct: Product,
     options: {
@@ -765,9 +877,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return updated;
       })
     );
-  };
+  }, [calculateItemPrice, currency, isAgent, pricingTier]);
 
-  const toggleItemAddon = (itemId: string, addonId: string) => {
+  const toggleItemAddon = useCallback((itemId: string, addonId: string) => {
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
@@ -796,15 +908,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         };
       })
     );
-  };
+  }, [calculateItemPrice, currency, pricingTier]);
 
-  const updateItemNotes = (itemId: string, notes: string) => {
+  const updateItemNotes = useCallback((itemId: string, notes: string) => {
     setItems(prev =>
       prev.map(item => (item.id === itemId ? { ...item, notes, source: 'USER', aiSuggested: false } : item))
     );
-  };
+  }, []);
 
-  const clearQuote = () => {
+  const clearQuote = useCallback(() => {
     setItems([]);
     setQuoteTitle('');
     setSourcePackageId(null);
@@ -844,19 +956,27 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     } catch (e) {
       console.warn('Clear cart storage note:', e);
     }
-  };
+  }, []);
 
-  const loadAiPlannerPayload = (payload: QuoteBuilderHandoffPayload) => {
+  const loadAiPlannerPayload = useCallback((payload: QuoteBuilderHandoffPayload) => {
     const db = AppDatabase.getInstance();
     const allDestinations = db.getDestinations();
     const allProducts = db.getProducts();
 
-    // 1. Verify destination against DB
+    // 1. Verify destination against DB and require ACTIVE status for new AI Planner quotes
+    const deletedSet = db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(allDestinations, db.getCityHubs(), deletedSet);
     const matchedDest = allDestinations.find(
       d => d.id === payload.destination.id ||
            (d.name || '').toLowerCase() === (payload.destination?.name || '').toLowerCase() ||
            d.slug === payload.destination.slug
     );
+    const resolvedDestId = matchedDest?.id || resolveDestinationIdToken(payload.destination?.id || payload.destination?.name || payload.destination?.slug, visIndex);
+    if (!resolvedDestId || !visIndex.activeDestinationIds.has(resolvedDestId)) {
+      setDestinationVisibilityError(`Cannot load itinerary: "${payload.destination?.name || 'Destination'}" is not currently Active.`);
+      return { priceVariance: false, oldPrice: 0, newPrice: 0 };
+    }
+    setDestinationVisibilityError(null);
     const destName = matchedDest ? matchedDest.name : payload.destination.name;
 
     // 2. Validate route hubs with AI metadata
@@ -942,7 +1062,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       oldPrice: aiExpectedPrice,
       newPrice: sumRecalculatedPrice
     };
-  };
+  }, [currency, pricingTier]);
 
   // Aggregated financials
   const totals = useMemo(() => {
@@ -968,8 +1088,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         item.product.accommodationType === 'manual' ||
         (item.product as any).category === 'Hotels';
       if (quotationScope === 'LAND_ONLY' && isHotel) continue;
-      const itemHubId = item.hubId || item.manualHotelDetails?.hubId;
-      if (isHotel && itemHubId && noAccHubIds.has(itemHubId)) continue;
+      if (shouldExcludeHotelItemByNoAccommodation(item, routeHubs, quotationScope === 'LAND_ONLY')) continue;
 
       if (canViewInternalCosts) {
         net += (item.calculation as any)?.totalNetCost || 0;
@@ -1001,11 +1120,25 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [items, overallDiscountPercent, canViewInternalCosts, quotationScope, routeHubs, currency]);
 
-  const saveCurrentQuote = (): Quotation | null => {
+  const saveCurrentQuote = useCallback((): Quotation | null => {
     if (items.length === 0) return null;
 
     const db = AppDatabase.getInstance();
     const existingQuote = activeQuoteId ? db.getQuoteByIdAuthorized(activeQuoteId, user) : null;
+
+    // For NEW quotes (no existingQuote), enforce strict ACTIVE destination check
+    if (!existingQuote) {
+      const deletedSet = db.getDeletedEntityIds();
+      const visIndex = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
+      const review = analyzeQuotationDestinationEligibility(
+        { status: 'DRAFT', destination, routeHubs, items },
+        visIndex
+      );
+      if (review.requiresReview) {
+        setDestinationVisibilityError(review.summaryMessage);
+        return null;
+      }
+    }
 
     const quoteIdToUse = activeQuoteId || `quote-${Date.now()}`;
     const quoteNumberToUse = existingQuote?.quoteNumber || `UBQ-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -1167,9 +1300,41 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
 
     return newQuote;
-  };
+  }, [
+    activeQuoteId,
+    agentNotes,
+    clientCompany,
+    clientEmail,
+    clientName,
+    currency,
+    currentVersion,
+    dayDescriptions,
+    dayNotes,
+    dayOverviews,
+    dayThemes,
+    destination,
+    exclusions,
+    importantInformation,
+    inclusions,
+    isAgent,
+    isLocked,
+    items,
+    itineraryOverview,
+    leadId,
+    overallDiscountPercent,
+    quoteTitle,
+    quotationScope,
+    routeHubs,
+    sourcePackageId,
+    sourcePackageName,
+    totals,
+    travelEndDate,
+    travelStartDate,
+    user,
+    cancellationPolicy
+  ]);
 
-  const loadSavedQuote = (quote: Quotation) => {
+  const loadSavedQuote = useCallback((quote: Quotation) => {
     setItems(quote.items || []);
     setQuoteTitle(quote.title || '');
     setSourcePackageId(quote.sourcePackageId || null);
@@ -1198,11 +1363,18 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveQuoteId(quote.id);
     setCurrentVersion(quote.version || 1);
     setIsLocked(!!quote.isLocked);
-  };
+  }, [setCurrency]);
 
-  const loadPackageIntoQuote = (pkg: B2BPackage) => {
+  const loadPackageIntoQuote = useCallback((pkg: B2BPackage): boolean => {
     const db = AppDatabase.getInstance();
     const freshPkg = db.getPackageById(pkg.id) || pkg;
+    if (!inventoryVisibilityService.isEntityAccessibleInB2B('PACKAGE', freshPkg)) {
+      setDestinationVisibilityError(
+        `Package "${freshPkg.title || 'Selected Package'}" is unavailable because one or more of its destinations are not Active.`
+      );
+      return false;
+    }
+    setDestinationVisibilityError(null);
 
     const transformed = transformPackageToQuoteState(freshPkg, {
       user,
@@ -1236,106 +1408,190 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setCurrentVersion(1);
     setIsLocked(false);
     setIsQuoteDrawerOpen(false);
-  };
+    return true;
+  }, [currency, paxConfig.adults, paxConfig.children, paxConfig.infants, setIsQuoteDrawerOpen, user]);
 
-  const deleteSavedQuote = (quoteId: string) => {
+  const deleteSavedQuote = useCallback((quoteId: string) => {
     const db = AppDatabase.getInstance();
     db.deleteQuote(quoteId, user);
     setSavedQuotes(prev => prev.filter(q => q.id !== quoteId));
-  };
+  }, [user]);
 
-  const loadQuoteItems = (newItems: QuoteItem[]) => {
+  const loadQuoteItems = useCallback((newItems: QuoteItem[]) => {
     setItems(newItems || []);
-  };
+  }, []);
+
+  const draftDestinationReview = useMemo<QuotationDestinationReviewResult>(() => {
+    const db = AppDatabase.getInstance();
+    const existingQuote = activeQuoteId ? db.getQuoteByIdAuthorized(activeQuoteId, user) : null;
+    const visIndex = buildDestinationVisibilityIndex(
+      db.getDestinations(),
+      db.getCityHubs(),
+      db.getDeletedEntityIds()
+    );
+    return analyzeQuotationDestinationEligibility(
+      {
+        status: existingQuote?.status || 'DRAFT',
+        destination,
+        routeHubs,
+        items
+      },
+      visIndex
+    );
+  }, [activeQuoteId, user, destination, routeHubs, items, visRevision]);
+
+  const contextValue = useMemo<QuotationContextType>(() => ({
+    items,
+    setItems,
+    loadQuoteItems,
+    currency,
+    setCurrency,
+    isQuoteDrawerOpen,
+    setIsQuoteDrawerOpen,
+    addProductToQuote,
+    removeProductFromQuote,
+    updateItemPax,
+    updateItemTravelDate,
+    updateItemServiceTime,
+    updateItemFull,
+    updateQuoteItem,
+    toggleItemAddon,
+    updateItemNotes,
+    clearQuote,
+    clientName,
+    setClientName,
+    clientEmail,
+    setClientEmail,
+    clientCompany,
+    setClientCompany,
+    clientPhone,
+    setClientPhone,
+    destination,
+    setDestination,
+    travelStartDate,
+    travelEndDate,
+    setQuotationDates,
+    setClientDetails,
+    leadId,
+    setLeadId,
+    agentNotes,
+    setAgentNotes,
+    overallDiscountPercent,
+    setOverallDiscountPercent,
+    activeQuoteId,
+    currentVersion,
+    isLocked,
+    quoteTitle,
+    setQuoteTitle,
+    sourcePackageId,
+    setSourcePackageId,
+    sourcePackageName,
+    setSourcePackageName,
+    quotationScope,
+    setQuotationScope,
+    routeHubs,
+    setRouteHubs,
+    paxConfig,
+    setPaxConfig,
+    dayThemes,
+    setDayThemes,
+    dayDescriptions,
+    setDayDescriptions,
+    dayOverviews,
+    setDayOverviews,
+    dayNotes,
+    setDayNotes,
+    itineraryOverview,
+    setItineraryOverview,
+    inclusions,
+    setInclusions,
+    exclusions,
+    setExclusions,
+    importantInformation,
+    setImportantInformation,
+    cancellationPolicy,
+    setCancellationPolicy,
+    handoffPayload,
+    setHandoffPayload,
+    quoteSource,
+    setQuoteSource,
+    priceRefreshNotice,
+    clearPriceRefreshNotice,
+    loadAiPlannerPayload,
+    ...totals,
+    savedQuotes,
+    saveCurrentQuote,
+    loadSavedQuote,
+    loadPackageIntoQuote,
+    deleteSavedQuote,
+    draftDestinationReview,
+    destinationVisibilityError,
+    clearDestinationVisibilityError
+  }), [
+    items,
+    currency,
+    isQuoteDrawerOpen,
+    setIsQuoteDrawerOpen,
+    setCurrency,
+    addProductToQuote,
+    removeProductFromQuote,
+    updateItemPax,
+    updateItemTravelDate,
+    updateItemServiceTime,
+    updateItemFull,
+    updateQuoteItem,
+    toggleItemAddon,
+    updateItemNotes,
+    clearQuote,
+    loadQuoteItems,
+    setQuotationDates,
+    setClientDetails,
+    clearPriceRefreshNotice,
+    loadAiPlannerPayload,
+    saveCurrentQuote,
+    loadSavedQuote,
+    loadPackageIntoQuote,
+    deleteSavedQuote,
+    clearDestinationVisibilityError,
+    clientName,
+    clientEmail,
+    clientCompany,
+    clientPhone,
+    destination,
+    travelStartDate,
+    travelEndDate,
+    leadId,
+    agentNotes,
+    overallDiscountPercent,
+    activeQuoteId,
+    currentVersion,
+    isLocked,
+    quoteTitle,
+    sourcePackageId,
+    sourcePackageName,
+    quotationScope,
+    routeHubs,
+    paxConfig,
+    dayThemes,
+    dayDescriptions,
+    dayOverviews,
+    dayNotes,
+    itineraryOverview,
+    inclusions,
+    exclusions,
+    importantInformation,
+    cancellationPolicy,
+    handoffPayload,
+    quoteSource,
+    priceRefreshNotice,
+    totals,
+    savedQuotes,
+    draftDestinationReview,
+    destinationVisibilityError
+  ]);
 
   return (
-    <QuotationContext.Provider
-      value={{
-        items,
-        setItems,
-        loadQuoteItems,
-        currency,
-        setCurrency,
-        isQuoteDrawerOpen,
-        setIsQuoteDrawerOpen,
-        addProductToQuote,
-        removeProductFromQuote,
-        updateItemPax,
-        updateItemTravelDate,
-        updateItemServiceTime,
-        updateItemFull,
-        updateQuoteItem,
-        toggleItemAddon,
-        updateItemNotes,
-        clearQuote,
-        clientName,
-        setClientName,
-        clientEmail,
-        setClientEmail,
-        clientCompany,
-        setClientCompany,
-        clientPhone,
-        setClientPhone,
-        destination,
-        setDestination,
-        travelStartDate,
-        travelEndDate,
-        setQuotationDates,
-        setClientDetails,
-        leadId,
-        setLeadId,
-        agentNotes,
-        setAgentNotes,
-        overallDiscountPercent,
-        setOverallDiscountPercent,
-        activeQuoteId,
-        currentVersion,
-        isLocked,
-        quoteTitle,
-        setQuoteTitle,
-        sourcePackageId,
-        setSourcePackageId,
-        sourcePackageName,
-        setSourcePackageName,
-        quotationScope,
-        setQuotationScope,
-        routeHubs,
-        setRouteHubs,
-        paxConfig,
-        setPaxConfig,
-        dayThemes,
-        setDayThemes,
-        dayDescriptions,
-        setDayDescriptions,
-        dayOverviews,
-        setDayOverviews,
-        dayNotes,
-        setDayNotes,
-        itineraryOverview,
-        setItineraryOverview,
-        inclusions,
-        setInclusions,
-        exclusions,
-        setExclusions,
-        importantInformation,
-        setImportantInformation,
-        cancellationPolicy,
-        setCancellationPolicy,
-        handoffPayload,
-        setHandoffPayload,
-        quoteSource,
-        setQuoteSource,
-        priceRefreshNotice,
-        clearPriceRefreshNotice,
-        loadAiPlannerPayload,
-        ...totals,
-        savedQuotes,
-        saveCurrentQuote,
-        loadSavedQuote,
-        loadPackageIntoQuote,
-        deleteSavedQuote
-      }}
-    >
+    <QuotationContext.Provider value={contextValue}>
       {children}
     </QuotationContext.Provider>
   );

@@ -278,7 +278,7 @@ export const CustomPageView: React.FC<CustomPageViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {images.map((img, iIdx) => (
                 <div key={iIdx} className="rounded-2xl overflow-hidden h-48 bg-slate-100 border border-slate-200">
-                  <img src={img} alt={`Gallery item ${iIdx + 1}`} className="w-full h-full object-cover" />
+                  <img src={img} alt={`Gallery item ${iIdx + 1}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                 </div>
               ))}
             </div>
@@ -325,6 +325,8 @@ export const CustomPageView: React.FC<CustomPageViewProps> = ({
               <img
                 src={page.heroImage}
                 alt={page.title}
+                loading="eager"
+                decoding="async"
                 className="w-full h-full object-cover opacity-50"
                 referrerPolicy="no-referrer"
               />

@@ -10,15 +10,12 @@ import {
   resolveRailRateNettPrice
 } from '../types/rail';
 import { CurrencyCode, Product } from '../types';
-import { INITIAL_RAIL_STATIONS, getStationById } from '../data/initialRailStations';
-import { INITIAL_RAIL_ROUTES, findRoute } from '../data/initialRailRoutes';
-import { INITIAL_RAIL_RATES, findExactRate } from '../data/initialRailRates';
-import { RAIL_SEASON_ADJUSTMENTS, resolveRailSeasonForDate } from '../data/initialRailSeasons';
+import { resolveRailSeasonForDate } from '../utils/railSeasonHelper';
 import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
+import { INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS } from '../data/initialRailCommercialProducts';
 import { convertCurrency } from './currencyEngine';
 import { currencyConversionService } from './currencyConversionService';
 import { evaluateInventoryValidity, evaluateApplicableSurcharges } from './pricingEngine';
-import { INITIAL_PRODUCTS } from '../data/initialProducts';
 import { AppDatabase } from './db';
 
 export class RailPricingEngine {
@@ -118,10 +115,10 @@ export class RailPricingEngine {
     }
 
     // 3. Resolve Product & Commercial Master Product
-    const directProduct = db.getProductById(productId) || INITIAL_PRODUCTS.find(p => p.id === productId);
+    const directProduct = db.getProductById(productId) || (INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS.find(p => p.id === productId || p.sku === productId) as any);
     const isGreenCar = productId === 'RAIL-JP-GREEN-RESERVED' || (directProduct?.name || '').toLowerCase().includes('green');
     const canonicalProductId = isGreenCar ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED';
-    const product = directProduct || db.getProductById(canonicalProductId) || INITIAL_PRODUCTS.find(p => p.id === canonicalProductId);
+    const product = directProduct || db.getProductById(canonicalProductId) || (INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS.find(p => p.id === canonicalProductId) as any);
     const commercialPass = db.getJapanRailCommercialProductById?.(productId) ||
       db.getJapanRailCommercialProductById?.(canonicalProductId) ||
       db.getJapanRailCommercialProducts?.()?.find((cp: any) => cp.id === productId || cp.sku === productId || cp.productCode === productId || cp.id === canonicalProductId);
@@ -259,14 +256,17 @@ export class RailPricingEngine {
     const markupRule = db.getRailMarkupRule() || INITIAL_RAIL_MARKUP_RULE;
     const agencySettings = db.resolveAgencyPricingSettings({
       companyId: params.companyId,
-      agencyName: params.agencyName,
-      explicitProductLevelMarginEnabled: params.productLevelMarginEnabled,
-      explicitAgentLevelMarginPercent: params.customAgentMarginPercent
+      agencyName: params.agencyName
     });
-    const isProductLevelMarginEnabled = agencySettings.productLevelMarginEnabled !== false;
+    const isProductLevelMarginEnabled =
+      typeof params.productLevelMarginEnabled === 'boolean'
+        ? params.productLevelMarginEnabled
+        : agencySettings.productLevelMarginEnabled !== false;
     const rawMarkupPercent = isProductLevelMarginEnabled
       ? markupRule.b2bAgentMarkupPercent
-      : agencySettings.agentLevelMarginPercent;
+      : (typeof params.customAgentMarginPercent === 'number'
+          ? params.customAgentMarginPercent
+          : agencySettings.agentLevelMarginPercent);
     const appliedMarkupPercent = Number.isFinite(Number(rawMarkupPercent))
       ? Number(rawMarkupPercent)
       : (isProductLevelMarginEnabled ? INITIAL_RAIL_MARKUP_RULE.b2bAgentMarkupPercent : 0);
@@ -288,6 +288,13 @@ export class RailPricingEngine {
     const validityCheck = evaluateInventoryValidity(validitySource, travelDate);
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: commercialPass?.surcharges || product?.surcharges,
+      productId: commercialPass?.id || product?.id,
+      productName: (commercialPass as any)?.productName || (commercialPass as any)?.name || product?.name || `${originStation} → ${destinationStation}`,
+      category: 'Rail / Shinkansen',
+      productType: 'Rail & Transportation',
+      destinationId: (commercialPass as any)?.destinationId || 'dest-japan',
+      destinationName: (commercialPass as any)?.destinationName || 'Japan',
+      country: 'Japan',
       serviceDate: travelDate,
       baseNativeAmount: baseSellingPriceJPY,
       nativeCurrency,

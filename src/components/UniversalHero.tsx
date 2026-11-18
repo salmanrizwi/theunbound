@@ -193,6 +193,9 @@ export const UniversalHero: React.FC<UniversalHeroProps> = ({
               <img
                 src={desktopImage}
                 alt={altText}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
                 className="w-full h-full object-cover object-center transition-transform duration-1000 scale-100"
                 style={{ objectPosition: mediaConfig?.focalPoint || 'center' }}
                 referrerPolicy="no-referrer"
