@@ -13,6 +13,25 @@ interface State {
   errorInfo: ErrorInfo | null;
 }
 
+const CHUNK_RELOAD_STORAGE_KEY = 'theunbound_chunk_reload_at';
+const CHUNK_RELOAD_COOLDOWN_MS = 15000;
+
+function isStaleModuleGraphError(error: Error | null): boolean {
+  const message = (error?.message || '').toLowerCase();
+  return (
+    message.includes("reading 'usestate'") ||
+    message.includes("reading 'useeffect'") ||
+    message.includes("reading 'useref'") ||
+    message.includes("reading 'usecontext'") ||
+    message.includes("reading 'usememo'") ||
+    message.includes("reading 'usecallback'") ||
+    message.includes('invalid hook call') ||
+    message.includes('outdated optimize dep') ||
+    message.includes('failed to fetch dynamically imported module') ||
+    message.includes('importing a module script failed')
+  );
+}
+
 export class GlobalErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
@@ -26,6 +45,20 @@ export class GlobalErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('[GlobalErrorBoundary] Caught unexpected component error:', error, errorInfo);
+    if (typeof window !== 'undefined' && isStaleModuleGraphError(error)) {
+      try {
+        const now = Date.now();
+        const lastReloadRaw = window.sessionStorage?.getItem(CHUNK_RELOAD_STORAGE_KEY);
+        const lastReloadAt = lastReloadRaw ? Number(lastReloadRaw) : 0;
+        if (!lastReloadAt || Number.isNaN(lastReloadAt) || now - lastReloadAt > CHUNK_RELOAD_COOLDOWN_MS) {
+          window.sessionStorage?.setItem(CHUNK_RELOAD_STORAGE_KEY, String(now));
+          window.location.reload();
+          return;
+        }
+      } catch {
+        // Ignore storage errors and show fallback UI
+      }
+    }
     this.setState({ errorInfo });
   }
 

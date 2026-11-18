@@ -16,6 +16,13 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, '.'),
     },
+    dedupe: [
+      'react',
+      'react-dom',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
+      'scheduler',
+    ],
   },
   server: {
     port: 3000,
@@ -26,12 +33,14 @@ export default defineConfig({
     include: [
       'react',
       'react-dom',
+      'react-dom/client',
       'react/jsx-runtime',
       'react/jsx-dev-runtime',
       'lucide-react',
       'firebase/app',
       'firebase/auth',
       'firebase/firestore',
+      'firebase/storage',
       'motion',
       'jspdf',
       'html2canvas',
