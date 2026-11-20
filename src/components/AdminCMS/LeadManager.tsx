@@ -3,6 +3,7 @@ import { AppDatabase } from '../../services/db';
 import { TravelLead, LeadStatus, LeadPriority, LeadSource, LeadStageConfig } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
+import { resolveUserAccountManager } from '../../services/accountManagerService';
 import { 
   Users, 
   Plus, 
@@ -1074,17 +1075,26 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                             const staffName = lead.assignedTeamMemberNameSnapshot || lead.assignedStaffName;
                             const hasAgent = Boolean(lead.responsibleAgentId || lead.assignedAgentId || agentName);
                             const hasStaff = Boolean(lead.assignedTeamMemberId || lead.assignedStaffId || staffName);
+                            const agentUidForAm = lead.responsibleAgentId || lead.assignedAgentId || (lead.userType === 'B2B_AGENT' ? lead.userId : undefined);
+                            const agentAm = agentUidForAm ? resolveUserAccountManager(agentUidForAm) : null;
 
                             return (
                               <div className="space-y-1.5 min-w-[180px]">
                                 {/* B2B Agent Indicator */}
-                                <div className="flex items-center gap-1.5">
-                                  <Building className={`w-3.5 h-3.5 shrink-0 ${hasAgent ? 'text-indigo-600' : 'text-amber-500'}`} />
+                                <div className="flex items-start gap-1.5">
+                                  <Building className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${hasAgent ? 'text-indigo-600' : 'text-amber-500'}`} />
                                   <div className="truncate">
                                     {hasAgent ? (
-                                      <span className="text-xs font-bold text-slate-900 truncate block">
-                                        {agentName || 'B2B Partner Agent'}
-                                      </span>
+                                      <>
+                                        <span className="text-xs font-bold text-slate-900 truncate block">
+                                          {agentName || 'B2B Partner Agent'}
+                                        </span>
+                                        {agentAm && (
+                                          <span className={`text-[10px] font-semibold block truncate ${agentAm.isAssigned ? 'text-indigo-700' : 'text-amber-700'}`}>
+                                            AM: {agentAm.isAssigned ? agentAm.name : 'Unassigned'}
+                                          </span>
+                                        )}
+                                      </>
                                     ) : (
                                       <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded inline-block">
                                         Needs B2B Agent

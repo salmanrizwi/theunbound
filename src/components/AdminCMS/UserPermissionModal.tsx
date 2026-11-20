@@ -10,10 +10,19 @@ import {
 import { 
   getDefaultPermissionsForRole, 
   isMasterAdmin, 
-  canRevokeAdminPermissions 
+  canRevokeAdminPermissions,
+  canUserAssignAccountManagers
 } from '../../services/permissionEngine';
 import { AppDatabase } from '../../services/db';
 import { UserCashbackConfigPanel } from './UserCashbackConfigPanel';
+import { AccountManagerSelector } from './AccountManagerSelector';
+import {
+  assignAccountManagerToUser,
+  getAssignmentHistoryForAgent,
+  isB2BAgentRole,
+  isExternalPartnerAccount,
+  resolveUserAccountManager
+} from '../../services/accountManagerService';
 import { 
   X, 
   Shield, 
@@ -117,9 +126,11 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
     initialAgencySettings.agentLevelMarginPercent ?? user?.customAgentMarginPercent ?? 0
   );
   const [auditReason, setAuditReason] = useState<string>('');
+  const [accountManagerUid, setAccountManagerUid] = useState<string>(user?.accountManagerUid || '');
+  const [accountManagerReason, setAccountManagerReason] = useState<string>('');
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'PROFILE' | 'COMPANY' | 'ACCOUNT' | 'PERMISSIONS' | 'COMMERCIAL' | 'CASHBACK'>('PROFILE');
+  const [activeTab, setActiveTab] = useState<'PROFILE' | 'COMPANY' | 'ACCOUNT' | 'ACCOUNT_MANAGER' | 'PERMISSIONS' | 'COMMERCIAL' | 'CASHBACK'>('PROFILE');
 
   // Permissions state initialized with existing or default
   const [perms, setPerms] = useState<UserPermissionAccess>(() => {
@@ -188,6 +199,8 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       setProductLevelMarginEnabled(resolvedPricing.productLevelMarginEnabled !== false);
       setAgentMargin(resolvedPricing.agentLevelMarginPercent ?? user.customAgentMarginPercent ?? 0);
       setAuditReason('');
+      setAccountManagerUid(user.accountManagerUid || '');
+      setAccountManagerReason('');
       setErrorBanner(null);
 
       const existing = user.permissions || {};
@@ -318,6 +331,27 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
       }
     }
 
+    // Mandatory Account Manager validation for active/approved B2B Agents
+    const isTargetB2BAgent = isB2BAgentRole(role);
+    if (isTargetB2BAgent && approvalStatus === 'APPROVED') {
+      const cleanAmUid = (accountManagerUid || '').trim();
+      if (!cleanAmUid || !db.isEligibleInternalTeamMember(cleanAmUid)) {
+        setErrorBanner(
+          'Mandatory Rule: Every active B2B Agent must have an eligible internal Team Member assigned as their Account Manager.'
+        );
+        setActiveTab('ACCOUNT_MANAGER');
+        return;
+      }
+    }
+
+    if ((accountManagerUid || '').trim() && !db.isEligibleInternalTeamMember(accountManagerUid)) {
+      setErrorBanner(
+        'Invalid Account Manager: Only active internal Team Members may be assigned (B2B Agents cannot be Account Managers).'
+      );
+      setActiveTab('ACCOUNT_MANAGER');
+      return;
+    }
+
     const nowIso = new Date().toISOString();
     const finalFullName = name.trim() || `${firstName} ${lastName}`.trim() || user.name;
     const updatedUser: User = {
@@ -383,6 +417,23 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
     try {
       setIsSubmitting(true);
       await onSave(updatedUser, auditReason.trim() || undefined);
+
+      // Apply user-level Account Manager assignment/reassignment if changed (immutable history + strict UID isolation)
+      const trimmedNewAmUid = (accountManagerUid || '').trim();
+      const previousAmUid = (user.accountManagerUid || '').trim();
+      if (
+        trimmedNewAmUid &&
+        trimmedNewAmUid !== previousAmUid &&
+        isExternalPartnerAccount(updatedUser)
+      ) {
+        assignAccountManagerToUser({
+          agentUserId: updatedUser.id,
+          accountManagerUid: trimmedNewAmUid,
+          actor: currentUser,
+          reason: accountManagerReason.trim() || auditReason.trim() || undefined
+        });
+      }
+
       db.updateAgencyPricingSettings(
         updatedUser.companyId || updatedUser.id,
         {
@@ -498,6 +549,7 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
             </button>
 
             <button
+              type="button"
               onClick={() => setActiveTab('ACCOUNT')}
               className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
                 activeTab === 'ACCOUNT'
@@ -507,6 +559,22 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
             >
               <UserCheck className="w-3.5 h-3.5" />
               <span>Account & Security</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('ACCOUNT_MANAGER')}
+              className={`py-3 px-3 text-xs font-bold border-b-2 transition-all cursor-pointer flex items-center space-x-1.5 whitespace-nowrap ${
+                activeTab === 'ACCOUNT_MANAGER'
+                  ? 'border-[#00C6A6] text-[#008f77]'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Briefcase className="w-3.5 h-3.5" />
+              <span>Account Manager</span>
+              {isB2BAgentRole(role) && !accountManagerUid && (
+                <span className="w-2 h-2 rounded-full bg-rose-500" title="Account Manager unassigned" />
+              )}
             </button>
 
             <button
@@ -1561,6 +1629,184 @@ export const UserPermissionModal: React.FC<UserPermissionModalProps> = ({
               )}
             </div>
           )}
+
+          {/* TAB 3.5: USER-LEVEL ACCOUNT MANAGER ASSIGNMENT & AUDIT HISTORY */}
+          {activeTab === 'ACCOUNT_MANAGER' && (() => {
+            const currentResolved = resolveUserAccountManager(user, allUsers);
+            const assignmentHistory = getAssignmentHistoryForAgent(user.id);
+            const canAssign = canUserAssignAccountManagers(currentUser);
+            const isExternal = isExternalPartnerAccount({ ...user, role });
+
+            return (
+              <div className="space-y-5">
+                <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div>
+                      <div className="flex items-center space-x-2 text-slate-900 font-bold text-sm">
+                        <Briefcase className="w-4 h-4 text-[#00C6A6]" />
+                        <span>Assigned Account Manager (User-Level)</span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Bound strictly to this individual account&apos;s UID (<span className="font-mono">{user.id}</span>). Changes here do not affect other users in the same agency or mutate past leads, quotations, or bookings.
+                      </p>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shrink-0 border ${
+                        currentResolved.isAssigned
+                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          : 'bg-rose-50 text-rose-700 border-rose-200'
+                      }`}
+                    >
+                      {currentResolved.isAssigned ? 'Assigned' : 'Unassigned'}
+                    </span>
+                  </div>
+
+                  {!isExternal ? (
+                    <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600">
+                      This account has internal role <strong>{role}</strong>. Account Manager assignments apply exclusively to individual B2B Agent and Partner accounts.
+                    </div>
+                  ) : (
+                    <>
+                      {/* Currently Assigned Card */}
+                      {currentResolved.isAssigned ? (
+                        <div className="p-4 rounded-xl bg-teal-50/50 border border-teal-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="space-y-1 text-xs">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-[#008972]">
+                              Currently Assigned Account Manager
+                            </div>
+                            <div className="font-black text-slate-900 text-sm">
+                              {currentResolved.name}
+                            </div>
+                            <div className="text-slate-600 flex items-center gap-2 flex-wrap">
+                              <span>{currentResolved.designation}</span>
+                              {currentResolved.email && (
+                                <>
+                                  <span>•</span>
+                                  <span className="font-mono">{currentResolved.email}</span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-right text-[11px] text-slate-500 space-y-0.5">
+                            <div>
+                              Assigned:{' '}
+                              <strong className="text-slate-800">
+                                {currentResolved.assignedAt
+                                  ? new Date(currentResolved.assignedAt).toLocaleString()
+                                  : 'Active'}
+                              </strong>
+                            </div>
+                            {currentResolved.assignedByName && (
+                              <div>By {currentResolved.assignedByName}</div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2.5">
+                          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                          <div>
+                            <div className="font-bold">No Account Manager Assigned</div>
+                            <p className="text-[11px] text-amber-800 mt-0.5">
+                              Every B2B Agent requires an assigned internal Team Member as Account Manager. Select an active internal Team Member below to assign or reassign.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Selector */}
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold text-slate-800">
+                          Assigned Account Manager {isB2BAgentRole(role) && <span className="text-rose-600">*</span>}
+                        </label>
+                        <AccountManagerSelector
+                          id="modal-account-manager-selector"
+                          value={accountManagerUid}
+                          onChange={(uid) => setAccountManagerUid(uid)}
+                          allUsers={allUsers}
+                          disabled={!canAssign}
+                          required={isB2BAgentRole(role) && approvalStatus === 'APPROVED'}
+                          placeholder="Search & select active internal Team Member..."
+                        />
+                        {!canAssign && (
+                          <p className="text-[11px] text-rose-600 font-semibold">
+                            Read-only: Only authorized Administrators may assign or reassign Account Managers.
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Optional Assignment Reason */}
+                      {canAssign && (
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-700">
+                            Assignment / Reassignment Reason (Optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={accountManagerReason}
+                            onChange={(e) => setAccountManagerReason(e.target.value)}
+                            placeholder="e.g. Portfolio rebalancing for Tokyo accounts / Dedicated key account coverage..."
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-[#00C6A6]"
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Immutable Assignment History Timeline */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-900 uppercase tracking-wider">
+                      <Clock className="w-4 h-4 text-indigo-600" />
+                      <span>Immutable Assignment History ({assignmentHistory.length})</span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 font-mono">Append-Only Audit Trail</span>
+                  </div>
+
+                  {assignmentHistory.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-400">
+                      No Account Manager assignment changes recorded for this user yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                      {assignmentHistory.map(hist => (
+                        <div
+                          key={hist.id}
+                          className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                        >
+                          <div className="space-y-0.5">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                                  hist.action === 'ASSIGNED'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-indigo-100 text-indigo-800'
+                                }`}
+                              >
+                                {hist.action}
+                              </span>
+                              <span className="font-bold text-slate-900">
+                                {hist.previousAccountManagerName
+                                  ? `${hist.previousAccountManagerName} → ${hist.newAccountManagerName}`
+                                  : `Assigned to ${hist.newAccountManagerName}`}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500">
+                              Performed by <strong>{hist.performedByName}</strong> ({hist.performedByRole})
+                              {hist.reason && <> • Reason: &ldquo;{hist.reason}&rdquo;</>}
+                            </div>
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-400 shrink-0">
+                            {new Date(hist.timestamp).toLocaleString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* AUDIT LOG REASON SECTION */}
           <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-2">

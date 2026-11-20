@@ -16,6 +16,7 @@ import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
+import { resolveUserAccountManager } from '../../services/accountManagerService';
 import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
 import { ProformaInvoiceModal } from './leads/ProformaInvoiceModal';
 import { validateProformaInvoicePreflight, ProformaPreflightError } from '../../services/proformaInvoicePreflight';
@@ -721,6 +722,22 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                           Assigned by {lead.assignedByUserNameSnapshot || 'Operations'} • {lead.assignedAt ? new Date(lead.assignedAt).toLocaleDateString() : 'Active'}
                           {(lead.responsibleAgentEmailSnapshot || lead.assignedAgentEmailSnapshot) && ` • ${lead.responsibleAgentEmailSnapshot || lead.assignedAgentEmailSnapshot}`}
                         </p>
+                        {(() => {
+                          const agentUid = lead.responsibleAgentId || lead.assignedAgentId || (lead.userType === 'B2B_AGENT' ? lead.userId : undefined);
+                          const am = agentUid ? resolveUserAccountManager(agentUid) : null;
+                          if (!am) return null;
+                          return (
+                            <p className={`text-[11px] font-semibold mt-1 flex items-center gap-1.5 ${am.isAssigned ? 'text-[#008972]' : 'text-amber-700'}`}>
+                              <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                              <span>
+                                Agent Account Manager:{' '}
+                                {am.isAssigned
+                                  ? `${am.name}${am.designation ? ` (${am.designation})` : ''}`
+                                  : 'Unassigned'}
+                              </span>
+                            </p>
+                          );
+                        })()}
                       </div>
                       <button
                         type="button"

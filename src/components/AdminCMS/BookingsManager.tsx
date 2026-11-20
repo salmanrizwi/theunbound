@@ -3,6 +3,7 @@ import { Booking, BookingStatus } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
+import { resolveUserAccountManager } from '../../services/accountManagerService';
 import { BookingDashboardCards } from '../Bookings/BookingDashboardCards';
 import { BookingOperationsDesk, DeskSection } from '../Bookings/BookingOperationsDesk';
 import { ManualOperationalBookingModal } from '../Bookings/ManualOperationalBookingModal';
@@ -430,6 +431,16 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                                 {b.agentAgencySnapshot}
                               </span>
                             )}
+                            {(() => {
+                              const agentUid = b.submittingAgentId || b.assignedAgentId || b.agentId;
+                              const am = agentUid ? resolveUserAccountManager(agentUid) : null;
+                              if (!am || !agentUid) return null;
+                              return (
+                                <span className={`text-[10px] font-semibold block truncate max-w-[180px] mt-0.5 ${am.isAssigned ? 'text-indigo-700' : 'text-amber-700'}`}>
+                                  AM: {am.isAssigned ? am.name : 'Unassigned'}
+                                </span>
+                              );
+                            })()}
                           </div>
                           <div className="pt-1 border-t border-slate-100" onClick={(e) => e.stopPropagation()}>
                             <span className="text-[9px] text-slate-400 font-bold block uppercase mb-0.5">Operational Owner</span>

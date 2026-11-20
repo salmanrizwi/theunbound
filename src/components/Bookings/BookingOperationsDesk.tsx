@@ -7,6 +7,7 @@ import {
   isInternalStaff, 
   isExternalUser 
 } from '../../services/permissionEngine';
+import { resolveUserAccountManager } from '../../services/accountManagerService';
 import { 
   Building2, 
   ArrowLeft, 
@@ -369,6 +370,16 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
                 <div>
                   <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Channel & Agent</span>
                   <span className="font-semibold text-slate-800 block truncate">{booking.agencyName || booking.agentName || 'Direct VIP'}</span>
+                  {(() => {
+                    const agentUid = booking.submittingAgentId || booking.assignedAgentId || booking.agentId;
+                    const am = agentUid ? resolveUserAccountManager(agentUid) : null;
+                    if (!am || !agentUid) return null;
+                    return (
+                      <span className={`text-[11px] font-semibold block truncate mt-0.5 ${am.isAssigned ? 'text-[#008972]' : 'text-amber-700'}`}>
+                        Account Mgr: {am.isAssigned ? am.name : 'Unassigned'}
+                      </span>
+                    );
+                  })()}
                 </div>
 
                 <div className="pt-2.5 border-t border-slate-200">

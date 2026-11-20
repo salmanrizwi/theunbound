@@ -43,6 +43,7 @@ import {
   SlidersHorizontal,
   Tag,
   Wallet,
+  Briefcase,
   LucideIcon
 } from 'lucide-react';
 import { CMSSection } from '../AdminCMSHub';
@@ -256,6 +257,13 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       label: 'Account Management',
       items: [
         {
+          id: 'my_assigned_agents',
+          label: 'My Assigned Agents',
+          section: 'ACCOUNT_MANAGEMENT',
+          subTab: 'MY_ASSIGNED_AGENTS',
+          icon: Briefcase
+        },
+        {
           id: 'b2b_agents',
           label: 'B2B Agents',
           section: 'ACCOUNT_MANAGEMENT',
@@ -336,6 +344,13 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
               section: 'PAGE_MANAGEMENT',
               subTab: 'NAVIGATION_MENU',
               icon: Layers
+            },
+            {
+              id: 'about_us_team',
+              label: 'About Us: Meet Our Team',
+              section: 'PAGE_MANAGEMENT',
+              subTab: 'ABOUT_US_TEAM',
+              icon: Users
             },
             {
               id: 'legal_pages',
@@ -492,6 +507,9 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
     }
     if (item.id === 'quotes') {
       return activeSubTab === 'QUOTES' || activeSubTab === 'BUILDER';
+    }
+    if (item.id === 'my_assigned_agents') {
+      return activeSubTab === 'MY_ASSIGNED_AGENTS';
     }
     if (item.id === 'suppliers') {
       return activeSubTab === 'SUPPLIERS';

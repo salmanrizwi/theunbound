@@ -29,6 +29,8 @@ import {
   VerificationStatus,
   UserCategory,
   UserApprovalStatus,
+  AccountManagerAssignmentStatus,
+  AccountManagerAssignmentHistory,
   UserPermissionAccess,
   Hotel,
   CityHub,
@@ -2306,7 +2308,8 @@ export class AppDatabase {
             this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
             this.syncCollectionSafely<CalendarTask>('calendar_tasks', 'calendar_tasks'),
             this.syncCollectionSafely<Supplier>('suppliers', 'suppliers'),
-            this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages')
+            this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages'),
+            this.syncCollectionSafely<AccountManagerAssignmentHistory>('account_manager_assignment_history', 'account_manager_assignment_history')
           );
 
           // Hydrate secondary CMS & rate sub-collections via parallel one-shot getDocs
@@ -22576,6 +22579,7 @@ export class AppDatabase {
       (user as any).status === 'INACTIVE' ||
       (user as any).status === 'SUSPENDED' ||
       (user as any).isDeleted === true ||
+      (user as any).isDeactivated === true ||
       (user as any).isActive === false ||
       (user as any).disabled === true
     ) {
@@ -23297,33 +23301,296 @@ export class AppDatabase {
     }
   }
 
-  public approveUser(userId: string, actor: User | null): void {
+  public getAccountManagerAssignmentHistory(agentUid?: string): AccountManagerAssignmentHistory[] {
+    const all = this.getItem<AccountManagerAssignmentHistory[]>('account_manager_assignment_history', []);
+    const sorted = [...all].sort((a, b) =>
+      String(b.timestamp || '').localeCompare(String(a.timestamp || ''))
+    );
+    if (!agentUid) return sorted;
+    return sorted.filter(h => h.agentUid === agentUid);
+  }
+
+  public recordAccountManagerAssignmentHistory(entry: AccountManagerAssignmentHistory): AccountManagerAssignmentHistory {
+    const all = this.getItem<AccountManagerAssignmentHistory[]>('account_manager_assignment_history', []);
+    // Strictly append-only immutable history: never overwrite an existing record ID
+    if (all.some(h => h.id === entry.id)) {
+      return entry;
+    }
+    const next = [entry, ...all];
+    this.setItem('account_manager_assignment_history', next);
+    this.syncFirestoreDoc('account_manager_assignment_history', entry.id, entry);
+    return entry;
+  }
+
+  public approveUser(
+    userId: string,
+    actor: User | null,
+    options?: { accountManagerUid?: string; reason?: string }
+  ): void {
     const users = this.getUsers();
     const existing = users.find(u => u.id === userId);
-    if (existing) {
-      const user: User = {
-        ...existing,
-        approvalStatus: 'APPROVED',
-        verificationStatus: 'VERIFIED',
-        verifiedAt: new Date().toISOString(),
-        verifiedBy: actor?.name || 'Administrator',
-        permissions: getDefaultPermissionsForRole(existing.role)
+    if (!existing) return;
+
+    const nowIso = new Date().toISOString();
+    const isB2BAgentAccount = existing.role === 'B2B_AGENT' || existing.role === 'AGENT';
+    const candidateAmUid = (options?.accountManagerUid || existing.accountManagerUid || '').trim();
+
+    let amFields: Partial<User> = {};
+    let shouldLogAssignmentHistory = false;
+    let selectedTeamMember: User | undefined;
+
+    if (isB2BAgentAccount) {
+      if (!candidateAmUid || !this.isEligibleInternalTeamMember(candidateAmUid)) {
+        throw new Error(
+          'Mandatory Rule: An active internal Team Member must be assigned as Account Manager before approving a B2B Agent account.'
+        );
+      }
+      selectedTeamMember = users.find(u => u.id === candidateAmUid);
+      if (!selectedTeamMember) {
+        throw new Error('Selected Account Manager record could not be resolved.');
+      }
+
+      const managerChanged =
+        existing.accountManagerUid !== selectedTeamMember.id ||
+        existing.accountManagerAssignmentStatus !== 'ASSIGNED';
+
+      amFields = {
+        accountManagerUid: selectedTeamMember.id,
+        accountManagerName: selectedTeamMember.name,
+        accountManagerEmail: selectedTeamMember.email,
+        accountManagerDesignation: selectedTeamMember.jobTitle || (selectedTeamMember as any).designation || selectedTeamMember.role,
+        accountManagerPhone: selectedTeamMember.phone || selectedTeamMember.contactNumber || undefined,
+        accountManagerAssignedAt: existing.accountManagerAssignedAt || nowIso,
+        accountManagerAssignedBy: existing.accountManagerAssignedBy || actor?.id || 'usr-admin-business',
+        accountManagerAssignedByName: existing.accountManagerAssignedByName || actor?.name || 'Administrator',
+        accountManagerUpdatedAt: nowIso,
+        accountManagerAssignmentStatus: 'ASSIGNED'
       };
-      this.saveUser(
-        user, 
-        actor, 
-        'USER_ROLE_CHANGED', 
-        `Administrator approved user account: ${user.name} (${user.email}) as ${user.role} with standard permissions.`,
-        true
-      );
-      this.userStatusChangeListeners.forEach(listener => {
-        try {
-          listener(user, actor, 'APPROVED');
-        } catch (e) {
-          console.error('[DB] onUserStatusChanged error:', e);
-        }
-      });
+      shouldLogAssignmentHistory = managerChanged;
+    } else if (options?.accountManagerUid && this.isEligibleInternalTeamMember(options.accountManagerUid)) {
+      selectedTeamMember = users.find(u => u.id === options.accountManagerUid);
+      if (selectedTeamMember) {
+        amFields = {
+          accountManagerUid: selectedTeamMember.id,
+          accountManagerName: selectedTeamMember.name,
+          accountManagerEmail: selectedTeamMember.email,
+          accountManagerDesignation: selectedTeamMember.jobTitle || selectedTeamMember.role,
+          accountManagerPhone: selectedTeamMember.phone || selectedTeamMember.contactNumber || undefined,
+          accountManagerAssignedAt: existing.accountManagerAssignedAt || nowIso,
+          accountManagerAssignedBy: actor?.id || 'usr-admin-business',
+          accountManagerAssignedByName: actor?.name || 'Administrator',
+          accountManagerUpdatedAt: nowIso,
+          accountManagerAssignmentStatus: 'ASSIGNED'
+        };
+        shouldLogAssignmentHistory = existing.accountManagerUid !== selectedTeamMember.id;
+      }
     }
+
+    const user: User = {
+      ...existing,
+      ...amFields,
+      approvalStatus: 'APPROVED',
+      verificationStatus: 'VERIFIED',
+      verifiedAt: nowIso,
+      verifiedBy: actor?.name || 'Administrator',
+      updatedAt: nowIso,
+      permissions: existing.permissions || getDefaultPermissionsForRole(existing.role)
+    };
+
+    this.saveUser(
+      user,
+      actor,
+      'USER_ROLE_CHANGED',
+      `Administrator approved user account: ${user.name} (${user.email}) as ${user.role}${selectedTeamMember ? ` with Account Manager ${selectedTeamMember.name}` : ''}.`,
+      true
+    );
+
+    if (shouldLogAssignmentHistory && selectedTeamMember) {
+      const actionType = existing.accountManagerUid ? 'REASSIGNED' : 'ASSIGNED';
+      this.recordAccountManagerAssignmentHistory({
+        id: `am-hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        agentUid: user.id,
+        agentName: user.name,
+        agentEmail: user.email,
+        agencyId: user.companyId,
+        agencyName: user.agencyName || user.companyName,
+        previousAccountManagerUid: existing.accountManagerUid || null,
+        previousAccountManagerName: existing.accountManagerName || null,
+        previousAccountManagerEmail: existing.accountManagerEmail || null,
+        newAccountManagerUid: selectedTeamMember.id,
+        newAccountManagerName: selectedTeamMember.name,
+        newAccountManagerEmail: selectedTeamMember.email,
+        newAccountManagerDesignation: selectedTeamMember.jobTitle || selectedTeamMember.role,
+        action: actionType,
+        performedByUid: actor?.id || 'usr-admin-business',
+        performedByName: actor?.name || 'Administrator',
+        performedByEmail: actor?.email,
+        performedByRole: actor?.role || 'ADMIN',
+        reason: options?.reason || 'Initial assignment upon B2B Agent account approval',
+        timestamp: nowIso
+      });
+      this.logAudit(
+        actor,
+        actionType === 'ASSIGNED' ? 'ACCOUNT_MANAGER_ASSIGNED' : 'ACCOUNT_MANAGER_REASSIGNED',
+        'UserAccountManager',
+        user.id,
+        `Assigned Account Manager ${selectedTeamMember.name} (${selectedTeamMember.id}) to B2B Agent ${user.name} (${user.id}) on approval.`,
+        existing.accountManagerUid || 'UNASSIGNED',
+        selectedTeamMember.id
+      );
+    }
+
+    this.userStatusChangeListeners.forEach(listener => {
+      try {
+        listener(user, actor, 'APPROVED');
+      } catch (e) {
+        console.error('[DB] onUserStatusChanged error:', e);
+      }
+    });
+  }
+
+  public createManagedUser(
+    input: {
+      id?: string;
+      name: string;
+      email: string;
+      role: UserRole;
+      agencyName?: string;
+      companyName?: string;
+      jobTitle?: string;
+      contactNumber?: string;
+      country?: string;
+      department?: string;
+      accountManagerUid?: string;
+      approvalStatus?: UserApprovalStatus;
+      notes?: string;
+    },
+    actor: User | null
+  ): User {
+    const cleanName = (input.name || '').trim();
+    const cleanEmail = (input.email || '').trim().toLowerCase();
+    if (!cleanName || cleanName.length < 2) {
+      throw new Error('Full legal name is required (minimum 2 characters).');
+    }
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      throw new Error('A valid business email address is required.');
+    }
+    if (input.role === 'BUYER' || (input.role as string) === 'BUYER') {
+      throw new Error('Direct consumer (Buyer) accounts are not supported in TheUnbound.');
+    }
+
+    const users = this.getUsers();
+    if (users.some(u => (u.email || '').trim().toLowerCase() === cleanEmail)) {
+      throw new Error(`An account with email ${cleanEmail} already exists.`);
+    }
+
+    const isB2BAgent = input.role === 'B2B_AGENT' || input.role === 'AGENT';
+    const isExternal = isB2BAgent || input.role === 'AGENCY_OWNER';
+    const approvalStatus: UserApprovalStatus = input.approvalStatus || 'APPROVED';
+
+    if (isExternal && !(input.agencyName || input.companyName || '').trim()) {
+      throw new Error('Travel Agency / Company Name is required for external B2B partner accounts.');
+    }
+
+    let amMember: User | undefined;
+    const amUid = (input.accountManagerUid || '').trim();
+    if (isB2BAgent && approvalStatus === 'APPROVED') {
+      if (!amUid || !this.isEligibleInternalTeamMember(amUid)) {
+        throw new Error(
+          'Mandatory Rule: An active internal Team Member must be assigned as Account Manager when creating an active B2B Agent account.'
+        );
+      }
+      amMember = users.find(u => u.id === amUid);
+    } else if (amUid) {
+      if (!this.isEligibleInternalTeamMember(amUid)) {
+        throw new Error('Selected Account Manager must be an active, approved internal Team Member.');
+      }
+      amMember = users.find(u => u.id === amUid);
+    }
+
+    const nowIso = new Date().toISOString();
+    const newId =
+      (input.id || '').trim() ||
+      `usr-${isB2BAgent ? 'agent' : input.role.toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    const newUser: User = {
+      id: newId,
+      name: cleanName,
+      displayName: cleanName,
+      email: cleanEmail,
+      role: input.role,
+      category: isExternal ? 'EXTERNAL' : 'INTERNAL',
+      agencyName: (input.agencyName || input.companyName || '').trim() || undefined,
+      companyName: (input.companyName || input.agencyName || '').trim() || undefined,
+      jobTitle: input.jobTitle?.trim() || undefined,
+      contactNumber: input.contactNumber?.trim() || undefined,
+      phone: input.contactNumber?.trim() || undefined,
+      country: input.country?.trim() || 'Global',
+      department: input.department?.trim() || undefined,
+      notes: input.notes?.trim() || undefined,
+      approvalStatus,
+      verificationStatus: approvalStatus === 'APPROVED' ? 'VERIFIED' : 'PENDING_VERIFICATION',
+      verifiedAt: approvalStatus === 'APPROVED' ? nowIso : undefined,
+      verifiedBy: approvalStatus === 'APPROVED' ? (actor?.name || 'Administrator') : undefined,
+      createdAt: nowIso.split('T')[0],
+      updatedAt: nowIso,
+      permissions: getDefaultPermissionsForRole(input.role),
+      accountManagerUid: amMember?.id,
+      accountManagerName: amMember?.name,
+      accountManagerEmail: amMember?.email,
+      accountManagerDesignation: amMember ? (amMember.jobTitle || amMember.role) : undefined,
+      accountManagerPhone: amMember ? (amMember.phone || amMember.contactNumber || undefined) : undefined,
+      accountManagerAssignedAt: amMember ? nowIso : undefined,
+      accountManagerAssignedBy: amMember ? (actor?.id || 'usr-admin-business') : undefined,
+      accountManagerAssignedByName: amMember ? (actor?.name || 'Administrator') : undefined,
+      accountManagerUpdatedAt: amMember ? nowIso : undefined,
+      accountManagerAssignmentStatus: amMember ? 'ASSIGNED' : (isB2BAgent ? 'UNASSIGNED' : undefined)
+    };
+
+    this.saveUser(
+      newUser,
+      actor,
+      'USER_ROLE_CHANGED',
+      `Created managed user ${newUser.name} (${newUser.email}) as ${newUser.role}${amMember ? ` assigned to Account Manager ${amMember.name}` : ''}.`,
+      true
+    );
+    this.syncUserCompanyProfile(newUser, actor || undefined);
+
+    if (amMember) {
+      this.recordAccountManagerAssignmentHistory({
+        id: `am-hist-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        agentUid: newUser.id,
+        agentName: newUser.name,
+        agentEmail: newUser.email,
+        agencyId: newUser.companyId,
+        agencyName: newUser.agencyName || newUser.companyName,
+        previousAccountManagerUid: null,
+        previousAccountManagerName: null,
+        previousAccountManagerEmail: null,
+        newAccountManagerUid: amMember.id,
+        newAccountManagerName: amMember.name,
+        newAccountManagerEmail: amMember.email,
+        newAccountManagerDesignation: amMember.jobTitle || amMember.role,
+        action: 'ASSIGNED',
+        performedByUid: actor?.id || 'usr-admin-business',
+        performedByName: actor?.name || 'Administrator',
+        performedByEmail: actor?.email,
+        performedByRole: actor?.role || 'ADMIN',
+        reason: 'Initial Account Manager assignment during user creation',
+        timestamp: nowIso
+      });
+      this.logAudit(
+        actor,
+        'ACCOUNT_MANAGER_ASSIGNED',
+        'UserAccountManager',
+        newUser.id,
+        `Assigned Account Manager ${amMember.name} to newly created B2B Agent ${newUser.name}.`,
+        'UNASSIGNED',
+        amMember.id
+      );
+    }
+
+    return newUser;
   }
 
   public rejectUser(
@@ -23467,6 +23734,7 @@ export class AppDatabase {
       iataOrAbtaNumber: userData.iataOrAbtaNumber?.trim() || '',
       createdAt: new Date().toISOString().split('T')[0],
       approvalStatus,
+      accountManagerAssignmentStatus: isB2BAgent ? 'UNASSIGNED' : undefined,
       pricingSettings: {
         productLevelMarginEnabled: true,
         activeMarginMode: 'PRODUCT_LEVEL',

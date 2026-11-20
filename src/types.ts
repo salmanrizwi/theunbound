@@ -232,6 +232,8 @@ export type QuotationScope = 'HOTEL_LAND' | 'LAND_ONLY' | 'HOTEL_ONLY';
 
 export type UserApprovalStatus = 'APPROVED' | 'PENDING' | 'REJECTED';
 
+export type AccountManagerAssignmentStatus = 'ASSIGNED' | 'UNASSIGNED';
+
 export interface CMSOperationsPermissions {
   enabled: boolean;
   productManagement?: boolean;
@@ -587,6 +589,40 @@ export interface User {
   firstBookingWelcomeSentAt?: string;
   firstBookingWelcomeMessageId?: string;
   emailOptOut?: boolean;
+  // Strictly user-level Account Manager assignment (never agency-level)
+  accountManagerUid?: string;
+  accountManagerName?: string;
+  accountManagerEmail?: string;
+  accountManagerDesignation?: string;
+  accountManagerPhone?: string;
+  accountManagerAssignedAt?: string;
+  accountManagerAssignedBy?: string;
+  accountManagerAssignedByName?: string;
+  accountManagerUpdatedAt?: string;
+  accountManagerAssignmentStatus?: AccountManagerAssignmentStatus;
+}
+
+export interface AccountManagerAssignmentHistory {
+  id: string;
+  agentUid: string;
+  agentName: string;
+  agentEmail?: string;
+  agencyId?: string;
+  agencyName?: string;
+  previousAccountManagerUid?: string | null;
+  previousAccountManagerName?: string | null;
+  previousAccountManagerEmail?: string | null;
+  newAccountManagerUid: string;
+  newAccountManagerName: string;
+  newAccountManagerEmail?: string;
+  newAccountManagerDesignation?: string;
+  action: 'ASSIGNED' | 'REASSIGNED';
+  performedByUid: string;
+  performedByName: string;
+  performedByEmail?: string;
+  performedByRole: string;
+  reason?: string;
+  timestamp: string;
 }
 
 export interface DestinationCity {
@@ -4394,6 +4430,8 @@ export type AuditAction =
   | 'USER_REJECTED'
   | 'USER_ROLE_CHANGED'
   | 'USER_PERMISSIONS_CHANGED'
+  | 'ACCOUNT_MANAGER_ASSIGNED'
+  | 'ACCOUNT_MANAGER_REASSIGNED'
   | 'USER_DELETED'
   | 'USER_ARCHIVED'
   | 'BOOKING_DELETED'

@@ -22,6 +22,7 @@ const BookingsManager = lazyWithRetry(() => import('./BookingsManager').then(m =
 const QuoteMasterManager = lazyWithRetry(() => import('./QuoteMasterManager').then(m => ({ default: m.QuoteMasterManager })));
 const HomepageManager = lazyWithRetry(() => import('./HomepageManager').then(m => ({ default: m.HomepageManager })));
 const AssociatedPartnersManager = lazyWithRetry(() => import('./AssociatedPartnersManager').then(m => ({ default: m.AssociatedPartnersManager })));
+const AboutUsTeamManager = lazyWithRetry(() => import('./AboutUsTeamManager').then(m => ({ default: m.AboutUsTeamManager })));
 const InstitutionalPagesManager = lazyWithRetry(() => import('./InstitutionalPagesManager').then(m => ({ default: m.InstitutionalPagesManager })));
 const MenuAndPagesManager = lazyWithRetry(() => import('./MenuAndPagesManager').then(m => ({ default: m.MenuAndPagesManager })));
 const PageSEOManager = lazyWithRetry(() => import('./PageSEOManager').then(m => ({ default: m.PageSEOManager })));
@@ -35,6 +36,7 @@ const CityHubsManager = lazyWithRetry(() => import('./CityHubsManager').then(m =
 const DestinationFAQManager = lazyWithRetry(() => import('./DestinationFAQManager').then(m => ({ default: m.DestinationFAQManager })));
 const LeadManager = lazyWithRetry(() => import('./LeadManager').then(m => ({ default: m.LeadManager })));
 const UserApprovalAccessManager = lazyWithRetry(() => import('./UserApprovalAccessManager').then(m => ({ default: m.UserApprovalAccessManager })));
+const MyAssignedAgentsView = lazyWithRetry(() => import('./MyAssignedAgentsView').then(m => ({ default: m.MyAssignedAgentsView })));
 const FinancialsManager = lazyWithRetry(() => import('./FinancialsManager').then(m => ({ default: m.FinancialsManager })));
 const CurrencyManagementPanel = lazyWithRetry(() => import('./CurrencyManagement/CurrencyManagementPanel').then(m => ({ default: m.CurrencyManagementPanel })));
 const PricingManager = lazyWithRetry(() => import('./PricingManager').then(m => ({ default: m.PricingManager })));
@@ -709,6 +711,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             { id: 'HOMEPAGE', label: 'Homepage & Hero Control', icon: LayoutTemplate },
             { id: 'PARTNERS', label: 'Associated Partners Carousel', icon: Handshake },
             { id: 'NAVIGATION_MENU', label: 'Menu & Custom Pages', icon: Layers },
+            { id: 'ABOUT_US_TEAM', label: 'About Us: Meet Our Team', icon: Users },
             { id: 'PAGE_SEO', label: 'Page SEO Management', icon: Globe2 },
             { id: 'PAGES_LEGAL', label: 'Site Pages & Legal Policies', icon: ShieldCheck },
             { id: 'FOOTER_NAV', label: 'Footer Navigation Builder', icon: SlidersHorizontal }
@@ -765,6 +768,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           alertCount: pendingUsers,
           description: 'Admin user approval panel, Direct Buyer vs. B2B Agent segregation, custom margin settings, and staff operations roster.',
           subTabs: [
+            { id: 'MY_ASSIGNED_AGENTS', label: 'My Assigned Agents', icon: Briefcase },
             { id: 'PERMISSIONS', label: 'Access & Permissions', icon: Shield },
             { id: 'USERS_ACCESS', label: 'User Approval & Segregation', icon: UserCheck },
             { id: 'COMPANIES', label: 'Corporate Partners & Companies', icon: Building2 },
@@ -899,7 +903,12 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
     .filter(ts => ts.modules.length > 0);
 
   const isCMSAllowed = canUserAccessCMS(currentUser);
-  const isModuleAllowed = isCMSAllowed && canUserAccessCMSModule(currentUser, currentModuleConfig.id);
+  const isMyAssignedAgentsAccess =
+    isCMSAllowed &&
+    currentModuleConfig.id === 'ACCOUNT_MANAGEMENT' &&
+    activeSubTab === 'MY_ASSIGNED_AGENTS' &&
+    canUserAccessCMSSubTab(currentUser, 'ACCOUNT_MANAGEMENT', 'MY_ASSIGNED_AGENTS');
+  const isModuleAllowed = isMyAssignedAgentsAccess || (isCMSAllowed && canUserAccessCMSModule(currentUser, currentModuleConfig.id));
   const isSubTabAllowed = isModuleAllowed && (activeSubTab ? canUserAccessCMSSubTab(currentUser, currentModuleConfig.id, activeSubTab) : true);
 
   // Action Center Drawer & Linked Record Navigation state
@@ -1422,6 +1431,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
                   currentUser={currentUser}
                 />
               )}
+              {activeSubTab === 'ABOUT_US_TEAM' && <AboutUsTeamManager currentUser={currentUser} />}
               {activeSubTab === 'PAGES_LEGAL' && <InstitutionalPagesManager />}
               {(activeSubTab === 'PAGE_SEO' || activeSubTab === 'PAGES_SEO' || activeSubTab === 'SEO') && (
                 <PageSEOManager currentUser={currentUser} />
@@ -1456,6 +1466,13 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           {/* 4.1 ACCOUNT MANAGEMENT */}
           {currentModuleConfig.id === 'ACCOUNT_MANAGEMENT' && (
             <>
+              {activeSubTab === 'MY_ASSIGNED_AGENTS' && (
+                <MyAssignedAgentsView
+                  onNavigateToLead={(leadId) => handleNavigate('LEAD_MANAGEMENT', 'LEADS', leadId)}
+                  onNavigateToQuote={(quoteId) => handleOpenQuoteInBuilder(quoteId, { mode: 'inspect' })}
+                  onNavigateToBooking={(bookingId) => handleNavigate('BOOKING_MANAGEMENT', 'BOOKINGS', bookingId)}
+                />
+              )}
               {(!activeSubTab || activeSubTab === 'PERMISSIONS') && <UserApprovalAccessManager initialTab="PERMISSIONS" />}
               {activeSubTab === 'USERS_ACCESS' && <UserApprovalAccessManager initialTab="USERS_ACCESS" />}
               {activeSubTab === 'COMPANIES' && <UserApprovalAccessManager initialTab="COMPANIES" />}

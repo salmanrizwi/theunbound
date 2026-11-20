@@ -5,11 +5,23 @@ import { useAuth } from '../../context/AuthContext';
 import { UserPermissionModal } from './UserPermissionModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { CompanyManagementView } from './CompanyManagementView';
+import { AccountManagerSelector } from './AccountManagerSelector';
 import { 
   getDefaultPermissionsForRole, 
   isMasterAdmin, 
-  canRevokeAdminPermissions 
+  canRevokeAdminPermissions,
+  canUserAssignAccountManagers
 } from '../../services/permissionEngine';
+import {
+  assignAccountManagerToUser,
+  getAccountManagerWorkloadSummary,
+  getAllAssignmentHistory,
+  getAssignmentHistoryForAgent,
+  getEligibleAccountManagers,
+  isB2BAgentRole,
+  isExternalPartnerAccount,
+  resolveUserAccountManager
+} from '../../services/accountManagerService';
 import { cashbackService } from '../../services/cashbackService';
 import { 
   Users, 
@@ -49,11 +61,14 @@ import {
   Settings2,
   Trash2,
   X,
-  AlertCircle
+  AlertCircle,
+  Briefcase,
+  UserPlus,
+  History
 } from 'lucide-react';
 
 interface UserApprovalAccessManagerProps {
-  initialTab?: 'USERS_ACCESS' | 'PERMISSIONS' | 'COMPANIES';
+  initialTab?: 'USERS_ACCESS' | 'PERMISSIONS' | 'COMPANIES' | 'AM_AUDIT';
 }
 
 export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps> = ({ 
@@ -63,13 +78,15 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>(() => db.getUsers());
   const [companies, setCompanies] = useState(() => db.getCompanies());
-  const [currentSectionTab, setCurrentSectionTab] = useState<'PERMISSIONS' | 'USERS_ACCESS' | 'COMPANIES'>(initialTab);
+  const [currentSectionTab, setCurrentSectionTab] = useState<'PERMISSIONS' | 'USERS_ACCESS' | 'COMPANIES' | 'AM_AUDIT'>(initialTab);
   
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
   const [accessFilter, setAccessFilter] = useState<string>('ALL'); // ALL, B2B_QUOTE, BUYER_QUOTE, CMS_ENABLED, CMS_DISABLED
+  const [selectedAccountManagerFilter, setSelectedAccountManagerFilter] = useState<string>('ALL'); // ALL | UNASSIGNED | <teamMemberUid>
+  const [selectedAgencyFilter, setSelectedAgencyFilter] = useState<string>('ALL');
   const [savedSuccess, setSavedSuccess] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -85,6 +102,29 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
     'Verified commercial office billing address'
   ]);
   const [customRequirementInput, setCustomRequirementInput] = useState<string>('');
+
+  // Quick Assign / Reassign Account Manager Modal State
+  const [assignAmTargetUser, setAssignAmTargetUser] = useState<User | null>(null);
+  const [assignAmUid, setAssignAmUid] = useState<string>('');
+  const [assignAmReason, setAssignAmReason] = useState<string>('');
+
+  // Mandatory Account Manager Modal on Pending B2B Agent Approval
+  const [approvalTargetUser, setApprovalTargetUser] = useState<User | null>(null);
+  const [approvalAmUid, setApprovalAmUid] = useState<string>('');
+  const [approvalReason, setApprovalReason] = useState<string>('');
+
+  // Create Managed User Modal State
+  const [isCreateUserModalOpen, setIsCreateUserModalOpen] = useState(false);
+  const [createName, setCreateName] = useState('');
+  const [createEmail, setCreateEmail] = useState('');
+  const [createRole, setCreateRole] = useState<UserRole>('B2B_AGENT');
+  const [createAgencyName, setCreateAgencyName] = useState('');
+  const [createJobTitle, setCreateJobTitle] = useState('');
+  const [createPhone, setCreatePhone] = useState('');
+  const [createCountry, setCreateCountry] = useState('');
+  const [createAmUid, setCreateAmUid] = useState('');
+  const [createStatus, setCreateStatus] = useState<UserApprovalStatus>('APPROVED');
+  const [createError, setCreateError] = useState<string | null>(null);
 
   // Bulk Operations State
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
@@ -108,7 +148,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   };
 
   useEffect(() => {
-    const unsub = db.subscribeToCollections(['system_users', 'companies'], () => {
+    const unsub = db.subscribeToCollections(['system_users', 'companies', 'account_manager_assignment_history'], () => {
       refreshUsers();
     });
     return () => unsub();
@@ -117,6 +157,35 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   const handleOpenPermissionModal = (targetUser: User) => {
     setSelectedUserForModal(targetUser);
     setIsModalOpen(true);
+  };
+
+  const handleOpenAssignAmModal = (targetUser: User) => {
+    setAssignAmTargetUser(targetUser);
+    setAssignAmUid(targetUser.accountManagerUid || '');
+    setAssignAmReason('');
+  };
+
+  const handleConfirmQuickAssignAm = () => {
+    if (!assignAmTargetUser) return;
+    try {
+      const res = assignAccountManagerToUser({
+        agentUserId: assignAmTargetUser.id,
+        accountManagerUid: assignAmUid,
+        actor: currentUser,
+        reason: assignAmReason.trim() || undefined
+      });
+      refreshUsers();
+      setAssignAmTargetUser(null);
+      if (res.changed) {
+        setSavedSuccess(
+          `Assigned Account Manager ${res.updatedUser.accountManagerName} to ${res.updatedUser.name}.`
+        );
+        setTimeout(() => setSavedSuccess(null), 4000);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Unable to assign Account Manager.');
+      setTimeout(() => setErrorMessage(null), 4500);
+    }
   };
 
   const handleSaveUserFromModal = async (updatedUser: User, auditReason?: string) => {
@@ -138,10 +207,83 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   };
 
   const handleApprove = (targetUser: User) => {
-    db.approveUser(targetUser.id, currentUser);
-    refreshUsers();
-    setSavedSuccess(`Approved account for ${targetUser.name}. Automated verification approval email with portal link dispatched.`);
-    setTimeout(() => setSavedSuccess(null), 4000);
+    const requiresAm = isB2BAgentRole(targetUser.role);
+    const hasValidAm =
+      Boolean(targetUser.accountManagerUid) &&
+      db.isEligibleInternalTeamMember(targetUser.accountManagerUid);
+
+    if (requiresAm && !hasValidAm) {
+      setApprovalTargetUser(targetUser);
+      setApprovalAmUid(targetUser.accountManagerUid || '');
+      setApprovalReason('');
+      return;
+    }
+
+    try {
+      db.approveUser(targetUser.id, currentUser);
+      refreshUsers();
+      setSavedSuccess(`Approved account for ${targetUser.name}. Automated verification approval email with portal link dispatched.`);
+      setTimeout(() => setSavedSuccess(null), 4000);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Approval blocked until an Account Manager is assigned.');
+      setTimeout(() => setErrorMessage(null), 4500);
+    }
+  };
+
+  const handleConfirmApprovalWithAm = () => {
+    if (!approvalTargetUser) return;
+    try {
+      db.approveUser(approvalTargetUser.id, currentUser, {
+        accountManagerUid: approvalAmUid,
+        reason: approvalReason.trim() || undefined
+      });
+      refreshUsers();
+      setSavedSuccess(
+        `Assigned Account Manager and approved B2B Agent account for ${approvalTargetUser.name}.`
+      );
+      setApprovalTargetUser(null);
+      setTimeout(() => setSavedSuccess(null), 4500);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Unable to approve B2B Agent without an active Account Manager.');
+      setTimeout(() => setErrorMessage(null), 4500);
+    }
+  };
+
+  const handleCreateUserSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateError(null);
+    try {
+      const created = db.createManagedUser(
+        {
+          name: createName,
+          email: createEmail,
+          role: createRole,
+          agencyName: createAgencyName,
+          companyName: createAgencyName,
+          jobTitle: createJobTitle,
+          contactNumber: createPhone,
+          country: createCountry,
+          accountManagerUid: createAmUid || undefined,
+          approvalStatus: createStatus
+        },
+        currentUser
+      );
+      refreshUsers();
+      setIsCreateUserModalOpen(false);
+      setCreateName('');
+      setCreateEmail('');
+      setCreateRole('B2B_AGENT');
+      setCreateAgencyName('');
+      setCreateJobTitle('');
+      setCreatePhone('');
+      setCreateCountry('');
+      setCreateAmUid('');
+      setCreateStatus('APPROVED');
+      setSavedSuccess(`Created user ${created.name} (${created.role}).`);
+      setTimeout(() => setSavedSuccess(null), 4000);
+    } catch (err: any) {
+      setCreateError(err?.message || 'Unable to create user account.');
+    }
   };
 
   const handleReject = (targetUser: User) => {
@@ -327,8 +469,12 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
       } else if (bulkActionConfirm.action === 'ROLE_DEFAULTS') {
         updatedPerms = getDefaultPermissionsForRole(u.role);
       } else if (bulkActionConfirm.action === 'APPROVE_ALL') {
-        db.approveUser(u.id, currentUser);
-        affectedCount++;
+        try {
+          db.approveUser(u.id, currentUser);
+          affectedCount++;
+        } catch {
+          // Skip B2B agents missing mandatory Account Manager assignment
+        }
         return;
       }
 
@@ -354,13 +500,25 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
     setTimeout(() => setSavedSuccess(null), 4000);
   };
 
+  const eligibleAccountManagers = getEligibleAccountManagers(users);
+  const amWorkloadSummary = getAccountManagerWorkloadSummary(users);
+  const unassignedB2BAgentsCount = amWorkloadSummary.unassignedB2BAgents.length;
+  const distinctAgencies = Array.from(
+    new Set<string>(
+      users
+        .map(u => (u.agencyName || u.companyName || '').trim())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b));
+
   // Filtered Users List
   const filteredUsers = users.filter(u => {
     const matchesSearch = 
       u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (u.agencyName && u.agencyName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (u.companyName && u.companyName.toLowerCase().includes(searchQuery.toLowerCase()));
+      (u.companyName && u.companyName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (u.accountManagerName && u.accountManagerName.toLowerCase().includes(searchQuery.toLowerCase()));
     
     const matchesRole = selectedRole === 'ALL' || u.role === selectedRole;
     const userStatus = u.approvalStatus || 'APPROVED';
@@ -376,7 +534,25 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
       matchesAccess = u.permissions?.canAccessCMS === false || (u.permissions?.canAccessCMS === undefined && u.role !== 'SUPER_ADMIN' && u.role !== 'ADMIN' && u.role !== 'TEAM_MEMBER');
     }
 
-    return matchesSearch && matchesRole && matchesStatus && matchesAccess;
+    let matchesAccountManager = true;
+    if (selectedAccountManagerFilter === 'UNASSIGNED') {
+      matchesAccountManager =
+        isExternalPartnerAccount(u) && (!u.accountManagerUid || !u.accountManagerUid.trim());
+    } else if (selectedAccountManagerFilter !== 'ALL') {
+      matchesAccountManager = u.accountManagerUid === selectedAccountManagerFilter;
+    }
+
+    const userAgency = (u.agencyName || u.companyName || '').trim();
+    const matchesAgency = selectedAgencyFilter === 'ALL' || userAgency === selectedAgencyFilter;
+
+    return (
+      matchesSearch &&
+      matchesRole &&
+      matchesStatus &&
+      matchesAccess &&
+      matchesAccountManager &&
+      matchesAgency
+    );
   });
 
   const pendingCount = users.filter(u => u.approvalStatus === 'PENDING').length;
@@ -423,6 +599,20 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                 <span>{errorMessage}</span>
               </span>
             )}
+            {canUserAssignAccountManagers(currentUser) && (
+              <button
+                type="button"
+                id="btn-open-create-user-modal"
+                onClick={() => {
+                  setCreateError(null);
+                  setIsCreateUserModalOpen(true);
+                }}
+                className="inline-flex items-center space-x-1.5 bg-slate-900 hover:bg-[#00C6A6] text-white font-bold px-3.5 py-2 rounded-xl text-xs shadow-xs transition-colors cursor-pointer"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>Add / Provision User</span>
+              </button>
+            )}
             {pendingCount > 0 && (
               <button 
                 onClick={() => {
@@ -439,7 +629,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
         </div>
 
         {/* Section View Selector */}
-        <div className="flex items-center space-x-2 border-t border-slate-100 pt-4">
+        <div className="flex items-center space-x-2 border-t border-slate-100 pt-4 flex-wrap gap-y-2">
           <button
             onClick={() => setCurrentSectionTab('PERMISSIONS')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
@@ -486,6 +676,101 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
               {companies.length}
             </span>
           </button>
+
+          <button
+            onClick={() => setCurrentSectionTab('AM_AUDIT')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+              currentSectionTab === 'AM_AUDIT'
+                ? 'bg-slate-900 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <History className="w-4 h-4 text-[#00C6A6]" />
+            <span>ACCOUNT MANAGER HISTORY</span>
+          </button>
+        </div>
+      </div>
+
+      {/* User-Level Account Manager Workload & Unassigned Audit Ribbon */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs space-y-2.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-900">
+            <Briefcase className="w-4 h-4 text-[#00C6A6]" />
+            <span>User-Level Account Manager Workload &amp; Audit</span>
+            <span className="text-[11px] font-normal text-slate-500">
+              (Individual B2B Agents — click any manager or badge to filter)
+            </span>
+          </div>
+
+          {unassignedB2BAgentsCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedAccountManagerFilter(
+                  selectedAccountManagerFilter === 'UNASSIGNED' ? 'ALL' : 'UNASSIGNED'
+                );
+                if (currentSectionTab === 'COMPANIES' || currentSectionTab === 'AM_AUDIT') {
+                  setCurrentSectionTab('PERMISSIONS');
+                }
+              }}
+              className={`px-3 py-1 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                selectedAccountManagerFilter === 'UNASSIGNED'
+                  ? 'bg-rose-600 text-white border-rose-600'
+                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+              }`}
+            >
+              <AlertCircle className="w-3.5 h-3.5" />
+              <span>{unassignedB2BAgentsCount} Unassigned B2B Agent{unassignedB2BAgentsCount === 1 ? '' : 's'}</span>
+            </button>
+          ) : (
+            <span className="px-3 py-1 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 inline-flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>All B2B Agents Assigned</span>
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSelectedAccountManagerFilter('ALL')}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition-colors ${
+              selectedAccountManagerFilter === 'ALL'
+                ? 'bg-slate-900 text-white border-slate-900'
+                : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+            }`}
+          >
+            All Users ({users.length})
+          </button>
+          {amWorkloadSummary.workloads.map(w => {
+            const active = selectedAccountManagerFilter === w.teamMember.id;
+            return (
+              <button
+                key={w.teamMember.id}
+                type="button"
+                onClick={() => {
+                  setSelectedAccountManagerFilter(active ? 'ALL' : w.teamMember.id);
+                  if (currentSectionTab === 'COMPANIES' || currentSectionTab === 'AM_AUDIT') {
+                    setCurrentSectionTab('PERMISSIONS');
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition-colors flex items-center gap-1.5 ${
+                  active
+                    ? 'bg-[#00C6A6] text-slate-950 border-[#00C6A6]'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <span>{w.teamMember.name}</span>
+                <span
+                  className={`px-1.5 py-0.2 rounded font-mono text-[10px] ${
+                    active ? 'bg-slate-950/15 text-slate-950' : 'bg-slate-200 text-slate-800'
+                  }`}
+                >
+                  {w.assignedAgentsCount}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -572,6 +857,37 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                   <option value="PENDING">Pending Review</option>
                   <option value="REJECTED">Rejected</option>
                 </select>
+
+                <select
+                  id="filter-account-manager"
+                  value={selectedAccountManagerFilter}
+                  onChange={e => setSelectedAccountManagerFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 rounded-xl px-3 py-2 focus:ring-0"
+                >
+                  <option value="ALL">Account Manager: All</option>
+                  <option value="UNASSIGNED">Unassigned B2B Agents ({unassignedB2BAgentsCount})</option>
+                  {eligibleAccountManagers.map(tm => (
+                    <option key={tm.id} value={tm.id}>
+                      AM: {tm.name}
+                    </option>
+                  ))}
+                </select>
+
+                {distinctAgencies.length > 0 && (
+                  <select
+                    id="filter-user-agency"
+                    value={selectedAgencyFilter}
+                    onChange={e => setSelectedAgencyFilter(e.target.value)}
+                    className="bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 rounded-xl px-3 py-2 focus:ring-0 max-w-[180px]"
+                  >
+                    <option value="ALL">Agency: All</option>
+                    {distinctAgencies.map(ag => (
+                      <option key={ag} value={ag}>
+                        {ag}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
 
@@ -645,6 +961,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                   </th>
                   <th className="py-3 px-3">User & Organization</th>
                   <th className="py-3 px-3">Role & Type</th>
+                  <th className="py-3 px-3">Assigned Account Manager</th>
                   <th className="py-3 px-3">Status</th>
                   <th className="py-3 px-3">Quote Builder Access</th>
                   <th className="py-3 px-3">CMS Modules Access</th>
@@ -721,6 +1038,46 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                             {u.category || (u.role === 'SUPER_ADMIN' || u.role === 'ADMIN' || u.role === 'TEAM_MEMBER' || u.role === 'DMC_STAFF' ? 'INTERNAL' : 'EXTERNAL')}
                           </div>
                         </div>
+                      </td>
+
+                      {/* User-Level Assigned Account Manager */}
+                      <td className="py-3 px-3">
+                        {isExternalPartnerAccount(u) ? (() => {
+                          const resolvedAm = resolveUserAccountManager(u, users);
+                          return (
+                            <div className="space-y-1 min-w-[165px]">
+                              {resolvedAm.isAssigned ? (
+                                <div>
+                                  <div className="font-bold text-slate-900 text-[11px] flex items-center gap-1">
+                                    <UserCheck className="w-3 h-3 text-[#008972] shrink-0" />
+                                    <span className="truncate max-w-[140px]">{resolvedAm.name}</span>
+                                  </div>
+                                  {resolvedAm.email && (
+                                    <div className="text-[10px] text-slate-500 font-mono truncate max-w-[155px]">
+                                      {resolvedAm.email}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold">
+                                  <AlertCircle className="w-3 h-3" />
+                                  <span>Unassigned</span>
+                                </span>
+                              )}
+                              {canUserAssignAccountManagers(currentUser) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAssignAmModal(u)}
+                                  className="text-[10px] font-bold text-[#008972] hover:text-slate-900 underline cursor-pointer block"
+                                >
+                                  {resolvedAm.isAssigned ? 'Reassign AM' : 'Assign AM'}
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          <span className="text-[10px] text-slate-400 italic">Internal Staff</span>
+                        )}
                       </td>
 
                       {/* Account Status */}
@@ -821,7 +1178,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
 
                 {filteredUsers.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-10 text-center text-slate-400 text-xs">
+                    <td colSpan={8} className="py-10 text-center text-slate-400 text-xs">
                       No users match the active search and access filters.
                     </td>
                   </tr>
@@ -884,7 +1241,20 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                 />
               </div>
 
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+                <select
+                  value={selectedAccountManagerFilter}
+                  onChange={e => setSelectedAccountManagerFilter(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 text-xs font-semibold text-slate-700 rounded-xl px-3 py-1.5"
+                >
+                  <option value="ALL">Account Manager: All</option>
+                  <option value="UNASSIGNED">Unassigned B2B Agents ({unassignedB2BAgentsCount})</option>
+                  {eligibleAccountManagers.map(tm => (
+                    <option key={tm.id} value={tm.id}>
+                      AM: {tm.name}
+                    </option>
+                  ))}
+                </select>
                 <select
                   value={selectedStatus}
                   onChange={e => setSelectedStatus(e.target.value)}
@@ -904,6 +1274,7 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                   <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                     <th className="py-3 px-4">User & Agency</th>
                     <th className="py-3 px-3">User Type (Role)</th>
+                    <th className="py-3 px-3">Assigned Account Manager</th>
                     <th className="py-3 px-3">Pricing & Margin Configuration</th>
                     <th className="py-3 px-3">Status</th>
                     <th className="py-3 px-4 text-right">Approval Decision</th>
@@ -941,6 +1312,36 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                               <option value="TEAM_MEMBER">Team Member</option>
                             </optgroup>
                           </select>
+                        </td>
+
+                        <td className="py-3 px-3">
+                          {isExternalPartnerAccount(userItem) ? (() => {
+                            const resolvedAm = resolveUserAccountManager(userItem, users);
+                            return (
+                              <div className="space-y-1 min-w-[155px]">
+                                {resolvedAm.isAssigned ? (
+                                  <div className="text-xs font-bold text-slate-900 truncate max-w-[160px]">
+                                    {resolvedAm.name}
+                                  </div>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold">
+                                    Unassigned
+                                  </span>
+                                )}
+                                {canUserAssignAccountManagers(currentUser) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenAssignAmModal(userItem)}
+                                    className="text-[10px] font-bold text-[#008972] hover:text-slate-900 underline cursor-pointer block"
+                                  >
+                                    {resolvedAm.isAssigned ? 'Reassign' : 'Assign Required'}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })() : (
+                            <span className="text-[10px] text-slate-400 italic">Internal Staff</span>
+                          )}
                         </td>
 
                         <td className="py-3 px-3">
@@ -1072,6 +1473,88 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
       {currentSectionTab === 'COMPANIES' && (
         <CompanyManagementView onOpenUserModal={handleOpenPermissionModal} />
       )}
+
+      {/* VIEW 4: ACCOUNT MANAGER IMMUTABLE ASSIGNMENT AUDIT HISTORY */}
+      {currentSectionTab === 'AM_AUDIT' && (() => {
+        const allHistory = getAllAssignmentHistory();
+        return (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <History className="w-4 h-4 text-[#00C6A6]" />
+                  <span>Account Manager Assignment Audit Trail ({allHistory.length})</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Append-only history of every individual B2B Agent Account Manager assignment and reassignment. Historical entries are immutable.
+                </p>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                    <th className="py-3 px-4">Timestamp</th>
+                    <th className="py-3 px-3">B2B Agent (User-Level)</th>
+                    <th className="py-3 px-3">Action</th>
+                    <th className="py-3 px-3">Previous Account Manager</th>
+                    <th className="py-3 px-3">New Account Manager</th>
+                    <th className="py-3 px-3">Performed By</th>
+                    <th className="py-3 px-4">Reason</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {allHistory.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-10 text-center text-slate-400">
+                        No Account Manager assignments recorded yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    allHistory.map(item => (
+                      <tr key={item.id} className="hover:bg-slate-50/70">
+                        <td className="py-3 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                          {new Date(item.timestamp).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="font-bold text-slate-900">{item.agentName}</div>
+                          <div className="text-[10px] text-slate-400">
+                            {item.agencyName || item.agentEmail || item.agentUid}
+                          </div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                              item.action === 'ASSIGNED'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-indigo-100 text-indigo-800'
+                            }`}
+                          >
+                            {item.action}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-slate-600">
+                          {item.previousAccountManagerName || <span className="text-slate-400 italic">Unassigned</span>}
+                        </td>
+                        <td className="py-3 px-3 font-bold text-slate-900">
+                          {item.newAccountManagerName}
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="font-semibold text-slate-800">{item.performedByName}</div>
+                          <div className="text-[10px] text-slate-400">{item.performedByRole}</div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600">
+                          {item.reason || '—'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Bulk Operation Confirmation Modal */}
       {bulkActionConfirm && (
@@ -1290,6 +1773,352 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                 Confirm &amp; Dispatch Email
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mandatory Account Manager Assignment on Pending B2B Agent Approval Modal */}
+      {approvalTargetUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-teal-50 text-[#008972]">
+                    <Briefcase className="w-4 h-4" />
+                  </span>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    Assign Account Manager &amp; Approve B2B Agent
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Every active B2B Agent must be assigned to an eligible internal Team Member before activation.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setApprovalTargetUser(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-0.5">
+              <div className="font-bold text-slate-900">{approvalTargetUser.name}</div>
+              <div className="text-slate-500 font-mono">{approvalTargetUser.email}</div>
+              {(approvalTargetUser.agencyName || approvalTargetUser.companyName) && (
+                <div className="text-[#008972] font-semibold">
+                  {approvalTargetUser.agencyName || approvalTargetUser.companyName}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-slate-800">
+                Select Account Manager (Required) *
+              </label>
+              <AccountManagerSelector
+                id="approval-account-manager-selector"
+                value={approvalAmUid}
+                onChange={(uid) => setApprovalAmUid(uid)}
+                allUsers={users}
+                required
+                placeholder="Select internal Team Member..."
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-bold text-slate-700">
+                Assignment Note (Optional)
+              </label>
+              <input
+                type="text"
+                value={approvalReason}
+                onChange={(e) => setApprovalReason(e.target.value)}
+                placeholder="Initial onboarding assignment note..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-[#00C6A6]"
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setApprovalTargetUser(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!approvalAmUid}
+                onClick={handleConfirmApprovalWithAm}
+                className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 rounded-xl cursor-pointer shadow-xs"
+              >
+                Confirm Assignment &amp; Approve
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick User-Level Assign / Reassign Account Manager Modal */}
+      {assignAmTargetUser && (() => {
+        const targetHistory = getAssignmentHistoryForAgent(assignAmTargetUser.id);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+            <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-teal-50 text-[#008972]">
+                      <Briefcase className="w-4 h-4" />
+                    </span>
+                    <h3 className="font-bold text-slate-900 text-base">
+                      {assignAmTargetUser.accountManagerUid ? 'Reassign Account Manager' : 'Assign Account Manager'}
+                    </h3>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Applies strictly to this individual user account (<span className="font-mono">{assignAmTargetUser.id}</span>). Other agents in the same agency will not be modified.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssignAmTargetUser(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-0.5">
+                <div className="font-bold text-slate-900">{assignAmTargetUser.name}</div>
+                <div className="text-slate-500 font-mono">{assignAmTargetUser.email}</div>
+                {(assignAmTargetUser.agencyName || assignAmTargetUser.companyName) && (
+                  <div className="text-[#008972] font-semibold">
+                    Agency: {assignAmTargetUser.agencyName || assignAmTargetUser.companyName}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-800">
+                  Assigned Account Manager *
+                </label>
+                <AccountManagerSelector
+                  id="quick-assign-account-manager-selector"
+                  value={assignAmUid}
+                  onChange={(uid) => setAssignAmUid(uid)}
+                  allUsers={users}
+                  required
+                  placeholder="Select eligible internal Team Member..."
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700">
+                  Reason for Assignment / Reassignment (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={assignAmReason}
+                  onChange={(e) => setAssignAmReason(e.target.value)}
+                  placeholder="e.g. Regional portfolio update / Senior consultant coverage"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:border-[#00C6A6]"
+                />
+              </div>
+
+              {targetHistory.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                  <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                    Recent Assignment History ({targetHistory.length})
+                  </div>
+                  <div className="max-h-32 overflow-y-auto space-y-1.5 text-[11px]">
+                    {targetHistory.slice(0, 5).map(h => (
+                      <div key={h.id} className="p-2 rounded-lg bg-slate-50 border border-slate-200/80 flex items-center justify-between gap-2">
+                        <div className="truncate">
+                          <span className="font-bold text-slate-800">{h.action}:</span>{' '}
+                          <span>{h.previousAccountManagerName ? `${h.previousAccountManagerName} → ${h.newAccountManagerName}` : h.newAccountManagerName}</span>
+                        </div>
+                        <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                          {new Date(h.timestamp).toLocaleDateString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setAssignAmTargetUser(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!assignAmUid}
+                  onClick={handleConfirmQuickAssignAm}
+                  className="px-4 py-2 text-xs font-bold text-white bg-slate-900 hover:bg-[#00C6A6] disabled:opacity-40 rounded-xl cursor-pointer shadow-xs"
+                >
+                  Save Account Manager
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Admin Create / Provision User Modal (Enforces Mandatory Account Manager for Active B2B Agents) */}
+      {isCreateUserModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                  <UserPlus className="w-4 h-4 text-[#00C6A6]" />
+                  <span>Provision New User Account</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Active B2B Agent accounts require a user-level Account Manager assignment at creation.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCreateUserModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {createError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-bold text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{createError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateUserSubmit} className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Full Name *</label>
+                  <input
+                    type="text"
+                    required
+                    value={createName}
+                    onChange={(e) => setCreateName(e.target.value)}
+                    placeholder="e.g. Priya Sharma"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Business Email *</label>
+                  <input
+                    type="email"
+                    required
+                    value={createEmail}
+                    onChange={(e) => setCreateEmail(e.target.value)}
+                    placeholder="priya@abctravels.com"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Role *</label>
+                  <select
+                    value={createRole}
+                    onChange={(e) => setCreateRole(e.target.value as UserRole)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                  >
+                    <option value="B2B_AGENT">B2B Agent</option>
+                    <option value="AGENCY_OWNER">Agency Owner</option>
+                    <option value="TEAM_MEMBER">Internal Team Member</option>
+                    <option value="ADMIN">Admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Account Status</label>
+                  <select
+                    value={createStatus}
+                    onChange={(e) => setCreateStatus(e.target.value as UserApprovalStatus)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold"
+                  >
+                    <option value="APPROVED">APPROVED (Active)</option>
+                    <option value="PENDING">PENDING (Review)</option>
+                  </select>
+                </div>
+                {(createRole === 'B2B_AGENT' || createRole === 'AGENCY_OWNER') && (
+                  <div className="sm:col-span-2">
+                    <label className="block font-bold text-slate-700 mb-1">Travel Agency / Company Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={createAgencyName}
+                      onChange={(e) => setCreateAgencyName(e.target.value)}
+                      placeholder="e.g. ABC Travels"
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Designation / Job Title</label>
+                  <input
+                    type="text"
+                    value={createJobTitle}
+                    onChange={(e) => setCreateJobTitle(e.target.value)}
+                    placeholder="e.g. Senior Travel Consultant"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Contact Number</label>
+                  <input
+                    type="text"
+                    value={createPhone}
+                    onChange={(e) => setCreatePhone(e.target.value)}
+                    placeholder="+91 98..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
+              </div>
+
+              {(createRole === 'B2B_AGENT' || createRole === 'AGENCY_OWNER') && (
+                <div className="space-y-1.5 pt-1">
+                  <label className="block font-bold text-slate-800">
+                    Assigned Account Manager (User-Level){' '}
+                    {createRole === 'B2B_AGENT' && createStatus === 'APPROVED' && (
+                      <span className="text-rose-600">*</span>
+                    )}
+                  </label>
+                  <AccountManagerSelector
+                    id="create-user-account-manager-selector"
+                    value={createAmUid}
+                    onChange={(uid) => setCreateAmUid(uid)}
+                    allUsers={users}
+                    required={createRole === 'B2B_AGENT' && createStatus === 'APPROVED'}
+                    placeholder="Select internal Team Member as Account Manager..."
+                  />
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateUserModalOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold text-white bg-[#00C6A6] hover:bg-[#00a88d] rounded-xl cursor-pointer shadow-xs"
+                >
+                  Create User Account
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

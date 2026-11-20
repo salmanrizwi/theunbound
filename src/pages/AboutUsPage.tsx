@@ -31,6 +31,7 @@ import { AppDatabase } from '../services/db';
 import { useInventoryVisibility } from '../services/inventoryVisibilityService';
 import { HeroTrustStrip } from '../components/Hero/HeroTrustStrip';
 import { WhyTheUnbound } from '../components/WhyTheUnbound';
+import { MeetOurTeamSection } from '../components/AboutUs/MeetOurTeamSection';
 
 interface AboutUsPageProps {
   onBackToExplore?: () => void;
@@ -371,6 +372,9 @@ export const AboutUsPage: React.FC<AboutUsPageProps> = ({
           </div>
         </div>
       </section>
+
+      {/* Section: Meet Our Team Dynamic Gallery */}
+      <MeetOurTeamSection />
 
       {/* Section: Strategic Vision & 4 Value Pillars */}
       <section className="space-y-8">

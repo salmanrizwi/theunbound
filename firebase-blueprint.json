@@ -24,9 +24,44 @@
         "address": { "type": "string", "required": false },
         "website": { "type": "string", "required": false },
         "marginOverride": { "type": "number", "required": false },
+        "accountManagerUid": { "type": "string", "required": false },
+        "accountManagerName": { "type": "string", "required": false },
+        "accountManagerEmail": { "type": "string", "required": false },
+        "accountManagerDesignation": { "type": "string", "required": false },
+        "accountManagerPhone": { "type": "string", "required": false },
+        "accountManagerAssignedAt": { "type": "string", "required": false },
+        "accountManagerAssignedBy": { "type": "string", "required": false },
+        "accountManagerAssignedByName": { "type": "string", "required": false },
+        "accountManagerUpdatedAt": { "type": "string", "required": false },
+        "accountManagerAssignmentStatus": { "type": "string", "required": false, "enum": ["ASSIGNED", "UNASSIGNED"] },
         "permissions": { "type": "object", "required": true },
         "createdAt": { "type": "string", "required": true },
         "updatedAt": { "type": "string", "required": true }
+      }
+    },
+    "AccountManagerAssignmentHistory": {
+      "collection": "account_manager_assignment_history",
+      "fields": {
+        "id": { "type": "string", "required": true },
+        "agentUid": { "type": "string", "required": true },
+        "agentName": { "type": "string", "required": true },
+        "agentEmail": { "type": "string", "required": false },
+        "agencyId": { "type": "string", "required": false },
+        "agencyName": { "type": "string", "required": false },
+        "previousAccountManagerUid": { "type": "string", "required": false },
+        "previousAccountManagerName": { "type": "string", "required": false },
+        "previousAccountManagerEmail": { "type": "string", "required": false },
+        "newAccountManagerUid": { "type": "string", "required": true },
+        "newAccountManagerName": { "type": "string", "required": true },
+        "newAccountManagerEmail": { "type": "string", "required": false },
+        "newAccountManagerDesignation": { "type": "string", "required": false },
+        "action": { "type": "string", "required": true, "enum": ["ASSIGNED", "REASSIGNED"] },
+        "performedByUid": { "type": "string", "required": true },
+        "performedByName": { "type": "string", "required": true },
+        "performedByEmail": { "type": "string", "required": false },
+        "performedByRole": { "type": "string", "required": true },
+        "reason": { "type": "string", "required": false },
+        "timestamp": { "type": "string", "required": true }
       }
     },
     "Company": {
@@ -1284,6 +1319,40 @@
           "enum": ["ADMIN", "SUPER_ADMIN"]
         },
         "fxSource": { "type": "string", "required": false }
+      }
+    },
+    "AboutUsWebsiteContent": {
+      "collection": "websiteContent",
+      "fields": {
+        "pageId": { "type": "string", "required": true, "enum": ["aboutUs"] },
+        "meetOurTeamConfig": { "type": "object", "required": true },
+        "updatedAt": { "type": "string", "required": true, "maxLength": 64 },
+        "updatedBy": { "type": "string", "required": false, "maxLength": 128 },
+        "updatedByRole": { "type": "string", "required": false, "enum": ["ADMIN", "SUPER_ADMIN", "TEAM_MEMBER", "DMC_STAFF"] },
+        "updatedByEmail": { "type": "string", "required": false, "maxLength": 160 }
+      }
+    },
+    "TeamMember": {
+      "collection": "websiteContent/aboutUs/meetOurTeam",
+      "fields": {
+        "teamMemberId": { "type": "string", "required": true, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "fullName": { "type": "string", "required": true, "minLength": 2, "maxLength": 120 },
+        "designation": { "type": "string", "required": true, "minLength": 2, "maxLength": 140 },
+        "introduction": { "type": "string", "required": true, "minLength": 5, "maxLength": 6000 },
+        "imageStoragePath": { "type": "string", "required": true, "maxLength": 400 },
+        "imageUrl": { "type": "string", "required": true, "maxLength": 400000 },
+        "thumbnailStoragePath": { "type": "string", "required": false, "maxLength": 400 },
+        "thumbnailUrl": { "type": "string", "required": false, "maxLength": 400000 },
+        "imageWidth": { "type": "number", "required": false },
+        "imageHeight": { "type": "number", "required": false },
+        "socialLinks": { "type": "object", "required": false },
+        "displayOrder": { "type": "number", "required": true },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "INACTIVE"] },
+        "createdAt": { "type": "string", "required": true, "maxLength": 64 },
+        "updatedAt": { "type": "string", "required": true, "maxLength": 64 },
+        "updatedBy": { "type": "string", "required": false, "maxLength": 128 },
+        "updatedByRole": { "type": "string", "required": false, "enum": ["ADMIN", "SUPER_ADMIN", "TEAM_MEMBER", "DMC_STAFF"] },
+        "updatedByEmail": { "type": "string", "required": false, "maxLength": 160 }
       }
     }
   }

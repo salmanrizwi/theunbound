@@ -859,6 +859,11 @@ export function canUserAccessCMSSubTab(
   moduleId: string, 
   subTabId: string
 ): boolean {
+  // Internal operations workspace: every approved internal Team Member / Admin can view their own Assigned Agents
+  if (subTabId === 'MY_ASSIGNED_AGENTS') {
+    return canUserAccessCMS(user) && isInternalStaff(user);
+  }
+
   // First evaluate module access
   if (!canUserAccessCMSModule(user, moduleId)) return false;
   if (isMasterAdmin(user)) return true;
@@ -903,6 +908,12 @@ export function canUserAccessCMSSubTab(
 
   if (subTabId === 'SHEETS_SYNC') {
     if (perms?.cmsSystem?.googleSheetsSync === false && user?.role !== 'ADMIN') {
+      return false;
+    }
+  }
+
+  if (subTabId === 'ABOUT_US_TEAM') {
+    if (perms?.cmsContent?.aboutUs === false || perms?.cmsContent?.pageManagement === false) {
       return false;
     }
   }
@@ -1184,7 +1195,31 @@ export function isExternalUser(user: User | null | undefined): boolean {
 export function isInternalStaff(user: User | null | undefined): boolean {
   if (!user) return false;
   if (isMasterAdmin(user)) return true;
-  return user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF';
+  return user.role === 'ADMIN' || user.role === 'SUPER_ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF';
+}
+
+/**
+ * Evaluates whether a user is authorized to assign or reassign Account Managers to B2B Agents.
+ * Strictly restricted to active, approved Administrators / Super Admins or explicitly authorized Account Managers.
+ * B2B Agents, Agency Owners, Buyers, and standard Team Members are strictly blocked.
+ */
+export function canUserAssignAccountManagers(user: User | null | undefined): boolean {
+  if (!user) return false;
+  if ((user.approvalStatus || 'APPROVED') !== 'APPROVED') return false;
+  if (user.isDeactivated === true || (user as any).status === 'DISABLED' || (user as any).status === 'DELETED') {
+    return false;
+  }
+  if (isExternalUser(user) || user.role === 'AGENCY_OWNER') return false;
+  if (isMasterAdmin(user) || user.role === 'ADMIN' || user.role === 'SUPER_ADMIN') return true;
+  // Internal staff explicitly granted Account Management / User Management access
+  if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    return Boolean(
+      user.permissions?.canManageUsers === true ||
+      user.permissions?.cmsFinance?.accountManagement === true ||
+      user.permissions?.cmsFinance?.userAccounts === true
+    );
+  }
+  return false;
 }
 
 /**

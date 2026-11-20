@@ -321,21 +321,85 @@ service cloud.firestore {
     // USER ACCOUNTS & PERMISSION PROFILES (Field-Level Security Enforced)
     // =========================================================================
 
+    function isValidAccountManagerAssignmentHistory(data, historyId) {
+      return data != null &&
+        data.keys().hasAll([
+          'id',
+          'agentUid',
+          'agentName',
+          'newAccountManagerUid',
+          'newAccountManagerName',
+          'action',
+          'performedByUid',
+          'performedByName',
+          'timestamp'
+        ]) &&
+        data.keys().hasOnly([
+          'id',
+          'agentUid',
+          'agentName',
+          'agentEmail',
+          'agencyId',
+          'agencyName',
+          'previousAccountManagerUid',
+          'previousAccountManagerName',
+          'previousAccountManagerEmail',
+          'newAccountManagerUid',
+          'newAccountManagerName',
+          'newAccountManagerEmail',
+          'newAccountManagerDesignation',
+          'action',
+          'performedByUid',
+          'performedByName',
+          'performedByEmail',
+          'performedByRole',
+          'reason',
+          'timestamp'
+        ]) &&
+        data.id is string && data.id == historyId &&
+        data.agentUid is string && data.agentUid.size() > 0 && data.agentUid.size() <= 128 &&
+        data.agentName is string && data.agentName.size() > 0 && data.agentName.size() <= 200 &&
+        data.newAccountManagerUid is string && data.newAccountManagerUid.size() > 0 && data.newAccountManagerUid.size() <= 128 &&
+        data.newAccountManagerName is string && data.newAccountManagerName.size() > 0 && data.newAccountManagerName.size() <= 200 &&
+        data.action in ['ASSIGNED', 'REASSIGNED'] &&
+        data.performedByUid is string && data.performedByUid.size() > 0 && data.performedByUid.size() <= 128 &&
+        data.performedByName is string && data.performedByName.size() > 0 && data.performedByName.size() <= 200 &&
+        data.timestamp is string && data.timestamp.size() > 0 && data.timestamp.size() <= 64 &&
+        (!('reason' in data) || data.reason == null || (data.reason is string && data.reason.size() <= 1000));
+    }
+
     match /users/{userId} {
-      // Authenticated user can read their own profile directly, or business users can read profile directory
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isNotBuyer());
+      // Authenticated user can read only their own profile (or email lookup during own session),
+      // while internal staff can read user directory. B2B Agents cannot inspect other users' assignments.
+      allow read: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        isInternalUser() ||
+        ('email' in request.auth.token && 'email' in resource.data && resource.data.email == request.auth.token.email.lower())
+      );
       
-      // User can create their own document on registration, or Admin CMS can provision accounts
-      // Strictly reject BUYER role creation
+      // User can create their own document on registration, or Admin CMS can provision accounts.
+      // Strictly reject BUYER role creation and self-assignment of Account Managers.
       allow create: if canManageUserAccounts() || isValidAdminCMSData() || (
         isAuthenticated() && request.auth.uid == userId && (
           request.resource.data.role != 'BUYER' &&
-          (!('userType' in request.resource.data) || request.resource.data.userType != 'BUYER')
+          (!('userType' in request.resource.data) || request.resource.data.userType != 'BUYER') &&
+          !request.resource.data.keys().hasAny([
+            'accountManagerUid',
+            'accountManagerName',
+            'accountManagerEmail',
+            'accountManagerDesignation',
+            'accountManagerPhone',
+            'accountManagerAssignedAt',
+            'accountManagerAssignedBy',
+            'accountManagerAssignedByName',
+            'accountManagerUpdatedAt'
+          ]) &&
+          (!('accountManagerAssignmentStatus' in request.resource.data) || request.resource.data.accountManagerAssignmentStatus == 'UNASSIGNED')
         )
       );
 
-      // Update: Admin can update all fields (roles, permissions, approvals, pricingSettings)
-      // Self-updates are allowed ONLY if privilege & pricingSettings fields are untouched, and role is not BUYER
+      // Update: Admin / Account Management can update all fields (roles, permissions, approvals, pricingSettings, accountManager*).
+      // Self-updates are allowed ONLY if privilege, pricingSettings, and Account Manager fields remain untouched.
       allow update: if canManageUserAccounts() || isValidAdminCMSData() || (
         isAuthenticated() && request.auth.uid == userId && isNotBuyer() &&
         request.resource.data.role != 'BUYER' &&
@@ -348,12 +412,45 @@ service cloud.firestore {
           'customAgentMarginPercent',
           'agentLevelMarginPercent',
           'productLevelMarginEnabled',
-          'activeMarginMode'
+          'activeMarginMode',
+          'accountManagerUid',
+          'accountManagerName',
+          'accountManagerEmail',
+          'accountManagerDesignation',
+          'accountManagerPhone',
+          'accountManagerAssignedAt',
+          'accountManagerAssignedBy',
+          'accountManagerAssignedByName',
+          'accountManagerUpdatedAt',
+          'accountManagerAssignmentStatus'
         ])
       );
 
       // Deletion strictly reserved for Administrators
       allow delete: if canManageUserAccounts() || isValidAdminCMSData() || isResourceAdminOwned();
+    }
+
+    // Immutable append-only audit trail for user-level B2B Agent Account Manager assignments
+    match /account_manager_assignment_history/{historyId} {
+      allow get: if isAuthenticated() && isValidId(historyId) && (
+        canManageUserAccounts() ||
+        (isInternalUser() && resource != null && (
+          resource.data.newAccountManagerUid == request.auth.uid ||
+          resource.data.previousAccountManagerUid == request.auth.uid
+        ))
+      );
+      allow list: if isAuthenticated() && (
+        canManageUserAccounts() ||
+        (isInternalUser() && (
+          resource.data.newAccountManagerUid == request.auth.uid ||
+          resource.data.previousAccountManagerUid == request.auth.uid
+        ))
+      );
+      allow create: if isAuthenticated() &&
+        isValidId(historyId) &&
+        canManageUserAccounts() &&
+        isValidAccountManagerAssignmentHistory(request.resource.data, historyId);
+      allow update, delete: if false;
     }
 
     match /companies/{companyId} {
@@ -1801,6 +1898,92 @@ service cloud.firestore {
         !('totalNetCost' in request.resource.data)
       );
       allow delete: if false;
+    }
+
+    // =========================================================================
+    // WEBSITE CONTENT: ABOUT US & MEET OUR TEAM DYNAMIC GALLERY
+    // =========================================================================
+
+    function isValidAboutUsWebsiteContent(data) {
+      return data != null &&
+        data.keys().hasAll(['pageId', 'meetOurTeamConfig', 'updatedAt']) &&
+        data.keys().hasOnly(['pageId', 'meetOurTeamConfig', 'updatedAt', 'updatedBy', 'updatedByRole', 'updatedByEmail']) &&
+        data.pageId == 'aboutUs' &&
+        data.meetOurTeamConfig is map &&
+        'heading' in data.meetOurTeamConfig &&
+        data.meetOurTeamConfig.heading is string &&
+        data.meetOurTeamConfig.heading.size() >= 2 &&
+        data.meetOurTeamConfig.heading.size() <= 140 &&
+        (!('introText' in data.meetOurTeamConfig) || (data.meetOurTeamConfig.introText is string && data.meetOurTeamConfig.introText.size() <= 1000)) &&
+        (!('desktopColumns' in data.meetOurTeamConfig) || (data.meetOurTeamConfig.desktopColumns is int && data.meetOurTeamConfig.desktopColumns >= 1 && data.meetOurTeamConfig.desktopColumns <= 6)) &&
+        (!('tabletColumns' in data.meetOurTeamConfig) || (data.meetOurTeamConfig.tabletColumns is int && data.meetOurTeamConfig.tabletColumns >= 1 && data.meetOurTeamConfig.tabletColumns <= 4)) &&
+        (!('mobileColumns' in data.meetOurTeamConfig) || (data.meetOurTeamConfig.mobileColumns is int && data.meetOurTeamConfig.mobileColumns >= 1 && data.meetOurTeamConfig.mobileColumns <= 2)) &&
+        (!('rows' in data.meetOurTeamConfig) || (data.meetOurTeamConfig.rows is int && data.meetOurTeamConfig.rows >= 1 && data.meetOurTeamConfig.rows <= 12)) &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
+    }
+
+    function isValidTeamMember(data, memberId) {
+      return data != null &&
+        data.keys().hasAll([
+          'teamMemberId', 'fullName', 'designation', 'introduction',
+          'imageStoragePath', 'imageUrl', 'displayOrder', 'status',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'teamMemberId', 'fullName', 'designation', 'introduction',
+          'imageStoragePath', 'imageUrl', 'thumbnailStoragePath', 'thumbnailUrl',
+          'imageWidth', 'imageHeight', 'socialLinks', 'displayOrder', 'status',
+          'createdAt', 'updatedAt', 'updatedBy', 'updatedByRole', 'updatedByEmail'
+        ]) &&
+        data.teamMemberId is string && data.teamMemberId == memberId &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 120 &&
+        data.designation is string && data.designation.size() >= 2 && data.designation.size() <= 140 &&
+        data.introduction is string && data.introduction.size() >= 5 && data.introduction.size() <= 6000 &&
+        data.imageStoragePath is string && data.imageStoragePath.size() > 0 && data.imageStoragePath.size() <= 400 &&
+        data.imageUrl is string && data.imageUrl.size() > 0 && data.imageUrl.size() <= 400000 &&
+        (!('thumbnailStoragePath' in data) || (data.thumbnailStoragePath is string && data.thumbnailStoragePath.size() <= 400)) &&
+        (!('thumbnailUrl' in data) || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 400000)) &&
+        (!('imageWidth' in data) || (data.imageWidth is int && data.imageWidth > 0 && data.imageWidth <= 10000)) &&
+        (!('imageHeight' in data) || (data.imageHeight is int && data.imageHeight > 0 && data.imageHeight <= 10000)) &&
+        (!('socialLinks' in data) || data.socialLinks is map) &&
+        (data.displayOrder is int || data.displayOrder is float) &&
+        data.displayOrder >= 0 && data.displayOrder <= 9999 &&
+        data.status in ['ACTIVE', 'INACTIVE'] &&
+        data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64;
+    }
+
+    match /websiteContent/{pageId} {
+      allow get: if isValidId(pageId) && pageId == 'aboutUs';
+      allow list: if isMasterAdmin() || canAccessCMSContent();
+      allow create, update: if isValidId(pageId) && pageId == 'aboutUs' &&
+        (isMasterAdmin() || canAccessCMSContent() || isValidAdminCMSData()) &&
+        isValidAboutUsWebsiteContent(request.resource.data);
+      allow delete: if isValidId(pageId) && (isMasterAdmin() || canAccessCMSContent());
+
+      match /meetOurTeam/{teamMemberId} {
+        allow get: if isValidId(teamMemberId) && (
+          isMasterAdmin() ||
+          canAccessCMSContent() ||
+          (resource != null && resource.data.status == 'ACTIVE')
+        );
+        allow list: if isMasterAdmin() ||
+          canAccessCMSContent() ||
+          resource.data.status == 'ACTIVE';
+        allow create: if isValidId(teamMemberId) &&
+          pageId == 'aboutUs' &&
+          (isMasterAdmin() || canAccessCMSContent() || isValidAdminCMSData()) &&
+          isValidTeamMember(request.resource.data, teamMemberId);
+        allow update: if isValidId(teamMemberId) &&
+          pageId == 'aboutUs' &&
+          (isMasterAdmin() || canAccessCMSContent() || isValidAdminCMSData()) &&
+          isValidTeamMember(request.resource.data, teamMemberId) &&
+          request.resource.data.teamMemberId == resource.data.teamMemberId &&
+          request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if isValidId(teamMemberId) &&
+          pageId == 'aboutUs' &&
+          (isMasterAdmin() || canAccessCMSContent() || isResourceAdminOwned());
+      }
     }
   }
 }

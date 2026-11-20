@@ -4,6 +4,7 @@ import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../services/pricingEngine';
+import { resolveUserAccountManager } from '../../services/accountManagerService';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { 
@@ -974,6 +975,16 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                               {creatorRole === 'ADMIN' ? 'Headquarters Admin' : 'Internal Ops Staff'}
                             </div>
                           )}
+                          {(() => {
+                            const agentUid = creatorRole === 'B2B_AGENT' ? (q.agentId || (q as any).b2bAgentId || q.createdBy) : q.agentId;
+                            const am = agentUid ? resolveUserAccountManager(agentUid) : null;
+                            if (!am || !agentUid || creatorRole === 'ADMIN') return null;
+                            return (
+                              <div className={`text-[10px] font-semibold truncate ${am.isAssigned ? 'text-indigo-700' : 'text-amber-700'}`}>
+                                AM: {am.isAssigned ? am.name : 'Unassigned'}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     </td>
@@ -1336,6 +1347,20 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 <div className="text-slate-400 text-[11px]">
                   Email: {viewingQuote.agentEmail || 'N/A'} • Role: {viewingQuote.createdByUserType || 'B2B_AGENT'}
                 </div>
+                {(() => {
+                  const isPartner = viewingQuote.createdByUserType === 'B2B_AGENT' || Boolean(viewingQuote.agentId);
+                  const agentUid = viewingQuote.agentId || (viewingQuote as any).b2bAgentId || (isPartner ? viewingQuote.createdBy : undefined);
+                  const am = agentUid ? resolveUserAccountManager(agentUid) : null;
+                  if (!am || !isPartner) return null;
+                  return (
+                    <div className={`text-[11px] font-semibold pt-1 border-t border-slate-200/70 ${am.isAssigned ? 'text-[#008972]' : 'text-amber-700'}`}>
+                      Assigned Account Manager:{' '}
+                      {am.isAssigned
+                        ? `${am.name}${am.designation ? ` (${am.designation})` : ''}`
+                        : 'Unassigned'}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Client Card */}

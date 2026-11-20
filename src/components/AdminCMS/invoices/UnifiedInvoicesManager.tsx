@@ -4,6 +4,7 @@ import { BookingInvoice, BookingUploadedInvoice, Booking, User } from '../../../
 import { useAuth } from '../../../context/AuthContext';
 import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../../services/pricingEngine';
+import { resolveUserAccountManager } from '../../../services/accountManagerService';
 import { 
   validateProformaInvoicePreflight, 
   ProformaPreflightError 
@@ -463,7 +464,18 @@ export const UnifiedInvoicesManager: React.FC = () => {
                         </button>
                       </td>
                       <td className="py-3.5 px-4 font-bold text-slate-900">
-                        {inv.customerOrAgent}
+                        <div>{inv.customerOrAgent}</div>
+                        {(() => {
+                          const linkedBooking = bookings.find(item => item.id === inv.bookingId);
+                          const agentUid = linkedBooking?.submittingAgentId || linkedBooking?.assignedAgentId || linkedBooking?.agentId;
+                          const am = agentUid ? resolveUserAccountManager(agentUid) : null;
+                          if (!am || !agentUid) return null;
+                          return (
+                            <span className={`text-[10px] font-semibold block mt-0.5 ${am.isAssigned ? 'text-indigo-700' : 'text-amber-700'}`}>
+                              AM: {am.isAssigned ? am.name : 'Unassigned'}
+                            </span>
+                          );
+                        })()}
                       </td>
                       {(() => {
                         const invConv = convertForDisplay(inv.amount || 0, inv.currency || 'USD');
