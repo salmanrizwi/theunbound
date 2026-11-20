@@ -317,8 +317,9 @@ function verifyAllChannelsMatch(quote: Quotation, expectedBase: number, expected
     `Complete Quotation Email Proposal HTML does not contain expected Final Selling Price ${formattedExpectedFinal}`
   );
   assert(
-    canonicalEmail.simpleSemanticHtml.includes(formattedExpectedFinal),
-    `Complete Quotation Email Simple HTML does not contain expected Final Selling Price ${formattedExpectedFinal}`
+    canonicalEmail.simpleSemanticHtml.includes(model.landPartTotalFormatted) &&
+      Boolean(model.hotelPartTotalFormatted && canonicalEmail.simpleSemanticHtml.includes(model.hotelPartTotalFormatted)),
+    `Complete Quotation Email Option 2 HTML must contain Land Part Total (${model.landPartTotalFormatted}) and Hotel Part Total (${model.hotelPartTotalFormatted})`
   );
   assert(
     canonicalEmail.textBody.includes(formattedExpectedFinal),

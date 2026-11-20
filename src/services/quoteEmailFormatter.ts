@@ -1788,6 +1788,716 @@ function buildOption2ServiceDetailsHtml(s: ServicePresentationItem, dateLabel: s
   return parts.join('');
 }
 
+export interface Option2PricingValidationResult {
+  isValid: boolean;
+  missingFields: Array<'Land Part Total' | 'Hotel Part Total' | 'Quotation Currency'>;
+  landPartDisplay?: string;
+  hotelPartDisplay?: string;
+  errorMessage?: string;
+}
+
+/**
+ * Validates that Option 2's Quotation Pricing Summary has authoritative, verified
+ * Land Part Total and Hotel Part Total values in a valid quotation currency.
+ * Never invents numbers or substitutes zero unless confirmed genuinely zero by
+ * the authoritative pricing engine / committed quotation snapshot.
+ */
+export function validateOption2PricingSummary(
+  model: QuotePresentationModel
+): Option2PricingValidationResult {
+  const missingFields: Array<'Land Part Total' | 'Hotel Part Total' | 'Quotation Currency'> = [];
+
+  const currency = typeof model?.currency === 'string' ? model.currency.trim() : '';
+  if (!currency) {
+    missingFields.push('Quotation Currency');
+  }
+
+  const landTotalValid =
+    model?.isLandPartTotalAuthoritative !== false &&
+    typeof model?.landPartTotalNumeric === 'number' &&
+    Number.isFinite(model.landPartTotalNumeric) &&
+    model.landPartTotalNumeric >= 0;
+
+  if (!landTotalValid) {
+    missingFields.push('Land Part Total');
+  }
+
+  const hotelTotalValid =
+    model?.isHotelPartTotalAuthoritative !== false &&
+    typeof model?.hotelAccommodationTotalNumeric === 'number' &&
+    Number.isFinite(model.hotelAccommodationTotalNumeric) &&
+    model.hotelAccommodationTotalNumeric >= 0;
+
+  if (!hotelTotalValid) {
+    missingFields.push('Hotel Part Total');
+  }
+
+  if (missingFields.length > 0) {
+    return {
+      isValid: false,
+      missingFields,
+      landPartDisplay: landTotalValid && currency
+        ? (model.landPartTotalFormatted || formatCurrency(model.landPartTotalNumeric, currency))
+        : undefined,
+      hotelPartDisplay: hotelTotalValid && currency
+        ? (model.hotelPartTotalFormatted || formatCurrency(model.hotelAccommodationTotalNumeric, currency))
+        : undefined,
+      errorMessage: `Cannot dispatch Option 2 Complete Formatted Quotation: authoritative pricing total unavailable for ${missingFields.join(', ')}. Please verify pricing and save the quotation snapshot before sending.`
+    };
+  }
+
+  const landPartDisplay =
+    model.landPartTotalFormatted && model.landPartTotalFormatted.trim()
+      ? model.landPartTotalFormatted
+      : formatCurrency(model.landPartTotalNumeric, currency);
+
+  const hotelPartDisplay =
+    model.hotelPartTotalFormatted && model.hotelPartTotalFormatted.trim()
+      ? model.hotelPartTotalFormatted
+      : formatCurrency(model.hotelAccommodationTotalNumeric, currency);
+
+  return {
+    isValid: true,
+    missingFields: [],
+    landPartDisplay,
+    hotelPartDisplay
+  };
+}
+
+/**
+ * Parses HTML attributes from a tag's attribute string safely without regex ReDoS.
+ */
+function parseHtmlTagAttributes(attrString: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  if (!attrString) return attrs;
+  const attrRegex = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let match: RegExpExecArray | null;
+  while ((match = attrRegex.exec(attrString)) !== null) {
+    const name = match[1].toLowerCase();
+    // Strictly drop all event handlers and dangerous execution attributes
+    if (name.startsWith('on') || name === 'srcdoc' || name === 'formaction') continue;
+    const value = match[2] ?? match[3] ?? match[4] ?? '';
+    attrs[name] = value;
+  }
+  return attrs;
+}
+
+/**
+ * Validates that a hyperlink href uses only safe, email-compatible URL schemes.
+ * Blocks javascript:, data:, vbscript:, and obfuscated control-char variants.
+ */
+function sanitizeSafeEmailHref(rawHref: string | undefined): string | null {
+  if (!rawHref) return null;
+  const decoded = rawHref
+    .replace(/&amp;/gi, '&')
+    .replace(/&#(\d+);/g, (_m, c) => String.fromCharCode(parseInt(c, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/[\u0000-\u001F\u007F\s]+/g, '')
+    .trim();
+
+  if (!decoded) return null;
+  if (/^(?:https?:\/\/|mailto:|tel:|#)/i.test(decoded)) {
+    return rawHref.trim();
+  }
+  return null;
+}
+
+/**
+ * Parses and allowlists safe CSS declarations from an inline style string.
+ * Rejects any CSS injection vectors (url, expression, javascript, data, behavior).
+ */
+function parseSafeInlineCssMap(rawStyle: string | undefined): Record<string, string> {
+  const safeMap: Record<string, string> = {};
+  if (!rawStyle) return safeMap;
+
+  const declarations = rawStyle.split(';');
+  const SAFE_SPACING_RE = /^(?:0|-?[0-9.]+(?:px|pt|em|rem|%)|auto)(?:\s+(?:0|-?[0-9.]+(?:px|pt|em|rem|%)|auto)){0,3}$/i;
+  const SAFE_COLOR_RE = /^(?:#[0-9a-f]{3,8}|rgb\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*\)|rgba\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*[0-9.]+\s*\)|[a-z]{3,20})$/i;
+
+  for (const decl of declarations) {
+    const colonIdx = decl.indexOf(':');
+    if (colonIdx <= 0) continue;
+    const prop = decl.slice(0, colonIdx).trim().toLowerCase();
+    const val = decl.slice(colonIdx + 1).trim();
+    if (!prop || !val) continue;
+
+    // Block dangerous CSS constructs unconditionally
+    if (/url\s*\(|expression\s*\(|javascript:|vbscript:|data:|behavior|-moz-binding|@import|[<>"]/i.test(val)) {
+      continue;
+    }
+
+    if (prop === 'text-align' && /^(left|right|center|justify)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'vertical-align' && /^(top|middle|bottom|baseline)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if ((prop === 'color' || prop === 'background-color' || prop === 'border-color') && SAFE_COLOR_RE.test(val)) {
+      safeMap[prop] = val;
+    } else if (prop === 'font-weight' && /^(normal|bold|bolder|lighter|[1-9]00)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'font-style' && /^(normal|italic|oblique)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'text-decoration' && /^(?:none|underline|line-through|overline)(?:\s+(?:underline|line-through|overline))*$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'font-size' && /^[0-9.]+(?:px|pt|em|rem|%)$/i.test(val)) {
+      safeMap[prop] = val;
+    } else if (prop === 'line-height' && /^(?:normal|[0-9.]+(?:px|pt|em|rem|%)?)$/i.test(val)) {
+      safeMap[prop] = val;
+    } else if (
+      (prop === 'margin' || prop === 'margin-top' || prop === 'margin-bottom' || prop === 'margin-left' || prop === 'margin-right' ||
+       prop === 'padding' || prop === 'padding-top' || prop === 'padding-bottom' || prop === 'padding-left' || prop === 'padding-right' ||
+       prop === 'text-indent') &&
+      SAFE_SPACING_RE.test(val)
+    ) {
+      safeMap[prop] = val;
+    } else if (
+      prop === 'list-style-type' &&
+      /^(disc|circle|square|decimal|decimal-leading-zero|lower-alpha|upper-alpha|lower-latin|upper-latin|lower-roman|upper-roman|none)$/i.test(val)
+    ) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'list-style-position' && /^(inside|outside)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (
+      (prop === 'border' || prop === 'border-top' || prop === 'border-bottom' || prop === 'border-left' || prop === 'border-right') &&
+      /^(?:none|0|[0-9.]+(?:px|pt)\s+(?:solid|dashed|dotted|double)\s+(?:#[0-9a-f]{3,8}|rgb\([^)]+\)|[a-z]{3,20}))$/i.test(val)
+    ) {
+      safeMap[prop] = val;
+    } else if (prop === 'border-collapse' && /^(collapse|separate)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'width' && /^[0-9.]+(?:px|pt|em|rem|%)$/i.test(val)) {
+      safeMap[prop] = val;
+    } else if (prop === 'white-space' && /^(normal|pre-wrap|pre-line|nowrap)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'text-transform' && /^(none|uppercase|lowercase|capitalize)$/i.test(val)) {
+      safeMap[prop] = val.toLowerCase();
+    } else if (prop === 'letter-spacing' && /^(?:normal|-?[0-9.]+(?:px|em|rem))$/i.test(val)) {
+      safeMap[prop] = val;
+    }
+  }
+
+  return safeMap;
+}
+
+function serializeCssMap(cssMap: Record<string, string>): string {
+  return Object.entries(cssMap)
+    .filter(([, v]) => Boolean(v && v.trim()))
+    .map(([k, v]) => `${k}: ${v.trim()}`)
+    .join('; ');
+}
+
+function escapeHtmlAttrValue(val: string): string {
+  return val
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Converts plain-text / Markdown Commercial Terms (when no HTML tags exist)
+ * into clean semantic HTML preserving headings, numbered clauses, bullets,
+ * nested indentation, paragraph breaks, bold/italic, and safe hyperlinks.
+ */
+function convertPlainTextCommercialTermsToSemanticHtml(plainText: string): string {
+  const lines = plainText.split(/\r?\n/);
+  const blocks: string[] = [];
+
+  type ListState = { type: 'ul' | 'ol'; start?: number; items: Array<{ html: string; indentLevel: number }> };
+  let activeList: ListState | null = null;
+  let paragraphLines: string[] = [];
+
+  const formatInline = (raw: string): string => {
+    const escaped = escapeHtml(raw);
+    return escaped
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_m, label, url) => {
+        const safe = sanitizeSafeEmailHref(url);
+        return safe ? `<a href="${escapeHtmlAttrValue(safe)}">${label}</a>` : label;
+      })
+      .replace(/~~([^~]+)~~/g, '<del>$1</del>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+      .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
+  };
+
+  const flushParagraph = () => {
+    if (paragraphLines.length === 0) return;
+    const html = paragraphLines.map(formatInline).join('<br/>');
+    if (html.trim()) {
+      blocks.push(`<p>${html}</p>`);
+    }
+    paragraphLines = [];
+  };
+
+  const flushList = () => {
+    if (!activeList || activeList.items.length === 0) {
+      activeList = null;
+      return;
+    }
+    const startAttr = activeList.type === 'ol' && activeList.start && activeList.start > 1
+      ? ` start="${activeList.start}"`
+      : '';
+    const itemsHtml = activeList.items
+      .map((item) => {
+        const indentStyle = item.indentLevel > 0 ? ` style="margin-left: ${item.indentLevel * 20}px;"` : '';
+        return `<li${indentStyle}>${item.html}</li>`;
+      })
+      .join('');
+    blocks.push(`<${activeList.type}${startAttr}>${itemsHtml}</${activeList.type}>`);
+    activeList = null;
+  };
+
+  for (const rawLine of lines) {
+    const leadingSpaces = (rawLine.match(/^(\s*)/)?.[1] || '').replace(/\t/g, '  ').length;
+    const indentLevel = Math.min(4, Math.floor(leadingSpaces / 2));
+    const trimmed = rawLine.trim();
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    if (/^(?:---|\*\*\*|___)$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      blocks.push('<hr/>');
+      continue;
+    }
+
+    const hMatch = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (hMatch) {
+      flushParagraph();
+      flushList();
+      const level = hMatch[1].length;
+      blocks.push(`<h${level}>${formatInline(hMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    const bqMatch = trimmed.match(/^>\s+(.+)$/);
+    if (bqMatch) {
+      flushParagraph();
+      flushList();
+      blocks.push(`<blockquote><p>${formatInline(bqMatch[1])}</p></blockquote>`);
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*•▪●◦]\s+(.+)$/);
+    if (bulletMatch) {
+      flushParagraph();
+      if (!activeList || activeList.type !== 'ul') {
+        flushList();
+        activeList = { type: 'ul', items: [] };
+      }
+      activeList.items.push({ html: formatInline(bulletMatch[1]), indentLevel });
+      continue;
+    }
+
+    const orderedMatch = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      const num = parseInt(orderedMatch[1], 10);
+      if (!activeList || activeList.type !== 'ol') {
+        flushList();
+        activeList = { type: 'ol', start: isNaN(num) ? 1 : num, items: [] };
+      }
+      activeList.items.push({ html: formatInline(orderedMatch[2]), indentLevel });
+      continue;
+    }
+
+    flushList();
+    paragraphLines.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+
+  return blocks.join('');
+}
+
+/**
+ * Renders Commercial Quotation Terms for Option 2 (Complete Formatted Quotation)
+ * preserving original rich-text structure and formatting verbatim with
+ * email-client-compatible inline CSS (Gmail, Google Workspace, Outlook, and
+ * Tailwind-preflight-safe preview).
+ *
+ * Preserves: headings (h1-h6), bold, italic, underline, strikethrough, sub/sup,
+ * inline span/font styles, numbered lists (ol with start/type), bullet lists (ul
+ * including nesting), paragraph breaks, line spacing, indentation (padding/margin/
+ * ql-indent/blockquote), tables (colspan/rowspan/align/borders), hyperlinks (safe
+ * URL allowlist only), and text alignment.
+ */
+export function renderCommercialTermsRichHtmlForEmail(
+  content: string,
+  options?: {
+    fontFamily?: string;
+    fontSize?: string;
+    lineHeight?: string;
+    color?: string;
+    headingColor?: string;
+    borderColor?: string;
+    linkColor?: string;
+  }
+): string {
+  if (!content || typeof content !== 'string') return '';
+  const normalized = normalizeStoredContent(content);
+  if (!normalized) return '';
+
+  const fontFamily = options?.fontFamily || EXCEL_FONT;
+  const fontSize = options?.fontSize || '11px';
+  const lineHeight = options?.lineHeight || '1.5';
+  const color = options?.color || EXCEL_TEXT_PRIMARY;
+  const headingColor = options?.headingColor || EXCEL_NAVY;
+  const borderColor = options?.borderColor || EXCEL_BORDER;
+  const linkColor = options?.linkColor || EXCEL_NAVY;
+
+  const hasHtml = /<\/?(?:p|br|div|h[1-6]|strong|b|em|i|u|s|del|strike|sub|sup|ul|ol|li|table|thead|tbody|tfoot|tr|td|th|span|a|blockquote|hr|font)\b/i.test(normalized);
+
+  let sourceHtml = hasHtml
+    ? normalized
+    : convertPlainTextCommercialTermsToSemanticHtml(normalized);
+
+  // 1. Strip HTML comments and dangerous elements with their inner payloads
+  sourceHtml = sourceHtml.replace(/<!--[\s\S]*?-->/g, '');
+  const dangerousBlockTags = 'script|style|iframe|object|embed|form|input|textarea|select|button|svg|canvas|math|template|noscript';
+  sourceHtml = sourceHtml.replace(
+    new RegExp(`<(${dangerousBlockTags})\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>`, 'gi'),
+    ''
+  );
+  sourceHtml = sourceHtml.replace(
+    new RegExp(`<\\/?(?:${dangerousBlockTags}|meta|link|base)\\b[^>]*\\/?>`, 'gi'),
+    ''
+  );
+
+  // 2. Token-level HTML serializer preserving original structure + merging safe inline CSS
+  const tagRegex = /<(\/?)([a-zA-Z][a-zA-Z0-9-]*)(\s+[^>]*?)?(\/?)>/g;
+  const output: string[] = [];
+  let lastIndex = 0;
+  let ulDepth = 0;
+  const anchorTagStack: Array<'a' | 'span'> = [];
+  const headingFontSizes: Record<string, string> = {
+    h1: '15px',
+    h2: '13.5px',
+    h3: '12px',
+    h4: '11.5px',
+    h5: '11px',
+    h6: '10.5px'
+  };
+  const olTypeToCss: Record<string, string> = {
+    '1': 'decimal',
+    'a': 'lower-alpha',
+    'A': 'upper-alpha',
+    'i': 'lower-roman',
+    'I': 'upper-roman'
+  };
+  const fontSizeAttrMap: Record<string, string> = {
+    '1': '9px',
+    '2': '10.5px',
+    '3': '11px',
+    '4': '12.5px',
+    '5': '14px',
+    '6': '16px',
+    '7': '18px'
+  };
+
+  let match: RegExpExecArray | null;
+  while ((match = tagRegex.exec(sourceHtml)) !== null) {
+    // Preserve text node verbatim between tags (with **bold** support if legacy markdown leaked in)
+    if (match.index > lastIndex) {
+      const textChunk = sourceHtml.slice(lastIndex, match.index);
+      output.push(textChunk);
+    }
+    lastIndex = tagRegex.lastIndex;
+
+    const isClosing = match[1] === '/';
+    const rawTag = match[2].toLowerCase();
+    const rawAttrStr = match[3] || '';
+
+    if (isClosing) {
+      if (rawTag === 'ul') {
+        ulDepth = Math.max(0, ulDepth - 1);
+        output.push('</ul>');
+      } else if (rawTag === 'ol') {
+        output.push('</ol>');
+      } else if (rawTag === 'b' || rawTag === 'strong') {
+        output.push('</strong>');
+      } else if (rawTag === 'i' || rawTag === 'em') {
+        output.push('</em>');
+      } else if (rawTag === 's' || rawTag === 'del' || rawTag === 'strike') {
+        output.push('</del>');
+      } else if (rawTag === 'font' || rawTag === 'span') {
+        output.push('</span>');
+      } else if (rawTag === 'a') {
+        const closingAnchor = anchorTagStack.pop() || 'a';
+        output.push(`</${closingAnchor}>`);
+      } else if (
+        rawTag === 'p' || rawTag === 'div' || rawTag === 'li' ||
+        rawTag === 'h1' || rawTag === 'h2' || rawTag === 'h3' || rawTag === 'h4' || rawTag === 'h5' || rawTag === 'h6' ||
+        rawTag === 'u' || rawTag === 'sub' || rawTag === 'sup' || rawTag === 'blockquote' ||
+        rawTag === 'table' || rawTag === 'thead' || rawTag === 'tbody' || rawTag === 'tfoot' ||
+        rawTag === 'tr' || rawTag === 'th' || rawTag === 'td'
+      ) {
+        output.push(`</${rawTag}>`);
+      }
+      continue;
+    }
+
+    // Opening or self-closing tag
+    if (rawTag === 'br') {
+      output.push('<br/>');
+      continue;
+    }
+    if (rawTag === 'hr') {
+      output.push(`<hr style="border: 0; border-top: 1px solid #cbd5e1; margin: 8px 0;" />`);
+      continue;
+    }
+
+    const attrs = parseHtmlTagAttributes(rawAttrStr);
+    const sourceCss = parseSafeInlineCssMap(attrs.style);
+
+    // Map legacy HTML align / valign & editor classes (Quill / Tailwind) into inline CSS
+    if (attrs.align && /^(left|center|right|justify)$/i.test(attrs.align) && !sourceCss['text-align']) {
+      sourceCss['text-align'] = attrs.align.toLowerCase();
+    }
+    if (attrs.valign && /^(top|middle|bottom|baseline)$/i.test(attrs.valign) && !sourceCss['vertical-align']) {
+      sourceCss['vertical-align'] = attrs.valign.toLowerCase();
+    }
+    if (attrs.class) {
+      const cls = attrs.class;
+      const alignClassMatch = cls.match(/\b(?:ql-align-|text-)(left|center|right|justify)\b/i);
+      if (alignClassMatch && !sourceCss['text-align']) {
+        sourceCss['text-align'] = alignClassMatch[1].toLowerCase();
+      }
+      const indentClassMatch = cls.match(/\bql-indent-([1-8])\b/i);
+      if (indentClassMatch && !sourceCss['padding-left'] && !sourceCss['margin-left']) {
+        sourceCss['margin-left'] = `${parseInt(indentClassMatch[1], 10) * 24}px`;
+      }
+    }
+
+    if (rawTag === 'h1' || rawTag === 'h2' || rawTag === 'h3' || rawTag === 'h4' || rawTag === 'h5' || rawTag === 'h6') {
+      const merged: Record<string, string> = {
+        'margin': rawTag === 'h1' ? '10px 0 5px 0' : rawTag === 'h2' ? '9px 0 4px 0' : '7px 0 3px 0',
+        'font-family': fontFamily,
+        'font-size': headingFontSizes[rawTag],
+        'font-weight': 'bold',
+        'line-height': '1.35',
+        'color': rawTag === 'h1' || rawTag === 'h2' || rawTag === 'h3' ? headingColor : color,
+        ...sourceCss
+      };
+      output.push(`<${rawTag} style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'p') {
+      const merged: Record<string, string> = {
+        'margin': '0 0 7px 0',
+        'font-family': fontFamily,
+        'font-size': fontSize,
+        'line-height': lineHeight,
+        'color': color,
+        ...sourceCss
+      };
+      output.push(`<p style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'div') {
+      const merged: Record<string, string> = {
+        'margin': '0 0 4px 0',
+        'font-family': fontFamily,
+        'font-size': fontSize,
+        'line-height': lineHeight,
+        'color': color,
+        ...sourceCss
+      };
+      output.push(`<div style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'ul') {
+      ulDepth += 1;
+      const defaultBullet = ulDepth === 1 ? 'disc' : ulDepth === 2 ? 'circle' : 'square';
+      const merged: Record<string, string> = {
+        'margin': ulDepth === 1 ? '4px 0 8px 0' : '2px 0 4px 0',
+        'padding-left': '22px',
+        'list-style-type': defaultBullet,
+        'list-style-position': 'outside',
+        'font-family': fontFamily,
+        'font-size': fontSize,
+        'line-height': lineHeight,
+        'color': color,
+        ...sourceCss
+      };
+      output.push(`<ul style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'ol') {
+      const mappedType = attrs.type && olTypeToCss[attrs.type] ? olTypeToCss[attrs.type] : 'decimal';
+      const merged: Record<string, string> = {
+        'margin': '4px 0 8px 0',
+        'padding-left': '24px',
+        'list-style-type': mappedType,
+        'list-style-position': 'outside',
+        'font-family': fontFamily,
+        'font-size': fontSize,
+        'line-height': lineHeight,
+        'color': color,
+        ...sourceCss
+      };
+      const extraAttrs: string[] = [];
+      if (attrs.start && /^\d+$/.test(attrs.start.trim())) {
+        extraAttrs.push(`start="${attrs.start.trim()}"`);
+      }
+      if (attrs.type && olTypeToCss[attrs.type]) {
+        extraAttrs.push(`type="${attrs.type}"`);
+      }
+      const extraStr = extraAttrs.length > 0 ? ` ${extraAttrs.join(' ')}` : '';
+      output.push(`<ol${extraStr} style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'li') {
+      const merged: Record<string, string> = {
+        'display': 'list-item',
+        'margin': '0 0 3px 0',
+        'font-family': fontFamily,
+        'font-size': fontSize,
+        'line-height': lineHeight,
+        'color': color,
+        ...sourceCss
+      };
+      output.push(`<li style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'strong' || rawTag === 'b') {
+      const merged: Record<string, string> = {
+        'font-weight': 'bold',
+        ...sourceCss
+      };
+      output.push(`<strong style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'em' || rawTag === 'i') {
+      const merged: Record<string, string> = {
+        'font-style': 'italic',
+        ...sourceCss
+      };
+      output.push(`<em style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'u') {
+      const merged: Record<string, string> = {
+        'text-decoration': 'underline',
+        ...sourceCss
+      };
+      output.push(`<u style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 's' || rawTag === 'del' || rawTag === 'strike') {
+      const merged: Record<string, string> = {
+        'text-decoration': 'line-through',
+        ...sourceCss
+      };
+      output.push(`<del style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'sub' || rawTag === 'sup') {
+      const merged: Record<string, string> = {
+        'font-size': '80%',
+        ...sourceCss
+      };
+      output.push(`<${rawTag} style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'span') {
+      const styleStr = serializeCssMap(sourceCss);
+      output.push(styleStr ? `<span style="${escapeHtmlAttrValue(styleStr)}">` : '<span>');
+    } else if (rawTag === 'font') {
+      const merged: Record<string, string> = { ...sourceCss };
+      if (attrs.color && /^(?:#[0-9a-f]{3,8}|rgb\([^)]+\)|[a-z]{3,20})$/i.test(attrs.color.trim()) && !merged.color) {
+        merged.color = attrs.color.trim();
+      }
+      if (attrs.size && fontSizeAttrMap[attrs.size.trim()] && !merged['font-size']) {
+        merged['font-size'] = fontSizeAttrMap[attrs.size.trim()];
+      }
+      const styleStr = serializeCssMap(merged);
+      output.push(styleStr ? `<span style="${escapeHtmlAttrValue(styleStr)}">` : '<span>');
+    } else if (rawTag === 'blockquote') {
+      // Browser execCommand('indent') emits <blockquote style="margin: 0 0 0 40px; border: none; padding: 0px;">
+      const isIndentBlock = sourceCss.border === 'none' || sourceCss.border === '0';
+      const merged: Record<string, string> = isIndentBlock
+        ? {
+            'margin': '4px 0 6px 28px',
+            'padding': '0',
+            'border': 'none',
+            'font-family': fontFamily,
+            'font-size': fontSize,
+            'line-height': lineHeight,
+            'color': color,
+            ...sourceCss
+          }
+        : {
+            'margin': '6px 0 8px 14px',
+            'padding-left': '10px',
+            'border-left': `3px solid ${headingColor}`,
+            'font-family': fontFamily,
+            'font-size': fontSize,
+            'line-height': lineHeight,
+            'color': EXCEL_TEXT_SECONDARY,
+            ...sourceCss
+          };
+      output.push(`<blockquote style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'a') {
+      const safeHref = sanitizeSafeEmailHref(attrs.href);
+      if (safeHref) {
+        anchorTagStack.push('a');
+        const merged: Record<string, string> = {
+          'color': linkColor,
+          'text-decoration': 'underline',
+          ...sourceCss
+        };
+        output.push(
+          `<a href="${escapeHtmlAttrValue(safeHref)}" target="_blank" rel="noopener noreferrer" style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`
+        );
+      } else {
+        anchorTagStack.push('span');
+        const styleStr = serializeCssMap(sourceCss);
+        output.push(styleStr ? `<span style="${escapeHtmlAttrValue(styleStr)}">` : '<span>');
+      }
+    } else if (rawTag === 'table') {
+      const merged: Record<string, string> = {
+        'width': attrs.width && /^[0-9.]+(?:px|%)?$/i.test(attrs.width) ? attrs.width : '100%',
+        'border-collapse': 'collapse',
+        'mso-table-lspace': '0pt',
+        'mso-table-rspace': '0pt',
+        'margin': '8px 0',
+        'border': `1px solid ${borderColor}`,
+        'font-family': fontFamily,
+        'font-size': fontSize,
+        ...sourceCss
+      };
+      output.push(`<table border="0" cellspacing="0" cellpadding="0" style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    } else if (rawTag === 'thead' || rawTag === 'tbody' || rawTag === 'tfoot' || rawTag === 'tr') {
+      const styleStr = serializeCssMap(sourceCss);
+      output.push(styleStr ? `<${rawTag} style="${escapeHtmlAttrValue(styleStr)}">` : `<${rawTag}>`);
+    } else if (rawTag === 'th' || rawTag === 'td') {
+      const isHeader = rawTag === 'th';
+      const merged: Record<string, string> = {
+        'border': `1px solid ${borderColor}`,
+        'padding': '5px 8px',
+        'font-family': fontFamily,
+        'font-size': fontSize,
+        'line-height': '1.45',
+        'text-align': 'left',
+        'vertical-align': 'top',
+        ...(isHeader
+          ? { 'background-color': EXCEL_BLUE_ROW, 'font-weight': 'bold', 'color': headingColor }
+          : { 'color': color }),
+        ...sourceCss
+      };
+      if (attrs.width && /^[0-9.]+(?:px|%)?$/i.test(attrs.width) && !sourceCss.width) {
+        merged.width = /^\d+$/.test(attrs.width) ? `${attrs.width}px` : attrs.width;
+      }
+      const cellAttrs: string[] = [];
+      if (attrs.colspan && /^\d+$/.test(attrs.colspan)) {
+        const n = parseInt(attrs.colspan, 10);
+        if (n > 1 && n <= 20) cellAttrs.push(`colspan="${n}"`);
+      }
+      if (attrs.rowspan && /^\d+$/.test(attrs.rowspan)) {
+        const n = parseInt(attrs.rowspan, 10);
+        if (n > 1 && n <= 20) cellAttrs.push(`rowspan="${n}"`);
+      }
+      if (isHeader && attrs.scope && /^(col|row|colgroup|rowgroup)$/i.test(attrs.scope)) {
+        cellAttrs.push(`scope="${attrs.scope.toLowerCase()}"`);
+      }
+      if (merged['text-align'] && /^(left|center|right|justify)$/i.test(merged['text-align'])) {
+        cellAttrs.push(`align="${merged['text-align']}"`);
+      }
+      const extraStr = cellAttrs.length > 0 ? ` ${cellAttrs.join(' ')}` : '';
+      output.push(`<${rawTag}${extraStr} style="${escapeHtmlAttrValue(serializeCssMap(merged))}">`);
+    }
+    // Any other unknown tag is intentionally dropped (keeping its inner text intact)
+  }
+
+  if (lastIndex < sourceHtml.length) {
+    output.push(sourceHtml.slice(lastIndex));
+  }
+
+  return output.join('').trim();
+}
+
 /**
  * OPTION 2: COMPLETE FORMATTED QUOTATION (EXCEL-STYLE SPREADSHEET HTML)
  *
@@ -1796,6 +2506,8 @@ function buildOption2ServiceDetailsHtml(s: ServicePresentationItem, dateLabel: s
  * - Pale blue service detail rows (#D9E2F3) alternating with crisp white (#FFFFFF)
  * - Explicit dark grey borders (#404040) on every cell
  * - Arial typography, table-only layout (no Flexbox/Grid/hero banners/CTAs)
+ * - Section 3 displays strictly TWO totals: Land Part Total & Hotel Part Total
+ * - Section 5 preserves original rich-text Commercial Quotation Terms verbatim
  * - Strict confidentiality: zero supplier nett cost, zero internal margins
  */
 export function renderOption2CompleteFormattedHtmlEmail(
@@ -2231,108 +2943,50 @@ export function renderOption2CompleteFormattedHtmlEmail(
   `;
 
   // --------------------------------------------------------------------------
-  // E. PRICING AND QUOTATION SUMMARY
-  // Consumes ONLY committed snapshot / authoritative model values (zero recalculation)
+  // E. SECTION 3: QUOTATION PRICING SUMMARY (STRICT TWO-ROW DISPLAY)
+  // Displays ONLY:
+  //   1. Land Part Total
+  //   2. Hotel Part Total
+  // Both values come exclusively from the authoritative committed quotation
+  // snapshot / central pricing engine in the quotation's commercial currency.
+  // Never fabricates a value or substitutes zero when unavailable.
   // --------------------------------------------------------------------------
-  const pricingRows: string[] = [];
+  const pricingValidation = validateOption2PricingSummary(model);
+  const pricingCurrencyLabel = model.currency ? cleanInlineFormattedText(model.currency) : 'UNAVAILABLE';
 
-  if (model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted) {
-    pricingRows.push(`
-      <tr>
-        <td style="${tdBase} width: 68%; background-color: ${EXCEL_WHITE_ROW}; font-weight: bold;">Hotel Accommodation Total</td>
-        <td style="${tdBase} width: 32%; background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-weight: bold;">${cleanInlineFormattedText(model.hotelAccommodationTotalFormatted)}</td>
-      </tr>
-    `);
-  }
+  const landPartCellValue = pricingValidation.landPartDisplay
+    ? cleanInlineFormattedText(pricingValidation.landPartDisplay)
+    : `<span style="color: #b91c1c; font-weight: bold;">Unavailable (Missing Land Part Total)</span>`;
 
-  pricingRows.push(`
-    <tr>
-      <td style="${tdBase} width: 68%; background-color: ${EXCEL_WHITE_ROW}; font-weight: bold;">
-        Land Part Total
-        <div style="font-weight: normal; font-size: 10px; color: ${EXCEL_TEXT_SECONDARY};">Covers included tours, activities, transfers, rail, and ground services.</div>
-      </td>
-      <td style="${tdBase} width: 32%; background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-weight: bold;">${cleanInlineFormattedText(model.landPartTotalFormatted)}</td>
-    </tr>
-  `);
+  const hotelPartCellValue = pricingValidation.hotelPartDisplay
+    ? cleanInlineFormattedText(pricingValidation.hotelPartDisplay)
+    : `<span style="color: #b91c1c; font-weight: bold;">Unavailable (Missing Hotel Part Total)</span>`;
 
-  if (model.surchargesTotalNumeric > 0) {
-    pricingRows.push(`
-      <tr>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Surcharges${model.appliedSurchargesCount > 0 ? ` (${model.appliedSurchargesCount} seasonal/date adjustments)` : ''}</td>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">${cleanInlineFormattedText(formatCurrency(model.surchargesTotalNumeric, model.currency))}</td>
-      </tr>
-    `);
-  }
-
-  if (model.taxesTotalNumeric > 0) {
-    pricingRows.push(`
-      <tr>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Taxes &amp; Statutory Levies</td>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">${cleanInlineFormattedText(formatCurrency(model.taxesTotalNumeric, model.currency))}</td>
-      </tr>
-    `);
-  }
-
-  if (model.serviceFeesTotalNumeric > 0) {
-    pricingRows.push(`
-      <tr>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Service &amp; Facilitation Fees</td>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">${cleanInlineFormattedText(formatCurrency(model.serviceFeesTotalNumeric, model.currency))}</td>
-      </tr>
-    `);
-  }
-
-  if (model.discountsTotalNumeric > 0) {
-    pricingRows.push(`
-      <tr>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Discounts</td>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">-${cleanInlineFormattedText(formatCurrency(model.discountsTotalNumeric, model.currency))}</td>
-      </tr>
-    `);
-  }
-
-  pricingRows.push(`
-    <tr>
-      <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; font-size: 12px; font-weight: bold; color: ${EXCEL_NAVY};">
-        Final Quotation Total (${cleanInlineFormattedText(model.currency)})
-      </td>
-      <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; text-align: right; font-size: 13px; font-weight: bold; color: ${EXCEL_NAVY};">
-        ${cleanInlineFormattedText(model.finalCustomerSellingPriceFormatted)}
-      </td>
-    </tr>
-  `);
-
-  if (model.effectivePax > 0 && model.pricePerPersonFormatted) {
-    pricingRows.push(`
-      <tr>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Per-Person Rate (${model.effectivePax} Guests)</td>
-        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-weight: bold;">${cleanInlineFormattedText(model.pricePerPersonFormatted)} / person</td>
-      </tr>
-    `);
-  }
-
-  pricingRows.push(`
-    <tr>
-      <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">Currency &amp; Quotation Validity</td>
-      <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">
-        ${cleanInlineFormattedText(model.guaranteedCurrencyLine)} &bull; Valid Until: ${cleanInlineFormattedText(model.validUntilFormatted)}
-      </td>
-    </tr>
-  `);
+  const missingPricingWarningHtml = !pricingValidation.isValid
+    ? `<div style="font-family: ${EXCEL_FONT}; font-size: 11px; color: #991b1b; background-color: #fef2f2; border: 1px solid #dc2626; padding: 8px 10px; margin-bottom: 10px; font-weight: bold;">${cleanInlineFormattedText(pricingValidation.errorMessage || 'Authoritative quotation pricing totals are unavailable.')}</div>`
+    : '';
 
   const pricingSummaryHtml = `
     <div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; text-transform: uppercase; margin: 12px 0 4px 0; page-break-after: avoid;">
       3. Quotation Pricing Summary
     </div>
+    ${missingPricingWarningHtml}
     <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; border: 1px solid ${EXCEL_BORDER}; table-layout: fixed; margin-bottom: 14px;">
       <thead>
         <tr>
-          <th style="${thStyle} width: 68%;">Quotation Component</th>
-          <th style="${thStyle} width: 32%; text-align: right;">Amount (${cleanInlineFormattedText(model.currency)})</th>
+          <th style="${thStyle} width: 68%;">Pricing Component</th>
+          <th style="${thStyle} width: 32%; text-align: right;">Amount (${pricingCurrencyLabel})</th>
         </tr>
       </thead>
       <tbody>
-        ${pricingRows.join('')}
+        <tr>
+          <td style="${tdBase} width: 68%; background-color: ${EXCEL_WHITE_ROW}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY};">Land Part Total</td>
+          <td style="${tdBase} width: 32%; background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-size: 12px; font-weight: bold; color: ${EXCEL_NAVY};">${landPartCellValue}</td>
+        </tr>
+        <tr>
+          <td style="${tdBase} width: 68%; background-color: ${EXCEL_BLUE_ROW}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY};">Hotel Part Total</td>
+          <td style="${tdBase} width: 32%; background-color: ${EXCEL_BLUE_ROW}; text-align: right; font-size: 12px; font-weight: bold; color: ${EXCEL_NAVY};">${hotelPartCellValue}</td>
+        </tr>
       </tbody>
     </table>
   `;
@@ -2399,55 +3053,90 @@ export function renderOption2CompleteFormattedHtmlEmail(
 
   // --------------------------------------------------------------------------
   // F. COMPLETE DESTINATION-SPECIFIC COMMERCIAL QUOTATION TERMS
-  // Preserves destination headings, numbered clauses, paragraphs, and bullets
+  // Preserves original rich-text structure & formatting verbatim: headings,
+  // subheadings, bold, italic, underline, numbered clauses, bullets, tables,
+  // hyperlinks, indentation, text alignment, paragraph breaks, and multi-
+  // destination separation.
   // --------------------------------------------------------------------------
+  const termsRenderOpts = {
+    fontFamily: EXCEL_FONT,
+    fontSize: '11px',
+    lineHeight: '1.5',
+    color: EXCEL_TEXT_PRIMARY,
+    headingColor: EXCEL_NAVY,
+    borderColor: EXCEL_BORDER,
+    linkColor: EXCEL_NAVY
+  };
+
   let renderedTermsInnerHtml = '';
   const termsEntries = model.commercialTermsSnapshot?.entries;
   if (termsEntries && termsEntries.length > 0) {
-    renderedTermsInnerHtml = termsEntries
+    const renderedEntryBlocks = termsEntries
       .map((entry) => {
         const activeSecs = [...(entry.sections || [])]
           .filter((sec) => sec.isActive !== false && (sec.heading?.trim() || sec.htmlContent?.trim()))
           .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
-        if (activeSecs.length === 0) return '';
+        let entryBodyHtml = '';
+        if (activeSecs.length > 0) {
+          entryBodyHtml = activeSecs
+            .map((sec) => {
+              const secHeading = sec.heading && sec.heading.trim()
+                ? `<h3 style="margin: 8px 0 4px 0; font-family: ${EXCEL_FONT}; font-size: 12px; font-weight: bold; line-height: 1.4; color: ${EXCEL_NAVY};">${cleanInlineFormattedText(sec.heading)}</h3>`
+                : '';
+              const secBody = sec.htmlContent && sec.htmlContent.trim()
+                ? renderCommercialTermsRichHtmlForEmail(sec.htmlContent, termsRenderOpts)
+                : '';
+              return `<div style="margin: 0 0 8px 0;">${secHeading}${secBody}</div>`;
+            })
+            .join('');
+        } else if ((entry as any).htmlText && String((entry as any).htmlText).trim()) {
+          entryBodyHtml = renderCommercialTermsRichHtmlForEmail(String((entry as any).htmlText), termsRenderOpts);
+        } else if ((entry as any).plainText && String((entry as any).plainText).trim()) {
+          entryBodyHtml = renderCommercialTermsRichHtmlForEmail(String((entry as any).plainText), termsRenderOpts);
+        }
+
+        if (!entryBodyHtml) return '';
 
         const entryTitle = termsEntries.length > 1 || entry.targetName
-          ? `<div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; border-bottom: 1px solid ${EXCEL_BORDER}; padding-bottom: 3px; margin: 8px 0 6px 0; text-transform: uppercase;">${cleanInlineFormattedText(entry.targetName)} &mdash; Commercial Terms</div>`
+          ? `<div style="font-family: ${EXCEL_FONT}; font-size: 12px; font-weight: bold; color: ${EXCEL_NAVY}; border-bottom: 1px solid ${EXCEL_BORDER}; padding-bottom: 4px; margin: 0 0 8px 0; text-transform: uppercase;">${cleanInlineFormattedText(entry.targetName)} &mdash; Commercial Terms</div>`
           : '';
 
-        const sectionsHtml = activeSecs
-          .map((sec) => {
-            const secHeading = sec.heading
-              ? `<div style="font-family: ${EXCEL_FONT}; font-size: 11px; font-weight: bold; color: ${EXCEL_TEXT_PRIMARY}; margin: 6px 0 2px 0;">${cleanInlineFormattedText(sec.heading)}</div>`
-              : '';
-            const secBody = renderSpreadsheetRichText(sec.htmlContent, {
-              fontSize: '11px',
-              color: EXCEL_TEXT_PRIMARY,
-              strongColor: EXCEL_NAVY
-            });
-            return `<div style="margin: 0 0 6px 0;">${secHeading}${secBody}</div>`;
-          })
-          .join('');
-
-        return `${entryTitle}${sectionsHtml}`;
+        return `${entryTitle}${entryBodyHtml}`;
       })
-      .filter(Boolean)
+      .filter(Boolean);
+
+    renderedTermsInnerHtml = renderedEntryBlocks
+      .map((blockHtml, idx) =>
+        idx === 0
+          ? `<div style="margin: 0;">${blockHtml}</div>`
+          : `<div style="margin: 14px 0 0 0; padding-top: 12px; border-top: 2px solid ${EXCEL_NAVY};">${blockHtml}</div>`
+      )
       .join('');
   }
 
   if (!renderedTermsInnerHtml) {
-    renderedTermsInnerHtml = model.commercialTermsHtml
-      ? renderSpreadsheetRichText(model.commercialTermsHtml, {
-          fontSize: '11px',
-          color: EXCEL_TEXT_PRIMARY,
-          strongColor: EXCEL_NAVY
+    const fallbackHtmlSource =
+      model.commercialTermsSnapshot?.combinedHtml ||
+      model.commercialTermsHtml;
+
+    if (fallbackHtmlSource && fallbackHtmlSource.trim()) {
+      renderedTermsInnerHtml = renderCommercialTermsRichHtmlForEmail(fallbackHtmlSource, termsRenderOpts);
+    } else if (model.commercialTermsItems && model.commercialTermsItems.length > 0) {
+      renderedTermsInnerHtml = model.commercialTermsItems
+        .map((it) => {
+          const itemHeading = it.heading && it.heading.trim()
+            ? `<h3 style="margin: 8px 0 4px 0; font-family: ${EXCEL_FONT}; font-size: 12px; font-weight: bold; line-height: 1.4; color: ${EXCEL_NAVY};">${cleanInlineFormattedText(it.heading)}</h3>`
+            : '';
+          const itemBody = it.body && it.body.trim()
+            ? renderCommercialTermsRichHtmlForEmail(it.body, termsRenderOpts)
+            : '';
+          return `<div style="margin: 0 0 8px 0;">${itemHeading}${itemBody}</div>`;
         })
-      : (model.commercialTermsItems && model.commercialTermsItems.length > 0
-          ? model.commercialTermsItems
-              .map((it) => `<p style="margin: 0 0 6px 0; font-family: ${EXCEL_FONT}; font-size: 11px; line-height: 1.45; color: ${EXCEL_TEXT_PRIMARY};"><strong>${cleanInlineFormattedText(it.heading)}</strong> ${cleanInlineFormattedText(it.body)}</p>`)
-              .join('')
-          : renderSpreadsheetRichText(model.commercialTerms, { fontSize: '11px' }));
+        .join('');
+    } else if (model.commercialTerms && model.commercialTerms.trim()) {
+      renderedTermsInnerHtml = renderCommercialTermsRichHtmlForEmail(model.commercialTerms, termsRenderOpts);
+    }
   }
 
   const termsSectionHtml = `
@@ -2462,7 +3151,7 @@ export function renderOption2CompleteFormattedHtmlEmail(
       </thead>
       <tbody>
         <tr>
-          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">${renderedTermsInnerHtml}</td>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; padding: 10px 12px;">${renderedTermsInnerHtml}</td>
         </tr>
       </tbody>
     </table>

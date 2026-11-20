@@ -26,6 +26,11 @@ import {
 import { EmailNotificationService } from '../services/emailNotificationService';
 import { paginateQuotePresentationModel } from '../services/pdfPaginationEngine';
 
+import {
+  renderCommercialTermsRichHtmlForEmail,
+  validateOption2PricingSummary
+} from '../services/quoteEmailFormatter';
+
 const TEST_COMM_TERMS_SNAPSHOT = {
   snapshotId: 'snap-terms-opt2-01',
   resolvedAt: '2026-10-01T10:00:00.000Z',
@@ -40,14 +45,22 @@ const TEST_COMM_TERMS_SNAPSHOT = {
         {
           id: 'sec-jp-1',
           heading: '1. Japan Deposit & Payment Schedule',
-          htmlContent: '<p>A <strong>30% non-refundable advance deposit</strong> is required to lock Shinkansen and Ryokan inventory.</p><ul><li>Balance 100% payable 21 days prior to departure.</li><li>All bank transfer charges borne by remitting agency.</li></ul>',
+          htmlContent: [
+            '<h2 style="text-align: center;">Payment &amp; Booking Confirmation Rules</h2>',
+            '<p style="line-height: 1.8;">A <strong>30% non-refundable advance deposit</strong> is required to lock <em>Shinkansen</em> and <u>Ryokan</u> inventory. <span style="color: #b45309; font-weight: 700;">Peak season allocations close early.</span></p>',
+            '<ol start="2" type="1"><li>Balance <strong>100% payable</strong> 21 days prior to departure.</li><li class="ql-indent-1">All wire transfer fees borne by remitting agency.</li></ol>',
+            '<ul><li>Confirmed vouchers issued 7 days prior.<ul><li>JR Green Car QR codes delivered electronically.</li></ul></li></ul>',
+            '<blockquote style="margin: 0 0 0 40px; border: none; padding: 0px;">Indented Special Clause: Hotel city tax is payable directly at check-in.</blockquote>',
+            '<table><thead><tr><th colspan="2" style="text-align: center;">Japan Cancellation Slab</th></tr></thead><tbody><tr><td>21+ Days Prior</td><td align="right">30% Deposit</td></tr><tr><td>0–14 Days Prior</td><td align="right">100% Retention</td></tr></tbody></table>',
+            '<p style="text-align: right;">Reference: <a href="https://www.japan.travel/en/" onclick="alert(1)">Official Japan Travel Guide</a> | <a href="javascript:alert(9)">Blocked JS Link</a> | <a href="data:text/html,<script>alert(2)</script>">Blocked Data Link</a><script>window.__xss=1</script></p>'
+          ].join(''),
           isActive: true,
           displayOrder: 1
         },
         {
           id: 'sec-jp-2',
           heading: '2. Japan Chauffeur & Wait-Time Policy',
-          htmlContent: '<p>Private vehicles include <strong>60 minutes</strong> complimentary airport wait time after flight touchdown.</p>',
+          htmlContent: '<p>Private vehicles include <font color="#dc2626"><strong>60 minutes</strong></font> complimentary airport wait time after flight touchdown.</p><p><del>Legacy 30-minute grace period</del> superseded by 60-minute executive allowance.</p>',
           isActive: true,
           displayOrder: 2
         }
@@ -61,7 +74,7 @@ const TEST_COMM_TERMS_SNAPSHOT = {
         {
           id: 'sec-kr-1',
           heading: '1. K-ETA & Entry Formalities',
-          htmlContent: '<p>Travelers must hold a valid passport with at least 6 months validity beyond return date.</p>',
+          htmlContent: '<p>Travelers must hold a valid passport with at least 6 months validity beyond return date.</p><p class="ql-align-justify">All K-ETA approvals remain the sole responsibility of the traveling guest.</p>',
           isActive: true,
           displayOrder: 1
         }
@@ -598,28 +611,186 @@ export function runOption2ExcelSpreadsheetEmailAudit() {
   assert(!html.includes('</br>') && !html.includes('**No partial refunds**') && !html.includes('**body-immersive'), 'Zero uncleaned </br> or raw **Markdown** markers');
 
   // --------------------------------------------------------------------------
-  // 4. AUTHORITATIVE PRICING SUMMARY & COST CONFIDENTIALITY
+  // 4. SECTION 3: STRICT TWO-TOTAL PRICING SUMMARY & COST CONFIDENTIALITY
   // --------------------------------------------------------------------------
-  console.log('\n[4] Verifying Authoritative Pricing Order & Zero Nett Cost / Margin Leakage...');
-  const hotelTotalIdx = html.indexOf('Hotel Accommodation Total');
-  const landTotalIdx = html.indexOf('Land Part Total');
-  const finalTotalIdx = html.indexOf('Final Quotation Total');
-  assert(hotelTotalIdx > -1 && landTotalIdx > hotelTotalIdx && finalTotalIdx > landTotalIdx, 'Pricing Summary orders Hotel Total -> Land Part Total -> Final Total');
-  assert(html.includes('340,000') || html.includes('3,40,000'), 'Includes Hotel Accommodation Total from snapshot');
-  assert(html.includes('540,000') || html.includes('5,40,000'), 'Includes Land Part Total from snapshot');
-  assert(html.includes('912,500') || html.includes('9,12,500'), 'Includes Final Quotation Total from snapshot');
-  assert(html.includes('Applicable Surcharges') && html.includes('Applicable Taxes') && html.includes('Applicable Service') && html.includes('Applicable Discounts'), 'Displays surcharges, taxes, service fees, and discounts');
+  console.log('\n[4] Verifying Strict 2-Row Section 3 Pricing Summary, Currency, Missing-Value Guard & Confidentiality...');
+  const sec3Start = html.indexOf('3. Quotation Pricing Summary');
+  const sec4Start = html.indexOf('4. Policies &amp; Operational Notes');
+  assert(sec3Start > -1 && sec4Start > sec3Start, 'Section 3. Quotation Pricing Summary block exists in expected position');
+  const sec3Html = html.slice(sec3Start, sec4Start);
+  const sec3TbodyMatch = sec3Html.match(/<tbody>([\s\S]*?)<\/tbody>/i);
+  const sec3Rows = sec3TbodyMatch ? (sec3TbodyMatch[1].match(/<tr>[\s\S]*?<\/tr>/gi) || []) : [];
+
+  assert(sec3Rows.length === 2, `Section 3 renders EXACTLY 2 monetary rows (found ${sec3Rows.length})`);
+  assert(
+    sec3Rows[0]?.includes('Land Part Total') && (sec3Rows[0]?.includes('540,000') || sec3Rows[0]?.includes('5,40,000')),
+    'Row 1 displays authoritative Land Part Total (540,000 INR)'
+  );
+  assert(
+    sec3Rows[1]?.includes('Hotel Part Total') && (sec3Rows[1]?.includes('340,000') || sec3Rows[1]?.includes('3,40,000')),
+    'Row 2 displays authoritative Hotel Part Total (340,000 INR)'
+  );
+  assert(
+    !sec3Html.includes('Applicable Surcharges') &&
+      !sec3Html.includes('Applicable Taxes') &&
+      !sec3Html.includes('Applicable Service') &&
+      !sec3Html.includes('Applicable Discounts') &&
+      !sec3Html.includes('Final Quotation Total') &&
+      !sec3Html.includes('Per-Person Rate') &&
+      !sec3Html.includes('Currency &amp; Quotation Validity') &&
+      !sec3Html.includes('Hotel Accommodation Total'),
+    'Section 3 removes ALL unnecessary breakdown rows (surcharges, taxes, fees, discounts, final total, per-person, validity)'
+  );
+
+  // Genuine-zero LAND_ONLY quote validation
+  const landOnlyQuote: Quotation = {
+    ...complexMultiHubQuote,
+    quotationScope: 'LAND_ONLY',
+    hotelAccommodationTotal: 0,
+    totalSellingPrice: 540000,
+    finalCustomerSellingPrice: 540000,
+    currency: 'JPY',
+    authoritativeSnapshot: {
+      ...(complexMultiHubQuote.authoritativeSnapshot as any),
+      quotationScope: 'LAND_ONLY',
+      pricing: {
+        ...(complexMultiHubQuote.authoritativeSnapshot as any).pricing,
+        currency: 'JPY',
+        hotelAccommodationTotal: 0,
+        landPartTotal: 850000,
+        finalCustomerSellingPrice: 850000
+      }
+    }
+  };
+  const landOnlyModel = buildQuotePresentationModel(landOnlyQuote, { brandingMode: 'STANDARD' });
+  const landOnlyCheck = validateOption2PricingSummary(landOnlyModel);
+  const landOnlyHtml = renderQuoteEmailFromPresentationModel(landOnlyModel, undefined, 'PLAIN_TEXT').simpleSemanticHtml;
+  assert(landOnlyCheck.isValid === true, 'LAND_ONLY quote with authoritative ¥0 Hotel Part Total passes Option 2 validation');
+  assert(
+    landOnlyHtml.includes('Amount (JPY)') &&
+      landOnlyHtml.includes('850,000') &&
+      landOnlyHtml.includes('Hotel Part Total') &&
+      landOnlyHtml.includes('¥0'),
+    'LAND_ONLY JPY quote preserves commercial currency (JPY) and shows confirmed ¥0 Hotel Part Total'
+  );
+
+  // Missing / unavailable authoritative total must block dispatch & never invent zero
+  const missingHotelModel = {
+    ...standardModel,
+    isHotelPartTotalAuthoritative: false,
+    hotelPartTotalFormatted: undefined
+  };
+  const missingCheck = validateOption2PricingSummary(missingHotelModel);
+  const missingHtml = renderQuoteEmailFromPresentationModel(missingHotelModel, undefined, 'PLAIN_TEXT').simpleSemanticHtml;
+  assert(
+    !missingCheck.isValid && missingCheck.missingFields.includes('Hotel Part Total'),
+    'Missing Hotel Part Total fails validation and reports exact missing field'
+  );
+  assert(
+    missingHtml.includes('Unavailable (Missing Hotel Part Total)') &&
+      !missingHtml.includes('Hotel Part Total</td>\n          <td style="font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111111; padding: 7px 8px; border: 1px solid #404040; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; line-height: 1.45; width: 32%; background-color: #D9E2F3; text-align: right; font-size: 12px; font-weight: bold; color: #17365D;">₹0'),
+    'Missing Hotel Part Total displays explicit unavailable error and NEVER substitutes zero'
+  );
+
+  const missingLandModel = {
+    ...standardModel,
+    landPartTotalNumeric: Number.NaN,
+    isLandPartTotalAuthoritative: false
+  };
+  const missingLandCheck = validateOption2PricingSummary(missingLandModel);
+  assert(
+    !missingLandCheck.isValid && missingLandCheck.missingFields.includes('Land Part Total'),
+    'NaN/missing Land Part Total fails validation and prevents dispatch'
+  );
 
   const secretTokens = ['99811', '99,811', '77622', '77,622', '54321', '54,321', '19962', '33445', '11223', 'totalNetCost', 'markupPercent', 'supplierCost'];
   const leaked = secretTokens.filter((t) => html.includes(t));
   assert(leaked.length === 0, `Zero internal nett cost, margin, or markup leaked (checked ${secretTokens.length} markers)`);
 
   // --------------------------------------------------------------------------
-  // 5. DESTINATION-SPECIFIC COMMERCIAL QUOTATION TERMS
+  // 5. DESTINATION-SPECIFIC COMMERCIAL QUOTATION TERMS — FULL FORMATTING FIDELITY
   // --------------------------------------------------------------------------
-  console.log('\n[5] Verifying Destination-Specific Commercial Quotation Terms Preservation...');
-  assert(html.includes('Japan &mdash; Commercial Terms') && html.includes('South Korea &mdash; Commercial Terms'), 'Preserves both destination headings in Commercial Quotation Terms');
-  assert(html.includes('1. Japan Deposit &amp; Payment Schedule') && html.includes('1. K-ETA &amp; Entry Formalities'), 'Preserves full destination-specific section clauses');
+  console.log('\n[5] Verifying Commercial Quotation Terms Original Formatting, Structure & Security...');
+  const sec5Start = html.indexOf('5. ');
+  const sec5Html = sec5Start > -1 ? html.slice(sec5Start) : '';
+
+  assert(
+    sec5Html.includes('Japan &mdash; Commercial Terms') && sec5Html.includes('South Korea &mdash; Commercial Terms'),
+    'Preserves both destination headings in Commercial Quotation Terms'
+  );
+  assert(
+    sec5Html.indexOf('Japan &mdash; Commercial Terms') < sec5Html.indexOf('South Korea &mdash; Commercial Terms') &&
+      sec5Html.includes('border-top: 2px solid #17365D'),
+    'Preserves destination order and visual separation between multiple destinations'
+  );
+  assert(
+    sec5Html.includes('1. Japan Deposit &amp; Payment Schedule') && sec5Html.includes('1. K-ETA &amp; Entry Formalities'),
+    'Preserves all destination section headings verbatim'
+  );
+  assert(
+    /<h2\s+style="[^"]*text-align:\s*center[^"]*">Payment &amp; Booking Confirmation Rules<\/h2>/i.test(sec5Html),
+    'Preserves <h2> subheading hierarchy and center text alignment'
+  );
+  assert(
+    sec5Html.includes('line-height: 1.8') &&
+      /<strong\s+style="[^"]*font-weight:\s*bold[^"]*">30% non-refundable advance deposit<\/strong>/i.test(sec5Html) &&
+      /<em\s+style="[^"]*font-style:\s*italic[^"]*">Shinkansen<\/em>/i.test(sec5Html) &&
+      /<u\s+style="[^"]*text-decoration:\s*underline[^"]*">Ryokan<\/u>/i.test(sec5Html) &&
+      /<del\s+style="[^"]*text-decoration:\s*line-through[^"]*">Legacy 30-minute grace period<\/del>/i.test(sec5Html),
+    'Preserves line spacing, bold, italic, underline, and strikethrough inline styles'
+  );
+  assert(
+    sec5Html.includes('color: #b45309') && sec5Html.includes('color: #dc2626'),
+    'Preserves <span> and <font color> inline color/emphasis formatting'
+  );
+  assert(
+    /<ol\s+start="2"\s+type="1"\s+style="[^"]*list-style-type:\s*decimal[^"]*">/i.test(sec5Html) &&
+      sec5Html.includes('margin-left: 24px') &&
+      sec5Html.includes('display: list-item'),
+    'Preserves ordered list start attribute, explicit decimal numbering, and ql-indent-1 indentation'
+  );
+  assert(
+    sec5Html.includes('list-style-type: disc') && sec5Html.includes('list-style-type: circle'),
+    'Preserves nested unordered bullet lists (disc -> circle)'
+  );
+  assert(
+    /<blockquote\s+style="[^"]*margin:\s*0 0 0 40px[^"]*border:\s*none[^"]*">/i.test(sec5Html),
+    'Preserves indented blockquote clauses cleanly'
+  );
+  assert(
+    /<th\s+colspan="2"[^>]*>Japan Cancellation Slab<\/th>/i.test(sec5Html) &&
+      /<td\s+align="right"[^>]*text-align:\s*right[^>]*>30% Deposit<\/td>/i.test(sec5Html),
+    'Preserves embedded HTML tables including colspan and right cell alignment'
+  );
+  assert(
+    sec5Html.includes('text-align: justify') && sec5Html.includes('text-align: right'),
+    'Preserves ql-align-justify and inline text-align: right'
+  );
+  assert(
+    sec5Html.includes('href="https://www.japan.travel/en/"') &&
+      !sec5Html.includes('javascript:alert') &&
+      !sec5Html.includes('data:text/html') &&
+      !sec5Html.includes('onclick=') &&
+      !sec5Html.includes('window.__xss') &&
+      sec5Html.includes('Blocked JS Link') &&
+      sec5Html.includes('Blocked Data Link'),
+    'Preserves valid https hyperlinks while neutralizing javascript:/data: links, onclick handlers, and <script> payloads'
+  );
+
+  // Plain-text fallback formatting test
+  const plainTermsRendered = renderCommercialTermsRichHtmlForEmail(
+    '## Booking Conditions\n\n1. First clause with **bold text**.\n2. Second clause with *italic text*.\n\n- Bullet alpha\n  - Indented bullet beta\n\nFinal paragraph.'
+  );
+  assert(
+    plainTermsRendered.includes('<h2') &&
+      plainTermsRendered.includes('<ol') &&
+      plainTermsRendered.includes('list-style-type: decimal') &&
+      plainTermsRendered.includes('<ul') &&
+      plainTermsRendered.includes('margin-left: 20px') &&
+      plainTermsRendered.includes('<strong') &&
+      plainTermsRendered.includes('<em'),
+    'Plain-text/Markdown Commercial Terms fallback preserves headings, numbered lists, nested bullets, bold, italic, and paragraphs'
+  );
 
   // --------------------------------------------------------------------------
   // 6. WHITE-LABEL ISOLATION CHECK

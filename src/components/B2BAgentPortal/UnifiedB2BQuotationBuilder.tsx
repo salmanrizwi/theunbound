@@ -112,7 +112,11 @@ import {
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { EmailNotificationService } from '../../services/emailNotificationService';
-import { formatPlainTextQuotationToHtml } from '../../services/quoteEmailFormatter';
+import {
+  formatPlainTextQuotationToHtml,
+  validateOption2PricingSummary,
+  type Option2PricingValidationResult
+} from '../../services/quoteEmailFormatter';
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { QuotationScope } from '../../types';
 import { buildAgencyBrandingSnapshotFromUser, validateWhiteLabelReadiness } from '../../services/quotePresentationModel';
@@ -2208,6 +2212,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   const [emailPreviewHtml, setEmailPreviewHtml] = useState('');
   const [emailRichHtml, setEmailRichHtml] = useState('');
   const [emailSimpleHtml, setEmailSimpleHtml] = useState('');
+  const [option2PricingValidation, setOption2PricingValidation] = useState<Option2PricingValidationResult | null>(null);
   const [plainTextSubView, setPlainTextSubView] = useState<'PREVIEW' | 'EDIT'>('PREVIEW');
   const [emailPreviewTab, setEmailPreviewTab] = useState<'HTML_PREVIEW' | 'FULL_TEXT'>('HTML_PREVIEW');
   const [emailCopied, setEmailCopied] = useState(false);
@@ -4617,6 +4622,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     setEmailRichHtml(canonical.proposalViewHtml);
     setEmailSimpleHtml(canonical.simpleSemanticHtml);
     setEmailPreviewHtml(canonical.proposalViewHtml);
+    setOption2PricingValidation(validateOption2PricingSummary(canonical.model));
     return canonical;
   };
 
@@ -4953,6 +4959,20 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           formattingMode: emailPreviewTab === 'HTML_PREVIEW' ? 'PROPOSAL_VIEW' : 'PLAIN_TEXT'
         }
       );
+
+      if (emailPreviewTab === 'FULL_TEXT' && generatedEmail.presentationModel) {
+        const option2Check = validateOption2PricingSummary(generatedEmail.presentationModel);
+        setOption2PricingValidation(option2Check);
+        if (!option2Check.isValid) {
+          const pricingErr =
+            option2Check.errorMessage ||
+            `Cannot dispatch Option 2 Complete Formatted Quotation: missing authoritative pricing field(s): ${option2Check.missingFields.join(', ')}.`;
+          quotationOperationsService.markFailed(emailOp.operationId, new Error(pricingErr));
+          setEmailDispatchStage('FAILED');
+          setEmailErrorMessage(pricingErr);
+          return;
+        }
+      }
 
       const finalSubject = emailSubject.trim() || generatedEmail.subject;
       const finalHtmlBody = emailPreviewTab === 'HTML_PREVIEW'
@@ -7039,6 +7059,16 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                       </div>
                     </div>
 
+                    {option2PricingValidation && !option2PricingValidation.isValid && (
+                      <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-start space-x-2">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                        <span>
+                          {option2PricingValidation.errorMessage ||
+                            `Missing authoritative pricing field(s): ${option2PricingValidation.missingFields.join(', ')}.`}
+                        </span>
+                      </div>
+                    )}
+
                     {plainTextSubView === 'PREVIEW' ? (
                       <div className="border border-slate-200 rounded-2xl bg-slate-100 p-2 sm:p-3 max-h-[440px] overflow-auto">
                         <div
@@ -7087,7 +7117,11 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                 </button>
                 <button
                   type="button"
-                  disabled={isSendingEmail || !emailRecipient}
+                  disabled={
+                    isSendingEmail ||
+                    !emailRecipient ||
+                    (emailPreviewTab === 'FULL_TEXT' && Boolean(option2PricingValidation && !option2PricingValidation.isValid))
+                  }
                   onClick={handleSendProposalEmail}
                   className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black disabled:opacity-50 flex items-center space-x-2 cursor-pointer shadow-md shadow-indigo-600/20"
                 >

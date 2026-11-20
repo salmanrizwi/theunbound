@@ -949,16 +949,17 @@ export function validateQuotationOutputConsistency(
   });
 
   // 3. Cross-channel Total Price & Key Content Parity
-  const requiredTokens: Array<{ label: string; value: string }> = [
-    { label: 'Quote Reference', value: model.quoteNumber },
-    { label: 'Version Marker', value: `v${model.version}` },
-    { label: 'Final Customer Selling Price', value: model.finalCustomerSellingPriceFormatted },
-    { label: 'Land Part Total', value: model.landPartTotalFormatted }
+  const requiredTokens: Array<{ label: string; value: string; includeInOption2?: boolean }> = [
+    { label: 'Quote Reference', value: model.quoteNumber, includeInOption2: true },
+    { label: 'Version Marker', value: `v${model.version}`, includeInOption2: true },
+    { label: 'Final Customer Selling Price', value: model.finalCustomerSellingPriceFormatted, includeInOption2: false },
+    { label: 'Land Part Total', value: model.landPartTotalFormatted, includeInOption2: true }
   ];
   if (model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted) {
     requiredTokens.push({
       label: 'Hotel Accommodation Total',
-      value: model.hotelAccommodationTotalFormatted
+      value: model.hotelAccommodationTotalFormatted,
+      includeInOption2: true
     });
   }
 
@@ -973,12 +974,15 @@ export function validateQuotationOutputConsistency(
     if (!emailOutput.textBody.includes(tok.value)) {
       mismatches.push(`Email Plain Text missing ${tok.label} (${tok.value})`);
     }
-    if (!emailSimplePlainText.includes(tok.value)) {
+    if (tok.includeInOption2 !== false && !emailSimplePlainText.includes(tok.value)) {
       mismatches.push(`Email Semantic Copy missing ${tok.label} (${tok.value})`);
     }
     if (!whatsAppOutput.includes(tok.value)) {
       mismatches.push(`WhatsApp missing ${tok.label} (${tok.value})`);
     }
+  }
+  if (model.hotelPartTotalFormatted && !emailSimplePlainText.includes(model.hotelPartTotalFormatted)) {
+    mismatches.push(`Email Semantic Copy missing Hotel Part Total (${model.hotelPartTotalFormatted})`);
   }
 
   // Verify every scheduled service and hotel appears across PDF, Email, and WhatsApp

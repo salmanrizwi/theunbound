@@ -338,11 +338,14 @@ export interface QuotePresentationModel {
   hasHotelAccommodation: boolean;
   hotelAccommodationTotalNumeric: number;
   hotelAccommodationTotalFormatted?: string;
+  hotelPartTotalFormatted?: string;
+  isHotelPartTotalAuthoritative?: boolean;
   hotelItemsCount: number;
 
   hasLandServices: boolean;
   landPartTotalNumeric: number;
   landPartTotalFormatted: string;
+  isLandPartTotalAuthoritative?: boolean;
   landItemsCount: number;
   
   // Agent & Agency Branding
@@ -1463,11 +1466,22 @@ export function buildQuotePresentationModel(
 
   const centralTotals = calculateQuoteTotal(quote, activeOption?.id, undefined, effectiveCurrency);
 
+  const rawAuthHotelTotal = authSnap?.pricing?.hotelAccommodationTotal;
+  const rawAuthLandTotal = authSnap?.pricing?.landPartTotal;
+
+  const isHotelPartTotalAuthoritative = useAuthSnapPricing
+    ? (isLandOnlyQuote || (typeof rawAuthHotelTotal === 'number' && Number.isFinite(rawAuthHotelTotal) && rawAuthHotelTotal >= 0))
+    : (isLandOnlyQuote || (typeof centralTotals.hotelTotalSellingPrice === 'number' && Number.isFinite(centralTotals.hotelTotalSellingPrice) && centralTotals.hotelTotalSellingPrice >= 0));
+
+  const isLandPartTotalAuthoritative = useAuthSnapPricing
+    ? (typeof rawAuthLandTotal === 'number' && Number.isFinite(rawAuthLandTotal) && rawAuthLandTotal >= 0)
+    : (typeof centralTotals.landPartTotalSellingPrice === 'number' && Number.isFinite(centralTotals.landPartTotalSellingPrice) && centralTotals.landPartTotalSellingPrice >= 0);
+
   let hotelAccommodationTotalNumeric = useAuthSnapPricing
-    ? roundCurrencyAmount(isLandOnlyQuote ? 0 : (authSnap!.pricing.hotelAccommodationTotal || 0), effectiveCurrency)
+    ? roundCurrencyAmount(isLandOnlyQuote ? 0 : (isHotelPartTotalAuthoritative ? Number(rawAuthHotelTotal) : 0), effectiveCurrency)
     : centralTotals.hotelTotalSellingPrice;
   let landPartTotalNumeric = useAuthSnapPricing
-    ? roundCurrencyAmount(authSnap!.pricing.landPartTotal || 0, effectiveCurrency)
+    ? roundCurrencyAmount(isLandPartTotalAuthoritative ? Number(rawAuthLandTotal) : 0, effectiveCurrency)
     : centralTotals.landPartTotalSellingPrice;
   const hotelItemsCount = centralTotals.hotelItemsIncludedCount;
   const landItemsCount = centralTotals.landItemsIncludedCount;
@@ -1487,10 +1501,15 @@ export function buildQuotePresentationModel(
   const hotelAccommodationTotalFormatted = hasHotelAccommodation
     ? formatCurrency(hotelAccommodationTotalNumeric, effectiveCurrency)
     : undefined;
+  const hotelPartTotalFormatted = isHotelPartTotalAuthoritative
+    ? formatCurrency(hotelAccommodationTotalNumeric, effectiveCurrency)
+    : undefined;
 
   // Critical Rule: Land Part Total strictly excludes all hotel accommodation charges
   const hasLandServices = landPartTotalNumeric > 0 || landItemsCount > 0;
-  const landPartTotalFormatted = formatCurrency(landPartTotalNumeric, effectiveCurrency);
+  const landPartTotalFormatted = isLandPartTotalAuthoritative
+    ? formatCurrency(landPartTotalNumeric, effectiveCurrency)
+    : formatCurrency(0, effectiveCurrency);
 
   // Authoritative Final Customer Selling Price (Hotel Accommodation Total + Land Part Total)
   const finalCustomerSellingPriceNumeric = roundCurrencyAmount(
@@ -1755,10 +1774,13 @@ export function buildQuotePresentationModel(
     hasHotelAccommodation,
     hotelAccommodationTotalNumeric,
     hotelAccommodationTotalFormatted,
+    hotelPartTotalFormatted,
+    isHotelPartTotalAuthoritative,
     hotelItemsCount,
     hasLandServices,
     landPartTotalNumeric,
     landPartTotalFormatted,
+    isLandPartTotalAuthoritative,
     landItemsCount,
     visaServices: visaItems.map(it => transformQuoteItemToPresentation(it, effectiveCurrency)),
     days,
