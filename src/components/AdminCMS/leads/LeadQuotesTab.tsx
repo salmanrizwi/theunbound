@@ -7,6 +7,7 @@ import {
   User
 } from '../../../types';
 import { formatCurrency } from '../../../services/pricingEngine';
+import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { AppDatabase } from '../../../services/db';
 import { canUserViewInternalCostBreakdown } from '../../../services/permissionEngine';
 import { downloadQuotationPDF } from '../../../services/pdfGenerator';
@@ -57,6 +58,7 @@ export const LeadQuotesTab: React.FC<LeadQuotesTabProps> = ({
   isConverting = false
 }) => {
   const db = AppDatabase.getInstance();
+  const { convertForDisplay } = useDisplayCurrency();
   const activeSnapshot = lead.quoteSnapshot;
   const canViewInternalCosts = useMemo(
     () => canUserViewInternalCostBreakdown(currentUser),
@@ -241,41 +243,65 @@ export const LeadQuotesTab: React.FC<LeadQuotesTabProps> = ({
             </span>
           </div>
 
-          <div className={`grid grid-cols-2 ${canViewInternalCosts ? 'sm:grid-cols-4' : 'sm:grid-cols-2'} gap-3 text-xs`}>
-            {canViewInternalCosts && (
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <span className="text-slate-400 font-semibold block text-[11px]">Net Supplier Cost</span>
-                <span className="font-mono font-bold text-slate-800 text-sm mt-0.5 block">
-                  {activeSnapshot.currency || 'USD'} {(activeSnapshot.totalNetCost || 0).toLocaleString()}
-                </span>
+          {(() => {
+            const snapCurr = activeSnapshot.currency || 'USD';
+            const snapNetConv = convertForDisplay(activeSnapshot.totalNetCost || 0, snapCurr);
+            const snapMarginConv = convertForDisplay(activeSnapshot.marginAmount || 0, snapCurr);
+            const snapSellConv = convertForDisplay(
+              activeSnapshot.finalSellingPrice || activeSnapshot.totalSellingPrice || 0,
+              snapCurr
+            );
+            return (
+              <div className={`grid grid-cols-2 ${canViewInternalCosts ? 'sm:grid-cols-4' : 'sm:grid-cols-2'} gap-3 text-xs`}>
+                {canViewInternalCosts && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-slate-400 font-semibold block text-[11px]">Net Supplier Cost</span>
+                    <span className="font-mono font-bold text-slate-800 text-sm mt-0.5 block">
+                      {snapNetConv.formatted}
+                    </span>
+                    {snapNetConv.isConverted && (
+                      <span className="text-[10px] font-mono text-slate-400 block">
+                        Quote: {snapNetConv.nativeFormatted}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {canViewInternalCosts && (
+                  <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                    <span className="text-slate-400 font-semibold block text-[11px]">Target Margin</span>
+                    <span className="font-mono font-bold text-[#008f77] text-sm mt-0.5 block">
+                      {activeSnapshot.marginPercent || 15}% ({snapMarginConv.formatted})
+                    </span>
+                    {snapMarginConv.isConverted && (
+                      <span className="text-[10px] font-mono text-slate-400 block">
+                        Quote: {snapMarginConv.nativeFormatted}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 font-semibold block text-[11px]">Gross Selling Price</span>
+                  <span className="font-mono font-black text-slate-900 text-base mt-0.5 block">
+                    {snapSellConv.formatted}
+                  </span>
+                  {snapSellConv.isConverted && (
+                    <span className="text-[10px] font-mono text-slate-400 block">
+                      Quote: {snapSellConv.nativeFormatted}
+                    </span>
+                  )}
+                </div>
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                  <span className="text-slate-400 font-semibold block text-[11px]">Commercial State</span>
+                  <span className="font-bold text-slate-800 mt-0.5 block truncate">
+                    {lead.bookingReference ? `Linked to #${lead.bookingReference}` : 'Ready for Conversion'}
+                  </span>
+                </div>
               </div>
-            )}
-
-            {canViewInternalCosts && (
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                <span className="text-slate-400 font-semibold block text-[11px]">Target Margin</span>
-                <span className="font-mono font-bold text-[#008f77] text-sm mt-0.5 block">
-                  {activeSnapshot.marginPercent || 15}% ({activeSnapshot.currency || 'USD'}{' '}
-                  {(activeSnapshot.marginAmount || 0).toLocaleString()})
-                </span>
-              </div>
-            )}
-
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-              <span className="text-slate-400 font-semibold block text-[11px]">Gross Selling Price</span>
-              <span className="font-mono font-black text-slate-900 text-base mt-0.5 block">
-                {activeSnapshot.currency || 'USD'}{' '}
-                {(activeSnapshot.finalSellingPrice || activeSnapshot.totalSellingPrice || 0).toLocaleString()}
-              </span>
-            </div>
-
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-              <span className="text-slate-400 font-semibold block text-[11px]">Commercial State</span>
-              <span className="font-bold text-slate-800 mt-0.5 block truncate">
-                {lead.bookingReference ? `Linked to #${lead.bookingReference}` : 'Ready for Conversion'}
-              </span>
-            </div>
-          </div>
+            );
+          })()}
 
           {(activeSnapshot.quoteId || lead.quoteId) && onOpenQuote && (
             <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
@@ -400,9 +426,23 @@ export const LeadQuotesTab: React.FC<LeadQuotesTabProps> = ({
                       >
                         {group.status}
                       </span>
-                      <span className="font-mono font-black text-sm text-slate-900">
-                        {formatCurrency(group.latestTotalSellingPrice || 0, group.currency || 'USD')}
-                      </span>
+                      <div className="text-right">
+                        {(() => {
+                          const grpSellConv = convertForDisplay(group.latestTotalSellingPrice || 0, group.currency || 'USD');
+                          return (
+                            <>
+                              <span className="font-mono font-black text-sm text-slate-900 block">
+                                {grpSellConv.formatted}
+                              </span>
+                              {grpSellConv.isConverted && (
+                                <span className="text-[10px] font-mono text-slate-400 block">
+                                  Quote: {grpSellConv.nativeFormatted}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
 
@@ -438,17 +478,25 @@ export const LeadQuotesTab: React.FC<LeadQuotesTabProps> = ({
                         {latestVer?.changesSummary || quote?.latestSaveNote || 'Saved snapshot'}
                       </span>
                     </div>
-                    {canViewInternalCosts && (
-                      <div>
-                        <span className="text-slate-400 block">Net Cost</span>
-                        <span className="font-mono font-bold text-slate-800">
-                          {formatCurrency(
-                            latestVer?.totalNetCost ?? quote?.totalNetCost ?? 0,
-                            group.currency || 'USD'
+                    {canViewInternalCosts && (() => {
+                      const grpNetConv = convertForDisplay(
+                        latestVer?.totalNetCost ?? quote?.totalNetCost ?? 0,
+                        group.currency || 'USD'
+                      );
+                      return (
+                        <div>
+                          <span className="text-slate-400 block">Net Cost</span>
+                          <span className="font-mono font-bold text-slate-800 block">
+                            {grpNetConv.formatted}
+                          </span>
+                          {grpNetConv.isConverted && (
+                            <span className="text-[9px] font-mono text-slate-400 block">
+                              Native: {grpNetConv.nativeFormatted}
+                            </span>
                           )}
-                        </span>
-                      </div>
-                    )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Group Actions */}
@@ -604,29 +652,46 @@ export const LeadQuotesTab: React.FC<LeadQuotesTabProps> = ({
                                 </span>
                               </div>
 
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono font-black text-slate-900">
-                                  {formatCurrency(v.totalSellingPrice || 0, v.currency || 'USD')}
-                                </span>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                  {v.status || 'DRAFT'}
-                                </span>
-                              </div>
+                              {(() => {
+                                const verCurr = v.currency || 'USD';
+                                const verSellConv = convertForDisplay(v.totalSellingPrice || 0, verCurr);
+                                return (
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-right">
+                                      <span className="font-mono font-black text-slate-900 block">
+                                        {verSellConv.formatted}
+                                      </span>
+                                      {verSellConv.isConverted && (
+                                        <span className="text-[9px] font-mono text-slate-400 block">
+                                          Quote: {verSellConv.nativeFormatted}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                      {v.status || 'DRAFT'}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
                             </div>
 
                             <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
                               <span>
                                 {v.changesSummary || 'Explicit quotation draft saved'} •{' '}
                                 <strong>{v.totalItems ?? v.items?.length ?? 0}</strong> services
-                                {canViewInternalCosts && v.totalNetCost !== undefined && (
-                                  <span>
-                                    {' '}
-                                    • Net:{' '}
-                                    <strong className="font-mono">
-                                      {formatCurrency(v.totalNetCost, v.currency || 'USD')}
-                                    </strong>
-                                  </span>
-                                )}
+                                {canViewInternalCosts && v.totalNetCost !== undefined && (() => {
+                                  const verNetConv = convertForDisplay(v.totalNetCost, v.currency || 'USD');
+                                  return (
+                                    <span>
+                                      {' '}
+                                      • Net:{' '}
+                                      <strong className="font-mono">
+                                        {verNetConv.formatted}
+                                      </strong>
+                                      {verNetConv.isConverted ? ` (${verNetConv.nativeFormatted})` : ''}
+                                    </span>
+                                  );
+                                })()}
                               </span>
 
                               <div className="flex flex-wrap items-center gap-1.5">

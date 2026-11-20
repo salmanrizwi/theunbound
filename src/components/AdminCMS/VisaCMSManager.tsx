@@ -15,6 +15,7 @@ import {
   MarginType
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
@@ -163,6 +164,7 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
   onSubTabChange 
 }) => {
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
 
   // Primary Workspace Tabs
@@ -1724,16 +1726,27 @@ const VisaCMSManagerInner: React.FC<VisaCMSManagerProps> = ({
                       </td>
 
                       {/* Authoritative Final Selling Price */}
-                      <td className="py-3.5 px-4">
-                        <div className="font-black text-slate-900 text-sm font-mono text-[#008972]">
-                          {formatCurrency(item.finalPrice, item.currency)}
-                        </div>
-                        {item.nettPrice !== undefined && (
-                          <span className="text-[9px] text-slate-400 block font-mono">
-                            Nett Base: {formatCurrency(item.nettPrice, item.currency)}
-                          </span>
-                        )}
-                      </td>
+                      {(() => {
+                        const finalConv = convertForDisplay(item.finalPrice || 0, item.currency || 'USD');
+                        const nettConv = item.nettPrice !== undefined ? convertForDisplay(item.nettPrice, item.currency || 'USD') : null;
+                        return (
+                          <td className="py-3.5 px-4">
+                            <div className={`font-black text-sm font-mono ${finalConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-[#008972]'}`}>
+                              {finalConv.formatted}
+                            </div>
+                            {finalConv.isConverted && (
+                              <span className="text-[9px] text-slate-400 block font-mono">
+                                Native: {finalConv.nativeFormatted}
+                              </span>
+                            )}
+                            {nettConv && (
+                              <span className="text-[9px] text-slate-400 block font-mono">
+                                Nett Base: {nettConv.formatted}
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })()}
 
                       {/* Status */}
                       <td className="py-3.5 px-4">

@@ -1443,6 +1443,25 @@ service cloud.firestore {
       allow read, write: if canAccessCMSSystem();
     }
 
+    function isValidGlobalDisplayCurrency(data) {
+      return data != null
+        && data.keys().hasAll(['displayCurrency', 'updatedAt', 'updatedBy'])
+        && data.displayCurrency is string
+        && data.displayCurrency in ['USD', 'EUR', 'GBP', 'JPY', 'AED', 'THB', 'AUD', 'CAD', 'SGD', 'INR', 'CHF']
+        && data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64
+        && data.updatedBy is string && data.updatedBy.size() > 0 && data.updatedBy.size() <= 128
+        && (!('updatedByEmail' in data) || (data.updatedByEmail is string && data.updatedByEmail.size() <= 160))
+        && (!('updatedByName' in data) || (data.updatedByName is string && data.updatedByName.size() <= 160))
+        && (!('updatedByRole' in data) || data.updatedByRole in ['ADMIN', 'SUPER_ADMIN'])
+        && (!('fxSource' in data) || (data.fxSource is string && data.fxSource.size() <= 120));
+    }
+
+    match /systemSettings/globalDisplayCurrency {
+      allow read: if true;
+      allow create, update: if isMasterAdmin() && isValidGlobalDisplayCurrency(request.resource.data);
+      allow delete: if false;
+    }
+
     match /system_settings/{document=**} {
       allow read: if true;
       allow write: if canAccessCMSSystem();
@@ -1775,7 +1794,7 @@ service cloud.firestore {
         request.resource.data.uid == request.auth.uid &&
         request.resource.data.quoteId is string && request.resource.data.quoteId.size() > 0 && request.resource.data.quoteId.size() <= 128 &&
         request.resource.data.idempotencyKey is string && request.resource.data.idempotencyKey.size() > 0 && request.resource.data.idempotencyKey.size() <= 200 &&
-        request.resource.data.operationType in ['SAVE_DRAFT', 'SNAPSHOT_CREATE', 'PDF_GENERATE', 'EMAIL_SEND', 'WHATSAPP_SHARE'] &&
+        request.resource.data.operationType in ['SAVE_DRAFT', 'SNAPSHOT_CREATE', 'PDF_GENERATE', 'EMAIL_SEND', 'WHATSAPP_SHARE', 'SAVE_MASTER_PACKAGE', 'CONVERT_BOOKING'] &&
         request.resource.data.status in ['IDLE', 'PREPARING', 'IN_PROGRESS', 'VERIFYING', 'SUCCEEDED', 'FAILED', 'TIMED_OUT', 'RETRY_AVAILABLE'] &&
         !('internalNettCost' in request.resource.data) &&
         !('supplierCost' in request.resource.data) &&

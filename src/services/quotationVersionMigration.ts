@@ -395,18 +395,30 @@ export async function persistVerifiedSplitVersionAsync(params: {
 
   let writtenSectionCount = 0;
   try {
-    for (let i = 0; i < sectionDocs.length; i += 1) {
-      const secDoc = sectionDocs[i];
-      if (validExistingIds.has(secDoc.sectionId)) {
-        continue;
+    const sectionsToWrite = sectionDocs.filter(secDoc => !validExistingIds.has(secDoc.sectionId));
+    if (testHooks?.failAfterSectionIndex !== undefined) {
+      for (let i = 0; i < sectionDocs.length; i += 1) {
+        const secDoc = sectionDocs[i];
+        if (validExistingIds.has(secDoc.sectionId)) {
+          continue;
+        }
+        if (i >= testHooks.failAfterSectionIndex) {
+          throw new Error(
+            `Simulated section write failure at index ${i} (${secDoc.sectionId}) for ${versionId}`
+          );
+        }
+        await adapter.createSection(quoteId, versionId, secDoc.sectionId, secDoc);
+        writtenSectionCount += 1;
       }
-      if (testHooks?.failAfterSectionIndex !== undefined && i >= testHooks.failAfterSectionIndex) {
-        throw new Error(
-          `Simulated section write failure at index ${i} (${secDoc.sectionId}) for ${versionId}`
+    } else {
+      const SECTION_WRITE_BATCH_SIZE = 6;
+      for (let b = 0; b < sectionsToWrite.length; b += SECTION_WRITE_BATCH_SIZE) {
+        const batch = sectionsToWrite.slice(b, b + SECTION_WRITE_BATCH_SIZE);
+        await Promise.all(
+          batch.map(secDoc => adapter.createSection(quoteId, versionId, secDoc.sectionId, secDoc))
         );
+        writtenSectionCount += batch.length;
       }
-      await adapter.createSection(quoteId, versionId, secDoc.sectionId, secDoc);
-      writtenSectionCount += 1;
     }
 
     // Read written section documents back from Firestore before committing

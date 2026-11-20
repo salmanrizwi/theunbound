@@ -42,8 +42,8 @@ import {
 } from 'lucide-react';
 import { TravelLead, B2BCustomer, User, GroupedLeadQuotationVersions } from '../../types';
 import { AppDatabase } from '../../services/db';
-import { formatCurrency } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
 
 interface B2BMyLeadsAndClientsCRMViewProps {
@@ -66,6 +66,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
   onNavigateToBooking
 }) => {
   const { user } = useAuth();
+  const { convertForDisplay, aggregateForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
 
   // Top-level CRM sub-view: 'assigned-leads' or 'clients'
@@ -668,14 +669,20 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                             </div>
                           </div>
 
-                          {lead.estimatedBudget && (
-                            <div className="flex items-center justify-between text-xs px-1 text-slate-600">
-                              <span className="text-slate-400 font-medium">Budget:</span>
-                              <span className="font-mono font-bold text-slate-900">
-                                {lead.currency || 'USD'} {Number(lead.estimatedBudget).toLocaleString()}
-                              </span>
-                            </div>
-                          )}
+                          {lead.estimatedBudget && (() => {
+                            const budgetConv = convertForDisplay(Number(lead.estimatedBudget), lead.currency || 'USD');
+                            return (
+                              <div className="flex items-center justify-between text-xs px-1 text-slate-600">
+                                <span className="text-slate-400 font-medium">Budget:</span>
+                                <span className="font-mono font-bold text-slate-900">
+                                  {budgetConv.formatted}
+                                  {budgetConv.isConverted && (
+                                    <span className="text-[10px] font-normal text-slate-400 ml-1">({budgetConv.nativeFormatted})</span>
+                                  )}
+                                </span>
+                              </div>
+                            );
+                          })()}
 
                           {/* Linked References */}
                           {(lead.quoteNumber || lead.bookingReference) && (
@@ -768,7 +775,17 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                                 {lead.paxAdults || 2} Adults {lead.paxChildren ? `+ ${lead.paxChildren} Ch` : ''}
                               </td>
                               <td className="py-3 px-4 font-mono font-bold text-slate-900">
-                                {lead.estimatedBudget ? `${lead.currency || 'USD'} ${Number(lead.estimatedBudget).toLocaleString()}` : '—'}
+                                {lead.estimatedBudget ? (() => {
+                                  const budgetConv = convertForDisplay(Number(lead.estimatedBudget), lead.currency || 'USD');
+                                  return (
+                                    <div>
+                                      <div className={budgetConv.status === 'UNAVAILABLE' ? 'text-amber-700' : ''}>{budgetConv.formatted}</div>
+                                      {budgetConv.isConverted && (
+                                        <div className="text-[10px] font-normal text-slate-400">Native: {budgetConv.nativeFormatted}</div>
+                                      )}
+                                    </div>
+                                  );
+                                })() : '—'}
                               </td>
                               <td className="py-3 px-4">
                                 {isBooked ? (
@@ -856,7 +873,11 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-start">
                   {kanbanStages.map(stage => {
                     const stageLeads = filteredLeads.filter(stage.match);
-                    const stageValue = stageLeads.reduce((acc, l) => acc + Number(l.estimatedBudget || 0), 0);
+                    const pricedStageLeads = stageLeads.filter(l => Number(l.estimatedBudget || 0) > 0);
+                    const stageAgg = aggregateForDisplay(pricedStageLeads, l => ({
+                      amount: Number(l.estimatedBudget || 0),
+                      currency: l.currency || 'USD'
+                    }));
 
                     return (
                       <div 
@@ -873,7 +894,8 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                               </span>
                             </h4>
                             <span className="text-[10px] text-slate-400 font-mono">
-                              ${stageValue.toLocaleString()}
+                              {stageAgg.formattedTotal}
+                              {stageAgg.hasUnavailableRates && ` (${stageAgg.unavailableCount} FX N/A)`}
                             </span>
                           </div>
                         </div>
@@ -920,8 +942,8 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                                   <span className="text-slate-400">
                                     {lead.paxAdults || 2} Adults
                                   </span>
-                                  <span className="font-mono font-bold text-slate-800">
-                                    {lead.estimatedBudget ? `${lead.currency || '$'}${Number(lead.estimatedBudget).toLocaleString()}` : ''}
+                                  <span className="font-mono font-bold text-slate-800" title={lead.estimatedBudget ? `Native: ${lead.currency || 'USD'} ${Number(lead.estimatedBudget).toLocaleString()}` : undefined}>
+                                    {lead.estimatedBudget ? convertForDisplay(Number(lead.estimatedBudget), lead.currency || 'USD').formatted : ''}
                                   </span>
                                 </div>
 
@@ -1098,9 +1120,21 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                       </div>
                       <div className="p-2 rounded-xl bg-slate-50 border border-slate-100">
                         <span className="text-[10px] text-slate-400 block uppercase font-bold">Est. Budget</span>
-                        <span className="font-mono font-bold text-slate-900 block">
-                          ${Number(customer.budgetPerPersonUSD || 0).toLocaleString()}
-                        </span>
+                        {(() => {
+                          const clientConv = convertForDisplay(Number(customer.budgetPerPersonUSD || 0), 'USD');
+                          return (
+                            <>
+                              <span className="font-mono font-bold text-slate-900 block">
+                                {clientConv.formatted}
+                              </span>
+                              {clientConv.isConverted && (
+                                <span className="text-[10px] text-slate-400 font-mono block">
+                                  Native: {clientConv.nativeFormatted}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -1203,7 +1237,9 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                         </div>
                         <div>
                           <span className="text-slate-400 text-[9px] block">Budget Per Person</span>
-                          <span className="font-semibold text-teal-600">${Number(selectedLead.estimatedBudget || 0).toLocaleString()}</span>
+                          <span className="font-semibold text-teal-600">
+                            {convertForDisplay(Number(selectedLead.estimatedBudget || 0), selectedLead.currency || 'USD').formatted}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -1311,9 +1347,21 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                       </div>
                       <div className="p-3 bg-white rounded-xl border border-slate-200 text-center">
                         <span className="text-[10px] text-slate-400 block">Estimated Budget</span>
-                        <span className="text-base font-bold text-[#008f77]">
-                          {selectedLead.currency || 'USD'} {Number(selectedLead.estimatedBudget || 0).toLocaleString()}
-                        </span>
+                        {(() => {
+                          const budgetConv = convertForDisplay(Number(selectedLead.estimatedBudget || 0), selectedLead.currency || 'USD');
+                          return (
+                            <>
+                              <span className="text-base font-bold text-[#008f77] block">
+                                {budgetConv.formatted}
+                              </span>
+                              {budgetConv.isConverted && (
+                                <span className="text-[10px] text-slate-400 font-mono block">
+                                  Native: {budgetConv.nativeFormatted}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -1387,9 +1435,21 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                                 <span className="text-xs font-bold text-slate-700">{group.title}</span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <span className="font-mono font-black text-sm text-slate-900">
-                                  {formatCurrency(group.latestTotalSellingPrice || 0, group.currency || 'USD')}
-                                </span>
+                                {(() => {
+                                  const grpConv = convertForDisplay(group.latestTotalSellingPrice || 0, group.currency || 'USD');
+                                  return (
+                                    <div className="text-right">
+                                      <span className={`font-mono font-black text-sm ${grpConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-900'}`}>
+                                        {grpConv.formatted}
+                                      </span>
+                                      {grpConv.isConverted && (
+                                        <span className="text-[10px] text-slate-400 font-mono block">
+                                          Quote: {grpConv.nativeFormatted}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white border border-slate-200 text-slate-700">
                                   {group.status}
                                 </span>
@@ -1459,9 +1519,17 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                                         <span className="text-[11px] text-slate-500">
                                           {new Date(v.updatedAt || v.createdAt).toLocaleString()}
                                         </span>
-                                        <span className="text-[11px] font-bold text-slate-800 font-mono">
-                                          {formatCurrency(v.totalSellingPrice || 0, v.currency || 'USD')}
-                                        </span>
+                                        {(() => {
+                                          const verConv = convertForDisplay(v.totalSellingPrice || 0, v.currency || 'USD');
+                                          return (
+                                            <span className={`text-[11px] font-bold font-mono ${verConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-800'}`}>
+                                              {verConv.formatted}
+                                              {verConv.isConverted && (
+                                                <span className="text-[10px] font-normal text-slate-400 ml-1">({verConv.nativeFormatted})</span>
+                                              )}
+                                            </span>
+                                          );
+                                        })()}
                                       </div>
                                       <p className="text-[11px] text-slate-500">
                                         {v.createdByName || 'Agent'} • {v.totalItems ?? v.items?.length ?? 0} services

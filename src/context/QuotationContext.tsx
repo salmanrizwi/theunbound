@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useMemo, useCall
 import { CurrencyCode, Product, QuoteItem, Quotation, TravelLead, B2BPackage, TripRouteHub, QuoteBuilderHandoffPayload, QuoteItemSource } from '../types';
 import { calculateProductPrice, calculateProductPriceForAgent, resolveInventoryValidity, evaluateInventoryValidity, roundCurrencyAmount, buildQuotationCurrencySnapshot } from '../services/pricingEngine';
 import { currencyEngine } from '../services/currencyEngine';
+import { displayCurrencyService } from '../services/displayCurrencyService';
 import { sanitizeProductForAgent } from '../utils/customerQuoteSanitizer';
 import { AppDatabase } from '../services/db';
 import { campaignAnalytics } from '../services/campaignAnalyticsService';
@@ -75,6 +76,7 @@ interface QuotationContextType {
     }
   ) => void;
   removeProductFromQuote: (itemId: string) => void;
+  removeProductsByIds: (itemIds: string[]) => void;
   updateItemPax: (itemId: string, pax: { adults: number; children: number; infants: number }) => void;
   updateItemTravelDate: (itemId: string, date: string) => void;
   updateItemServiceTime: (itemId: string, time: string) => void;
@@ -242,6 +244,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
   const [currency, setCurrencyState] = useState<CurrencyCode>(() => {
     try {
+      const globalCurr = displayCurrencyService.getDisplayCurrency();
+      if (globalCurr) return globalCurr;
       if (typeof window !== 'undefined') {
         const savedCurr = localStorage.getItem('theunbound_selected_currency');
         const validCurrencies: CurrencyCode[] = ['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'SGD', 'AED', 'CHF', 'THB'];
@@ -262,11 +266,23 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
   const [fxRateTick, setFxRateTick] = useState(0);
   useEffect(() => {
-    const unsub = currencyEngine.subscribe(() => {
+    const unsubEngine = currencyEngine.subscribe(() => {
+      setFxRateTick(t => t + 1);
+    });
+    const lastGlobalRef = { current: displayCurrencyService.getDisplayCurrency() };
+    const unsubGlobal = displayCurrencyService.subscribe(() => {
+      const nextGlobal = displayCurrencyService.getDisplayCurrency();
+      if (nextGlobal !== lastGlobalRef.current) {
+        lastGlobalRef.current = nextGlobal;
+        if (!isInsideB2BQuoteBuilder()) {
+          setCurrencyState(nextGlobal);
+        }
+      }
       setFxRateTick(t => t + 1);
     });
     return () => {
-      unsub();
+      unsubEngine();
+      unsubGlobal();
     };
   }, []);
   const [isQuoteDrawerOpenState, setIsQuoteDrawerOpenState] = useState(false);
@@ -293,30 +309,73 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   latestItemsRef.current = items;
   const itemsDirtyRef = useRef<boolean>(false);
 
+  const compactQuoteItemsForStorage = useCallback((targetItems: QuoteItem[]): any[] => {
+    return targetItems.map(it => {
+      const prod = it.product as any;
+      if (!prod) return it;
+      const hasHeavyGallery = Array.isArray(prod.galleryImages) && prod.galleryImages.length > 1;
+      const hasInlineDataUrl = typeof prod.image === 'string' && prod.image.startsWith('data:') && prod.image.length > 8192;
+      const hasLongDesc = typeof prod.longDescription === 'string' && prod.longDescription.length > 600;
+      const hasHeavyRooms = Array.isArray(prod.roomTypes) && prod.roomTypes.length > 0;
+      if (!hasHeavyGallery && !hasInlineDataUrl && !hasLongDesc && !hasHeavyRooms) {
+        return it;
+      }
+      const nextProd = { ...prod };
+      if (hasHeavyGallery) nextProd.galleryImages = prod.galleryImages.slice(0, 1);
+      if (hasInlineDataUrl) delete nextProd.image;
+      if (hasLongDesc) nextProd.longDescription = prod.longDescription.slice(0, 600);
+      if (hasHeavyRooms) delete nextProd.roomTypes;
+      return { ...it, product: nextProd };
+    });
+  }, []);
+
   const flushItemsToStorage = useCallback((targetItems: QuoteItem[]) => {
     if (typeof window === 'undefined') return;
+    if (!itemsDirtyRef.current) return;
     try {
-      const serialized = JSON.stringify(targetItems);
+      if (targetItems.length === 0) {
+        const hadSession = sessionStorage.getItem('theunbound_cart_items');
+        if (!hadSession || hadSession === '[]') {
+          itemsDirtyRef.current = false;
+          return;
+        }
+      }
+      const compact = compactQuoteItemsForStorage(targetItems);
+      const serialized = JSON.stringify(compact);
       try {
         sessionStorage.setItem('theunbound_cart_items', serialized);
       } catch {}
-      try {
-        localStorage.setItem('theunbound_cart_items', serialized);
-      } catch {}
+      if (serialized.length <= 262144) {
+        try {
+          localStorage.setItem('theunbound_cart_items', serialized);
+        } catch {}
+      }
       itemsDirtyRef.current = false;
     } catch (e) {
       console.warn('Cart items storage sync note:', e);
     }
-  }, []);
+  }, [compactQuoteItemsForStorage]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     itemsDirtyRef.current = true;
     const handleFlush = () => flushItemsToStorage(latestItemsRef.current);
-    const timer = window.setTimeout(handleFlush, 300);
+    let idleHandle: number | null = null;
+    const timer = window.setTimeout(() => {
+      const w = window as any;
+      if (typeof w.requestIdleCallback === 'function') {
+        idleHandle = w.requestIdleCallback(handleFlush, { timeout: 1000 });
+      } else {
+        handleFlush();
+      }
+    }, 550);
     window.addEventListener('pagehide', handleFlush);
     return () => {
       window.clearTimeout(timer);
+      const w = window as any;
+      if (idleHandle !== null && typeof w.cancelIdleCallback === 'function') {
+        w.cancelIdleCallback(idleHandle);
+      }
       window.removeEventListener('pagehide', handleFlush);
     };
   }, [items, flushItemsToStorage]);
@@ -445,8 +504,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   // Recalculate all items whenever currency or user pricingTier changes (preserve locked/issued snapshots if currency unchanged)
   useEffect(() => {
-    setItems(prevItems =>
-      prevItems.map(item => {
+    setItems(prevItems => {
+      if (prevItems.length === 0) return prevItems;
+      let anyChanged = false;
+      const nextItems = prevItems.map(item => {
         if (isLocked && item.calculation && item.calculation.currency === currency) {
           return item;
         }
@@ -460,6 +521,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
               restored,
               (item as any).metadata?.dayNumber || 1
             );
+            anyChanged = true;
             return {
               ...refreshedItem,
               id: item.id,
@@ -494,12 +556,14 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
+        anyChanged = true;
         return {
           ...item,
           calculation
         };
-      })
-    );
+      });
+      return anyChanged ? nextItems : prevItems;
+    });
   }, [currency, pricingTier, isAgent, isLocked, fxRateTick]);
 
   const addProductToQuote = useCallback((
@@ -659,6 +723,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const removeProductFromQuote = useCallback((itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
+  }, []);
+
+  const removeProductsByIds = useCallback((itemIds: string[]) => {
+    if (!itemIds || itemIds.length === 0) return;
+    const removeSet = new Set(itemIds);
+    setItems(prev => {
+      const next = prev.filter(i => !removeSet.has(i.id));
+      return next.length === prev.length ? prev : next;
+    });
   }, []);
 
   const updateItemPax = useCallback((itemId: string, pax: { adults: number; children: number; infants: number }) => {
@@ -1450,6 +1523,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setIsQuoteDrawerOpen,
     addProductToQuote,
     removeProductFromQuote,
+    removeProductsByIds,
     updateItemPax,
     updateItemTravelDate,
     updateItemServiceTime,
@@ -1535,6 +1609,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setCurrency,
     addProductToQuote,
     removeProductFromQuote,
+    removeProductsByIds,
     updateItemPax,
     updateItemTravelDate,
     updateItemServiceTime,

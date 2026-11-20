@@ -255,24 +255,52 @@ export class CurrencyConversionService {
     let rateTimestamp = status.lastFetchedAt || new Date().toISOString();
     let cacheStatus: 'LIVE' | 'STALE' | 'CACHED' | 'BASELINE' | 'MISSING' = status.isStale ? 'STALE' : (status.isLive ? 'LIVE' : 'CACHED');
 
-    // 1. Direct Pair lookup
+    // 1. Direct Pair lookup (if explicitly PAUSED, block conversion — never fallback to baseline or rate 1)
     const directPair = this.engine.getPair(pairId);
+    if (directPair?.status === 'PAUSED') {
+      return {
+        rate: 0,
+        isAvailable: false,
+        isLoading: false,
+        isStale: true,
+        status: 'UNAVAILABLE',
+        reason: `FX exchange rate unavailable — pair ${pairId} is paused`,
+        rateTimestamp: directPair.lastFetchedAt || rateTimestamp,
+        provider: status.provider || 'Google Finance Live Feed',
+        sourceCurrency: fromCode,
+        targetCurrency: toCode,
+        pairId
+      };
+    }
     if (
       directPair &&
-      directPair.status !== 'PAUSED' &&
       this.isValidRate(directPair.effectiveRate)
     ) {
       resolvedRate = directPair.effectiveRate;
       rateTimestamp = directPair.lastFetchedAt || rateTimestamp;
     }
 
-    // 2. Inverse Pair lookup if direct pair missing/invalid/paused
-    if (resolvedRate === null || !this.isValidRate(resolvedRate)) {
+    // 2. Inverse Pair lookup only if directPair was not explicitly configured/paused
+    if (!directPair && (resolvedRate === null || !this.isValidRate(resolvedRate))) {
       const inversePairId = `${toCode}_${fromCode}`;
       const inversePair = this.engine.getPair(inversePairId);
+      if (inversePair?.status === 'PAUSED') {
+        return {
+          rate: 0,
+          isAvailable: false,
+          isLoading: false,
+          isStale: true,
+          status: 'UNAVAILABLE',
+          reason: `FX exchange rate unavailable — inverse pair ${inversePairId} is paused`,
+          rateTimestamp: inversePair.lastFetchedAt || rateTimestamp,
+          provider: status.provider || 'Google Finance Live Feed',
+          sourceCurrency: fromCode,
+          targetCurrency: toCode,
+          pairId
+        };
+      }
       if (
         inversePair &&
-        inversePair.status !== 'PAUSED' &&
         this.isValidRate(inversePair.effectiveRate)
       ) {
         const inverted = Number((1 / inversePair.effectiveRate).toFixed(6));
@@ -283,25 +311,12 @@ export class CurrencyConversionService {
       }
     }
 
-    // 3. Triangulation via USD base rate in engine
+    // 3. Engine validation check (respects removed pairs)
     if (resolvedRate === null || !this.isValidRate(resolvedRate)) {
-      const rateInfo = this.engine.getRateInfo(fromCode, toCode);
-      if (rateInfo && this.isValidRate(rateInfo.effectiveRate)) {
-        resolvedRate = rateInfo.effectiveRate;
-        rateTimestamp = rateInfo.rateTimestamp || rateTimestamp;
-      }
-    }
-
-    // 4. Baseline institutional USD rates triangulation fallback
-    if (resolvedRate === null || !this.isValidRate(resolvedRate)) {
-      const fromUsd = BASELINE_USD_RATES[fromCode];
-      const toUsd = BASELINE_USD_RATES[toCode];
-      if (fromUsd && toUsd && fromUsd > 0 && toUsd > 0) {
-        const baselineRate = Number((toUsd / fromUsd).toFixed(6));
-        if (this.isValidRate(baselineRate)) {
-          resolvedRate = baselineRate;
-          cacheStatus = 'BASELINE';
-        }
+      const validation = this.engine.validateConversion(fromCode, toCode);
+      if (validation.isValid && this.isValidRate(validation.effectiveRate)) {
+        resolvedRate = validation.effectiveRate;
+        rateTimestamp = validation.rateTimestamp || rateTimestamp;
       }
     }
 

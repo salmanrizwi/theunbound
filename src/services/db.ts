@@ -221,6 +221,7 @@ import { pricingCache } from './pricingCache';
 import { performanceMonitor } from './performanceMonitor';
 import { calculateEligibleBookingComponents } from './cashbackEngine';
 import { withBoundedTimeout } from './quotationOperationsService';
+import { displayCurrencyService } from './displayCurrencyService';
 
 let currentAuthUser: User | null = null;
 import { 
@@ -668,6 +669,12 @@ const BULKY_COLLECTION_KEYS = new Set([
   'b2b_packages', 'custom_pages', 'reviews', 'promotions'
 ]);
 
+// Large transactional collections whose localStorage mirror write is coalesced/deferred off hot paths
+const DEFERRED_PERSISTENCE_KEYS = new Set([
+  'saved_quotes', 'bookings', 'leads', 'invoices',
+  'system_users', 'companies', 'admin_activities', 'user_notifications'
+]);
+
 export function pruneBulkyLocalStorageKeys(): void {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
@@ -785,6 +792,21 @@ export class AppDatabase {
   private pendingMasterHydrations: Map<string, Promise<Quotation | null>> = new Map();
   private migratedLegacyQuoteIds: Set<string> = new Set();
   private pendingLegacyQuoteMigrations: Map<string, Promise<void>> = new Map();
+  private hydratedImageStorageKeys: Set<string> = new Set();
+  private productLookupCache: {
+    key: string;
+    byId: Map<string, Product>;
+    bySku: Map<string, Product>;
+    byProdId: Map<string, Product>;
+    byDocId: Map<string, Product>;
+  } | null = null;
+  private hotelLookupCache: { key: string; byId: Map<string, Hotel> } | null = null;
+  private userLookupCache: { ver: number; byId: Map<string, User>; byLowerEmail: Map<string, User> } | null = null;
+  private productRatesIndexCache: { ver: number; byKey: Map<string, ProductPricingRate[]> } | null = null;
+  private quotesForUserCache: Map<string, { ver: number; list: Quotation[] }> = new Map();
+  private quoteRawByKeyCache: { ver: number; byId: Map<string, Quotation>; byNumber: Map<string, Quotation> } | null = null;
+  private deferredStorageQueue: Set<string> = new Set();
+  private deferredStorageTimer: any = null;
   private actionCenterHooks?: {
     onBookingStatusChanged?: (bookingId: string, bookingRef: string, status: string, user: User | null) => void;
     onPaymentVerified?: (bookingId: string, bookingRef: string, paymentId: string, user: User | null) => void;
@@ -865,9 +887,15 @@ export class AppDatabase {
         if (e.key && e.key.startsWith(STORAGE_KEY_PREFIX)) {
           const stripped = e.key.substring(STORAGE_KEY_PREFIX.length);
           this.memoryCache.delete(stripped);
+          if (stripped === 'saved_quotes') {
+            this.quotesForUserCache.clear();
+            this.quoteRawByKeyCache = null;
+          }
           this.notify();
         }
       });
+      window.addEventListener('beforeunload', () => this.flushDeferredStorage());
+      window.addEventListener('pagehide', () => this.flushDeferredStorage());
     }
   }
 
@@ -1114,11 +1142,20 @@ export class AppDatabase {
       ) {
         pricingCache.clearAll();
       }
+      if (key === 'saved_quotes') {
+        this.quotesForUserCache.clear();
+        this.quoteRawByKeyCache = null;
+      }
       this.dirtyKeys.add(key);
 
       if (BULKY_COLLECTION_KEYS.has(key)) {
         // Keep bulky master catalogs strictly in memoryCache without expensive JSON.stringify serialization
         memoryStorage.set(STORAGE_KEY_PREFIX + key, '__MEM_CACHED__');
+      } else if (DEFERRED_PERSISTENCE_KEYS.has(key)) {
+        memoryStorage.set(STORAGE_KEY_PREFIX + key, '__MEM_CACHED__');
+        if (typeof window !== 'undefined') {
+          this.scheduleDeferredStorageFlush(key);
+        }
       } else {
         safeStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(storedValue));
       }
@@ -1130,12 +1167,61 @@ export class AppDatabase {
     }
   }
 
+  private scheduleDeferredStorageFlush(key: string): void {
+    this.deferredStorageQueue.add(key);
+    if (this.deferredStorageTimer) return;
+    this.deferredStorageTimer = setTimeout(() => {
+      this.deferredStorageTimer = null;
+      this.flushDeferredStorage();
+    }, 150);
+    if (typeof this.deferredStorageTimer?.unref === 'function') {
+      this.deferredStorageTimer.unref();
+    }
+  }
+
+  private flushDeferredStorage(onlyKey?: string): void {
+    if (onlyKey) {
+      if (this.deferredStorageQueue.delete(onlyKey) && this.memoryCache.has(onlyKey)) {
+        try {
+          safeStorage.setItem(STORAGE_KEY_PREFIX + onlyKey, JSON.stringify(this.memoryCache.get(onlyKey)));
+        } catch {}
+      }
+      return;
+    }
+    if (this.deferredStorageTimer) {
+      clearTimeout(this.deferredStorageTimer);
+      this.deferredStorageTimer = null;
+    }
+    if (this.deferredStorageQueue.size === 0) return;
+    const keys = Array.from(this.deferredStorageQueue);
+    this.deferredStorageQueue.clear();
+    for (const k of keys) {
+      if (this.memoryCache.has(k)) {
+        try {
+          safeStorage.setItem(STORAGE_KEY_PREFIX + k, JSON.stringify(this.memoryCache.get(k)));
+        } catch {}
+      }
+    }
+  }
+
   public invalidateMemoryCache(key?: string): void {
     if (key) {
+      this.flushDeferredStorage(key);
       this.memoryCache.delete(key);
       masterDataCache.bumpVersion(key);
+      if (key === 'saved_quotes') {
+        this.quotesForUserCache.clear();
+        this.quoteRawByKeyCache = null;
+      }
     } else {
+      this.flushDeferredStorage();
       this.memoryCache.clear();
+      this.quotesForUserCache.clear();
+      this.quoteRawByKeyCache = null;
+      this.productLookupCache = null;
+      this.hotelLookupCache = null;
+      this.userLookupCache = null;
+      this.productRatesIndexCache = null;
       masterDataCache.bumpAll();
     }
   }
@@ -1206,7 +1292,9 @@ export class AppDatabase {
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
         'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata',
         'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency',
-        'surcharge_masters', 'surcharge_product_mappings', 'surcharge_history'
+        'surcharge_masters', 'surcharge_product_mappings', 'surcharge_history',
+        'rail_stations', 'rail_routes', 'rail_rates', 'rail_seasons', 'rail_markup_rules',
+        'japan_rail_commercial_products'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -1251,7 +1339,9 @@ export class AppDatabase {
         'visas', 'visa_rates', 'travel_protection_plans', 'vip_ground_services', 'connectivity_plans',
         'custom_pages', 'blog_articles', 'inventory_tombstones', 'image_metadata',
         'campaigns', 'automation_jobs', 'automation_logs', 'automation_idempotency',
-        'surcharge_masters', 'surcharge_product_mappings', 'surcharge_history'
+        'surcharge_masters', 'surcharge_product_mappings', 'surcharge_history',
+        'rail_stations', 'rail_routes', 'rail_rates', 'rail_seasons', 'rail_markup_rules',
+        'japan_rail_commercial_products'
       ];
       const isAdminCollection = cmsCollections.includes(collectionName);
       const effectiveEmail = auth.currentUser?.email || currentAuthUser?.email || data?.updatedByEmail || 'business@theunbound.in';
@@ -1778,6 +1868,32 @@ export class AppDatabase {
     return hasDehydratedFlag && (hasMissingItems || hasDehydratedItemStubs || hasDehydratedOptionStubs);
   }
 
+  private isSnapshotListUnchanged<T extends Record<string, any>>(storageKey: string, nextList: T[]): boolean {
+    const prevList = this.memoryCache.get(storageKey);
+    if (!Array.isArray(prevList) || prevList.length !== nextList.length) return false;
+    for (let i = 0; i < nextList.length; i += 1) {
+      const a: any = prevList[i];
+      const b: any = nextList[i];
+      if (a === b) continue;
+      if (!a || !b) return false;
+      if ((a.id || '') !== (b.id || '')) return false;
+      const aTime = a.updatedAt || a.lastUpdated || '';
+      const bTime = b.updatedAt || b.lastUpdated || '';
+      if (aTime !== bTime) return false;
+      const aVer = a.version || a.latestVersion || '';
+      const bVer = b.version || b.latestVersion || '';
+      if (aVer !== bVer) return false;
+      if ((a.status || '') !== (b.status || '')) return false;
+      if ((a.isPublished ?? '') !== (b.isPublished ?? '')) return false;
+      if ((a.snapshotHash || '') !== (b.snapshotHash || '')) return false;
+      if ((a.name || a.title || '') !== (b.name || b.title || '')) return false;
+      if (!aTime && !aVer && !a.snapshotHash) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private syncCollectionSafely<T extends Record<string, any>>(
     collectionName: string,
     storageKey: string,
@@ -1850,7 +1966,12 @@ export class AppDatabase {
           japan_rail_commercial_products: 'RAIL'
         };
         const imgEntityType = entityTypeMap[storageKey];
+        const needsInitialImageHydration = Boolean(imgEntityType && !this.hydratedImageStorageKeys.has(storageKey));
+        if (!needsInitialImageHydration && this.isSnapshotListUnchanged(storageKey, list)) {
+          return;
+        }
         if (imgEntityType && list.length > 0) {
+          this.hydratedImageStorageKeys.add(storageKey);
           list.forEach((rec: any) => {
             if (storageKey === 'products') {
               const cleanImages = canonicalImageService.extractPersistedProductImages(rec);
@@ -1954,6 +2075,9 @@ export class AppDatabase {
         });
       }
 
+      if (this.isSnapshotListUnchanged(storageKey, list)) {
+        return;
+      }
       this.setItem(storageKey, list, true);
     }, (err) => {
       console.debug(`[DB] Scoped query sync note (${storageKey}):`, err?.message || err);
@@ -5624,6 +5748,23 @@ export class AppDatabase {
       if (mc && mc.productId) marginConfigMap.set(mc.productId, mc);
     });
 
+    const regionNameMap = new Map<string, string>();
+    const hubNameMap = new Map<string, string>();
+    const hubRegionMap = new Map<string, string>();
+    try {
+      this.getRegions().forEach(r => {
+        if (r && r.id && r.name) regionNameMap.set(r.id, r.name);
+      });
+      this.getCityHubs().forEach(h => {
+        if (h && h.id) {
+          if (h.name) hubNameMap.set(h.id, h.name);
+          if (h.regionId) hubRegionMap.set(h.id, h.regionId);
+        }
+      });
+    } catch {
+      // Non-fatal fallback if hierarchy collections are initializing
+    }
+
     const deletedSet = this.getDeletedEntityIds();
     const built = raw
       .filter(p => p && p.id && !deletedSet.has(p.id) && !deletedSet.has(`Product_${p.id}`) && !(p as any).isDeleted && (p as any).status !== 'DELETED')
@@ -5665,8 +5806,54 @@ export class AppDatabase {
           ? linkedCfg!.version
           : p.marginConfigVersion;
 
+        // Backward-compatible non-destructive read normalization for Rail multi-region & multi-hub metadata
+        let railGeographyPatch: Partial<Product> = {};
+        if (isRail) {
+          const normHubIds = Array.from(
+            new Set([
+              ...(Array.isArray(p.hubIds) ? p.hubIds.map(h => (h || '').trim()).filter(Boolean) : []),
+              ...(p.hubId && p.hubId.trim() ? [p.hubId.trim()] : [])
+            ])
+          );
+          const normHubNames = Array.from(
+            new Set([
+              ...(Array.isArray(p.hubNames) ? p.hubNames.map(n => (n || '').trim()).filter(Boolean) : []),
+              ...normHubIds.map(hid => hubNameMap.get(hid) || '').filter(Boolean),
+              ...(normHubIds.length === 0 && p.city && p.city.trim() ? [p.city.trim()] : [])
+            ])
+          );
+          const normRegionIds = Array.from(
+            new Set([
+              ...(Array.isArray(p.regionIds) ? p.regionIds.map(r => (r || '').trim()).filter(Boolean) : []),
+              ...(p.regionId && p.regionId.trim() ? [p.regionId.trim()] : []),
+              ...normHubIds.map(hid => hubRegionMap.get(hid) || '').filter(Boolean)
+            ])
+          );
+          const normRegionNames = Array.from(
+            new Set([
+              ...(Array.isArray(p.regionNames) ? p.regionNames.map(n => (n || '').trim()).filter(Boolean) : []),
+              ...normRegionIds.map(rid => regionNameMap.get(rid) || '').filter(Boolean),
+              ...(normRegionIds.length === 0 && p.regionName && p.regionName.trim() ? [p.regionName.trim()] : [])
+            ])
+          );
+          const normDestIds = Array.from(
+            new Set([
+              ...(Array.isArray(p.destinationIds) ? p.destinationIds.map(d => (d || '').trim()).filter(Boolean) : []),
+              ...(p.destinationId && p.destinationId.trim() ? [p.destinationId.trim()] : [])
+            ])
+          );
+          railGeographyPatch = {
+            ...(normDestIds.length > 0 ? { destinationIds: normDestIds } : {}),
+            ...(normRegionIds.length > 0 ? { regionIds: normRegionIds } : {}),
+            ...(normRegionNames.length > 0 ? { regionNames: normRegionNames } : {}),
+            ...(normHubIds.length > 0 ? { hubIds: normHubIds } : {}),
+            ...(normHubNames.length > 0 ? { hubNames: normHubNames } : {})
+          };
+        }
+
         return {
           ...p,
+          ...railGeographyPatch,
           ...(resolvedB2BPct !== undefined ? { b2bAgentMarkupPercent: resolvedB2BPct } : {}),
           ...(resolvedDefaultPct !== undefined ? { defaultMarkupPercent: resolvedDefaultPct } : {}),
           marginType: resolvedMarginType,
@@ -6014,33 +6201,310 @@ export class AppDatabase {
     return Array.from(routesMap.values());
   }
 
-  public saveRailRoute(route: RailRoute, user?: User | null): void {
+  public buildCanonicalRailRouteId(originStationId: string, destinationStationId: string): string {
+    const slug = (id: string) =>
+      String(id || '')
+        .trim()
+        .toUpperCase()
+        .replace(/^JP-ST-/, '')
+        .replace(/^STN-/, '')
+        .replace(/[^A-Z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return `JP-RT-${slug(originStationId)}-${slug(destinationStationId)}`;
+  }
+
+  private validateAndNormalizeRailRoute(
+    routeInput: Partial<RailRoute>,
+    user?: User | null
+  ): { normalized: RailRoute; existingIndex: number; currentList: RailRoute[] } {
     if (user && user.role !== 'ADMIN' && user.role !== 'TEAM_MEMBER') {
-      throw new Error('Unauthorized: Only administrators may modify Japan Rail routes.');
+      const authErr: any = new Error('Unauthorized: Only administrators may create or modify Japan Rail routes.');
+      authErr.code = 'UNAUTHORIZED';
+      throw authErr;
     }
+
+    const rawOriginId = String(routeInput.originStationId || '').trim();
+    const rawDestId = String(routeInput.destinationStationId || '').trim();
+    if (!rawOriginId) {
+      const err: any = new Error('Origin station is required.');
+      err.code = 'MISSING_ORIGIN';
+      throw err;
+    }
+    if (!rawDestId) {
+      const err: any = new Error('Destination station is required.');
+      err.code = 'MISSING_DESTINATION';
+      throw err;
+    }
+
+    const stations = this.getRailStations();
+    const resolveStation = (id: string) => {
+      const lower = id.toLowerCase();
+      return stations.find(
+        s =>
+          s.stationId === id ||
+          s.stationId.toLowerCase() === lower ||
+          s.stationCode.toLowerCase() === lower
+      );
+    };
+
+    const originStation = resolveStation(rawOriginId);
+    const destStation = resolveStation(rawDestId);
+
+    if (!originStation) {
+      const err: any = new Error(`Origin station "${rawOriginId}" does not exist in Japan Rail Inventory.`);
+      err.code = 'INVALID_ORIGIN_STATION';
+      throw err;
+    }
+    if (!destStation) {
+      const err: any = new Error(`Destination station "${rawDestId}" does not exist in Japan Rail Inventory.`);
+      err.code = 'INVALID_DESTINATION_STATION';
+      throw err;
+    }
+    if (originStation.stationId === destStation.stationId) {
+      const err: any = new Error(
+        `Origin and destination stations cannot be identical (${originStation.stationName}). Please select two distinct stations.`
+      );
+      err.code = 'SAME_STATION';
+      throw err;
+    }
+
+    const isActive = routeInput.active !== false;
+    if (isActive && originStation.active === false) {
+      const err: any = new Error(
+        `Origin station "${originStation.stationName}" (${originStation.stationCode}) is currently inactive. Activate the station first or save the route as inactive.`
+      );
+      err.code = 'INACTIVE_ORIGIN_STATION';
+      throw err;
+    }
+    if (isActive && destStation.active === false) {
+      const err: any = new Error(
+        `Destination station "${destStation.stationName}" (${destStation.stationCode}) is currently inactive. Activate the station first or save the route as inactive.`
+      );
+      err.code = 'INACTIVE_DESTINATION_STATION';
+      throw err;
+    }
+
     const list = this.getRailRoutes();
-    const idx = list.findIndex(r => r.routeId === route.routeId);
+    const requestedRouteId = String(routeInput.routeId || '').trim();
+    const finalRouteId = requestedRouteId || this.buildCanonicalRailRouteId(originStation.stationId, destStation.stationId);
+    const existingIndex = list.findIndex(r => r.routeId === finalRouteId);
+    const existingRecord = existingIndex >= 0 ? list[existingIndex] : undefined;
+
+    // Directional duplicate check: allow B -> A independently from A -> B, reject duplicate A -> B
+    const directionalDuplicate = list.find(
+      r =>
+        r.routeId !== finalRouteId &&
+        r.originStationId === originStation.stationId &&
+        r.destinationStationId === destStation.stationId
+    );
+    if (directionalDuplicate) {
+      const dupErr: any = new Error(
+        `Route ${originStation.stationName} (${originStation.stationCode}) → ${destStation.stationName} (${destStation.stationCode}) already exists (${directionalDuplicate.routeId}). Edit the existing route instead of creating a duplicate.`
+      );
+      dupErr.code = 'DUPLICATE_ROUTE';
+      dupErr.existingRoute = directionalDuplicate;
+      throw dupErr;
+    }
+
+    const defaultRouteCode = `${originStation.stationCode}-${destStation.stationCode}`.toUpperCase();
+    const finalRouteCode = String(routeInput.routeCode || existingRecord?.routeCode || defaultRouteCode)
+      .trim()
+      .toUpperCase();
+    if (finalRouteCode) {
+      const codeCollision = list.find(
+        r => r.routeId !== finalRouteId && String(r.routeCode || '').trim().toUpperCase() === finalRouteCode
+      );
+      if (codeCollision) {
+        const codeErr: any = new Error(
+          `Route code "${finalRouteCode}" is already assigned to route ${codeCollision.routeId} (${codeCollision.originStationName} → ${codeCollision.destinationStationName}).`
+        );
+        codeErr.code = 'DUPLICATE_ROUTE_CODE';
+        codeErr.existingRoute = codeCollision;
+        throw codeErr;
+      }
+    }
+
+    // Distance validation — never fabricate if omitted
+    let distanceKm: number | undefined = undefined;
+    if (routeInput.distanceKm !== undefined && routeInput.distanceKm !== null && String(routeInput.distanceKm).trim() !== '') {
+      const parsedDistance = Number(routeInput.distanceKm);
+      if (!Number.isFinite(parsedDistance) || parsedDistance <= 0) {
+        const err: any = new Error('Distance (km) must be a positive number when specified.');
+        err.code = 'INVALID_DISTANCE';
+        throw err;
+      }
+      distanceKm = Math.round(parsedDistance * 10) / 10;
+    }
+
+    // Optional travel duration — never fabricate if omitted
+    let travelDurationMinutes: { nozomiMizuho?: number; hikariKodamaSakura?: number } | undefined = undefined;
+    const rawNozomi = routeInput.travelDurationMinutes?.nozomiMizuho;
+    const rawHikari = routeInput.travelDurationMinutes?.hikariKodamaSakura;
+    const cleanDuration: { nozomiMizuho?: number; hikariKodamaSakura?: number } = {};
+    if (rawNozomi !== undefined && rawNozomi !== null && String(rawNozomi).trim() !== '') {
+      const parsed = Number(rawNozomi);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        const err: any = new Error('Express (Nozomi / Mizuho) duration must be a positive number of minutes.');
+        err.code = 'INVALID_DURATION';
+        throw err;
+      }
+      cleanDuration.nozomiMizuho = Math.round(parsed);
+    }
+    if (rawHikari !== undefined && rawHikari !== null && String(rawHikari).trim() !== '') {
+      const parsed = Number(rawHikari);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        const err: any = new Error('Standard (Hikari / Kodama / Sakura) duration must be a positive number of minutes.');
+        err.code = 'INVALID_DURATION';
+        throw err;
+      }
+      cleanDuration.hikariKodamaSakura = Math.round(parsed);
+    }
+    if (cleanDuration.nozomiMizuho !== undefined || cleanDuration.hikariKodamaSakura !== undefined) {
+      travelDurationMinutes = cleanDuration;
+    }
+
+    const availableServiceGroups = Array.isArray(routeInput.availableServiceGroups)
+      ? Array.from(new Set(routeInput.availableServiceGroups.filter(Boolean)))
+      : existingRecord?.availableServiceGroups?.length
+        ? existingRecord.availableServiceGroups
+        : (['NOZOMI_MIZUHO'] as RailRoute['availableServiceGroups']);
+
+    if (availableServiceGroups.length === 0) {
+      const err: any = new Error('Select at least one applicable train service group for this route.');
+      err.code = 'MISSING_SERVICE_GROUP';
+      throw err;
+    }
+
+    const availableProductIds =
+      Array.isArray(routeInput.availableProductIds) && routeInput.availableProductIds.length > 0
+        ? Array.from(new Set(routeInput.availableProductIds.filter(Boolean)))
+        : existingRecord?.availableProductIds?.length
+          ? existingRecord.availableProductIds
+          : ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'];
+
     const now = new Date().toISOString();
-    const updated: RailRoute = {
-      ...route,
-      active: route.active !== false,
+    const normalized: RailRoute = {
+      ...existingRecord,
+      ...routeInput,
+      routeId: finalRouteId,
+      routeCode: finalRouteCode,
+      originStationId: originStation.stationId,
+      destinationStationId: destStation.stationId,
+      originStationName: originStation.stationName,
+      destinationStationName: destStation.stationName,
+      originRegionId: originStation.regionId || routeInput.originRegionId || 'reg-east-asia',
+      destinationRegionId: destStation.regionId || routeInput.destinationRegionId || 'reg-east-asia',
+      country: routeInput.country || originStation.country || 'Japan',
+      destinationId: routeInput.destinationId || originStation.destinationId || 'dest-japan',
+      railOperator: String(
+        routeInput.railOperator ||
+          existingRecord?.railOperator ||
+          originStation.railOperator ||
+          destStation.railOperator ||
+          'JR East / JR Central / smartEX'
+      ).trim(),
+      active: isActive,
+      availableProductIds,
+      availableServiceGroups,
+      distanceKm,
+      travelDurationMinutes,
+      durationMinutes: cleanDuration.nozomiMizuho ?? cleanDuration.hikariKodamaSakura ?? routeInput.durationMinutes,
+      notes: routeInput.notes !== undefined ? String(routeInput.notes).trim() || undefined : existingRecord?.notes,
+      createdAt: existingRecord?.createdAt || routeInput.createdAt || now,
       updatedAt: now
     };
-    if (idx >= 0) {
-      list[idx] = updated;
-    } else {
-      updated.createdAt = now;
-      list.push(updated);
+
+    return { normalized, existingIndex, currentList: list };
+  }
+
+  public async saveRailRouteAsync(routeInput: Partial<RailRoute>, user?: User | null): Promise<RailRoute> {
+    const { normalized, existingIndex, currentList } = this.validateAndNormalizeRailRoute(routeInput, user);
+
+    const effectiveEmail =
+      user?.email || auth.currentUser?.email || currentAuthUser?.email || 'business@theunbound.in';
+    const effectiveUid =
+      user?.id || auth.currentUser?.uid || currentAuthUser?.id || 'usr-admin-business';
+
+    const firestorePayload = cleanForFirestore({
+      ...normalized,
+      status: normalized.active ? 'ACTIVE' : 'INACTIVE',
+      updatedByRole: 'ADMIN',
+      updatedByEmail: effectiveEmail,
+      updatedBy: effectiveUid,
+      isDeleted: false
+    });
+
+    const routeRef = doc(firestoreDb, 'rail_routes', normalized.routeId);
+    try {
+      performanceMonitor.recordFirestoreWrite(1);
+      await withBoundedTimeout(
+        setDoc(routeRef, firestorePayload, { merge: true }),
+        15000,
+        `Firestore write (rail_routes/${normalized.routeId})`,
+        'FIRESTORE_WRITE_TIMEOUT'
+      );
+
+      // Read-back verification to confirm route actually persisted in Firestore
+      const readBackSnap = await withBoundedTimeout(
+        getDoc(routeRef),
+        10000,
+        `Firestore verify (rail_routes/${normalized.routeId})`,
+        'FIRESTORE_VERIFY_TIMEOUT'
+      );
+      if (!readBackSnap.exists()) {
+        throw new Error(`Persistence verification failed: route ${normalized.routeId} was not found after write.`);
+      }
+    } catch (err: any) {
+      const code = err?.code || 'FIRESTORE_ERROR';
+      const detail = err?.message || String(err);
+      const wrapped: any = new Error(
+        `Failed to save rail route ${normalized.originStationName} → ${normalized.destinationStationName} to Firestore (${code}): ${detail}`
+      );
+      wrapped.code = code;
+      wrapped.originalError = err;
+      throw wrapped;
     }
-    this.unmarkEntityDeleted('rail_routes', route.routeId);
-    this.setItem('rail_routes', list);
-    this.syncFirestoreDoc('rail_routes', route.routeId, updated);
+
+    const updatedList = [...currentList];
+    if (existingIndex >= 0) {
+      updatedList[existingIndex] = normalized;
+    } else {
+      updatedList.push(normalized);
+    }
+
+    this.unmarkEntityDeleted('rail_routes', normalized.routeId);
+    this.setItem('rail_routes', updatedList);
     this.logAudit(
       user || null,
-      (idx >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
+      (existingIndex >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
       'Product' as any,
-      route.routeId,
-      `Saved Japan Rail route: ${route.originStationName} -> ${route.destinationStationName}`
+      normalized.routeId,
+      `Saved Japan Rail route: ${normalized.originStationName} (${normalized.originStationId}) -> ${normalized.destinationStationName} (${normalized.destinationStationId}) [${normalized.routeCode || normalized.routeId}]`
+    );
+    this.notify();
+    return normalized;
+  }
+
+  public saveRailRoute(route: Partial<RailRoute>, user?: User | null): void {
+    const { normalized, existingIndex, currentList } = this.validateAndNormalizeRailRoute(route, user);
+    const updatedList = [...currentList];
+    if (existingIndex >= 0) {
+      updatedList[existingIndex] = normalized;
+    } else {
+      updatedList.push(normalized);
+    }
+    this.unmarkEntityDeleted('rail_routes', normalized.routeId);
+    this.setItem('rail_routes', updatedList);
+    this.syncFirestoreDoc('rail_routes', normalized.routeId, {
+      ...normalized,
+      status: normalized.active ? 'ACTIVE' : 'INACTIVE'
+    });
+    this.logAudit(
+      user || null,
+      (existingIndex >= 0 ? 'SETTINGS_UPDATED' : 'PRODUCT_CREATED') as any,
+      'Product' as any,
+      normalized.routeId,
+      `Saved Japan Rail route: ${normalized.originStationName} -> ${normalized.destinationStationName}`
     );
     this.notify();
   }
@@ -6802,11 +7266,33 @@ export class AppDatabase {
 
   public getProductById(id: string): Product | undefined {
     if (!id) return undefined;
-    const products = this.getProducts();
-    return products.find(p => p.id === id) || 
-           products.find(p => p.sku === id) || 
-           products.find(p => (p as any).product_id === id) ||
-           products.find(p => (p as any).docId === id);
+    const prodVer = masterDataCache.getVersion('products');
+    const railVer = masterDataCache.getVersion('japan_rail_commercial_products');
+    const tombVer = masterDataCache.getVersion('inventory_tombstones');
+    const key = `${prodVer}:${railVer}:${tombVer}`;
+    if (!this.productLookupCache || this.productLookupCache.key !== key) {
+      const products = this.getProducts();
+      const byId = new Map<string, Product>();
+      const bySku = new Map<string, Product>();
+      const byProdId = new Map<string, Product>();
+      const byDocId = new Map<string, Product>();
+      for (const p of products) {
+        if (!p) continue;
+        if (p.id && !byId.has(p.id)) byId.set(p.id, p);
+        if (p.sku && !bySku.has(p.sku)) bySku.set(p.sku, p);
+        const pid = (p as any).product_id;
+        if (pid && !byProdId.has(pid)) byProdId.set(pid, p);
+        const did = (p as any).docId;
+        if (did && !byDocId.has(did)) byDocId.set(did, p);
+      }
+      this.productLookupCache = { key, byId, bySku, byProdId, byDocId };
+    }
+    return (
+      this.productLookupCache.byId.get(id) ||
+      this.productLookupCache.bySku.get(id) ||
+      this.productLookupCache.byProdId.get(id) ||
+      this.productLookupCache.byDocId.get(id)
+    );
   }
 
   private prepareProductForSave(product: Product, user: User | null): {
@@ -6875,6 +7361,14 @@ export class AppDatabase {
     const candidateDestId = product.destinationId || prev?.destinationId;
     let candidateRegId = product.regionId || prev?.regionId;
 
+    const isRailCategory =
+      effectiveId === 'RAIL-JP-ORD-RESERVED' ||
+      effectiveId === 'RAIL-JP-GREEN-RESERVED' ||
+      product.category === 'Rail' ||
+      product.category === 'Rail / Shinkansen' ||
+      prev?.category === 'Rail' ||
+      prev?.category === 'Rail / Shinkansen';
+
     // If hub changed on a single-hub product and regionId was not explicitly changed, align regionId with the new hub's regionId
     if (hubIdChanged && effectiveHubIds.length === 1 && (!product.regionId || product.regionId === prev?.regionId)) {
       const targetHubObj = masterData.getHubById(effectiveHubId, true);
@@ -6883,11 +7377,25 @@ export class AppDatabase {
       }
     }
 
+    const explicitRegionIds = isRailCategory && Array.isArray(product.regionIds)
+      ? Array.from(new Set(product.regionIds.map(r => (r || '').trim()).filter(Boolean)))
+      : undefined;
+
+    if (isRailCategory && explicitRegionIds && explicitRegionIds.length > 0) {
+      if (!candidateRegId || !explicitRegionIds.includes(candidateRegId)) {
+        const primaryHubRegionId = effectiveHubId ? masterData.getHubById(effectiveHubId, true)?.regionId : undefined;
+        candidateRegId = (primaryHubRegionId && explicitRegionIds.includes(primaryHubRegionId))
+          ? primaryHubRegionId
+          : explicitRegionIds[0];
+      }
+    }
+
     const hierarchy = masterData.validateHierarchy(
       candidateRegId,
       candidateDestId,
       effectiveHubId,
-      effectiveHubIds
+      effectiveHubIds,
+      explicitRegionIds
     );
     if (!hierarchy.valid) {
       throw new Error(`Data Integrity Error: ${hierarchy.error}`);
@@ -6900,12 +7408,58 @@ export class AppDatabase {
           .filter(Boolean)
       )
     );
-    const canonicalRegionIds = Array.from(
+    const canonicalHubNames = Array.from(
       new Set(
         canonicalHubIds
+          .map(hid => masterData.getHubById(hid, true)?.name)
+          .filter((name): name is string => Boolean(name))
+      )
+    );
+
+    const baseRegionIdSource = isRailCategory
+      ? (
+          explicitRegionIds !== undefined
+            ? explicitRegionIds
+            : Array.from(
+                new Set([
+                  ...(candidateRegId ? [candidateRegId] : []),
+                  ...(Array.isArray(prev?.regionIds) ? prev!.regionIds! : []),
+                  ...canonicalHubIds
+                    .map(hid => masterData.getHubById(hid, true)?.regionId)
+                    .filter((rid): rid is string => Boolean(rid))
+                ])
+              )
+        )
+      : canonicalHubIds
+          .map(hid => masterData.getHubById(hid, true)?.regionId)
+          .filter((rid): rid is string => Boolean(rid));
+
+    const canonicalRegionIds = Array.from(
+      new Set([
+        ...baseRegionIdSource
+          .map(rid => masterData.getDestinationRegionById(rid, true)?.id || rid)
+          .filter(Boolean),
+        ...canonicalHubIds
           .map(hid => masterData.getHubById(hid, true)?.regionId)
           .filter((rid): rid is string => Boolean(rid))
+      ])
+    );
+    const canonicalRegionNames = Array.from(
+      new Set(
+        canonicalRegionIds
+          .map(rid => masterData.getDestinationRegionById(rid, true)?.name)
+          .filter((name): name is string => Boolean(name))
       )
+    );
+    const canonicalDestIds = Array.from(
+      new Set([
+        hierarchy.destination!.id,
+        ...(isRailCategory && Array.isArray(product.destinationIds)
+          ? product.destinationIds
+              .map(did => masterData.getDestinationById(did, true)?.id)
+              .filter((did): did is string => Boolean(did))
+          : [])
+      ])
     );
     const resolvedDestRegion = hierarchy.destinationRegion || (hierarchy.hub?.regionId ? masterData.getDestinationRegionById(hierarchy.hub.regionId, true) : undefined);
 
@@ -7024,11 +7578,14 @@ export class AppDatabase {
       regionId: resolvedDestRegion ? resolvedDestRegion.id : hierarchy.region!.id,
       regionName: resolvedDestRegion ? resolvedDestRegion.name : hierarchy.region!.name,
       ...(canonicalRegionIds.length > 0 ? { regionIds: canonicalRegionIds } : {}),
+      ...(canonicalRegionNames.length > 0 ? { regionNames: canonicalRegionNames } : {}),
       destinationId: hierarchy.destination!.id,
+      ...(canonicalDestIds.length > 0 ? { destinationIds: canonicalDestIds } : {}),
       destinationName: hierarchy.destination!.name,
       country: hierarchy.destination!.country || hierarchy.destination!.name,
       hubId: hierarchy.hub ? hierarchy.hub.id : effectiveHubId,
       hubIds: canonicalHubIds.length > 0 ? canonicalHubIds : (hierarchy.hub ? [hierarchy.hub.id] : []),
+      ...(canonicalHubNames.length > 0 ? { hubNames: canonicalHubNames } : (hierarchy.hub ? { hubNames: [hierarchy.hub.name] } : {})),
       city: hierarchy.hub ? hierarchy.hub.name : (product.city || hierarchy.destination!.name),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
@@ -7110,7 +7667,15 @@ export class AppDatabase {
         productName: savedProd.name,
         category: 'RAIL',
         destinationId: savedProd.destinationId || 'dest-japan',
+        ...(Array.isArray(savedProd.destinationIds) ? { destinationIds: savedProd.destinationIds } : {}),
         destinationName: savedProd.destinationName || 'Japan',
+        ...(savedProd.regionId ? { regionId: savedProd.regionId } : {}),
+        ...(savedProd.regionName ? { regionName: savedProd.regionName } : {}),
+        ...(Array.isArray(savedProd.regionIds) ? { regionIds: savedProd.regionIds } : {}),
+        ...(Array.isArray(savedProd.regionNames) ? { regionNames: savedProd.regionNames } : {}),
+        ...(savedProd.hubId ? { hubId: savedProd.hubId } : {}),
+        ...(Array.isArray(savedProd.hubIds) ? { hubIds: savedProd.hubIds } : {}),
+        ...(Array.isArray(savedProd.hubNames) ? { hubNames: savedProd.hubNames } : {}),
         productType: railCode,
         imageUrl: savedProd.imageUrl || savedProd.heroImage || '',
         images: savedProd.images,
@@ -7239,7 +7804,15 @@ export class AppDatabase {
         productName: savedProd.name,
         category: 'RAIL',
         destinationId: savedProd.destinationId || 'dest-japan',
+        ...(Array.isArray(savedProd.destinationIds) ? { destinationIds: savedProd.destinationIds } : {}),
         destinationName: savedProd.destinationName || 'Japan',
+        ...(savedProd.regionId ? { regionId: savedProd.regionId } : {}),
+        ...(savedProd.regionName ? { regionName: savedProd.regionName } : {}),
+        ...(Array.isArray(savedProd.regionIds) ? { regionIds: savedProd.regionIds } : {}),
+        ...(Array.isArray(savedProd.regionNames) ? { regionNames: savedProd.regionNames } : {}),
+        ...(savedProd.hubId ? { hubId: savedProd.hubId } : {}),
+        ...(Array.isArray(savedProd.hubIds) ? { hubIds: savedProd.hubIds } : {}),
+        ...(Array.isArray(savedProd.hubNames) ? { hubNames: savedProd.hubNames } : {}),
         productType: railCode,
         imageUrl: actualPrimary || '',
         heroImage: actualPrimary || '',
@@ -7619,7 +8192,11 @@ export class AppDatabase {
       guideConfig: product.guideConfig ? JSON.parse(JSON.stringify(product.guideConfig)) : undefined,
       ferryConfig: product.ferryConfig ? JSON.parse(JSON.stringify(product.ferryConfig)) : undefined,
       optionalUpgradeProductIds: Array.isArray(product.optionalUpgradeProductIds) ? [...product.optionalUpgradeProductIds] : [],
+      destinationIds: Array.isArray(product.destinationIds) ? [...product.destinationIds] : (product.destinationId ? [product.destinationId] : []),
+      regionIds: Array.isArray(product.regionIds) ? [...product.regionIds] : (product.regionId ? [product.regionId] : []),
+      regionNames: Array.isArray(product.regionNames) ? [...product.regionNames] : (product.regionName ? [product.regionName] : []),
       hubIds: Array.isArray(product.hubIds) ? [...product.hubIds] : (product.hubId ? [product.hubId] : []),
+      hubNames: Array.isArray(product.hubNames) ? [...product.hubNames] : (product.city ? [product.city] : []),
       configuration: product.configuration ? JSON.parse(JSON.stringify(product.configuration)) : undefined,
       heroImage: primaryUrl,
       imageUrl: primaryUrl,
@@ -7693,7 +8270,11 @@ export class AppDatabase {
       guideConfig: product.guideConfig ? JSON.parse(JSON.stringify(product.guideConfig)) : undefined,
       ferryConfig: product.ferryConfig ? JSON.parse(JSON.stringify(product.ferryConfig)) : undefined,
       optionalUpgradeProductIds: Array.isArray(product.optionalUpgradeProductIds) ? [...product.optionalUpgradeProductIds] : [],
+      destinationIds: Array.isArray(product.destinationIds) ? [...product.destinationIds] : (product.destinationId ? [product.destinationId] : []),
+      regionIds: Array.isArray(product.regionIds) ? [...product.regionIds] : (product.regionId ? [product.regionId] : []),
+      regionNames: Array.isArray(product.regionNames) ? [...product.regionNames] : (product.regionName ? [product.regionName] : []),
       hubIds: Array.isArray(product.hubIds) ? [...product.hubIds] : (product.hubId ? [product.hubId] : []),
+      hubNames: Array.isArray(product.hubNames) ? [...product.hubNames] : (product.city ? [product.city] : []),
       configuration: product.configuration ? JSON.parse(JSON.stringify(product.configuration)) : undefined,
       heroImage: primaryUrl,
       imageUrl: primaryUrl,
@@ -8975,9 +9556,27 @@ export class AppDatabase {
   /**
    * Authoritative raw quote retrieval (for server-side/internal commercial recalculation)
    */
-  public getRawQuoteById(quoteId: string): Quotation | null {
+  private getQuoteRawIndex() {
+    const ver = masterDataCache.getVersion('saved_quotes');
+    if (this.quoteRawByKeyCache && this.quoteRawByKeyCache.ver === ver) {
+      return this.quoteRawByKeyCache;
+    }
     const all = this.getAllSavedQuotes();
-    return all.find(q => q.id === quoteId || q.quoteNumber === quoteId) || null;
+    const byId = new Map<string, Quotation>();
+    const byNumber = new Map<string, Quotation>();
+    for (const q of all) {
+      if (!q) continue;
+      if (q.id && !byId.has(q.id)) byId.set(q.id, q);
+      if (q.quoteNumber && !byNumber.has(q.quoteNumber)) byNumber.set(q.quoteNumber, q);
+    }
+    this.quoteRawByKeyCache = { ver, byId, byNumber };
+    return this.quoteRawByKeyCache;
+  }
+
+  public getRawQuoteById(quoteId: string): Quotation | null {
+    if (!quoteId) return null;
+    const idx = this.getQuoteRawIndex();
+    return idx.byId.get(quoteId) || idx.byNumber.get(quoteId) || null;
   }
 
   /**
@@ -8989,39 +9588,50 @@ export class AppDatabase {
    *   with all commercial internals stripped.
    */
   public getQuotesForUser(user: User | null): Quotation[] {
-    const all = this.getAllSavedQuotes();
     if (!user) return [];
+    const ver = masterDataCache.getVersion('saved_quotes');
+    const canViewInternal =
+      user.role === 'ADMIN' ||
+      ((user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') && canUserViewInternalCostBreakdown(user));
+    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
+    const cacheKey = `${user.id || ''}|${user.role || ''}|${canViewInternal ? 1 : 0}|${userEmail}|${ver}`;
+    const cached = this.quotesForUserCache.get(cacheKey);
+    if (cached && cached.ver === ver) {
+      return [...cached.list];
+    }
+
+    const all = this.getAllSavedQuotes();
+    let result: Quotation[];
 
     // 1. Admin & Internal Staff with authorized pricing visibility
     if (user.role === 'ADMIN') {
-      return all;
-    }
-    if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
-      if (canUserViewInternalCostBreakdown(user)) {
-        return all;
-      }
-      return all.map(q => sanitizeQuoteForAgent(q));
-    }
-
-    // 2. B2B Agents see their own created quotes or assigned quotes (STRICTLY SANITIZED)
-    if (user.role === 'B2B_AGENT') {
-      const agentQuotes = all.filter(q => 
-        q.createdBy === user.id || 
-        q.agentId === user.id || 
-        q.b2bAgentId === user.id || 
+      result = all;
+    } else if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+      result = canViewInternal ? all : all.map(q => sanitizeQuoteForAgent(q));
+    } else if (user.role === 'B2B_AGENT') {
+      // 2. B2B Agents see their own created quotes or assigned quotes (STRICTLY SANITIZED)
+      const agentQuotes = all.filter(q =>
+        q.createdBy === user.id ||
+        q.agentId === user.id ||
+        q.b2bAgentId === user.id ||
         q.assignedTo === user.id ||
-        (user.email && q.agentEmail?.toLowerCase().trim() === user.email.toLowerCase().trim())
+        (userEmail && q.agentEmail?.toLowerCase().trim() === userEmail)
       );
-      return agentQuotes.map(q => sanitizeQuoteForAgent(q));
+      result = agentQuotes.map(q => sanitizeQuoteForAgent(q));
+    } else {
+      // 3. Buyers / Registered Users see quotes created for their account or email (STRICTLY SANITIZED - FINAL TOTAL ONLY)
+      const buyerQuotes = all.filter(q =>
+        (q.clientUserId && q.clientUserId === user.id) ||
+        (userEmail && q.clientEmail && q.clientEmail.toLowerCase().trim() === userEmail)
+      );
+      result = buyerQuotes.map(q => sanitizeQuoteDocumentForCustomer(q));
     }
 
-    // 3. Buyers / Registered Users see quotes created for their account or email (STRICTLY SANITIZED - FINAL TOTAL ONLY)
-    const userEmail = user.email ? user.email.toLowerCase().trim() : '';
-    const buyerQuotes = all.filter(q => 
-      (q.clientUserId && q.clientUserId === user.id) ||
-      (userEmail && q.clientEmail && q.clientEmail.toLowerCase().trim() === userEmail)
-    );
-    return buyerQuotes.map(q => sanitizeQuoteDocumentForCustomer(q));
+    if (this.quotesForUserCache.size > 40) {
+      this.quotesForUserCache.clear();
+    }
+    this.quotesForUserCache.set(cacheKey, { ver, list: result });
+    return [...result];
   }
 
   public getAllSavedQuotesForUser(user: User | null): Quotation[] {
@@ -9029,8 +9639,7 @@ export class AppDatabase {
   }
 
   public getQuoteByIdAuthorized(quoteId: string, user: User | null): Quotation | null {
-    const all = this.getAllSavedQuotes();
-    const found = all.find(q => q.id === quoteId || q.quoteNumber === quoteId);
+    const found = this.getRawQuoteById(quoteId);
     if (!found) return null;
     if (!user) return null;
 
@@ -10939,11 +11548,7 @@ export class AppDatabase {
             'FIRESTORE_WRITE_TIMEOUT'
           );
 
-          for (let i = 0; i < preparedSectionPayloads.length; i += 1) {
-            if (testHooks?.failAfterSectionIndex !== undefined && i >= testHooks.failAfterSectionIndex) {
-              throw new Error(`Simulated section write failure at section index ${i} (${preparedSectionPayloads[i].doc.sectionId})`);
-            }
-            const secPayload = preparedSectionPayloads[i].doc;
+          const writeSingleSectionWithRetry = async (secPayload: QuotationVersionSectionDocument): Promise<QuotationVersionSectionDocument> => {
             const secRef = doc(firestoreDb, 'quotations', targetQuoteId, 'versions', versionDocId, 'sections', secPayload.sectionId);
             let wrote = false;
             let lastErr: any = null;
@@ -10964,7 +11569,26 @@ export class AppDatabase {
             if (!wrote) {
               throw lastErr || new Error(`Failed writing section ${secPayload.sectionId}`);
             }
-            stagedSectionWrites.push(secPayload);
+            return secPayload;
+          };
+
+          if (testHooks?.failAfterSectionIndex !== undefined) {
+            for (let i = 0; i < preparedSectionPayloads.length; i += 1) {
+              if (i >= testHooks.failAfterSectionIndex) {
+                throw new Error(`Simulated section write failure at section index ${i} (${preparedSectionPayloads[i].doc.sectionId})`);
+              }
+              const persistedSec = await writeSingleSectionWithRetry(preparedSectionPayloads[i].doc);
+              stagedSectionWrites.push(persistedSec);
+            }
+          } else {
+            const SECTION_BATCH_SIZE = 6;
+            for (let b = 0; b < preparedSectionPayloads.length; b += SECTION_BATCH_SIZE) {
+              const batch = preparedSectionPayloads.slice(b, b + SECTION_BATCH_SIZE);
+              const batchResults = await Promise.all(
+                batch.map(entry => writeSingleSectionWithRetry(entry.doc))
+              );
+              stagedSectionWrites.push(...batchResults);
+            }
           }
 
           // Real Firestore Readback Verification BEFORE setting manifestStatus = COMMITTED
@@ -11263,7 +11887,15 @@ export class AppDatabase {
         versionNumber: nextVersion,
         deduplicated: false
       };
-      this.explicitQuoteSaveCache.set(reqKey, { timestamp: Date.now(), result: finalResult });
+      const cacheNow = Date.now();
+      if (this.explicitQuoteSaveCache.size > 80) {
+        for (const [k, entry] of this.explicitQuoteSaveCache.entries()) {
+          if (cacheNow - entry.timestamp > 600_000) {
+            this.explicitQuoteSaveCache.delete(k);
+          }
+        }
+      }
+      this.explicitQuoteSaveCache.set(reqKey, { timestamp: cacheNow, result: finalResult });
       return finalResult;
     } finally {
       releaseLock();
@@ -11802,17 +12434,7 @@ export class AppDatabase {
       brandingSnapshot: quote.brandingSnapshot,
       commercialTermsSnapshot: quote.commercialTermsSnapshot,
       termsAndConditions: quote.termsAndConditions,
-      notificationEmailsSent: [
-        {
-          recipient: quote.clientEmail || 'client@theunbound.in',
-          recipientType: 'CLIENT_AGENT',
-          subject: `Ground Booking Initiated - ${bookingRef}`,
-          bodySnippet: `Your quotation ${quote.quoteNumber} has been accepted and submitted for ground dispatch.`,
-          fullHtml: `<p>Booking ${bookingRef} has been received for processing.</p>`,
-          sentAt: timestamp,
-          status: 'DELIVERED'
-        }
-      ],
+      notificationEmailsSent: [],
       items: quote.items.map(item => {
         const bdItem = (centralBookingTotals.breakdown?.items || []).find(bi => bi.itemId === item.id);
         const itemFinalSellingPrice = bdItem?.finalCustomerSellingPrice
@@ -11970,6 +12592,111 @@ export class AppDatabase {
       : newBookingDraft;
   }
 
+  /**
+   * Async, Firestore-verified conversion of Quotation to Confirmed Booking.
+   * Performs duplicate protection (local + remote Firestore), sanitizes external B2B agent
+   * payloads cleanly for Firestore security rules, and propagates persistence errors honestly.
+   */
+  public async convertQuotationToBookingAsync(
+    quoteOrId: string | Quotation,
+    user: User | null,
+    specialNotes?: string
+  ): Promise<Booking | null> {
+    const quote = typeof quoteOrId === 'string' ? this.getQuoteByIdAuthorized(quoteOrId, user) : quoteOrId;
+    if (!quote) return null;
+
+    const hasFirebaseSession = typeof window !== 'undefined' && Boolean(auth.currentUser);
+    const bookings = this.getAllBookings();
+    const localExisting = bookings.find(b => b.quoteId === quote.id);
+    if (localExisting) {
+      return (user?.role === 'B2B_AGENT' || user?.role === 'BUYER')
+        ? this.sanitizeBookingForExternalUser(localExisting)
+        : localExisting;
+    }
+
+    if (hasFirebaseSession && auth.currentUser) {
+      try {
+        const allowInternal = canUserViewInternalCostBreakdown(user);
+        const dupQuery = allowInternal
+          ? query(collection(firestoreDb, 'bookings'), where('quoteId', '==', quote.id), limit(1))
+          : query(
+              collection(firestoreDb, 'bookings'),
+              where('quoteId', '==', quote.id),
+              where('submittedByUserId', '==', auth.currentUser.uid),
+              limit(1)
+            );
+        const remoteSnap = await withBoundedTimeout(
+          getDocs(dupQuery),
+          10000,
+          'Check Existing Booking',
+          'FIRESTORE_READ_TIMEOUT'
+        );
+        if (!remoteSnap.empty) {
+          const existingRemote = remoteSnap.docs[0].data() as Booking;
+          const merged = [existingRemote, ...bookings.filter(b => b.id !== existingRemote.id)];
+          this.setItem('bookings', merged);
+          return (user?.role === 'B2B_AGENT' || user?.role === 'BUYER')
+            ? this.sanitizeBookingForExternalUser(existingRemote)
+            : existingRemote;
+        }
+      } catch (lookupErr: any) {
+        // Non-fatal if composite index is absent on scoped query; continue with client lock + create
+        console.debug('[DB] Remote booking duplicate precheck note:', lookupErr?.message || lookupErr);
+      }
+    }
+
+    const prevBookingsSnapshot = [...bookings];
+    const prevQuotesSnapshot = [...this.getAllSavedQuotes()];
+    const converted = this.convertQuotationToBooking(quote, user, specialNotes);
+    if (!converted) return null;
+
+    const latestFullBooking = this.getAllBookings().find(b => b.id === converted.id) || converted;
+    const allowInternal = canUserViewInternalCostBreakdown(user);
+    const firestoreBookingPayload: any = allowInternal
+      ? { ...latestFullBooking }
+      : this.sanitizeBookingForExternalUser(latestFullBooking);
+    if (!allowInternal) {
+      delete firestoreBookingPayload.totalSupplierCost;
+      delete firestoreBookingPayload.isInternalManualBooking;
+      if (hasFirebaseSession && auth.currentUser?.uid) {
+        firestoreBookingPayload.submittedByUserId = auth.currentUser.uid;
+        if (!firestoreBookingPayload.submittingAgentId && !firestoreBookingPayload.agentId && !firestoreBookingPayload.userId) {
+          firestoreBookingPayload.submittingAgentId = auth.currentUser.uid;
+        }
+      }
+    }
+
+    const bookingSynced = await this.syncFirestoreDocAsync('bookings', latestFullBooking.id, firestoreBookingPayload);
+    if (hasFirebaseSession && !bookingSynced) {
+      // Rollback local bookings and quotes cache so UI never presents an unpersisted confirmed booking
+      this.setItem('bookings', prevBookingsSnapshot);
+      this.setItem('saved_quotes', prevQuotesSnapshot);
+      throw new Error('Failed to persist confirmed booking to Firestore within timeout. Please retry.');
+    }
+
+    const updatedMasterQuote = this.getAllSavedQuotes().find(q => q.id === quote.id);
+    if (updatedMasterQuote) {
+      const quoteSynced = await this.syncFirestoreDocAsync(
+        'quotations',
+        quote.id,
+        this.stripInternalCommercialKeysForFirestore(updatedMasterQuote, user)
+      );
+      if (hasFirebaseSession && !quoteSynced) {
+        console.warn(`[DB] Booking ${latestFullBooking.id} persisted, but quotation status sync to Firestore timed out.`);
+      }
+    }
+
+    const leadId = quote.leadId || quote.linkedLeadId;
+    if (leadId) {
+      const updatedLead = this.getLeads().find(l => l.id === leadId || l.leadNumber === leadId);
+      if (updatedLead) {
+        this.syncFirestoreDocAsync('leads', updatedLead.id, updatedLead).catch(() => undefined);
+      }
+    }
+
+    return converted;
+  }
+
   // ==========================================
   // B2B READY-MADE PACKAGES MANAGEMENT
   // ==========================================
@@ -12096,6 +12823,7 @@ export class AppDatabase {
     }
 
     const pkgs = this.getPackages();
+    const prevPkgsSnapshot = [...pkgs];
     let idx = pkgs.findIndex(p => p.id === pkg.id);
     if (idx < 0) {
       // Check if an existing package matches by slug or title in the same destination for idempotent update
@@ -12148,17 +12876,29 @@ export class AppDatabase {
     this.unmarkEntityDeleted('Package', pkg.id);
     this.unmarkEntityDeleted('B2BPackage', pkg.id);
 
+    const hasFirebaseSession = typeof window !== 'undefined' && Boolean(auth.currentUser);
     try {
+      const firebaseEmail = typeof window !== 'undefined' ? auth.currentUser?.email : undefined;
+      const firebaseUid = typeof window !== 'undefined' ? auth.currentUser?.uid : undefined;
       const enrichedData = {
         ...updatedPkg,
         isDeleted: false,
-        updatedByRole: 'ADMIN',
-        updatedByEmail: 'business@theunbound.in',
-        updatedBy: 'usr-admin-business'
+        updatedByRole: user?.role === 'SUPER_ADMIN' ? 'SUPER_ADMIN' : 'ADMIN',
+        updatedByEmail: firebaseEmail || user?.email || 'business@theunbound.in',
+        updatedBy: firebaseUid || user?.id || 'usr-admin-business'
       };
-      await setDoc(doc(firestoreDb, 'b2b_packages', pkg.id), cleanForFirestore(enrichedData), { merge: true });
+      await withBoundedTimeout(
+        setDoc(doc(firestoreDb, 'b2b_packages', pkg.id), cleanForFirestore(enrichedData), { merge: true }),
+        15000,
+        `Save Master Package (${pkg.title})`,
+        'FIRESTORE_WRITE_TIMEOUT'
+      );
     } catch (err: any) {
-      console.warn(`[DB] Firestore savePackageAsync warning (${pkg.id}):`, err?.message || err);
+      console.warn(`[DB] Firestore savePackageAsync error (${pkg.id}):`, err?.message || err);
+      if (hasFirebaseSession) {
+        this.setItem('b2b_packages', prevPkgsSnapshot);
+        throw new Error(err?.message || `Failed to save Master Package "${pkg.title}" to Firestore.`);
+      }
     }
 
     this.logAudit(
@@ -17567,18 +18307,40 @@ export class AppDatabase {
     const invoices = this.getInvoicesForLead(leadId);
 
     const isInternal = user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER' || user?.role === 'DMC_STAFF';
+    const targetCurrency = displayCurrencyService.getDisplayCurrency();
 
-    const totalSellingPrice = bookings.reduce((sum, b) => sum + (b.totalAmount || 0), 0);
-    const totalPaid = bookings.reduce((sum, b) => sum + ((b as any).paidAmount || (b.paymentStatus === 'PAID' ? b.totalAmount : 0) || 0), 0);
+    const sellingAgg = displayCurrencyService.aggregateForDisplay(
+      bookings,
+      b => ({ amount: b.totalAmount || 0, currency: b.currency || 'USD' }),
+      targetCurrency
+    );
+    const paidAgg = displayCurrencyService.aggregateForDisplay(
+      bookings,
+      b => ({
+        amount: (b as any).paidAmount || (b.paymentStatus === 'PAID' ? b.totalAmount : 0) || 0,
+        currency: b.currency || 'USD'
+      }),
+      targetCurrency
+    );
+
+    const totalSellingPrice = sellingAgg.totalConverted;
+    const totalPaid = paidAgg.totalConverted;
     const pendingBalance = Math.max(0, totalSellingPrice - totalPaid);
-    const currency = bookings[0]?.currency || 'USD';
+    const currency = targetCurrency;
 
     let totalNetCost = 0;
     let grossMargin = 0;
     let grossMarginPercent = 0;
+    let hasUnavailableRates = sellingAgg.hasUnavailableRates || paidAgg.hasUnavailableRates;
 
     if (isInternal) {
-      totalNetCost = bookings.reduce((sum, b) => sum + (b.totalNetCost || b.internalNettCost || 0), 0);
+      const netAgg = displayCurrencyService.aggregateForDisplay(
+        bookings,
+        b => ({ amount: b.totalNetCost || b.internalNettCost || 0, currency: b.currency || 'USD' }),
+        targetCurrency
+      );
+      totalNetCost = netAgg.totalConverted;
+      hasUnavailableRates = hasUnavailableRates || netAgg.hasUnavailableRates;
       grossMargin = totalSellingPrice - totalNetCost;
       grossMarginPercent = totalSellingPrice > 0 ? Math.round((grossMargin / totalSellingPrice) * 100) : 0;
     }
@@ -17593,15 +18355,20 @@ export class AppDatabase {
     return {
       totalSellingPrice,
       totalPaid,
+      totalPaidAmount: totalPaid,
       pendingBalance,
+      totalBalanceDue: pendingBalance,
       currency,
+      hasUnavailableRates,
       paymentStatus: pendingBalance === 0 && totalSellingPrice > 0 ? 'PAID' : totalPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID',
       bookingsCount: bookings.length,
       invoicesCount: invoices.length,
       isInternal,
-      totalNetCost: isInternal ? totalNetCost : undefined,
-      grossMargin: isInternal ? grossMargin : undefined,
-      grossMarginPercent: isInternal ? grossMarginPercent : undefined,
+      totalNetCost: isInternal ? totalNetCost : 0,
+      grossMargin: isInternal ? grossMargin : 0,
+      totalGrossMargin: isInternal ? grossMargin : 0,
+      grossMarginPercent: isInternal ? grossMarginPercent : 0,
+      marginPercentage: isInternal ? grossMarginPercent : 0,
       bookings,
       invoices,
       paymentProofs
@@ -17803,7 +18570,19 @@ export class AppDatabase {
   }
 
   public getHotelById(id: string): Hotel | undefined {
-    return this.getHotels().find(h => h.id === id);
+    if (!id) return undefined;
+    const ver = masterDataCache.getVersion('hotels');
+    const tombVer = masterDataCache.getVersion('inventory_tombstones');
+    const key = `${ver}:${tombVer}`;
+    if (!this.hotelLookupCache || this.hotelLookupCache.key !== key) {
+      const hotels = this.getHotels();
+      const byId = new Map<string, Hotel>();
+      for (const h of hotels) {
+        if (h?.id && !byId.has(h.id)) byId.set(h.id, h);
+      }
+      this.hotelLookupCache = { key, byId };
+    }
+    return this.hotelLookupCache.byId.get(id);
   }
 
   public saveHotel(hotel: Hotel, user: User | null): void {
@@ -21841,15 +22620,32 @@ export class AppDatabase {
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
   }
 
+  private getUserLookupMaps() {
+    const ver = masterDataCache.getVersion('system_users');
+    if (this.userLookupCache && this.userLookupCache.ver === ver) {
+      return this.userLookupCache;
+    }
+    const users = this.getUsers();
+    const byId = new Map<string, User>();
+    const byLowerEmail = new Map<string, User>();
+    for (const u of users) {
+      if (!u) continue;
+      if (u.id && !byId.has(u.id)) byId.set(u.id, u);
+      const email = u.email ? u.email.trim().toLowerCase() : '';
+      if (email && !byLowerEmail.has(email)) byLowerEmail.set(email, u);
+    }
+    this.userLookupCache = { ver, byId, byLowerEmail };
+    return this.userLookupCache;
+  }
+
   public getUserByEmail(email: string): User | undefined {
     if (!email) return undefined;
-    const cleanEmail = email.trim().toLowerCase();
-    return this.getUsers().find(u => (u.email || '').trim().toLowerCase() === cleanEmail);
+    return this.getUserLookupMaps().byLowerEmail.get(email.trim().toLowerCase());
   }
 
   public getUserById(id: string): User | undefined {
     if (!id) return undefined;
-    return this.getUsers().find(u => u.id === id);
+    return this.getUserLookupMaps().byId.get(id);
   }
 
   public saveUserLocally(user: User): void {
@@ -25392,6 +26188,31 @@ export class AppDatabase {
   // Product Pricing Rates
   public getProductRates(): ProductPricingRate[] {
     return this.getItem<ProductPricingRate[]>('product_pricing_rates', []);
+  }
+
+  public getActiveProductRatesForProduct(productId?: string, sku?: string): ProductPricingRate[] {
+    const ver = masterDataCache.getVersion('product_pricing_rates');
+    if (!this.productRatesIndexCache || this.productRatesIndexCache.ver !== ver) {
+      const rates = this.getProductRates();
+      const byKey = new Map<string, ProductPricingRate[]>();
+      for (const r of rates) {
+        if (!r || (r.status && r.status !== 'ACTIVE')) continue;
+        if (!r.productId) continue;
+        let bucket = byKey.get(r.productId);
+        if (!bucket) {
+          bucket = [];
+          byKey.set(r.productId, bucket);
+        }
+        bucket.push(r);
+      }
+      this.productRatesIndexCache = { ver, byKey };
+    }
+    const primary = productId ? this.productRatesIndexCache.byKey.get(productId) : undefined;
+    const secondary = sku && sku !== productId ? this.productRatesIndexCache.byKey.get(sku) : undefined;
+    if (!primary && !secondary) return [];
+    if (primary && !secondary) return primary;
+    if (!primary && secondary) return secondary;
+    return [...(primary || []), ...(secondary || [])];
   }
 
   public saveProductRate(rate: ProductPricingRate, user?: User | null): void {

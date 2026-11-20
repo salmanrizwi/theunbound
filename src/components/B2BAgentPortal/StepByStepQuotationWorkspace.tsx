@@ -376,7 +376,8 @@ const DebouncedTextInput: React.FC<{
   placeholder?: string;
   className?: string;
   debounceMs?: number;
-}> = React.memo(({ value, onCommit, placeholder, className, debounceMs = 180 }) => {
+  type?: string;
+}> = React.memo(({ value, onCommit, placeholder, className, debounceMs = 180, type = 'text' }) => {
   const [localVal, setLocalVal] = useState(value);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onCommitRef = useRef(onCommit);
@@ -427,7 +428,7 @@ const DebouncedTextInput: React.FC<{
 
   return (
     <input
-      type="text"
+      type={type}
       value={localVal}
       onChange={handleChange}
       onBlur={handleBlur}
@@ -1169,7 +1170,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
   onOpenVersionHistory
 }) => {
   const { user, updateUserProfile } = useAuth();
-  const { setIsQuoteDrawerOpen } = useQuotation();
+  const { setIsQuoteDrawerOpen, removeProductsByIds } = useQuotation();
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
   const hubUidRef = useRef<number>(0);
   const [showInternalItemized, setShowInternalItemized] = useState<boolean>(false);
@@ -1811,6 +1812,14 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
     });
     return map;
   }, [currentDestination.id, routeHubs, availableHotels]);
+
+  const availableHotelsByIdMap = useMemo(() => {
+    const map = new Map<string, Hotel>();
+    for (const h of availableHotels) {
+      if (h?.id) map.set(h.id, h);
+    }
+    return map;
+  }, [availableHotels]);
 
   const selectedProductIdsSet = useMemo(
     () => new Set(items.map(it => it.product?.id).filter(Boolean) as string[]),
@@ -3393,7 +3402,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
     const existingHotelItems = items.filter(it =>
       doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
-    existingHotelItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(existingHotelItems.map(it => it.id));
 
     const occupancy = validateRoomOccupancy(selectedRoom, safeRooms, adultsCount, childrenCount, infantsCount);
     if (occupancy.isValid) {
@@ -3457,7 +3466,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
     const existingHotelItems = items.filter(it =>
       doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
-    existingHotelItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(existingHotelItems.map(it => it.id));
     setRouteHubs(prev =>
       prev.map(h => {
         if (h.id !== targetHub.id) return h;
@@ -3498,7 +3507,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
     const existingHotelItems = items.filter(it =>
       doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
-    existingHotelItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(existingHotelItems.map(it => it.id));
     setRouteHubs(prev =>
       prev.map(h => (h.id === targetHub.id ? { 
         ...h, 
@@ -3524,7 +3533,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
     const existingItems = items.filter(it =>
       doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
-    existingItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(existingItems.map(it => it.id));
     setRouteHubs(prev =>
       prev.map(h => (h.id === targetHub.id ? {
         ...h,
@@ -3852,9 +3861,10 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
       if (onDeleteHubOccurrenceItems) {
         onDeleteHubOccurrenceItems(deletedHub, routeHubs);
       } else {
-        items
+        const toRemove = items
           .filter(it => doesHotelItemBelongToHubOccurrence(it, deletedHub, routeHubs))
-          .forEach(it => removeProductFromQuote(it.id));
+          .map(it => it.id);
+        removeProductsByIds(toRemove);
       }
     }
     setRouteHubs(prev => {
@@ -4231,12 +4241,12 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
               {setQuoteTitle && (
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Proposal / Itinerary Title</label>
-                  <input
-                    type="text"
+                  <DebouncedTextInput
                     value={quoteTitle || ''}
-                    onChange={(e) => setQuoteTitle(e.target.value)}
+                    onCommit={(val) => setQuoteTitle(val)}
                     placeholder={sourcePackageName || `${currentDestination.name} Bespoke Travel Proposal`}
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
+                    debounceMs={150}
                   />
                 </div>
               )}
@@ -4271,45 +4281,47 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Client Full Name *</label>
-                    <input
-                      type="text"
+                    <DebouncedTextInput
                       value={clientName || ''}
-                      onChange={(e) => setClientName(e.target.value)}
+                      onCommit={(val) => setClientName(val)}
                       placeholder="e.g. Robert & Sarah Vance"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
+                      debounceMs={150}
                     />
                   </div>
 
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Client Email</label>
-                    <input
+                    <DebouncedTextInput
                       type="email"
                       value={clientEmail || ''}
-                      onChange={(e) => setClientEmail(e.target.value)}
+                      onCommit={(val) => setClientEmail(val)}
                       placeholder="client@agency.com"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
+                      debounceMs={150}
                     />
                   </div>
 
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Phone / WhatsApp</label>
-                    <input
+                    <DebouncedTextInput
                       type="tel"
                       value={clientPhone || ''}
-                      onChange={(e) => setClientPhone(e.target.value)}
+                      onCommit={(val) => setClientPhone(val)}
                       placeholder="+1 (555) 019-2834"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
+                      debounceMs={150}
                     />
                   </div>
 
                   <div>
                     <label className="text-[11px] font-bold text-slate-600 block mb-1">Agency / Company</label>
-                    <input
-                      type="text"
+                    <DebouncedTextInput
                       value={clientCompany || ''}
-                      onChange={(e) => setClientCompany(e.target.value)}
+                      onCommit={(val) => setClientCompany(val)}
                       placeholder="Elite Luxury Travel Ltd"
                       className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:bg-white focus:border-teal-500 outline-none"
+                      debounceMs={150}
                     />
                   </div>
                 </div>
@@ -4523,12 +4535,12 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
 
                 <div>
                   <label className="text-[11px] font-bold text-slate-600 block mb-1">Nationality</label>
-                  <input
-                    type="text"
+                  <DebouncedTextInput
                     value={nationality || ''}
-                    onChange={(e) => setNationality(e.target.value)}
+                    onCommit={(val) => setNationality(val)}
                     placeholder="e.g. Indian, American"
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 outline-none"
+                    debounceMs={150}
                   />
                 </div>
 
@@ -4892,8 +4904,8 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                   const isManualComplete = isManualStay && isManualHotelPricingComplete(manualDetails);
 
                   const selectedHotel = (!isNoAccommodation && !isManualStay) ? (
-                    availableHotels.find(h => h.id === hub.hotelId) || 
-                    (assignedItem ? availableHotels.find(h => h.id === assignedItem.hotelId || assignedItem.product.id.includes(h.id)) : undefined)
+                    (hub.hotelId ? availableHotelsByIdMap.get(hub.hotelId) : undefined) ||
+                    (assignedItem ? ((assignedItem.hotelId ? availableHotelsByIdMap.get(assignedItem.hotelId) : undefined) || availableHotels.find(h => assignedItem.product.id.includes(h.id))) : undefined)
                   ) : undefined;
 
                   const selectedRoom = selectedHotel?.roomTypes?.find(r => r.id === hub.roomTypeId) || selectedHotel?.roomTypes?.[0];
@@ -5087,7 +5099,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                                 onOpenManualHotelModal(hub.id);
                               }
                             } else if (val) {
-                              const h = availableHotels.find(x => x.id === val);
+                              const h = availableHotelsByIdMap.get(val);
                               if (h) {
                                 handleSelectHotel(hub.id, h, h.roomTypes?.[0]?.id, currentRoomsCount);
                               }
@@ -7477,10 +7489,10 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          disabled={isSavingExplicitly || isReadOnlyHistoricalMode}
+                          disabled={isSavingExplicitly || isReadOnlyHistoricalMode || Boolean(outputBusyOption)}
                           onClick={autoSaveStatus === 'FAILED' && onRetryAutoSave ? onRetryAutoSave : onSaveDraft}
                           className={`flex-1 py-2 px-3 rounded-xl border text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-2xs ${
-                            isSavingExplicitly || isReadOnlyHistoricalMode
+                            isSavingExplicitly || isReadOnlyHistoricalMode || Boolean(outputBusyOption)
                               ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
                               : autoSaveStatus === 'FAILED'
                                 ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-700 cursor-pointer'
@@ -7535,19 +7547,25 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                       <button
                         type="button"
                         onClick={onPreviewQuotation}
-                        disabled={packagePricingStatus === 'CALCULATING'}
+                        disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
                         className={`w-full py-2 px-3 rounded-xl text-xs font-black transition-colors flex items-center justify-center space-x-1.5 shadow-xs ${
-                          packagePricingStatus === 'CALCULATING'
+                          packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)
                             ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
                             : 'bg-slate-900 hover:bg-slate-800 text-[#00E5C0] cursor-pointer'
                         }`}
                       >
-                        {packagePricingStatus === 'CALCULATING' ? (
+                        {packagePricingStatus === 'CALCULATING' || outputBusyOption === 'PREVIEW_PROPOSAL' ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <Eye className="w-3.5 h-3.5" />
                         )}
-                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Open Proposal Preview'}</span>
+                        <span>
+                          {packagePricingStatus === 'CALCULATING'
+                            ? 'Calculating...'
+                            : outputBusyOption === 'PREVIEW_PROPOSAL'
+                              ? 'Opening Preview...'
+                              : 'Open Proposal Preview'}
+                        </span>
                       </button>
                     </div>
 
@@ -7570,9 +7588,9 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                       <button
                         type="button"
                         onClick={onDownloadPDF}
-                        disabled={packagePricingStatus === 'CALCULATING' || outputBusyOption === 'DOWNLOAD_PDF'}
+                        disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
                         className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-xs ${
-                          packagePricingStatus === 'CALCULATING' || outputBusyOption === 'DOWNLOAD_PDF'
+                          packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)
                             ? 'bg-indigo-300 text-white cursor-not-allowed'
                             : 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer'
                         }`}
@@ -7611,19 +7629,25 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                       <button
                         type="button"
                         onClick={onOpenEmailModal}
-                        disabled={packagePricingStatus === 'CALCULATING'}
+                        disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
                         className={`w-full py-2 px-3 rounded-xl border text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-2xs ${
-                          packagePricingStatus === 'CALCULATING'
+                          packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)
                             ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
                             : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-800 cursor-pointer'
                         }`}
                       >
-                        {packagePricingStatus === 'CALCULATING' ? (
+                        {packagePricingStatus === 'CALCULATING' || outputBusyOption === 'SEND_EMAIL' ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <Mail className="w-3.5 h-3.5" />
                         )}
-                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Dispatch Email'}</span>
+                        <span>
+                          {packagePricingStatus === 'CALCULATING'
+                            ? 'Calculating...'
+                            : outputBusyOption === 'SEND_EMAIL'
+                              ? 'Preparing Email...'
+                              : 'Dispatch Email'}
+                        </span>
                       </button>
                     </div>
 
@@ -7646,19 +7670,25 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                       <button
                         type="button"
                         onClick={onShareWhatsApp}
-                        disabled={packagePricingStatus === 'CALCULATING'}
+                        disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
                         className={`w-full py-2 px-3 rounded-xl text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-xs ${
-                          packagePricingStatus === 'CALCULATING'
+                          packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)
                             ? 'bg-emerald-300 text-white cursor-not-allowed'
                             : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
                         }`}
                       >
-                        {packagePricingStatus === 'CALCULATING' ? (
+                        {packagePricingStatus === 'CALCULATING' || outputBusyOption === 'SHARE_WHATSAPP' ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
                           <MessageCircle className="w-3.5 h-3.5" />
                         )}
-                        <span>{packagePricingStatus === 'CALCULATING' ? 'Calculating...' : 'Share on WhatsApp'}</span>
+                        <span>
+                          {packagePricingStatus === 'CALCULATING'
+                            ? 'Calculating...'
+                            : outputBusyOption === 'SHARE_WHATSAPP'
+                              ? 'Preparing WhatsApp...'
+                              : 'Share on WhatsApp'}
+                        </span>
                       </button>
                     </div>
 
@@ -7691,10 +7721,25 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                           <button
                             type="button"
                             onClick={onOpenSavePackageModal}
-                            className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 transition-colors cursor-pointer flex items-center justify-center space-x-1.5 shadow-2xs"
+                            disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
+                            className={`w-full py-2 px-3 rounded-xl border text-xs font-bold transition-colors flex items-center justify-center space-x-1.5 shadow-2xs ${
+                              packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)
+                                ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+                                : 'bg-white hover:bg-slate-100 border-slate-200 text-slate-800 cursor-pointer'
+                            }`}
                           >
-                            <Layers className="w-3.5 h-3.5 text-amber-600" />
-                            <span>{linkedMasterPackageId ? 'Update Master Package' : 'Save as Master Package'}</span>
+                            {outputBusyOption === 'SAVE_MASTER_PACKAGE' ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                            ) : (
+                              <Layers className="w-3.5 h-3.5 text-amber-600" />
+                            )}
+                            <span>
+                              {outputBusyOption === 'SAVE_MASTER_PACKAGE'
+                                ? 'Saving Package...'
+                                : linkedMasterPackageId
+                                  ? 'Update Master Package'
+                                  : 'Save as Master Package'}
+                            </span>
                           </button>
                           {linkedMasterPackageId && onViewSavedMasterPackage && (
                             <button
@@ -7729,10 +7774,23 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                       <button
                         type="button"
                         onClick={onConvertBooking}
-                        className="w-full py-2.5 px-3 rounded-xl bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 text-xs font-black transition-all cursor-pointer flex items-center justify-center space-x-1.5 shadow-sm"
+                        disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
+                        className={`w-full py-2.5 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center space-x-1.5 shadow-sm ${
+                          packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)
+                            ? 'bg-teal-200 text-slate-600 cursor-not-allowed'
+                            : 'bg-[#00C6A6] hover:bg-[#00B598] text-slate-950 cursor-pointer'
+                        }`}
                       >
-                        <BookmarkCheck className="w-4 h-4" />
-                        <span>Convert to Booking</span>
+                        {outputBusyOption === 'CONVERT_BOOKING' ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <BookmarkCheck className="w-4 h-4" />
+                        )}
+                        <span>
+                          {outputBusyOption === 'CONVERT_BOOKING'
+                            ? 'Converting Booking...'
+                            : 'Convert to Booking'}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -7773,7 +7831,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                     <button
                       type="button"
                       onClick={onDownloadPDF}
-                      disabled={packagePricingStatus === 'CALCULATING' || outputBusyOption === 'DOWNLOAD_PDF'}
+                      disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
                       className="px-4 py-2.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {outputBusyOption === 'DOWNLOAD_PDF' ? (
@@ -7786,10 +7844,15 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                     <button
                       type="button"
                       onClick={onPreviewQuotation}
-                      className="px-5 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-md"
+                      disabled={packagePricingStatus === 'CALCULATING' || isSavingExplicitly || Boolean(outputBusyOption)}
+                      className="px-5 py-2.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black transition-all cursor-pointer flex items-center space-x-1.5 shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Eye className="w-4 h-4" />
-                      <span>Open Proposal Preview</span>
+                      {outputBusyOption === 'PREVIEW_PROPOSAL' ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Eye className="w-4 h-4" />
+                      )}
+                      <span>{outputBusyOption === 'PREVIEW_PROPOSAL' ? 'Opening Preview...' : 'Open Proposal Preview'}</span>
                     </button>
                   </div>
                 </div>

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, Suspense } from 'react';
 import { 
   FileText, 
   Search, 
@@ -23,14 +23,18 @@ import {
 } from 'lucide-react';
 import { Quotation, QuoteStatus, CurrencyCode } from '../../types';
 import { AppDatabase } from '../../services/db';
-import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { useAuth } from '../../context/AuthContext';
-import { useQuotation } from '../../context/QuotationContext';
-import { ProposalDocumentView } from '../ProposalDocumentView';
-import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 import { analyzeQuotationDestinationEligibility } from '../../services/destinationVisibility';
+
+const ProposalDocumentView = React.lazy(() =>
+  import('../ProposalDocumentView').then(m => ({ default: m.ProposalDocumentView }))
+);
+const QuotationVersionHistoryModal = React.lazy(() =>
+  import('../Quotations/QuotationVersionHistoryModal').then(m => ({ default: m.QuotationVersionHistoryModal }))
+);
 
 interface B2BQuotesManagerViewProps {
   onOpenCreateQuote: () => void;
@@ -48,7 +52,7 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
   onConvertToBooking
 }) => {
   const { user } = useAuth();
-  const { currency } = useQuotation();
+  const { convertForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
   const canViewInternalCosts = useMemo(() => canUserViewInternalCostBreakdown(user), [user]);
 
@@ -65,12 +69,20 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
 
   const [selectedStatusTab, setSelectedStatusTab] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [previewingQuote, setPreviewingQuote] = useState<Quotation | null>(null);
   const [versionHistoryQuote, setVersionHistoryQuote] = useState<Quotation | null>(null);
   const [actionSuccessMessage, setActionSuccessMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
   const filteredQuotes = useMemo(() => {
-    const qTerm = (searchQuery || '').toLowerCase().trim();
+    const qTerm = (debouncedSearchQuery || '').toLowerCase().trim();
     return quotes.filter(q => {
       const matchesSearch = !qTerm ||
         (q.quoteNumber || '').toLowerCase().includes(qTerm) ||
@@ -91,13 +103,13 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
 
       return matchesSearch && matchesStatus;
     });
-  }, [quotes, searchQuery, selectedStatusTab]);
+  }, [quotes, debouncedSearchQuery, selectedStatusTab]);
 
   const [currentPage, setCurrentPage] = useState(1);
   const QUOTES_PAGE_SIZE = 20;
   React.useEffect(() => {
     setCurrentPage(1);
-  }, [selectedStatusTab, searchQuery]);
+  }, [selectedStatusTab, debouncedSearchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredQuotes.length / QUOTES_PAGE_SIZE));
   const safePage = Math.min(currentPage, totalPages);
@@ -129,13 +141,30 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
     }
   };
 
-  const statusTabs = [
-    { id: 'ALL', label: 'All Quotes', count: quotes.length },
-    { id: 'DRAFT', label: 'Drafts', count: quotes.filter(q => q.status === 'DRAFT' || q.status === 'IN_PROGRESS').length },
-    { id: 'SENT', label: 'Sent to Client', count: quotes.filter(q => q.status === 'SENT' || q.status === 'SENT_TO_CLIENT' || q.status === 'VIEWED').length },
-    { id: 'APPROVED', label: 'Client Approved', count: quotes.filter(q => q.status === 'APPROVED' || q.status === 'ACCEPTED').length },
-    { id: 'CONVERTED', label: 'Bookings Converted', count: quotes.filter(q => q.status === 'CONVERTED' || q.status === 'CONFIRMED' || q.status === 'BOOKING_SUBMITTED').length }
-  ];
+  const statusTabs = useMemo(() => {
+    let draft = 0;
+    let sent = 0;
+    let approved = 0;
+    let converted = 0;
+    for (const q of quotes) {
+      if (q.status === 'DRAFT' || q.status === 'IN_PROGRESS') draft++;
+      else if (q.status === 'SENT' || q.status === 'SENT_TO_CLIENT' || q.status === 'VIEWED') sent++;
+      else if (q.status === 'APPROVED' || q.status === 'ACCEPTED') approved++;
+      else if (q.status === 'CONVERTED' || q.status === 'CONFIRMED' || q.status === 'BOOKING_SUBMITTED') converted++;
+    }
+    return [
+      { id: 'ALL', label: 'All Quotes', count: quotes.length },
+      { id: 'DRAFT', label: 'Drafts', count: draft },
+      { id: 'SENT', label: 'Sent to Client', count: sent },
+      { id: 'APPROVED', label: 'Client Approved', count: approved },
+      { id: 'CONVERTED', label: 'Bookings Converted', count: converted }
+    ];
+  }, [quotes]);
+
+  const visibilityIndex = useMemo(
+    () => inventoryVisibilityService.getVisibilityIndex(),
+    [refreshTrigger]
+  );
 
   return (
     <div className="w-full max-w-full min-w-0 px-4 sm:px-6 lg:px-8 xl:px-10 py-6 space-y-6">
@@ -244,16 +273,14 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {paginatedQuotes.map(quote => {
-                  const versionsForQuote = db.getQuotationVersions(quote.id, user);
                   const versionCount = Math.max(
                     quote.versionCount || 0,
-                    quote.latestVersion || quote.version || 1,
-                    versionsForQuote.length
+                    quote.latestVersion || quote.version || 1
                   );
                   const activeVersion = quote.latestVersion || quote.version || 1;
                   const isDraftQuote = quote.status === 'DRAFT' || quote.status === 'IN_PROGRESS';
                   const draftReview = isDraftQuote
-                    ? analyzeQuotationDestinationEligibility(quote, inventoryVisibilityService.getVisibilityIndex())
+                    ? analyzeQuotationDestinationEligibility(quote, visibilityIndex)
                     : null;
                   return (
                   <tr key={quote.id} className="hover:bg-slate-50/80 transition-colors">
@@ -294,26 +321,38 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
                     </td>
 
                     <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
-                      {formatCurrency(
-                        convertCurrency(
-                          Number(quote.pricingSnapshot?.finalCustomerSellingPrice ?? quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0),
-                          (quote.currency || quote.pricingSnapshot?.currency || 'USD') as CurrencyCode,
-                          currency
-                        ),
-                        currency
-                      )}
+                      {(() => {
+                        const sourceCurr = (quote.currency || quote.pricingSnapshot?.currency || 'USD') as CurrencyCode;
+                        const rawSell = Number(quote.pricingSnapshot?.finalCustomerSellingPrice ?? quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0);
+                        const sellConv = convertForDisplay(rawSell, sourceCurr);
+                        return (
+                          <div>
+                            <div className={sellConv.status === 'UNAVAILABLE' ? 'text-amber-700' : ''}>{sellConv.formatted}</div>
+                            {sellConv.isConverted && (
+                              <div className="text-[10px] font-normal text-slate-400">Quote: {sellConv.nativeFormatted}</div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </td>
 
                     {canViewInternalCosts && (
                       <td className="py-3.5 px-4 font-mono text-emerald-600 font-semibold">
-                        +{formatCurrency(
-                          convertCurrency(
-                            Number(quote.totalMargin ?? quote.totalMarginAmount ?? 0),
-                            (quote.currency || quote.pricingSnapshot?.currency || 'USD') as CurrencyCode,
-                            currency
-                          ),
-                          currency
-                        )}
+                        {(() => {
+                          const sourceCurr = (quote.currency || quote.pricingSnapshot?.currency || 'USD') as CurrencyCode;
+                          const rawMargin = Number(quote.totalMargin ?? quote.totalMarginAmount ?? 0);
+                          const marginConv = convertForDisplay(rawMargin, sourceCurr);
+                          return (
+                            <div>
+                              <div className={marginConv.status === 'UNAVAILABLE' ? 'text-amber-700' : ''}>
+                                {marginConv.status === 'UNAVAILABLE' ? marginConv.formatted : `+${marginConv.formatted}`}
+                              </div>
+                              {marginConv.isConverted && (
+                                <div className="text-[10px] font-normal text-slate-400">+{marginConv.nativeFormatted}</div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </td>
                     )}
 
@@ -472,44 +511,48 @@ export const B2BQuotesManagerView: React.FC<B2BQuotesManagerViewProps> = ({
               </div>
             </div>
 
-            <ProposalDocumentView
-              quote={previewingQuote}
-              agentUser={user}
-              onClose={() => setPreviewingQuote(null)}
-            />
+            <Suspense fallback={null}>
+              <ProposalDocumentView
+                quote={previewingQuote}
+                agentUser={user}
+                onClose={() => setPreviewingQuote(null)}
+              />
+            </Suspense>
           </div>
         </div>
       )}
 
       {/* Quotation Version History Modal */}
       {versionHistoryQuote && (
-        <QuotationVersionHistoryModal
-          isOpen={!!versionHistoryQuote}
-          onClose={() => setVersionHistoryQuote(null)}
-          quoteId={versionHistoryQuote.id}
-          initialQuote={versionHistoryQuote}
-          currentUser={user}
-          onOpenVersion={(qId, ver, mode) => {
-            setVersionHistoryQuote(null);
-            if (onOpenQuoteVersion) {
-              onOpenQuoteVersion(qId, { version: ver, mode });
-            } else {
-              const target = db.getQuoteByIdAuthorized(qId, user);
-              if (target) onEditQuote(target);
-            }
-          }}
-          onRestoreVersion={(qId, ver) => {
-            setVersionHistoryQuote(null);
-            if (onRestoreQuoteVersion) {
-              onRestoreQuoteVersion(qId, ver);
-            } else if (onOpenQuoteVersion) {
-              onOpenQuoteVersion(qId, { version: ver, mode: 'restore' });
-            } else {
-              const target = db.getQuoteByIdAuthorized(qId, user);
-              if (target) onEditQuote(target);
-            }
-          }}
-        />
+        <Suspense fallback={null}>
+          <QuotationVersionHistoryModal
+            isOpen={!!versionHistoryQuote}
+            onClose={() => setVersionHistoryQuote(null)}
+            quoteId={versionHistoryQuote.id}
+            initialQuote={versionHistoryQuote}
+            currentUser={user}
+            onOpenVersion={(qId, ver, mode) => {
+              setVersionHistoryQuote(null);
+              if (onOpenQuoteVersion) {
+                onOpenQuoteVersion(qId, { version: ver, mode });
+              } else {
+                const target = db.getQuoteByIdAuthorized(qId, user);
+                if (target) onEditQuote(target);
+              }
+            }}
+            onRestoreVersion={(qId, ver) => {
+              setVersionHistoryQuote(null);
+              if (onRestoreQuoteVersion) {
+                onRestoreQuoteVersion(qId, ver);
+              } else if (onOpenQuoteVersion) {
+                onOpenQuoteVersion(qId, { version: ver, mode: 'restore' });
+              } else {
+                const target = db.getQuoteByIdAuthorized(qId, user);
+                if (target) onEditQuote(target);
+              }
+            }}
+          />
+        </Suspense>
       )}
     </div>
   );

@@ -112,6 +112,7 @@ export function createPageContainerElements(pages: RenderedPage[]): HTMLElement 
     bodyZone.style.flexDirection = 'column';
     bodyZone.style.justifyContent = 'flex-start';
     bodyZone.style.boxSizing = 'border-box';
+    bodyZone.style.overflow = 'visible';
     bodyZone.innerHTML = page.blocks.map((b) => b.html).join('');
     pageEl.appendChild(bodyZone);
 
@@ -131,6 +132,54 @@ export function createPageContainerElements(pages: RenderedPage[]): HTMLElement 
   });
 
   return rootWrapper;
+}
+
+/**
+ * Preload image URLs referenced inside the presentation model (logos, itinerary HTML images)
+ * before DOM height measurement so pagination sees real rendered image dimensions.
+ */
+async function preloadPresentationModelImages(model: QuotePresentationModel): Promise<void> {
+  if (typeof Image === 'undefined') return;
+  const urls = new Set<string>();
+  if (model.agentLogoUrl) urls.add(model.agentLogoUrl);
+
+  const collectImgSrcs = (html?: string) => {
+    if (!html || !html.includes('<img')) return;
+    const re = /<img\b[^>]*\bsrc\s*=\s*(['"])([^'"]+)\1/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      if (m[2]) urls.add(m[2]);
+    }
+  };
+
+  collectImgSrcs(model.itineraryOverview);
+  collectImgSrcs(model.commercialTermsHtml);
+  model.days.forEach((d) => {
+    collectImgSrcs(d.dayOverview);
+    collectImgSrcs(d.dayNotes);
+    d.services.forEach((s) => collectImgSrcs(s.overview));
+  });
+  model.visaServices?.forEach((v) => collectImgSrcs(v.overview));
+
+  if (urls.size === 0) return;
+
+  await Promise.all(
+    Array.from(urls).map(
+      (src) =>
+        new Promise<void>((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          const timer = setTimeout(() => resolve(), 3000);
+          const done = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+          img.onload = done;
+          img.onerror = done;
+          img.src = src;
+        })
+    )
+  );
 }
 
 /**
@@ -154,6 +203,8 @@ export async function generateQuotationPDFFromModel(
     }
   }
 
+  await withBoundedTimeout(preloadPresentationModelImages(model), 3500, 'PDF Pre-Pagination Image Warmup').catch(() => {});
+
   const pages = paginateQuotePresentationModel(model);
   const boundsValidation = validatePdfLayoutBounds(pages);
   if (!boundsValidation.valid) {
@@ -166,28 +217,50 @@ export async function generateQuotationPDFFromModel(
   try {
     await withBoundedTimeout(waitForImagesLoaded(wrapper), 6000, 'PDF Image Preload').catch(() => {});
 
-    // Verify rendered DOM geometry invariants before rasterizing
+    // Verify rendered DOM geometry invariants strictly before rasterizing
     const pageElements = Array.from(wrapper.querySelectorAll('.proposal-pdf-page')) as HTMLElement[];
     for (let i = 0; i < pageElements.length; i++) {
       const pageEl = pageElements[i];
+      const pageData = pages[i];
+      const bounds = pageData?.bounds || getPageContentBounds(i + 1);
       const headerEl = pageEl.querySelector('.proposal-pdf-header-zone') as HTMLElement | null;
       const bodyEl = pageEl.querySelector('.proposal-pdf-blocks-zone') as HTMLElement | null;
       const footerEl = pageEl.querySelector('.proposal-pdf-footer-zone') as HTMLElement | null;
+
       if (headerEl && bodyEl) {
         const hRect = headerEl.getBoundingClientRect();
         const bRect = bodyEl.getBoundingClientRect();
         if (hRect.bottom > bRect.top + 1) {
-          console.warn(
-            `[PDF Geometry Guard] Page ${i + 1} header bottom (${Math.round(hRect.bottom)}) approaches body top (${Math.round(bRect.top)}).`
+          console.error('[PDF Geometry Guard] Header/Body overlap:', {
+            pageNumber: i + 1,
+            headerBottom: Math.round(hRect.bottom),
+            bodyTop: Math.round(bRect.top),
+            diagnostics: pageData?.diagnostics
+          });
+          throw new Error(
+            `PDF Layout Bounds Validation Failed: Page ${i + 1} header bottom (${Math.round(hRect.bottom)}px) overlaps body top (${Math.round(bRect.top)}px).`
           );
         }
       }
+
       if (bodyEl && footerEl) {
+        const pRect = pageEl.getBoundingClientRect();
         const bRect = bodyEl.getBoundingClientRect();
         const fRect = footerEl.getBoundingClientRect();
-        if (bRect.bottom > fRect.top - 2) {
-          console.warn(
-            `[PDF Geometry Guard] Page ${i + 1} body bottom (${Math.round(bRect.bottom)}) approaches footer top (${Math.round(fRect.top)}).`
+        const actualDomBodyHeight = Math.ceil(bRect.height);
+        const maxBottomY = pRect.top + bounds.contentBottom + 2;
+
+        if (bRect.bottom > fRect.top - 1 || bRect.bottom > maxBottomY || actualDomBodyHeight > bounds.availableContentHeight + 2) {
+          console.error('[PDF Geometry Guard] Body/Footer overflow detected:', {
+            pageNumber: i + 1,
+            actualDomBodyHeight,
+            availableContentHeight: bounds.availableContentHeight,
+            bodyBottom: Math.round(bRect.bottom),
+            footerTop: Math.round(fRect.top),
+            diagnostics: pageData?.diagnostics
+          });
+          throw new Error(
+            `PDF Layout Bounds Validation Failed: Page ${i + 1} body height (${actualDomBodyHeight}px) exceeds availableContentHeight (${bounds.availableContentHeight}px) and would collide with footer.`
           );
         }
       }

@@ -15,6 +15,8 @@ export interface RailStation {
   searchAliases: string[];
   country: string; // "Japan"
   regionId: string; // "reg-east-asia"
+  regionName?: string;
+  prefecture?: string;
   destinationId: string; // "dest-japan"
   hubId?: string; // "hub-tokyo"
   city: string; // "Tokyo"
@@ -55,10 +57,13 @@ export interface RailService {
 
 export interface RailRoute {
   routeId: string; // e.g. "JP-RT-TOKYO-KYOTO"
+  routeCode?: string; // e.g. "TYO-KYO"
   originStationId: string;
   destinationStationId: string;
   originStationName: string;
   destinationStationName: string;
+  originRegionId?: string;
+  destinationRegionId?: string;
   country: string; // "Japan"
   destinationId: string; // "dest-japan"
   railOperator: string; // "JR Central / JR West / smartEX"
@@ -72,6 +77,7 @@ export interface RailRoute {
     nozomiMizuho?: number;
     hikariKodamaSakura?: number;
   };
+  notes?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -228,7 +234,25 @@ export interface RailPricingParams {
 export interface RailPricingResult {
   isPriceAvailable?: boolean;
   priceUnavailableReason?: string;
+  diagnosticCode?:
+    | 'OK'
+    | 'SAME_STATION'
+    | 'STATION_NOT_FOUND'
+    | 'STATION_INACTIVE'
+    | 'MISSING_ROUTE'
+    | 'INACTIVE_ROUTE'
+    | 'SERVICE_NOT_SUPPORTED'
+    | 'MISSING_FARE'
+    | 'PRODUCT_INACTIVE'
+    | 'FX_UNAVAILABLE'
+    | 'INVALID_PRICE';
   route: RailRoute;
+  routeId?: string;
+  routeCode?: string;
+  routeMatchType?: 'EXACT_DIRECTION' | 'SYMMETRIC_CORRIDOR';
+  adultRateId?: string;
+  childRateId?: string;
+  fareMatchType?: 'EXACT_DIRECTION' | 'SYMMETRIC_CORRIDOR';
   originStation: RailStation;
   destinationStation: RailStation;
   product: Product;
@@ -333,6 +357,10 @@ export interface RailBookingItemDetails {
   carType: RailCarType;
   seatType: RailSeatType;
   serviceGroup: RailServiceGroup;
+  routeId?: string;
+  routeCode?: string;
+  adultRateId?: string;
+  childRateId?: string;
   originStationId: string;
   originStationName: string;
   originStationCode: string;

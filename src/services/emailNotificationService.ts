@@ -44,10 +44,67 @@ export class EmailNotificationService {
     return EmailNotificationService.instance;
   }
 
+  public async checkEmailDispatchStatus(idempotencyKey: string): Promise<{
+    found: boolean;
+    status: string;
+    acceptedByProvider: boolean;
+    deliveryConfirmed: boolean;
+    messageId?: string;
+    sentAt?: string;
+    provider?: string;
+    simulated?: boolean;
+    error?: string;
+  }> {
+    const cleanKey = (idempotencyKey || '').trim();
+    if (!cleanKey) {
+      return { found: false, status: 'NOT_FOUND', acceptedByProvider: false, deliveryConfirmed: false };
+    }
+    const baseUrl =
+      typeof window !== 'undefined' && window.location?.origin
+        ? `${window.location.origin}/api/integrations/gmail/status`
+        : 'http://localhost:3000/api/integrations/gmail/status';
+    try {
+      const res = await fetchWithTimeout(
+        `${baseUrl}?idempotencyKey=${encodeURIComponent(cleanKey)}`,
+        { method: 'GET' },
+        8000
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          found: false,
+          status: 'STATUS_CHECK_FAILED',
+          acceptedByProvider: false,
+          deliveryConfirmed: false,
+          error: data.error || `Status check returned HTTP ${res.status}`
+        };
+      }
+      return {
+        found: Boolean(data.found),
+        status: String(data.status || 'NOT_FOUND'),
+        acceptedByProvider: Boolean(data.acceptedByProvider),
+        deliveryConfirmed: Boolean(data.deliveryConfirmed),
+        messageId: data.messageId,
+        sentAt: data.sentAt,
+        provider: data.provider,
+        simulated: Boolean(data.simulated),
+        error: data.error
+      };
+    } catch (err: any) {
+      return {
+        found: false,
+        status: 'STATUS_CHECK_FAILED',
+        acceptedByProvider: false,
+        deliveryConfirmed: false,
+        error: err?.message || 'Unable to verify prior dispatch status'
+      };
+    }
+  }
+
   /**
    * Executes live email dispatch via Google Workspace Gmail API v1 endpoint.
    * Mandate: Tracks comprehensive CommunicationAuditLog on every dispatch attempt,
-   * never masks failures, and records exact delivery status.
+   * never masks configuration or provider failures, and distinguishes provider acceptance from recipient delivery.
    */
   public async sendViaGmailApi(
     to: string, 
@@ -67,17 +124,26 @@ export class EmailNotificationService {
       senderEmail?: string;
     },
     textBody?: string
-  ): Promise<{ success: boolean; messageId?: string; error?: string; alreadySent?: boolean; providerStatus?: string }> {
+  ): Promise<{
+    success: boolean;
+    messageId?: string;
+    error?: string;
+    alreadySent?: boolean;
+    acceptedByProvider?: boolean;
+    deliveryConfirmed?: boolean;
+    provider?: string;
+    providerStatus?: string;
+  }> {
     const db = AppDatabase.getInstance();
     const communicationId = `comm-email-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const eventType: CommunicationEventType = meta?.eventType || (meta?.quoteId ? 'QUOTE_EMAIL_SENT' : 'BOOKING_EMAIL_SENT');
     const recipientType = meta?.recipientType || (meta?.quoteId ? 'BUYER' : 'DMC_OPS');
 
     const cleanTo = (to || '').trim();
-    if (!cleanTo || !cleanTo.includes('@') || /^[^\s@]+@example\.com$/i.test(cleanTo)) {
-      const invalidErr = !cleanTo || !cleanTo.includes('@')
+    if (!cleanTo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanTo) || /^[^\s@]+@example\.com$/i.test(cleanTo)) {
+      const invalidErr = !cleanTo || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanTo)
         ? 'Invalid or missing recipient email address.'
-        : `Recipient address "${cleanTo}" is an unconfigured placeholder domain (@example.com).`;
+        : `Recipient address "${cleanTo}" uses placeholder domain (@example.com) and cannot be dispatched.`;
       db.saveCommunicationAuditLog({
         id: `audit-${Date.now()}`,
         communicationId,
@@ -95,15 +161,15 @@ export class EmailNotificationService {
         deliveryStatus: 'FAILED',
         failureReason: invalidErr
       });
-      return { success: false, error: invalidErr, providerStatus: 'INVALID_RECIPIENT' };
+      return { success: false, error: invalidErr, acceptedByProvider: false, deliveryConfirmed: false, providerStatus: 'INVALID_RECIPIENT' };
     }
 
     if (!subject || !subject.trim()) {
-      return { success: false, error: 'Email subject line cannot be empty.', providerStatus: 'VALIDATION_ERROR' };
+      return { success: false, error: 'Email subject line cannot be empty.', acceptedByProvider: false, deliveryConfirmed: false, providerStatus: 'VALIDATION_ERROR' };
     }
 
     if (!htmlBody || !htmlBody.trim()) {
-      return { success: false, error: 'Email HTML body cannot be empty.', providerStatus: 'VALIDATION_ERROR' };
+      return { success: false, error: 'Email HTML body cannot be empty.', acceptedByProvider: false, deliveryConfirmed: false, providerStatus: 'VALIDATION_ERROR' };
     }
 
     try {
@@ -111,9 +177,11 @@ export class EmailNotificationService {
       const idempotencyKey = meta?.idempotencyKey || `${meta?.quoteId || meta?.bookingId || meta?.leadId || cleanTo}-${eventType}-${Date.now()}`;
 
       const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Authorization': storedToken ? `Bearer ${storedToken}` : 'Bearer theunbound-transactional-relay'
+        'Content-Type': 'application/json'
       };
+      if (storedToken && storedToken.trim()) {
+        headers['Authorization'] = `Bearer ${storedToken.trim()}`;
+      }
 
       const apiUrl = typeof window !== 'undefined' && window.location?.origin
         ? `${window.location.origin}/api/integrations/gmail/send`
@@ -172,7 +240,13 @@ export class EmailNotificationService {
           deliveryStatus: 'FAILED',
           failureReason: err
         });
-        return { success: false, error: err, providerStatus: data.status || 'PROVIDER_REJECTED' };
+        return {
+          success: false,
+          error: err,
+          acceptedByProvider: false,
+          deliveryConfirmed: false,
+          providerStatus: data.status || 'PROVIDER_REJECTED'
+        };
       }
 
       db.saveCommunicationAuditLog({
@@ -196,6 +270,9 @@ export class EmailNotificationService {
         success: true,
         messageId: data.messageId,
         alreadySent: Boolean(data.alreadySent),
+        acceptedByProvider: data.acceptedByProvider !== false,
+        deliveryConfirmed: Boolean(data.deliveryConfirmed),
+        provider: data.provider || (data.simulated ? 'TRANSACTIONAL_RELAY' : 'GMAIL_API'),
         providerStatus: data.simulated ? 'EMAIL_ACCEPTED_RELAY' : 'EMAIL_SENT_GMAIL_API'
       };
     } catch (err: any) {
@@ -220,7 +297,13 @@ export class EmailNotificationService {
         deliveryStatus: 'FAILED',
         failureReason: errorMsg
       });
-      return { success: false, error: errorMsg, providerStatus: isAbort ? 'TIMEOUT' : 'NETWORK_ERROR' };
+      return {
+        success: false,
+        error: errorMsg,
+        acceptedByProvider: false,
+        deliveryConfirmed: false,
+        providerStatus: isAbort ? 'TIMEOUT' : 'NETWORK_ERROR'
+      };
     }
   }
 

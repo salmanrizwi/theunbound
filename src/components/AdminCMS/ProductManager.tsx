@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { 
   Product, 
   ProductCategory, 
@@ -18,6 +18,7 @@ import {
 import { AppDatabase } from '../../services/db';
 import { MasterDataService } from '../../services/masterDataService';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { formatCurrency, CAPACITY_BASED_CATEGORIES, calculateB2BAgentPrice, validateInventoryValidityAndSurcharges } from '../../services/pricingEngine';
 import { InventoryValidityAndSurchargesSection } from './common/InventoryValidityAndSurchargesSection';
 import { 
@@ -75,12 +76,20 @@ import { canonicalImageService } from '../../services/imageService';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { ProductUpdateWorkspace } from './ProductUpdateWorkspace';
-import { JapanRailJourneyConfigurator } from '../JapanRail/JapanRailJourneyConfigurator';
-import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { AUTHORITATIVE_PRODUCT_CATEGORIES, PRODUCT_CMS_CATEGORIES, resolveAuthoritativeCategory, CONFIGURATOR_REGISTRY_MAP } from '../../services/configuratorRegistry';
 import { OperationalAssetSelector, SelectedAssetPayload } from './OperationalAssetSelector';
-import { RichTextEditor } from '../common/RichTextEditor';
 import { OperationalAssetsManager } from './OperationalAssetsManager';
+import { RailGeographySelector, hydrateRailGeographyState } from './RailGeographySelector';
+
+const JapanRailJourneyConfigurator = React.lazy(() =>
+  import('../JapanRail/JapanRailJourneyConfigurator').then(m => ({ default: m.JapanRailJourneyConfigurator }))
+);
+const GlobalConfiguratorRouter = React.lazy(() =>
+  import('../Configurators/GlobalConfiguratorRouter').then(m => ({ default: m.GlobalConfiguratorRouter }))
+);
+const RichTextEditor = React.lazy(() =>
+  import('../common/RichTextEditor').then(m => ({ default: m.RichTextEditor }))
+);
 
 interface ProductManagerProps {
   destinations: Destination[];
@@ -92,6 +101,7 @@ const CATEGORIES: ProductCategory[] = [...PRODUCT_CMS_CATEGORIES];
 export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, onViewProduct }) => {
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const [products, setProducts] = useState<Product[]>(() => db.getProducts());
   const [masterRegions, setMasterRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [regions, setRegions] = useState<DestinationRegionItem[]>(() => db.getRegions());
@@ -347,6 +357,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     setEditingProduct(product);
     setModalTab('CONTENT');
     const isCapCat = CAPACITY_BASED_CATEGORIES.includes(product.category as string);
+    const isRailCat = product.category === 'Rail' || product.category === 'Rail / Shinkansen';
+    const hydratedRail = isRailCat ? hydrateRailGeographyState(product, regions, cityHubs) : null;
     setFormData({
       ...product,
       pricingMethod: product.pricingMethod || (isCapCat ? 'capacity_based' : 'per_person'),
@@ -355,7 +367,19 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       buyerMarkupPercent: product.buyerMarkupPercent,
       b2bAgentMarkupPercent: product.b2bAgentMarkupPercent,
       optionalUpgradeProductIds: product.optionalUpgradeProductIds || [],
-      hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
+      destinationIds: product.destinationIds || (product.destinationId ? [product.destinationId] : []),
+      ...(hydratedRail ? {
+        regionId: hydratedRail.regionId || product.regionId || '',
+        regionName: hydratedRail.regionName || product.regionName || '',
+        regionIds: hydratedRail.regionIds,
+        regionNames: hydratedRail.regionNames,
+        hubId: hydratedRail.hubId || product.hubId || '',
+        city: hydratedRail.city || product.city || '',
+        hubIds: hydratedRail.hubIds,
+        hubNames: hydratedRail.hubNames
+      } : {
+        hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
+      })
     });
     setIsModalOpen(true);
   };
@@ -465,25 +489,51 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
     let validatedRegion: any;
     let validatedDestination: any;
     let validatedHub: any;
+    let railRegionIds: string[] = [];
+    let railRegionNames: string[] = [];
+    let railHubIds: string[] = [];
+    let railHubNames: string[] = [];
 
-    if (formData.category === 'Rail') {
-      const hubIds = formData.hubIds || [];
-      if (hubIds.length === 0) {
+    if (formData.category === 'Rail' || formData.category === 'Rail / Shinkansen') {
+      const selectedHubIds: string[] = Array.from(
+        new Set<string>(((formData.hubIds || []) as string[]).filter((id): id is string => typeof id === 'string' && Boolean(id)))
+      );
+      const selectedRegionIds: string[] = Array.from(
+        new Set<string>([
+          ...((formData.regionIds || []) as string[]),
+          ...(formData.regionId ? [String(formData.regionId)] : [])
+        ].filter((id): id is string => typeof id === 'string' && Boolean(id)))
+      );
+      if (selectedRegionIds.length === 0) {
+        alert('At least one Region (Tier 2) is required for Rail products.');
+        return;
+      }
+      if (selectedHubIds.length === 0) {
         alert('At least one associated City Hub is required for Rail products.');
         return;
       }
-      for (const hId of hubIds) {
-        const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, hId);
-        if (!hierarchy.valid) {
-          alert(`Data Integrity Error for Associated Hub (${hId}): ${hierarchy.error}`);
-          return;
-        }
-        validatedRegion = hierarchy.region;
-        validatedDestination = hierarchy.destination;
+      const primaryHubObj = masterData.getHubById(selectedHubIds[0], true);
+      const primaryRegId =
+        (primaryHubObj?.regionId && selectedRegionIds.includes(primaryHubObj.regionId) ? primaryHubObj.regionId : undefined) ||
+        selectedRegionIds[0];
+      const hierarchy = masterData.validateHierarchy(
+        primaryRegId,
+        formData.destinationId,
+        selectedHubIds[0],
+        selectedHubIds,
+        selectedRegionIds
+      );
+      if (!hierarchy.valid) {
+        alert(`Data Integrity Error: ${hierarchy.error}`);
+        return;
       }
-      if (hubIds[0]) {
-        validatedHub = masterData.getHubById(hubIds[0]);
-      }
+      validatedRegion = hierarchy.destinationRegion || hierarchy.region;
+      validatedDestination = hierarchy.destination;
+      validatedHub = primaryHubObj || hierarchy.hub;
+      railRegionIds = Array.from(new Set(selectedRegionIds.map(rid => masterData.getDestinationRegionById(rid, true)?.id || rid).filter(Boolean)));
+      railRegionNames = Array.from(new Set(railRegionIds.map(rid => masterData.getDestinationRegionById(rid, true)?.name).filter((n): n is string => Boolean(n))));
+      railHubIds = Array.from(new Set(selectedHubIds.map(hid => masterData.getHubById(hid, true)?.id || hid).filter(Boolean)));
+      railHubNames = Array.from(new Set(railHubIds.map(hid => masterData.getHubById(hid, true)?.name).filter((n): n is string => Boolean(n))));
     } else {
       const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
       if (!hierarchy.valid) {
@@ -523,7 +573,15 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
       country: validatedDestination.country || validatedDestination.name,
       hubId: validatedHub ? validatedHub.id : (formData.hubId || ''),
       city: validatedHub ? validatedHub.name : (formData.city || validatedDestination.name),
-      hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : []),
+      ...(formData.category === 'Rail' || formData.category === 'Rail / Shinkansen' ? {
+        destinationIds: [validatedDestination.id],
+        regionIds: railRegionIds,
+        regionNames: railRegionNames,
+        hubIds: railHubIds,
+        hubNames: railHubNames
+      } : {
+        hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : [])
+      }),
       productType: formData.productType || '',
       name: formData.name || '',
       shortDescription: formData.shortDescription || '',
@@ -650,12 +708,18 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
         ((p as any).product_id || '').toLowerCase().includes(q) ||
         (p.city || '').toLowerCase().includes(q) ||
         (p.regionName || '').toLowerCase().includes(q) ||
+        (Array.isArray(p.regionNames) && p.regionNames.some(rn => (rn || '').toLowerCase().includes(q))) ||
+        (Array.isArray(p.hubNames) && p.hubNames.some(hn => (hn || '').toLowerCase().includes(q))) ||
         (p.supplierName || '').toLowerCase().includes(q);
-      const matchesDest = selectedDestination === 'ALL' || p.destinationId === selectedDestination;
+      const matchesDest =
+        selectedDestination === 'ALL' ||
+        p.destinationId === selectedDestination ||
+        (Array.isArray(p.destinationIds) && p.destinationIds.includes(selectedDestination));
       const matchesReg =
         selectedMasterRegion === 'ALL' ||
         p.regionId === selectedMasterRegion ||
-        (Array.isArray(p.regionIds) && p.regionIds.includes(selectedMasterRegion));
+        (Array.isArray(p.regionIds) && p.regionIds.includes(selectedMasterRegion)) ||
+        (Array.isArray(p.hubIds) && p.hubIds.some(hid => cityHubs.find(h => h.id === hid)?.regionId === selectedMasterRegion));
       const matchesHub =
         selectedCityHub === 'ALL' ||
         p.hubId === selectedCityHub ||
@@ -910,6 +974,8 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                       <img
                         src={product.images?.[0] || product.imageUrl || product.heroImage || canonicalImageService.resolveProductImage(product)}
                         alt={product.name}
+                        loading="lazy"
+                        decoding="async"
                         className="w-12 h-10 rounded-lg object-cover bg-slate-100 shrink-0 border border-slate-200"
                         referrerPolicy="no-referrer"
                         onError={(e) => {
@@ -927,7 +993,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           {product.name}
                         </div>
                         <div className="text-[11px] text-slate-400">
-                          {product.city}, {product.country} • {product.duration}
+                          {(Array.isArray(product.hubNames) && product.hubNames.length > 1
+                            ? product.hubNames.join(', ')
+                            : product.city)}, {product.country} • {product.duration}
                         </div>
                       </div>
                     </div>
@@ -938,11 +1006,14 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         <span className="inline-block text-[10px] bg-slate-900 text-white font-bold px-2 py-0.5 rounded">
                           {product.destinationName || product.destinationId || 'Unmapped Destination'}
                         </span>
-                        {product.regionName && (
-                          <span className="inline-block text-[10px] bg-[#00C6A6]/20 text-[#008972] font-extrabold px-1.5 py-0.5 rounded border border-[#00C6A6]/40">
-                            {product.regionName}
+                        {(Array.isArray(product.regionNames) && product.regionNames.length > 0
+                          ? product.regionNames
+                          : (product.regionName ? [product.regionName] : [])
+                        ).map(regLabel => (
+                          <span key={regLabel} className="inline-block text-[10px] bg-[#00C6A6]/20 text-[#008972] font-extrabold px-1.5 py-0.5 rounded border border-[#00C6A6]/40">
+                            {regLabel}
                           </span>
-                        )}
+                        ))}
                         {!hierarchyAudit.valid && (
                           <span
                             className="inline-flex items-center gap-1 text-[10px] bg-amber-100 text-amber-900 font-bold px-1.5 py-0.5 rounded border border-amber-300"
@@ -954,7 +1025,11 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         )}
                       </div>
                       <div className="text-[11px] text-slate-500 font-medium flex items-center space-x-1 flex-wrap gap-1">
-                        <span className="text-slate-700 font-semibold">{product.city}</span>
+                        <span className="text-slate-700 font-semibold">
+                          {Array.isArray(product.hubNames) && product.hubNames.length > 1
+                            ? product.hubNames.join(', ')
+                            : product.city}
+                        </span>
                         <span>•</span>
                         <span>{product.category}</span>
                         {((product.upsells && product.upsells.length > 0) || (product.addons && product.addons.length > 0)) && (
@@ -978,44 +1053,69 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
                         <span>Pricing Pending</span>
                       </span>
-                    ) : (
-                      <>
-                        <div className="font-bold font-mono text-slate-900 text-xs">
-                          {formatCurrency(product.adultNetPrice ?? product.vehicleConfig?.unitVehicleNetCost, product.nativeCurrency || product.currency)}
-                        </div>
-                        <div className="text-[10px] text-slate-400">
-                          Child: {formatCurrency(product.childNetPrice, product.nativeCurrency || product.currency)}
-                        </div>
-                      </>
-                    )}
+                    ) : (() => {
+                      const nativeCurr = product.nativeCurrency || product.currency || 'USD';
+                      const adultNetConv = convertForDisplay(product.adultNetPrice ?? product.vehicleConfig?.unitVehicleNetCost ?? 0, nativeCurr);
+                      const childNetConv = convertForDisplay(product.childNetPrice ?? 0, nativeCurr);
+                      return (
+                        <>
+                          <div className={`font-bold font-mono text-xs ${adultNetConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-900'}`}>
+                            {adultNetConv.formatted}
+                          </div>
+                          {adultNetConv.isConverted && (
+                            <div className="text-[9px] text-slate-400 font-mono">
+                              Native: {adultNetConv.nativeFormatted}
+                            </div>
+                          )}
+                          <div className="text-[10px] text-slate-400">
+                            Child: {childNetConv.formatted}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </td>
                   <td className="py-3.5 px-4">
-                    <div className="text-[11px] space-y-0.5">
-                      <div>
-                        Markup:{' '}
-                        <strong className={product.marginStatus === 'INACTIVE' ? 'text-slate-500' : 'text-emerald-700'}>
-                          {product.marginType === 'FIXED'
-                            ? `+${formatCurrency(product.marginFixed ?? 0, product.nativeCurrency || product.currency)}`
-                            : `+${product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 0}%`}
-                        </strong>
-                        {product.marginStatus === 'INACTIVE' && (
-                          <span className="ml-1 text-[10px] text-amber-700 font-semibold">(Inactive)</span>
-                        )}
-                      </div>
-                      <div className="text-slate-400 text-[10px]">Tax: +{product.taxPercent}% • Fee: {formatCurrency(product.serviceFeeFixed, product.nativeCurrency || product.currency)}</div>
-                    </div>
+                    {(() => {
+                      const nativeCurr = product.nativeCurrency || product.currency || 'USD';
+                      const fixedMarginConv = convertForDisplay(product.marginFixed ?? 0, nativeCurr);
+                      const feeConv = convertForDisplay(product.serviceFeeFixed ?? 0, nativeCurr);
+                      return (
+                        <div className="text-[11px] space-y-0.5">
+                          <div>
+                            Markup:{' '}
+                            <strong className={product.marginStatus === 'INACTIVE' ? 'text-slate-500' : 'text-emerald-700'}>
+                              {product.marginType === 'FIXED'
+                                ? `+${fixedMarginConv.formatted}`
+                                : `+${product.b2bAgentMarkupPercent ?? product.defaultMarkupPercent ?? 0}%`}
+                            </strong>
+                            {product.marginStatus === 'INACTIVE' && (
+                              <span className="ml-1 text-[10px] text-amber-700 font-semibold">(Inactive)</span>
+                            )}
+                          </div>
+                          <div className="text-slate-400 text-[10px]">Tax: +{product.taxPercent}% • Fee: {feeConv.formatted}</div>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="py-3.5 px-4">
                     {(!product.sellingPriceStartingFrom && !(product.adultNetPrice || product.vehicleConfig?.unitVehicleNetCost)) ? (
                       <span className="text-[10px] font-bold text-amber-700 font-mono">Rate Unconfigured</span>
-                    ) : (
-                      <>
-                        <div className="font-bold font-mono text-[#008972] text-xs">
-                          {formatCurrency(product.sellingPriceStartingFrom, product.nativeCurrency || product.currency)}
-                        </div>
-                        <span className="text-[10px] text-slate-400">Gross Quoted ({product.nativeCurrency || product.currency})</span>
-                      </>
-                    )}
+                    ) : (() => {
+                      const nativeCurr = product.nativeCurrency || product.currency || 'USD';
+                      const sellingConv = convertForDisplay(product.sellingPriceStartingFrom ?? 0, nativeCurr);
+                      return (
+                        <>
+                          <div className={`font-bold font-mono text-xs ${sellingConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-[#008972]'}`}>
+                            {sellingConv.formatted}
+                          </div>
+                          <span className="text-[10px] text-slate-400">
+                            {sellingConv.isConverted
+                              ? `Native: ${sellingConv.nativeFormatted}`
+                              : `Gross Quoted (${nativeCurr})`}
+                          </span>
+                        </>
+                      );
+                    })()}
                   </td>
                   <td className="py-3.5 px-4">
                     <button
@@ -1211,12 +1311,16 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   <span className="font-bold text-[#008f77] flex items-center gap-1">
                     <Globe2 className="w-3 h-3" />
-                    {formData.regionName || 'Select Region'}
+                    {formData.category === 'Rail' && Array.isArray(formData.regionNames) && formData.regionNames.length > 0
+                      ? formData.regionNames.join(', ')
+                      : (formData.regionName || 'Select Region')}
                   </span>
                   <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                   <span className="font-bold text-slate-900 flex items-center gap-1">
                     <Building className="w-3 h-3 text-amber-600" />
-                    {formData.city || 'Select City Hub'}
+                    {formData.category === 'Rail' && Array.isArray(formData.hubNames) && formData.hubNames.length > 0
+                      ? formData.hubNames.join(', ')
+                      : (formData.city || 'Select City Hub')}
                   </span>
                 </div>
 
@@ -1232,12 +1336,17 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                         setFormData({
                           ...formData,
                           destinationId: destId,
+                          destinationIds: destId ? [destId] : [],
                           destinationName: dest?.name || '',
                           country: dest?.country || dest?.name || '',
                           regionId: '',
                           regionName: '',
+                          regionIds: [],
+                          regionNames: [],
                           hubId: '',
                           city: '',
+                          hubIds: [],
+                          hubNames: [],
                           location: dest?.name || ''
                         });
                       }}
@@ -1250,82 +1359,70 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-xs font-semibold text-slate-700">2. Region (Tier 2) *</label>
-                    <select
-                      required
-                      disabled={!formData.destinationId}
-                      value={formData.regionId || ''}
-                      onChange={e => {
-                        const regId = e.target.value;
-                        const reg = regions.find(r => r.id === regId);
-                        setFormData({
-                          ...formData,
-                          regionId: regId,
-                          regionName: reg?.name || '',
-                          hubId: '',
-                          city: ''
-                        });
-                      }}
-                      className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
-                    >
-                      <option value="">{formData.destinationId ? '-- Select Region --' : '-- Select Destination First --'}</option>
-                      {regions
-                        .filter(r => r.destinationId === formData.destinationId)
-                        .map(r => (
-                          <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
-                        ))}
-                    </select>
-                  </div>
+                  {formData.category === 'Rail' ? (
+                    <div className="sm:col-span-3">
+                      <RailGeographySelector
+                        compact
+                        destinationId={formData.destinationId}
+                        regions={regions}
+                        cityHubs={cityHubs}
+                        selectedRegionIds={
+                          formData.regionIds && formData.regionIds.length > 0
+                            ? formData.regionIds
+                            : (formData.regionId ? [formData.regionId] : [])
+                        }
+                        selectedHubIds={
+                          formData.hubIds && formData.hubIds.length > 0
+                            ? formData.hubIds
+                            : (formData.hubId ? [formData.hubId] : [])
+                        }
+                        onApplyUpdate={update => {
+                          setFormData(prev => ({
+                            ...prev,
+                            regionId: update.regionId,
+                            regionName: update.regionName,
+                            regionIds: update.regionIds,
+                            regionNames: update.regionNames,
+                            hubId: update.hubId,
+                            city: update.city,
+                            hubIds: update.hubIds,
+                            hubNames: update.hubNames,
+                            location: `${update.hubNames.join(', ') || update.city}, ${prev.destinationName || ''}`.replace(/^,\s*|,\s*$/g, '')
+                          }));
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold text-slate-700">2. Region (Tier 2) *</label>
+                        <select
+                          required
+                          disabled={!formData.destinationId}
+                          value={formData.regionId || ''}
+                          onChange={e => {
+                            const regId = e.target.value;
+                            const reg = regions.find(r => r.id === regId);
+                            setFormData({
+                              ...formData,
+                              regionId: regId,
+                              regionName: reg?.name || '',
+                              hubId: '',
+                              city: ''
+                            });
+                          }}
+                          className={`w-full p-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:border-[#00C6A6] ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                        >
+                          <option value="">{formData.destinationId ? '-- Select Region --' : '-- Select Destination First --'}</option>
+                          {regions
+                            .filter(r => r.destinationId === formData.destinationId)
+                            .map(r => (
+                              <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
+                            ))}
+                        </select>
+                      </div>
 
-                  <div className="space-y-1">
-                    {formData.category === 'Rail' ? (
-                      <>
-                        <label className="text-xs font-semibold text-slate-700">3. Associated City Hubs (Multi-Hub Selection) *</label>
-                        <div className={`p-2 bg-white border border-slate-200 rounded-xl space-y-1.5 max-h-32 overflow-y-auto ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}>
-                          {!formData.destinationId ? (
-                            <div className="text-slate-400 text-xs">-- Select Destination First --</div>
-                          ) : (
-                            cityHubs
-                              .filter(h => h.destinationId === formData.destinationId)
-                              .map(h => {
-                                const isChecked = (formData.hubIds || []).includes(h.id);
-                                return (
-                                  <label key={h.id} className="flex items-center space-x-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                                    <input
-                                      type="checkbox"
-                                      checked={isChecked}
-                                      onChange={e => {
-                                        const checked = e.target.checked;
-                                        const currentIds = formData.hubIds || [];
-                                        let nextIds: string[];
-                                        if (checked) {
-                                          nextIds = [...currentIds, h.id];
-                                        } else {
-                                          nextIds = currentIds.filter(id => id !== h.id);
-                                        }
-                                        const primaryHub = cityHubs.find(ch => ch.id === nextIds[0]);
-                                        setFormData({
-                                          ...formData,
-                                          hubIds: nextIds,
-                                          hubId: nextIds[0] || '',
-                                          city: primaryHub?.name || '',
-                                          regionId: primaryHub?.regionId || formData.regionId || '',
-                                          regionName: primaryHub?.regionName || formData.regionName || '',
-                                          location: `${primaryHub?.name || ''}, ${formData.destinationName || ''}`.replace(/^,\s*|,\s*$/g, '')
-                                        });
-                                      }}
-                                      className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                                    />
-                                    <span>{h.name} ({h.regionName || h.id})</span>
-                                  </label>
-                                );
-                              })
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <>
+                      <div className="space-y-1">
                         <label className="text-xs font-semibold text-slate-700">3. Destination Hub / City (Tier 3) *</label>
                         <div className="flex gap-1.5">
                           <select
@@ -1354,9 +1451,9 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                               ))}
                           </select>
                         </div>
-                      </>
-                    )}
-                  </div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
@@ -1377,11 +1474,28 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                       onChange={e => {
                         const newCat = e.target.value as ProductCategory;
                         const isCapCat = CAPACITY_BASED_CATEGORIES.includes(newCat);
-                        setFormData({ 
-                          ...formData, 
-                          category: newCat,
-                          pricingMethod: isCapCat ? 'capacity_based' : formData.pricingMethod || 'per_person'
-                        });
+                        if (newCat === 'Rail') {
+                          const hydrated = hydrateRailGeographyState({ ...formData, category: newCat }, regions, cityHubs);
+                          setFormData({
+                            ...formData,
+                            category: newCat,
+                            pricingMethod: 'per_person',
+                            regionId: hydrated.regionId,
+                            regionName: hydrated.regionName,
+                            regionIds: hydrated.regionIds,
+                            regionNames: hydrated.regionNames,
+                            hubId: hydrated.hubId,
+                            city: hydrated.city,
+                            hubIds: hydrated.hubIds,
+                            hubNames: hydrated.hubNames
+                          });
+                        } else {
+                          setFormData({ 
+                            ...formData, 
+                            category: newCat,
+                            pricingMethod: isCapCat ? 'capacity_based' : formData.pricingMethod || 'per_person'
+                          });
+                        }
                       }}
                       className="w-full p-2 bg-white border border-slate-200 rounded-xl text-xs font-medium"
                     >
@@ -2378,7 +2492,15 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                           <div className="font-semibold text-slate-900 truncate">{p.name}</div>
                           <div className="text-[10px] text-slate-500 flex items-center justify-between mt-0.5">
                             <span>{p.city} • {p.category}</span>
-                            <span className="font-mono font-bold text-slate-700">{formatCurrency(p.adultNetPrice, p.currency)}</span>
+                            {(() => {
+                              const upgConv = convertForDisplay(p.adultNetPrice || 0, p.nativeCurrency || p.currency || 'USD');
+                              return (
+                                <span className="font-mono font-bold text-slate-700">
+                                  {upgConv.formatted}
+                                  {upgConv.isConverted ? ` (${upgConv.nativeFormatted})` : ''}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </div>
                       </label>
@@ -2401,12 +2523,14 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
               <div className="space-y-1">
                 <label className="font-semibold text-slate-700 block text-xs uppercase tracking-wider">Full Itinerary Description</label>
-                <RichTextEditor
-                  value={formData.longDescription || ''}
-                  onChange={html => setFormData({ ...formData, longDescription: html, description: html })}
-                  placeholder="Detailed tour schedule, highlights, VIP benefits..."
-                  minHeight="150px"
-                />
+                <Suspense fallback={<div className="h-[150px] w-full rounded-xl bg-slate-50 border border-slate-200 animate-pulse" />}>
+                  <RichTextEditor
+                    value={formData.longDescription || ''}
+                    onChange={html => setFormData({ ...formData, longDescription: html, description: html })}
+                    placeholder="Detailed tour schedule, highlights, VIP benefits..."
+                    minHeight="150px"
+                  />
+                </Suspense>
               </div>
 
               {/* Multi-Picture Gallery Management */}
@@ -2522,7 +2646,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                               isAdded ? 'ring-2 ring-[#00C6A6] opacity-70' : 'border-slate-200 hover:border-[#00C6A6]'
                             }`}
                           >
-                            <img src={item.url} alt={item.title} className="w-full h-full object-cover" />
+                            <img src={item.url} alt={item.title} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             <div className="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 flex items-center justify-center p-1 text-center transition-opacity">
                               <span className="text-[10px] font-bold text-white">
                                 {isAdded ? '✓ Added' : 'Add Photo'}
@@ -2598,7 +2722,7 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
                     {(formData.images || []).map((imgUrl, idx) => (
                       <div key={idx} className="relative group rounded-xl overflow-hidden border border-slate-200 bg-white aspect-4/3 shadow-2xs">
-                        <img src={imgUrl} alt={`Product ${idx + 1}`} className="w-full h-full object-cover" />
+                        <img src={imgUrl} alt={`Product ${idx + 1}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                         {idx === 0 && (
                           <span className="absolute top-1.5 left-1.5 bg-[#00C6A6] text-slate-950 text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded shadow-xs">
                             Primary
@@ -2770,41 +2894,45 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
 
       {/* Shared Japan Rail Dynamic Journey Configurator Modal */}
       {testingRailProduct && (
-        <JapanRailJourneyConfigurator
-          portalOrigin="PRODUCT_MANAGEMENT"
-          initialProduct={testingRailProduct}
-          onClose={() => setTestingRailProduct(null)}
-        />
+        <Suspense fallback={null}>
+          <JapanRailJourneyConfigurator
+            portalOrigin="PRODUCT_MANAGEMENT"
+            initialProduct={testingRailProduct}
+            onClose={() => setTestingRailProduct(null)}
+          />
+        </Suspense>
       )}
 
       {/* Shared Dedicated Configurator Router for CMS Admin */}
       {testingConfigProduct && (
-        <GlobalConfiguratorRouter
-          isOpen={true}
-          itemOrProduct={testingConfigProduct}
-          portalOrigin="ADMIN_CMS"
-          onClose={() => setTestingConfigProduct(null)}
-          onSuccess={(result) => {
-            setTestingConfigProduct(null);
-            refreshProducts();
-            if (result?.configurationPayload) {
-              setFormData(prev => ({
-                ...prev,
-                configuration: {
-                  configuration_id: result.configurationPayload.configuration_id || `cfg-${prev.sku || testingConfigProduct.id}`,
-                  product_id: prev.id || testingConfigProduct.id,
-                  product_category: prev.category as any,
-                  configurator_type: result.configurationPayload.configurator_type || CONFIGURATOR_REGISTRY_MAP[resolveAuthoritativeCategory(prev as any)]?.configuratorType,
-                  configuration_version: 1,
-                  configuration_schema_version: '1.0.0',
-                  configuration_data: result.configurationPayload,
-                  status: 'ACTIVE',
-                  updated_at: new Date().toISOString()
-                }
-              }));
-            }
-          }}
-        />
+        <Suspense fallback={null}>
+          <GlobalConfiguratorRouter
+            isOpen={true}
+            itemOrProduct={testingConfigProduct}
+            portalOrigin="ADMIN_CMS"
+            onClose={() => setTestingConfigProduct(null)}
+            onSuccess={(result) => {
+              setTestingConfigProduct(null);
+              refreshProducts();
+              if (result?.configurationPayload) {
+                setFormData(prev => ({
+                  ...prev,
+                  configuration: {
+                    configuration_id: result.configurationPayload.configuration_id || `cfg-${prev.sku || testingConfigProduct.id}`,
+                    product_id: prev.id || testingConfigProduct.id,
+                    product_category: prev.category as any,
+                    configurator_type: result.configurationPayload.configurator_type || CONFIGURATOR_REGISTRY_MAP[resolveAuthoritativeCategory(prev as any)]?.configuratorType,
+                    configuration_version: 1,
+                    configuration_schema_version: '1.0.0',
+                    configuration_data: result.configurationPayload,
+                    status: 'ACTIVE',
+                    updated_at: new Date().toISOString()
+                  }
+                }));
+              }
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Admin Product & Configuration Inspector Modal (Section 11) */}
@@ -2854,24 +2982,37 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                     {inspectingProduct.status}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Net Cost (Adult / Unit)</span>
-                    <strong className="text-slate-900 font-mono text-sm">{formatCurrency(inspectingProduct.adultNetPrice, inspectingProduct.currency)}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Selling Starting From</span>
-                    <strong className="text-[#008972] font-mono text-sm">{formatCurrency(inspectingProduct.sellingPriceStartingFrom, inspectingProduct.currency)}</strong>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Duration</span>
-                    <span className="font-semibold text-slate-800">{inspectingProduct.duration}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-400 block text-[10px]">Capacity / Pax</span>
-                    <span className="font-semibold text-slate-800">{inspectingProduct.minPax} - {inspectingProduct.maxPax} Pax</span>
-                  </div>
-                </div>
+                {(() => {
+                  const inspNativeCurr = inspectingProduct.nativeCurrency || inspectingProduct.currency || 'USD';
+                  const inspNetConv = convertForDisplay(inspectingProduct.adultNetPrice ?? 0, inspNativeCurr);
+                  const inspSellConv = convertForDisplay(inspectingProduct.sellingPriceStartingFrom ?? 0, inspNativeCurr);
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Net Cost (Adult / Unit)</span>
+                        <strong className="text-slate-900 font-mono text-sm block">{inspNetConv.formatted}</strong>
+                        {inspNetConv.isConverted && (
+                          <span className="text-[10px] text-slate-400 font-mono block">Native: {inspNetConv.nativeFormatted}</span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Selling Starting From</span>
+                        <strong className="text-[#008972] font-mono text-sm block">{inspSellConv.formatted}</strong>
+                        {inspSellConv.isConverted && (
+                          <span className="text-[10px] text-slate-400 font-mono block">Native: {inspSellConv.nativeFormatted}</span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Duration</span>
+                        <span className="font-semibold text-slate-800">{inspectingProduct.duration}</span>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px]">Capacity / Pax</span>
+                        <span className="font-semibold text-slate-800">{inspectingProduct.minPax} - {inspectingProduct.maxPax} Pax</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* SECTION 2: Category Specific Attributes & Details */}
@@ -2905,9 +3046,20 @@ export const ProductManager: React.FC<ProductManagerProps> = ({ destinations, on
                       </div>
                       <div className="bg-white p-3 rounded-xl border border-slate-200">
                         <span className="text-slate-400 text-[10px] block uppercase font-semibold">Unit Vehicle Nett</span>
-                        <span className="font-mono text-slate-900 font-bold text-xs block">
-                          {formatCurrency(inspectingProduct.vehicleConfig.unitVehicleNetCost || inspectingProduct.adultNetPrice, inspectingProduct.currency)}
-                        </span>
+                        {(() => {
+                          const vehConv = convertForDisplay(
+                            inspectingProduct.vehicleConfig.unitVehicleNetCost || inspectingProduct.adultNetPrice || 0,
+                            inspectingProduct.nativeCurrency || inspectingProduct.currency || 'USD'
+                          );
+                          return (
+                            <>
+                              <span className="font-mono text-slate-900 font-bold text-xs block">{vehConv.formatted}</span>
+                              {vehConv.isConverted && (
+                                <span className="text-[10px] text-slate-400 font-mono block">Native: {vehConv.nativeFormatted}</span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     </>
                   )}

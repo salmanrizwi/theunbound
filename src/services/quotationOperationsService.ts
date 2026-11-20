@@ -7,13 +7,20 @@ export type QuotationOperationType =
   | 'SNAPSHOT_CREATE'
   | 'PDF_GENERATE'
   | 'EMAIL_SEND'
-  | 'WHATSAPP_SHARE';
+  | 'WHATSAPP_SHARE'
+  | 'SAVE_MASTER_PACKAGE'
+  | 'CONVERT_BOOKING';
 
 export type QuotationOperationStatus =
   | 'IDLE'
   | 'PREPARING'
+  | 'VALIDATING'
+  | 'GENERATING'
+  | 'SENDING'
+  | 'CHECKING_STATUS'
   | 'IN_PROGRESS'
   | 'VERIFYING'
+  | 'ACCEPTED_BY_PROVIDER'
   | 'SUCCEEDED'
   | 'FAILED'
   | 'TIMED_OUT'

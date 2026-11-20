@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TravelLead, BookingInvoice, Booking, User } from '../../../types';
 import { formatCurrency } from '../../../services/pricingEngine';
+import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { 
   Receipt, 
   DollarSign, 
@@ -22,12 +23,17 @@ interface LeadFinancialsTabProps {
   financialSummary: {
     totalSellingPrice: number;
     totalNetCost: number;
-    totalGrossMargin: number;
-    marginPercentage: number;
-    totalPaidAmount: number;
-    totalBalanceDue: number;
-    paymentStatus: 'PAID' | 'PARTIALLY_PAID' | 'UNPAID';
+    totalGrossMargin?: number;
+    grossMargin?: number;
+    marginPercentage?: number;
+    grossMarginPercent?: number;
+    totalPaidAmount?: number;
+    totalPaid?: number;
+    totalBalanceDue?: number;
+    pendingBalance?: number;
+    paymentStatus: 'PAID' | 'PARTIALLY_PAID' | 'UNPAID' | string;
     currency: string;
+    hasUnavailableRates?: boolean;
     bookingsCount: number;
     invoicesCount: number;
     activeInvoiceId?: string;
@@ -47,8 +53,14 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
   onViewInvoice,
   onGenerateInvoice
 }) => {
+  const { convertForDisplay, formatDisplayCurrency, displayCurrency } = useDisplayCurrency();
   const isInternal = currentUser?.role === 'ADMIN' || currentUser?.role === 'TEAM_MEMBER' || currentUser?.role === 'DMC_STAFF';
-  const currency = financialSummary?.currency || lead.currency || 'USD';
+  const currency = financialSummary?.currency || displayCurrency || 'USD';
+  const totalSelling = financialSummary?.totalSellingPrice || 0;
+  const totalPaid = financialSummary?.totalPaidAmount ?? financialSummary?.totalPaid ?? 0;
+  const totalBalance = financialSummary?.totalBalanceDue ?? financialSummary?.pendingBalance ?? 0;
+  const totalMargin = financialSummary?.totalGrossMargin ?? financialSummary?.grossMargin ?? 0;
+  const marginPct = financialSummary?.marginPercentage ?? financialSummary?.grossMarginPercent ?? 0;
 
   // Gather all payment proofs from connected bookings
   const allPaymentProofs = linkedBookings.flatMap(b => 
@@ -88,9 +100,9 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
           <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
-            <span className="text-slate-400 font-semibold block text-[11px]">Total Selling Price</span>
+            <span className="text-slate-400 font-semibold block text-[11px]">Total Selling Price ({displayCurrency})</span>
             <span className="font-mono font-black text-slate-900 text-base sm:text-lg mt-0.5 block">
-              {formatCurrency(financialSummary?.totalSellingPrice || 0, currency)}
+              {formatDisplayCurrency(totalSelling)}
             </span>
             <span className="text-[10px] text-slate-500 mt-1 block">
               {financialSummary?.bookingsCount || 0} Operational Bookings
@@ -100,7 +112,7 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
           <div className="p-3.5 bg-emerald-50/50 rounded-2xl border border-emerald-100">
             <span className="text-emerald-700 font-semibold block text-[11px]">Received Payments</span>
             <span className="font-mono font-black text-emerald-800 text-base sm:text-lg mt-0.5 block">
-              {formatCurrency(financialSummary?.totalPaidAmount || 0, currency)}
+              {formatDisplayCurrency(totalPaid)}
             </span>
             <span className="text-[10px] text-emerald-600 mt-1 block">
               Verified & Deposited
@@ -110,12 +122,12 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
           <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
             <span className="text-slate-400 font-semibold block text-[11px]">Outstanding Balance</span>
             <span className={`font-mono font-black text-base sm:text-lg mt-0.5 block ${
-              (financialSummary?.totalBalanceDue || 0) > 0 ? 'text-[#008f77]' : 'text-emerald-700'
+              totalBalance > 0 ? 'text-[#008f77]' : 'text-emerald-700'
             }`}>
-              {formatCurrency(financialSummary?.totalBalanceDue || 0, currency)}
+              {formatDisplayCurrency(totalBalance)}
             </span>
             <span className="text-[10px] text-slate-500 mt-1 block">
-              Pending Settlement
+              {financialSummary?.hasUnavailableRates ? 'Partial FX Unavailable' : 'Pending Settlement'}
             </span>
           </div>
 
@@ -124,10 +136,10 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
             <div className="p-3.5 bg-teal-50/50 rounded-2xl border border-teal-100">
               <span className="text-[#008f77] font-semibold block text-[11px]">Realized Gross Margin</span>
               <span className="font-mono font-black text-[#008f77] text-base sm:text-lg mt-0.5 block">
-                {formatCurrency(financialSummary?.totalGrossMargin || 0, currency)}
+                {formatDisplayCurrency(totalMargin)}
               </span>
               <span className="text-[10px] text-[#00705d] font-bold mt-1 block">
-                {financialSummary?.marginPercentage || 0}% Target Margin
+                {marginPct}% Target Margin
               </span>
             </div>
           ) : (
@@ -212,12 +224,26 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
                     <td className="py-3 px-4 text-slate-800 font-semibold">
                       {invoice.billedToAgency || invoice.billedToName || 'Direct VIP'}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                      {formatCurrency(invoice.totalAmount || 0, invoice.currency)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-[#008f77]">
-                      {formatCurrency(invoice.balanceDue || 0, invoice.currency)}
-                    </td>
+                    {(() => {
+                      const invTotalConv = convertForDisplay(invoice.totalAmount || 0, invoice.currency || 'USD');
+                      const invBalConv = convertForDisplay(invoice.balanceDue || 0, invoice.currency || 'USD');
+                      return (
+                        <>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                            <div>{invTotalConv.formatted}</div>
+                            {invTotalConv.isConverted && (
+                              <div className="text-[9px] text-slate-400 font-normal">Billed: {invTotalConv.nativeFormatted}</div>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-[#008f77]">
+                            <div>{invBalConv.formatted}</div>
+                            {invBalConv.isConverted && (
+                              <div className="text-[9px] text-slate-400 font-normal">Billed: {invBalConv.nativeFormatted}</div>
+                            )}
+                          </td>
+                        </>
+                      );
+                    })()}
                     <td className="py-3 px-4 text-center">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border inline-block ${
                         invoice.paymentStatus === 'PAID'
@@ -276,7 +302,20 @@ export const LeadFinancialsTab: React.FC<LeadFinancialsTabProps> = ({
                 </div>
 
                 <div className="flex items-center justify-between text-slate-600">
-                  <span>Amount: <strong className="font-mono text-slate-900">{formatCurrency(proof.amount, proof.currency)}</strong></span>
+                  {(() => {
+                    const proofConv = convertForDisplay(proof.amount || 0, proof.currency || 'USD');
+                    return (
+                      <span>
+                        Amount:{' '}
+                        <strong className="font-mono text-slate-900">{proofConv.formatted}</strong>
+                        {proofConv.isConverted && (
+                          <span className="text-[10px] font-mono text-slate-400 ml-1">
+                            ({proofConv.nativeFormatted})
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })()}
                   <span>Booking: <strong className="font-mono text-slate-800">#{proof.bookingReference}</strong></span>
                 </div>
 

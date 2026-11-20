@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
 import { Quotation, QuoteStatus, TravelLead } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
@@ -40,11 +41,16 @@ import {
   MessageCircle,
   History
 } from 'lucide-react';
-import { ShareWhatsAppModal } from '../B2BAgentPortal/ShareWhatsAppModal';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
 import { CalendarTask } from '../../types';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
-import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
+
+const ShareWhatsAppModal = React.lazy(() =>
+  import('../B2BAgentPortal/ShareWhatsAppModal').then(m => ({ default: m.ShareWhatsAppModal }))
+);
+const QuotationVersionHistoryModal = React.lazy(() =>
+  import('../Quotations/QuotationVersionHistoryModal').then(m => ({ default: m.QuotationVersionHistoryModal }))
+);
 
 export interface QuoteMasterManagerProps {
   initialQuoteId?: string | null;
@@ -63,18 +69,29 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
 }) => {
   const db = AppDatabase.getInstance();
   const { user, role } = useAuth();
+  const { displayCurrency, fxVersion, convertForDisplay, aggregateForDisplay } = useDisplayCurrency();
   
   const [quotes, setQuotes] = useState<Quotation[]>(() => db.getQuotesForUser(user));
   const [allLeads, setAllLeads] = useState<TravelLead[]>(() => db.getLeadsAuthorized(user));
   
   // Filtering & Search
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
   const [filterUserType, setFilterUserType] = useState<string>('ALL');
   const [filterCreator, setFilterCreator] = useState<string>('ALL');
   const [filterLeadLink, setFilterLeadLink] = useState<string>('ALL');
   const [filterDestination, setFilterDestination] = useState<string>('ALL');
   const [sortBy, setSortBy] = useState<'NEWEST' | 'OLDEST' | 'PRICE_HIGH' | 'MARGIN_HIGH'>('NEWEST');
+  const [currentPage, setCurrentPage] = useState(1);
+  const QUOTES_PAGE_SIZE = 25;
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
 
   // Modals & Drawers
   const [viewingQuote, setViewingQuote] = useState<Quotation | null>(null);
@@ -341,12 +358,53 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
     return Array.from(set);
   }, [quotes]);
 
-  // Aggregate Metrics Calculations across quotes
+  // Aggregate Metrics Calculations across quotes (converted per-record from native currency into Global Display Currency)
   const metrics = useMemo(() => {
+    const seenQuoteKeys = new Set<string>();
+    const activePipelineQuotes = quotes.filter((q) => {
+      if ((q as any).isDeleted) return false;
+      const status = String(q.status || '').toUpperCase();
+      if (status === 'CANCELLED' || status === 'EXPIRED' || status === 'ARCHIVED') return false;
+      const dedupKey = q.id || q.quoteNumber;
+      if (dedupKey) {
+        if (seenQuoteKeys.has(dedupKey)) return false;
+        seenQuoteKeys.add(dedupKey);
+      }
+      return true;
+    });
+
+    const getSourceCurrency = (q: Quotation) => q.currency || q.pricingSnapshot?.currency || 'USD';
+    const getSellingAmount = (q: Quotation) =>
+      q.pricingSnapshot?.finalCustomerSellingPrice ??
+      q.finalCustomerSellingPrice ??
+      q.totalSellingPrice ??
+      0;
+    const getNetAmount = (q: Quotation) =>
+      (q.pricingSnapshot as any)?.netCost ??
+      q.totalNetCost ??
+      0;
+    const getMarginAmount = (q: Quotation) =>
+      (q.pricingSnapshot as any)?.marginAmount ??
+      q.totalMargin ??
+      Math.max(0, getSellingAmount(q) - getNetAmount(q));
+
+    const pipelineSellingAgg = aggregateForDisplay(activePipelineQuotes, (q) => ({
+      amount: getSellingAmount(q),
+      currency: getSourceCurrency(q)
+    }));
+    const pipelineNetAgg = aggregateForDisplay(activePipelineQuotes, (q) => ({
+      amount: getNetAmount(q),
+      currency: getSourceCurrency(q)
+    }));
+    const pipelineMarginAgg = aggregateForDisplay(activePipelineQuotes, (q) => ({
+      amount: getMarginAmount(q),
+      currency: getSourceCurrency(q)
+    }));
+
     const totalCount = quotes.length;
-    const totalPipelineGross = quotes.reduce((acc, q) => acc + (q.totalSellingPrice || 0), 0);
-    const totalNetCost = quotes.reduce((acc, q) => acc + (q.totalNetCost || 0), 0);
-    const totalMargin = quotes.reduce((acc, q) => acc + (q.totalMargin || 0), 0);
+    const totalPipelineGross = pipelineSellingAgg.totalConverted;
+    const totalNetCost = pipelineNetAgg.totalConverted;
+    const totalMargin = pipelineMarginAgg.totalConverted;
     const avgMarginPercent = totalPipelineGross > 0 ? ((totalMargin / totalPipelineGross) * 100) : 0;
     const linkedToLeadCount = quotes.filter(q => !!q.leadId).length;
     const acceptedCount = quotes.filter(q => q.status === 'ACCEPTED').length;
@@ -355,9 +413,13 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
 
     return {
       totalCount,
+      activePipelineCount: activePipelineQuotes.length,
       totalPipelineGross,
       totalNetCost,
       totalMargin,
+      pipelineSellingAgg,
+      pipelineNetAgg,
+      pipelineMarginAgg,
       avgMarginPercent,
       linkedToLeadCount,
       acceptedCount,
@@ -365,11 +427,24 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
       draftCount,
       activeAgentsCount: distinctCreators.length
     };
-  }, [quotes, distinctCreators]);
+  }, [quotes, distinctCreators, aggregateForDisplay, displayCurrency, fxVersion]);
+
+  const allLeadsByIdOrNum = useMemo(() => {
+    const map = new Map<string, TravelLead>();
+    for (const l of allLeads) {
+      if (l.id) map.set(l.id, l);
+      if (l.leadNumber) map.set(l.leadNumber, l);
+    }
+    return map;
+  }, [allLeads]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearchQuery, filterStatus, filterUserType, filterCreator, filterLeadLink, filterDestination, sortBy]);
 
   // Filtering & Sorting Logic
   const filteredQuotes = useMemo(() => {
-    const qClean = searchQuery.toLowerCase().trim();
+    const qClean = debouncedSearchQuery.toLowerCase().trim();
 
     return quotes.filter(q => {
       // 1. Text Search
@@ -415,14 +490,37 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
         return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
       }
       if (sortBy === 'PRICE_HIGH') {
-        return (b.totalSellingPrice || 0) - (a.totalSellingPrice || 0);
+        const valA = convertForDisplay(
+          a.pricingSnapshot?.finalCustomerSellingPrice ?? a.finalCustomerSellingPrice ?? a.totalSellingPrice ?? 0,
+          a.currency || a.pricingSnapshot?.currency || 'USD'
+        ).convertedAmount ?? -1;
+        const valB = convertForDisplay(
+          b.pricingSnapshot?.finalCustomerSellingPrice ?? b.finalCustomerSellingPrice ?? b.totalSellingPrice ?? 0,
+          b.currency || b.pricingSnapshot?.currency || 'USD'
+        ).convertedAmount ?? -1;
+        return valB - valA;
       }
       if (sortBy === 'MARGIN_HIGH') {
-        return (b.totalMargin || 0) - (a.totalMargin || 0);
+        const valA = convertForDisplay(
+          a.pricingSnapshot?.marginAmount ?? a.totalMargin ?? 0,
+          a.currency || a.pricingSnapshot?.currency || 'USD'
+        ).convertedAmount ?? -1;
+        const valB = convertForDisplay(
+          b.pricingSnapshot?.marginAmount ?? b.totalMargin ?? 0,
+          b.currency || b.pricingSnapshot?.currency || 'USD'
+        ).convertedAmount ?? -1;
+        return valB - valA;
       }
       return 0;
     });
-  }, [quotes, searchQuery, filterStatus, filterUserType, filterCreator, filterLeadLink, filterDestination, sortBy]);
+  }, [quotes, debouncedSearchQuery, filterStatus, filterUserType, filterCreator, filterLeadLink, filterDestination, sortBy, convertForDisplay, displayCurrency, fxVersion]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredQuotes.length / QUOTES_PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedQuotes = useMemo(() => {
+    const start = (safePage - 1) * QUOTES_PAGE_SIZE;
+    return filteredQuotes.slice(start, start + QUOTES_PAGE_SIZE);
+  }, [filteredQuotes, safePage]);
 
   return (
     <div className="space-y-6">
@@ -523,19 +621,29 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
 
         {/* Pipeline Gross Value Card */}
         <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col justify-between">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Pipeline Value</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              Pipeline Value ({displayCurrency})
+            </span>
             <div className="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
               <DollarSign className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-3">
             <div className="text-xl sm:text-2xl font-black text-[#008972] font-mono">
-              ${Math.round(metrics.totalPipelineGross).toLocaleString()}
+              {metrics.pipelineSellingAgg.formattedTotal}
             </div>
             {canViewInternalCosts && (
               <div className="text-[10px] text-slate-500 font-medium mt-0.5">
-                Net Cost: ${Math.round(metrics.totalNetCost).toLocaleString()}
+                Net Cost: {metrics.pipelineNetAgg.formattedTotal}
+              </div>
+            )}
+            {metrics.pipelineSellingAgg.hasUnavailableRates && (
+              <div className="text-[10px] text-amber-700 font-bold mt-1 flex items-center space-x-1">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                <span>
+                  FX Unavailable for {metrics.pipelineSellingAgg.unavailableCount} quote(s) ({metrics.pipelineSellingAgg.unavailableCurrencies.join(', ')})
+                </span>
               </div>
             )}
           </div>
@@ -555,7 +663,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 {metrics.avgMarginPercent.toFixed(1)}%
               </div>
               <div className="text-[10px] text-purple-600 font-bold mt-0.5">
-                +${Math.round(metrics.totalMargin).toLocaleString()} Gross Margin
+                +{metrics.pipelineMarginAgg.formattedTotal} Gross Margin
               </div>
             </div>
           </div>
@@ -781,13 +889,12 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filteredQuotes.map((q, idx) => {
+              {paginatedQuotes.map((q, idx) => {
                 const creatorName = q.createdByName || q.agentName || 'Ops Team';
                 const creatorRole = q.createdByUserType || (q.agentAgency ? 'B2B_AGENT' : 'ADMIN');
                 const agencyName = q.agentAgency || q.agentCompany;
                 const marginPercent = q.totalSellingPrice > 0 ? Math.round(((q.totalMargin || 0) / q.totalSellingPrice) * 100) : 0;
-                const versionsList = db.getQuotationVersions(q.id, user);
-                const versionCount = Math.max(q.versionCount || 0, q.latestVersion || q.version || 1, versionsList.length);
+                const versionCount = Math.max(q.versionCount || 0, q.latestVersion || q.version || 1);
                 const rowKey = q.id ? `${q.id}-${q.version || 1}-${idx}` : `quote-row-${q.quoteNumber || 'unnumbered'}-${idx}`;
 
                 return (
@@ -887,9 +994,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                     {/* 4. CRM Lead Link */}
                     <td className="py-4 px-4 min-w-[160px]">
                       {(() => {
-                        const linkedLeadObj = q.leadId
-                          ? allLeads.find(l => l.id === q.leadId || l.leadNumber === q.leadId || l.id === q.linkedLeadId)
-                          : undefined;
+                        const linkedLeadObj =
+                          (q.leadId ? allLeadsByIdOrNum.get(q.leadId) : undefined) ||
+                          (q.linkedLeadId ? allLeadsByIdOrNum.get(q.linkedLeadId) : undefined);
                         if (q.leadId && linkedLeadObj) {
                           return (
                             <div className="space-y-1">
@@ -944,29 +1051,55 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                     </td>
 
                     {/* 5. Gross Selling */}
-                    <td className="py-4 px-4 min-w-[120px]">
-                      <div className="font-extrabold font-mono text-[#008972] text-sm">
-                        {formatCurrency(q.totalSellingPrice || 0, q.currency)}
-                      </div>
-                      <div className="text-[10px] text-slate-400">
-                        {q.currency || 'USD'} Gross
-                      </div>
-                    </td>
+                    {(() => {
+                      const nativeCurrency = q.currency || q.pricingSnapshot?.currency || 'USD';
+                      const nativeSelling =
+                        q.pricingSnapshot?.finalCustomerSellingPrice ??
+                        q.finalCustomerSellingPrice ??
+                        q.totalSellingPrice ??
+                        0;
+                      const nativeNet = q.pricingSnapshot?.netCost ?? q.totalNetCost ?? 0;
+                      const nativeMargin = q.pricingSnapshot?.marginAmount ?? q.totalMargin ?? Math.max(0, nativeSelling - nativeNet);
 
-                    {/* 6. Net Cost / Margin (Admin / Internal Only) */}
-                    {canViewInternalCosts && (
-                      <td className="py-4 px-4 min-w-[130px]">
-                        <div className="font-mono text-slate-700 text-xs">
-                          Net: {formatCurrency(q.totalNetCost || 0, q.currency)}
-                        </div>
-                        <div className="text-[10px] text-emerald-700 font-bold flex items-center space-x-1">
-                          <span>+{formatCurrency(q.totalMargin || 0, q.currency)}</span>
-                          <span className="bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-extrabold text-[9px]">
-                            {marginPercent}%
-                          </span>
-                        </div>
-                      </td>
-                    )}
+                      const sellingConv = convertForDisplay(nativeSelling, nativeCurrency);
+                      const netConv = convertForDisplay(nativeNet, nativeCurrency);
+                      const marginConv = convertForDisplay(nativeMargin, nativeCurrency);
+
+                      return (
+                        <>
+                          <td className="py-4 px-4 min-w-[130px]">
+                            <div className={`font-extrabold font-mono text-sm ${sellingConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-[#008972]'}`}>
+                              {sellingConv.formatted}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {sellingConv.isConverted
+                                ? `Quote: ${sellingConv.nativeFormatted}`
+                                : `${nativeCurrency} Gross`}
+                            </div>
+                          </td>
+
+                          {/* 6. Net Cost / Margin (Admin / Internal Only) */}
+                          {canViewInternalCosts && (
+                            <td className="py-4 px-4 min-w-[140px]">
+                              <div className="font-mono text-slate-700 text-xs">
+                                Net: {netConv.formatted}
+                              </div>
+                              <div className="text-[10px] text-emerald-700 font-bold flex items-center space-x-1">
+                                <span>{marginConv.status === 'UNAVAILABLE' ? 'FX Unavailable' : `+${marginConv.formatted}`}</span>
+                                <span className="bg-emerald-100 text-emerald-800 px-1 py-0.2 rounded font-extrabold text-[9px]">
+                                  {marginPercent}%
+                                </span>
+                              </div>
+                              {netConv.isConverted && (
+                                <div className="text-[9px] text-slate-400 font-mono">
+                                  Native Net: {netConv.nativeFormatted}
+                                </div>
+                              )}
+                            </td>
+                          )}
+                        </>
+                      );
+                    })()}
 
                     {/* 7. Status */}
                     <td className="py-4 px-4">
@@ -1106,6 +1239,32 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-slate-200 bg-slate-50/70 text-xs">
+            <span className="text-slate-600 font-medium">
+              Showing {(safePage - 1) * QUOTES_PAGE_SIZE + 1}–{Math.min(safePage * QUOTES_PAGE_SIZE, filteredQuotes.length)} of {filteredQuotes.length} quotations
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+              >
+                Previous
+              </button>
+              <span className="font-mono font-bold text-slate-700">
+                {safePage} / {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="px-3 py-1 rounded-lg border border-slate-200 bg-white text-slate-700 font-bold disabled:opacity-40 cursor-pointer"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 6. Quote Details & Financial Inspector Modal */}
@@ -1134,9 +1293,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                     </span>
                   )}
                   {(() => {
-                    const linkedLeadObj = viewingQuote.leadId
-                      ? allLeads.find(l => l.id === viewingQuote.leadId || l.leadNumber === viewingQuote.leadId || l.id === viewingQuote.linkedLeadId)
-                      : undefined;
+                    const linkedLeadObj =
+                      (viewingQuote.leadId ? allLeadsByIdOrNum.get(viewingQuote.leadId) : undefined) ||
+                      (viewingQuote.linkedLeadId ? allLeadsByIdOrNum.get(viewingQuote.linkedLeadId) : undefined);
                     return linkedLeadObj ? (
                       <span className="text-[10px] font-mono font-bold bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded">
                         Linked Lead: {linkedLeadObj.leadNumber} ({linkedLeadObj.contactName})
@@ -1343,7 +1502,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                   <span className="font-bold block">Currently Linked to CRM Lead</span>
                   <span className="font-mono text-[11px]">
                     {(() => {
-                      const curr = allLeads.find(l => l.id === leadLinkModalQuote.leadId || l.leadNumber === leadLinkModalQuote.leadId);
+                      const curr = allLeadsByIdOrNum.get(leadLinkModalQuote.leadId);
                       return curr ? `${curr.leadNumber} — ${curr.contactName}` : leadLinkModalQuote.leadId;
                     })()}
                   </span>
@@ -1426,44 +1585,48 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
 
       {/* WHATSAPP SHARE MODAL */}
       {whatsAppSharingQuote && (
-        <ShareWhatsAppModal
-          quote={whatsAppSharingQuote}
-          user={user}
-          onClose={() => setWhatsAppSharingQuote(null)}
-          onSuccess={() => {
-            setQuotes(db.getQuotesForUser(user));
-            setAllLeads(db.getLeadsAuthorized(user));
-          }}
-        />
+        <Suspense fallback={null}>
+          <ShareWhatsAppModal
+            quote={whatsAppSharingQuote}
+            user={user}
+            onClose={() => setWhatsAppSharingQuote(null)}
+            onSuccess={() => {
+              setQuotes(db.getQuotesForUser(user));
+              setAllLeads(db.getLeadsAuthorized(user));
+            }}
+          />
+        </Suspense>
       )}
 
       {/* QUOTATION VERSION HISTORY MODAL */}
       {versionHistoryQuote && (
-        <QuotationVersionHistoryModal
-          isOpen={!!versionHistoryQuote}
-          onClose={() => setVersionHistoryQuote(null)}
-          quoteId={versionHistoryQuote.id}
-          initialQuote={versionHistoryQuote}
-          currentUser={user}
-          onOpenVersion={(qId, ver, mode) => {
-            setVersionHistoryQuote(null);
-            if (onNavigateToBuilder) {
-              onNavigateToBuilder(qId, { version: ver, mode });
-            } else if (onLoadQuote) {
-              const target = db.getQuoteByIdAuthorized(qId, user);
-              if (target) onLoadQuote(target);
-            }
-          }}
-          onRestoreVersion={(qId, ver) => {
-            setVersionHistoryQuote(null);
-            if (onNavigateToBuilder) {
-              onNavigateToBuilder(qId, { version: ver, mode: 'restore' });
-            } else if (onLoadQuote) {
-              const target = db.getQuoteByIdAuthorized(qId, user);
-              if (target) onLoadQuote(target);
-            }
-          }}
-        />
+        <Suspense fallback={null}>
+          <QuotationVersionHistoryModal
+            isOpen={!!versionHistoryQuote}
+            onClose={() => setVersionHistoryQuote(null)}
+            quoteId={versionHistoryQuote.id}
+            initialQuote={versionHistoryQuote}
+            currentUser={user}
+            onOpenVersion={(qId, ver, mode) => {
+              setVersionHistoryQuote(null);
+              if (onNavigateToBuilder) {
+                onNavigateToBuilder(qId, { version: ver, mode });
+              } else if (onLoadQuote) {
+                const target = db.getQuoteByIdAuthorized(qId, user);
+                if (target) onLoadQuote(target);
+              }
+            }}
+            onRestoreVersion={(qId, ver) => {
+              setVersionHistoryQuote(null);
+              if (onNavigateToBuilder) {
+                onNavigateToBuilder(qId, { version: ver, mode: 'restore' });
+              } else if (onLoadQuote) {
+                const target = db.getQuoteByIdAuthorized(qId, user);
+                if (target) onLoadQuote(target);
+              }
+            }}
+          />
+        </Suspense>
       )}
 
     </div>

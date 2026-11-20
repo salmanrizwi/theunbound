@@ -29,11 +29,11 @@ import {
   Zap
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { useQuotation } from '../../context/QuotationContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { B2BNavTab, Quotation, B2BPackage, Destination, Product, Hotel } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { canonicalImageService } from '../../services/imageService';
-import { formatCurrency, convertCurrency, calculatePackagePrice } from '../../services/pricingEngine';
+import { formatCurrency, calculatePackagePrice } from '../../services/pricingEngine';
 import {
   cleanPackageText,
   isPackageVisibleToB2BAgent,
@@ -62,7 +62,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
   hotels = []
 }) => {
   const { user } = useAuth();
-  const { savedQuotes, currency } = useQuotation();
+  const { displayCurrency, fxVersion, convertForDisplay, aggregateForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
   const [dbTick, setDbTick] = useState(0);
 
@@ -126,31 +126,26 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
     [quotesList]
   );
 
-  const totalPipelineValue = useMemo(() => {
-    return activePipelineQuotes.reduce((sum, q) => {
+  const pipelineAgg = useMemo(() => {
+    const pricedQuotes = activePipelineQuotes.filter(q => {
       const rawQuoteAmount = Number(
         q.pricingSnapshot?.finalCustomerSellingPrice ??
         q.finalCustomerSellingPrice ??
         q.totalSellingPrice ??
         0
       );
-      if (!Number.isFinite(rawQuoteAmount) || rawQuoteAmount <= 0) return sum;
-      const sourceCurr = (q.currency || q.pricingSnapshot?.currency || 'USD') as any;
-      const convertedAmount = convertCurrency(rawQuoteAmount, sourceCurr, currency);
-      return sum + convertedAmount;
-    }, 0);
-  }, [activePipelineQuotes, currency]);
-
-  const totalConfirmedBookingsValue = useMemo(() => {
-    return bookings
-      .filter(b => b.status !== 'CANCELLED')
-      .reduce((sum, b) => {
-        const rawBookingAmount = Number(b.totalAmount || 0);
-        if (!Number.isFinite(rawBookingAmount) || rawBookingAmount <= 0) return sum;
-        const sourceCurr = (b.currency || 'USD') as any;
-        return sum + convertCurrency(rawBookingAmount, sourceCurr, currency);
-      }, 0);
-  }, [bookings, currency]);
+      return Number.isFinite(rawQuoteAmount) && rawQuoteAmount > 0;
+    });
+    return aggregateForDisplay(pricedQuotes, q => ({
+      amount: Number(
+        q.pricingSnapshot?.finalCustomerSellingPrice ??
+        q.finalCustomerSellingPrice ??
+        q.totalSellingPrice ??
+        0
+      ),
+      currency: q.currency || q.pricingSnapshot?.currency || 'USD'
+    }));
+  }, [activePipelineQuotes, aggregateForDisplay, displayCurrency, fxVersion]);
 
   // Quick Duplicate Handler
   const handleQuickDuplicate = (quote: Quotation) => {
@@ -350,13 +345,18 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
             </div>
           </div>
           <div className="mt-2">
-            <span className="text-xl sm:text-2xl font-extrabold text-slate-900 font-mono">
-              {formatCurrency(totalPipelineValue, currency)}
+            <span className={`text-xl sm:text-2xl font-extrabold font-mono ${pipelineAgg.unavailableCount > 0 && pipelineAgg.convertedCount === 0 ? 'text-amber-700' : 'text-slate-900'}`}>
+              {pipelineAgg.formattedTotal}
             </span>
           </div>
           <p className="text-[11px] text-emerald-600 font-bold mt-1">
-            Total Client Quotation Value
+            Total Client Quotation Value ({displayCurrency})
           </p>
+          {pipelineAgg.hasUnavailableRates && (
+            <p className="text-[10px] text-amber-700 font-semibold mt-0.5">
+              Partial: {pipelineAgg.unavailableCount} rate(s) unavailable
+            </p>
+          )}
         </div>
 
         {/* Metric 3: Confirmed Bookings */}
@@ -529,14 +529,18 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                           {quote.items?.length || 0} products
                         </td>
                         <td className="py-3 font-mono font-bold text-slate-900">
-                          {formatCurrency(
-                            convertCurrency(
-                              Number(quote.pricingSnapshot?.finalCustomerSellingPrice ?? quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0),
-                              (quote.currency || quote.pricingSnapshot?.currency || 'USD') as any,
-                              currency
-                            ),
-                            currency
-                          )}
+                          {(() => {
+                            const rawSell = Number(quote.pricingSnapshot?.finalCustomerSellingPrice ?? quote.finalCustomerSellingPrice ?? quote.totalSellingPrice ?? 0);
+                            const sellConv = convertForDisplay(rawSell, quote.currency || quote.pricingSnapshot?.currency || 'USD');
+                            return (
+                              <div>
+                                <div className={sellConv.status === 'UNAVAILABLE' ? 'text-amber-700' : ''}>{sellConv.formatted}</div>
+                                {sellConv.isConverted && (
+                                  <div className="text-[10px] font-normal text-slate-400">Quote: {sellConv.nativeFormatted}</div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-3">
                           <span className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-bold ${
@@ -646,7 +650,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                         <span className="text-[10px] text-slate-400 block leading-tight font-bold uppercase tracking-wider">Final Selling Price</span>
                         <div className="flex items-baseline space-x-1">
                           <span className="text-xs font-black text-slate-900 font-mono">
-                            {formatCurrency(calculatePackagePrice({ packageItem: pkg, targetCurrency: currency }).pricePerPerson, currency)}
+                            {formatCurrency(calculatePackagePrice({ packageItem: pkg, targetCurrency: displayCurrency }).pricePerPerson, displayCurrency)}
                           </span>
                           <span className="text-[10px] text-slate-400">/ person</span>
                         </div>

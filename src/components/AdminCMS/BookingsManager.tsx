@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Booking, BookingStatus } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency } from '../../services/pricingEngine';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { BookingDashboardCards } from '../Bookings/BookingDashboardCards';
 import { BookingOperationsDesk, DeskSection } from '../Bookings/BookingOperationsDesk';
 import { ManualOperationalBookingModal } from '../Bookings/ManualOperationalBookingModal';
@@ -44,6 +44,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   onOpenActionCenter
 }) => {
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
   
   const [bookings, setBookings] = useState<Booking[]>(() => db.getAllBookings());
@@ -162,7 +163,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
       return true;
     });
-  }, [bookings, searchQuery, channelFilter, ownershipFilter, activeFilter, user?.id]);
+  }, [bookings, debouncedSearchQuery, channelFilter, ownershipFilter, activeFilter, user?.id]);
 
   // If a booking is selected, render the full unified Booking Operations & Supplier Allocation Desk
   if (selectedBookingId) {
@@ -499,16 +500,26 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                       </td>
 
                       {/* Selling Price */}
-                      <td className="py-4 px-4 align-top text-right whitespace-nowrap font-mono">
-                        <span className="font-bold text-slate-900 block">
-                          {formatCurrency(b.totalAmount || 0, b.currency)}
-                        </span>
-                        <span className={`text-[10px] font-bold block ${
-                          b.paymentStatus === 'PAID' ? 'text-emerald-700' : 'text-blue-700'
-                        }`}>
-                          {b.paymentStatus || 'PENDING'}
-                        </span>
-                      </td>
+                      {(() => {
+                        const amtConv = convertForDisplay(b.totalAmount || 0, b.currency || 'USD');
+                        return (
+                          <td className="py-4 px-4 align-top text-right whitespace-nowrap font-mono">
+                            <span className={`font-bold block ${amtConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-900'}`}>
+                              {amtConv.formatted}
+                            </span>
+                            {amtConv.isConverted && (
+                              <span className="text-[10px] text-slate-400 block">
+                                Booked: {amtConv.nativeFormatted}
+                              </span>
+                            )}
+                            <span className={`text-[10px] font-bold block ${
+                              b.paymentStatus === 'PAID' ? 'text-emerald-700' : 'text-blue-700'
+                            }`}>
+                              {b.paymentStatus || 'PENDING'}
+                            </span>
+                          </td>
+                        );
+                      })()}
 
                       {/* Status */}
                       <td className="py-4 px-4 align-top text-center whitespace-nowrap">

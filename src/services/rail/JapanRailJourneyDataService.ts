@@ -75,6 +75,11 @@ export class JapanRailJourneyDataService {
       s.stationCode.toLowerCase().includes(q) ||
       s.displayName.toLowerCase().includes(q) ||
       s.city.toLowerCase().includes(q) ||
+      (s.stationNameLocal && s.stationNameLocal.toLowerCase().includes(q)) ||
+      (s.prefecture && s.prefecture.toLowerCase().includes(q)) ||
+      (s.regionName && s.regionName.toLowerCase().includes(q)) ||
+      (s.railOperator && s.railOperator.toLowerCase().includes(q)) ||
+      (s.shinkansenLine && s.shinkansenLine.toLowerCase().includes(q)) ||
       (s.searchAliases && s.searchAliases.some(a => a.toLowerCase().includes(q)))
     );
   }
@@ -85,11 +90,26 @@ export class JapanRailJourneyDataService {
   }
 
   public getRoute(originId: string, destinationId: string): RailRoute | undefined {
+    const originStation = this.getStation(originId);
+    const destStation = this.getStation(destinationId);
+    const resolvedOriginId = originStation?.stationId || originId;
+    const resolvedDestId = destStation?.stationId || destinationId;
+    if (!resolvedOriginId || !resolvedDestId || resolvedOriginId === resolvedDestId) {
+      return undefined;
+    }
+
     const list = AppDatabase.getInstance().getRailRoutes();
-    return list.find(r => 
-      ((r.originStationId === originId && r.destinationStationId === destinationId) ||
-       (r.originStationId === destinationId && r.destinationStationId === originId)) &&
-      r.active !== false
+    const exact = list.find(
+      r => r.originStationId === resolvedOriginId && r.destinationStationId === resolvedDestId
+    );
+    if (exact) {
+      return exact.active !== false ? exact : undefined;
+    }
+    return list.find(
+      r =>
+        r.originStationId === resolvedDestId &&
+        r.destinationStationId === resolvedOriginId &&
+        r.active !== false
     );
   }
 
@@ -137,12 +157,23 @@ export class JapanRailJourneyDataService {
   }
 
   public getRatesForRoute(originId: string, destinationId: string): RailRate[] {
+    const originStation = this.getStation(originId);
+    const destStation = this.getStation(destinationId);
+    const resolvedOriginId = originStation?.stationId || originId;
+    const resolvedDestId = destStation?.stationId || destinationId;
     const rates = AppDatabase.getInstance().getRailRates();
-    return rates.filter(r => 
-      ((r.originStationId === originId && r.destinationStationId === destinationId) ||
-       (r.originStationId === destinationId && r.destinationStationId === originId)) &&
-      r.active !== false
-    );
+    return rates
+      .filter(
+        r =>
+          ((r.originStationId === resolvedOriginId && r.destinationStationId === resolvedDestId) ||
+            (r.originStationId === resolvedDestId && r.destinationStationId === resolvedOriginId)) &&
+          r.active !== false
+      )
+      .sort((a, b) => {
+        const exactA = a.originStationId === resolvedOriginId && a.destinationStationId === resolvedDestId ? 1 : 0;
+        const exactB = b.originStationId === resolvedOriginId && b.destinationStationId === resolvedDestId ? 1 : 0;
+        return exactB - exactA;
+      });
   }
 }
 

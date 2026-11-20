@@ -35,10 +35,14 @@ export class JapanRailJourneyValidationService {
 
     if (!originStation) {
       errors.push(`Invalid origin station ID: "${segment.origin.stationId}". Station is not in the authoritative JR network.`);
+    } else if (originStation.active === false) {
+      errors.push(`Origin station "${originStation.stationName}" (${originStation.stationCode}) is currently inactive.`);
     }
 
     if (!destStation) {
       errors.push(`Invalid destination station ID: "${segment.destination.stationId}". Station is not in the authoritative JR network.`);
+    } else if (destStation.active === false) {
+      errors.push(`Destination station "${destStation.stationName}" (${destStation.stationCode}) is currently inactive.`);
     }
 
     // 2. Origin cannot equal Destination
@@ -74,7 +78,6 @@ export class JapanRailJourneyValidationService {
 
     // 6. Oversized baggage check
     if (segment.seatPreference === 'OVERSIZED_BAGGAGE') {
-      // Tokaido/Sanyo/Kyushu rules: dimensions > 160cm to 250cm require seat reservation with oversized baggage area
       const isTokaidoSanyoKyushu = 
         (originStation?.shinkansenLine?.includes('Tokaido') || originStation?.shinkansenLine?.includes('Sanyo') || originStation?.shinkansenLine?.includes('Kyushu')) &&
         (destStation?.shinkansenLine?.includes('Tokaido') || destStation?.shinkansenLine?.includes('Sanyo') || destStation?.shinkansenLine?.includes('Kyushu'));
@@ -87,9 +90,8 @@ export class JapanRailJourneyValidationService {
     // 7. Route connection check
     if (originStation && destStation && originStation.stationId !== destStation.stationId) {
       const directRoute = japanRailJourneyDataService.getRoute(originStation.stationId, destStation.stationId);
-      if (!directRoute) {
-        // Shinkansen route network can be traversed with connection
-        warnings.push(`Direct high-speed through train may not be scheduled between ${originStation.stationName} and ${destStation.stationName}. Transfer at a major hub (e.g. Shin-Osaka or Tokyo) may be required.`);
+      if (!directRoute && segment.pricing?.diagnosticCode !== 'MISSING_ROUTE') {
+        warnings.push(`No active route configured between ${originStation.stationName} and ${destStation.stationName}. Configure the route in Admin CMS → Japan Rail Inventory → Routes.`);
       }
     }
 

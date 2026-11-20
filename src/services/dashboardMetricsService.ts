@@ -10,6 +10,7 @@ import {
   CurrencyCode 
 } from '../types';
 import { CurrencyEngine } from './currencyEngine';
+import { displayCurrencyService, roundAmountForCurrency } from './displayCurrencyService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { IntegrationsHubService } from './integrationsHubService';
 import firebaseConfigJson from '../../firebase-applet-config.json';
@@ -86,6 +87,9 @@ export interface KeyBusinessMetrics {
     pendingValue: number;
     cancelledValue: number;
     currency: CurrencyCode;
+    hasUnavailableRates?: boolean;
+    unavailableCount?: number;
+    convertedCount?: number;
     source: string;
   };
   activeAgents: {
@@ -101,6 +105,9 @@ export interface KeyBusinessMetrics {
     totalOutstandingAmount: number;
     overduePaymentsCount: number;
     currency: CurrencyCode;
+    hasUnavailableRates?: boolean;
+    unavailableCount?: number;
+    convertedCount?: number;
     source: string;
   };
   activeSuppliers: {
@@ -152,6 +159,8 @@ export interface BusinessPerformanceData {
   rankings: ProductAndDestinationRankings;
   leadConversionRate: number;
   quoteConversionRate: number;
+  hasUnavailableRates?: boolean;
+  unavailableCount?: number;
 }
 
 export type PriorityLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
@@ -428,7 +437,6 @@ export class DashboardMetricsService {
   }): KeyBusinessMetrics {
     const { bookings, leads, quotes, users, suppliers, currentUser, comparison, baseCurrency } = params;
     const { currentRange, previousRange } = comparison;
-    const fx = CurrencyEngine.getInstance();
 
     // Check financial permission
     const isAuthorizedForFinance = currentUser 
@@ -491,11 +499,19 @@ export class DashboardMetricsService {
     let confirmedBookingValue = 0;
     let pendingBookingValue = 0;
     let cancelledBookingValue = 0;
+    let bookingValueUnavailableCount = 0;
+    let bookingValueConvertedCount = 0;
 
     if (isAuthorizedForFinance) {
       currentBookings.forEach(b => {
         const amount = b.totalAmount || b.finalCustomerSellingPrice || 0;
-        const converted = fx.convert(amount, b.currency || 'USD', baseCurrency);
+        const conv = displayCurrencyService.convertForDisplay(amount, b.currency || 'USD', baseCurrency);
+        if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
+          bookingValueUnavailableCount += 1;
+          return;
+        }
+        bookingValueConvertedCount += 1;
+        const converted = conv.convertedAmount;
         currentTotalBookingValue += converted;
 
         if (b.status === 'CONFIRMED') {
@@ -512,7 +528,10 @@ export class DashboardMetricsService {
     if (isAuthorizedForFinance) {
       previousBookings.forEach(b => {
         const amount = b.totalAmount || b.finalCustomerSellingPrice || 0;
-        previousTotalBookingValue += fx.convert(amount, b.currency || 'USD', baseCurrency);
+        const conv = displayCurrencyService.convertForDisplay(amount, b.currency || 'USD', baseCurrency);
+        if (conv.status !== 'UNAVAILABLE' && conv.convertedAmount !== null) {
+          previousTotalBookingValue += conv.convertedAmount;
+        }
       });
     }
 
@@ -536,6 +555,8 @@ export class DashboardMetricsService {
     );
 
     let totalOutstandingAmount = 0;
+    let outstandingUnavailableCount = 0;
+    let outstandingConvertedCount = 0;
     let overduePaymentsCount = 0;
     const nowTimestamp = new Date().getTime();
 
@@ -544,7 +565,13 @@ export class DashboardMetricsService {
       const totalSelling = b.totalAmount || 0;
       const paid = b.excessPaymentAmount || 0;
       const balance = Math.max(0, totalSelling - paid);
-      totalOutstandingAmount += fx.convert(balance, b.currency || 'USD', baseCurrency);
+      const balConv = displayCurrencyService.convertForDisplay(balance, b.currency || 'USD', baseCurrency);
+      if (balConv.status === 'UNAVAILABLE' || balConv.convertedAmount === null) {
+        outstandingUnavailableCount += 1;
+      } else {
+        outstandingConvertedCount += 1;
+        totalOutstandingAmount += balConv.convertedAmount;
+      }
 
       // Check overdue tranches or payment cutoffs
       let hasOverdue = false;
@@ -608,13 +635,16 @@ export class DashboardMetricsService {
       },
       bookingValue: {
         isAuthorized: isAuthorizedForFinance,
-        currentTotal: Math.round(currentTotalBookingValue),
-        previousTotal: Math.round(previousTotalBookingValue),
+        currentTotal: roundAmountForCurrency(currentTotalBookingValue, baseCurrency),
+        previousTotal: roundAmountForCurrency(previousTotalBookingValue, baseCurrency),
         percentChange: bookingValuePercentChange,
-        confirmedValue: Math.round(confirmedBookingValue),
-        pendingValue: Math.round(pendingBookingValue),
-        cancelledValue: Math.round(cancelledBookingValue),
+        confirmedValue: roundAmountForCurrency(confirmedBookingValue, baseCurrency),
+        pendingValue: roundAmountForCurrency(pendingBookingValue, baseCurrency),
+        cancelledValue: roundAmountForCurrency(cancelledBookingValue, baseCurrency),
         currency: baseCurrency,
+        hasUnavailableRates: bookingValueUnavailableCount > 0,
+        unavailableCount: bookingValueUnavailableCount,
+        convertedCount: bookingValueConvertedCount,
         source: 'authoritative_booking_customer_selling_totals'
       },
       activeAgents: {
@@ -627,9 +657,12 @@ export class DashboardMetricsService {
       pendingPayments: {
         isAuthorized: isAuthorizedForFinance,
         bookingsWithPendingPaymentsCount: bookingsWithPendingPayments.length,
-        totalOutstandingAmount: Math.round(totalOutstandingAmount),
+        totalOutstandingAmount: roundAmountForCurrency(totalOutstandingAmount, baseCurrency),
         overduePaymentsCount,
         currency: baseCurrency,
+        hasUnavailableRates: outstandingUnavailableCount > 0,
+        unavailableCount: outstandingUnavailableCount,
+        convertedCount: outstandingConvertedCount,
         source: 'authoritative_booking_schedules'
       },
       activeSuppliers: {
@@ -658,7 +691,7 @@ export class DashboardMetricsService {
   }): BusinessPerformanceData {
     const { bookings, leads, quotes, products, comparison, granularity, baseCurrency, isAuthorizedForFinance } = params;
     const { currentRange } = comparison;
-    const fx = CurrencyEngine.getInstance();
+    let perfUnavailableCount = 0;
 
     const filteredBookings = bookings.filter(b => this.isDateInRange(b.createdAt || b.submittedAt, currentRange));
     const filteredLeads = leads.filter(l => this.isDateInRange(l.createdAt, currentRange));
@@ -683,7 +716,12 @@ export class DashboardMetricsService {
         if (isAuthorizedForFinance) {
           dayBookings.forEach(b => {
             const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-            dayValue += fx.convert(val, b.currency || 'USD', baseCurrency);
+            const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+            if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
+              perfUnavailableCount += 1;
+            } else {
+              dayValue += conv.convertedAmount;
+            }
           });
         }
 
@@ -693,7 +731,7 @@ export class DashboardMetricsService {
           dateStart: dayKey,
           dateEnd: dayKey,
           bookingsCount: dayBookings.length,
-          bookingsValue: Math.round(dayValue),
+          bookingsValue: roundAmountForCurrency(dayValue, baseCurrency),
           confirmedCount: dayBookings.filter(b => b.status === 'CONFIRMED').length,
           leadsCount: dayLeads.length,
           quotesCount: dayQuotes.length
@@ -717,7 +755,12 @@ export class DashboardMetricsService {
         if (isAuthorizedForFinance) {
           wBookings.forEach(b => {
             const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-            wValue += fx.convert(val, b.currency || 'USD', baseCurrency);
+            const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+            if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
+              perfUnavailableCount += 1;
+            } else {
+              wValue += conv.convertedAmount;
+            }
           });
         }
 
@@ -727,7 +770,7 @@ export class DashboardMetricsService {
           dateStart: curr.toISOString().split('T')[0],
           dateEnd: wEnd.toISOString().split('T')[0],
           bookingsCount: wBookings.length,
-          bookingsValue: Math.round(wValue),
+          bookingsValue: roundAmountForCurrency(wValue, baseCurrency),
           confirmedCount: wBookings.filter(b => b.status === 'CONFIRMED').length,
           leadsCount: wLeads.length,
           quotesCount: wQuotes.length
@@ -751,7 +794,12 @@ export class DashboardMetricsService {
         if (isAuthorizedForFinance) {
           mBookings.forEach(b => {
             const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-            mValue += fx.convert(val, b.currency || 'USD', baseCurrency);
+            const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+            if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
+              perfUnavailableCount += 1;
+            } else {
+              mValue += conv.convertedAmount;
+            }
           });
         }
 
@@ -761,7 +809,7 @@ export class DashboardMetricsService {
           dateStart: curr.toISOString().split('T')[0],
           dateEnd: mEnd.toISOString().split('T')[0],
           bookingsCount: mBookings.length,
-          bookingsValue: Math.round(mValue),
+          bookingsValue: roundAmountForCurrency(mValue, baseCurrency),
           confirmedCount: mBookings.filter(b => b.status === 'CONFIRMED').length,
           leadsCount: mLeads.length,
           quotesCount: mQuotes.length
@@ -821,7 +869,12 @@ export class DashboardMetricsService {
       bookedDestMap[d].count++;
       if (isAuthorizedForFinance) {
         const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-        bookedDestMap[d].value += fx.convert(val, b.currency || 'USD', baseCurrency);
+        const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+        if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
+          perfUnavailableCount += 1;
+        } else {
+          bookedDestMap[d].value += conv.convertedAmount;
+        }
       }
     });
 
@@ -835,7 +888,12 @@ export class DashboardMetricsService {
           categoryMap[cat].count++;
           if (isAuthorizedForFinance) {
             const itVal = it.totalPrice || it.unitSellingPrice || 0;
-            categoryMap[cat].value += fx.convert(itVal, it.currency || b.currency || 'USD', baseCurrency);
+            const conv = displayCurrencyService.convertForDisplay(itVal, it.currency || b.currency || 'USD', baseCurrency);
+            if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
+              perfUnavailableCount += 1;
+            } else {
+              categoryMap[cat].value += conv.convertedAmount;
+            }
           }
         });
       }
@@ -890,7 +948,9 @@ export class DashboardMetricsService {
         topBookedCategories
       },
       leadConversionRate: totalLeads > 0 ? Math.round((filteredLeads.filter(l => (l.status as string) === 'CONVERTED' || l.status === 'WON' || l.status === 'BOOKED' || l.status === 'CONFIRMED').length / totalLeads) * 100) : 0,
-      quoteConversionRate: totalQuotes > 0 ? Math.round((filteredQuotes.filter(q => (q.status as string) === 'CONVERTED_TO_BOOKING' || q.status === 'CONVERTED' || q.status === 'BOOKED' || !!q.bookingId).length / totalQuotes) * 100) : 0
+      quoteConversionRate: totalQuotes > 0 ? Math.round((filteredQuotes.filter(q => (q.status as string) === 'CONVERTED_TO_BOOKING' || q.status === 'CONVERTED' || q.status === 'BOOKED' || !!q.bookingId).length / totalQuotes) * 100) : 0,
+      hasUnavailableRates: perfUnavailableCount > 0,
+      unavailableCount: perfUnavailableCount
     };
   }
 

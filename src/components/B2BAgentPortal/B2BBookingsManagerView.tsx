@@ -23,9 +23,8 @@ import {
 } from 'lucide-react';
 import { Booking, BookingStatus, CurrencyCode } from '../../types';
 import { AppDatabase } from '../../services/db';
-import { formatCurrency } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
-import { useQuotation } from '../../context/QuotationContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { BookingWorkspace } from '../Bookings/BookingWorkspace';
 
 interface B2BBookingsManagerViewProps {
@@ -36,7 +35,7 @@ export const B2BBookingsManagerView: React.FC<B2BBookingsManagerViewProps> = ({
   onOpenCreateQuote
 }) => {
   const { user } = useAuth();
-  const { currency } = useQuotation();
+  const { convertForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
 
   const [bookings, setBookings] = useState<Booking[]>(() => db.getBookingsForUser(user));
@@ -316,9 +315,21 @@ export const B2BBookingsManagerView: React.FC<B2BBookingsManagerViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <div className="font-mono font-bold text-slate-900">
-                          {formatCurrency(paymentSummary.totalAmount, b.currency || currency)}
-                        </div>
+                        {(() => {
+                          const amtConv = convertForDisplay(paymentSummary.totalAmount, b.currency || 'USD');
+                          return (
+                            <>
+                              <div className={`font-mono font-bold ${amtConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-900'}`}>
+                                {amtConv.formatted}
+                              </div>
+                              {amtConv.isConverted && (
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  Booked: {amtConv.nativeFormatted}
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${
                             b.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' :

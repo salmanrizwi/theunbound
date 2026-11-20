@@ -102,13 +102,19 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
     if (!destination || !inventoryVisibilityService.isDestinationActiveForB2B(destination)) return [];
     const destNameLower = (destination.name || '').toLowerCase();
     const destCountryLower = (destination.country || '').toLowerCase();
-    return allProducts.filter(p => 
-      inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p) && (
+    const seenIds = new Set<string>();
+    return allProducts.filter(p => {
+      if (!p || !p.id || seenIds.has(p.id)) return false;
+      const matches = inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p) && (
         p.destinationId === destination.id ||
+        (Array.isArray(p.destinationIds) && p.destinationIds.includes(destination.id)) ||
         (p.destinationName || '').toLowerCase().includes(destNameLower) ||
         (p.country || '').toLowerCase().includes(destCountryLower)
-      )
-    );
+      );
+      if (!matches) return false;
+      seenIds.add(p.id);
+      return true;
+    });
   }, [allProducts, destination]);
 
   // Filter hotels for this destination
@@ -272,7 +278,19 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {hubs.map(hub => {
               const hubNameLower = (hub.name || '').toLowerCase();
-              const hubProds = allProducts.filter(p => (p.city || '').toLowerCase().includes(hubNameLower));
+              const seenHubProdIds = new Set<string>();
+              const hubProds = allProducts.filter(p => {
+                if (!p || !p.id || seenHubProdIds.has(p.id)) return false;
+                if (!inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p)) return false;
+                const matches =
+                  p.hubId === hub.id ||
+                  (Array.isArray(p.hubIds) && p.hubIds.includes(hub.id)) ||
+                  (Array.isArray(p.hubNames) && p.hubNames.some(hn => (hn || '').toLowerCase() === hubNameLower)) ||
+                  (p.city || '').toLowerCase().includes(hubNameLower);
+                if (!matches) return false;
+                seenHubProdIds.add(p.id);
+                return true;
+              });
               const hubHots = allHotels.filter(h => (h.cityName && h.cityName.toLowerCase().includes(hubNameLower)) || (h.city && h.city.toLowerCase().includes(hubNameLower)));
               return (
                 <div
@@ -596,14 +614,20 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
   const hubProducts = useMemo(() => {
     if (!hub || !inventoryVisibilityService.isEntityAccessibleInB2B('HUB', hub)) return [];
     const hubNameLower = (hub.name || '').toLowerCase();
-    return allProducts.filter(p => 
-      inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p) && (
+    const seenIds = new Set<string>();
+    return allProducts.filter(p => {
+      if (!p || !p.id || seenIds.has(p.id)) return false;
+      const matches = inventoryVisibilityService.isEntityAccessibleInB2B('PRODUCT', p) && (
         (p as any).hubId === hub.id ||
         (Array.isArray(p.hubIds) && p.hubIds.includes(hub.id)) ||
+        (Array.isArray(p.hubNames) && p.hubNames.some(hn => (hn || '').toLowerCase() === hubNameLower)) ||
         (p.city || '').toLowerCase().includes(hubNameLower) ||
         (p.destinationName && p.destinationName.toLowerCase().includes(hubNameLower))
-      )
-    );
+      );
+      if (!matches) return false;
+      seenIds.add(p.id);
+      return true;
+    });
   }, [allProducts, hub]);
 
   // Hub Hotels

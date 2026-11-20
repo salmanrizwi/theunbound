@@ -1372,8 +1372,8 @@ export function calculateProductPrice(
         product.productType === 'Hotel' ||
         product.productType === 'Hotel & Resort'
       ) {
-        const allHotels = db.getHotels();
-        const matchedHotel = allHotels.find(
+        const directHotel = prodAny.hotelId ? db.getHotelById(prodAny.hotelId) : undefined;
+        const matchedHotel = directHotel || db.getHotels().find(
           h =>
             (prodAny.hotelId && h.id === prodAny.hotelId) ||
             (product.id && product.id.startsWith(`hotel-prod-${h.id}-`)) ||
@@ -1414,13 +1414,11 @@ export function calculateProductPrice(
           }
         }
       } else {
-        const masterProd = db.getProducts().find(
-          p =>
-            p.id === product.id ||
-            p.product_id === product.id ||
-            (prodAny.master_product_id && (p.id === prodAny.master_product_id || p.product_id === prodAny.master_product_id)) ||
-            (product.sku && p.sku === product.sku)
-        );
+        const masterProd =
+          (product.id && db.getProductById(product.id)) ||
+          (prodAny.master_product_id && db.getProductById(prodAny.master_product_id)) ||
+          (product.sku && db.getProductById(product.sku)) ||
+          undefined;
         if (masterProd) {
           product = {
             ...masterProd,
@@ -1484,11 +1482,7 @@ export function calculateProductPrice(
 
   try {
     const db = AppDatabase.getInstance();
-    const productRates = db.getProductRates();
-    const matchingRates = productRates.filter(r => 
-      (r.productId === product.id || r.productId === product.sku) && 
-      (r.status === 'ACTIVE' || !r.status)
-    );
+    const matchingRates = db.getActiveProductRatesForProduct(product.id, product.sku);
 
     if (matchingRates.length > 0) {
       // Prioritize date-valid rate
@@ -3954,6 +3948,16 @@ export function calculateQuoteInternalBreakdown(
   } catch {
     centralizedMasterSurcharges = [];
   }
+  const activeCentralMasterIdSet = new Set(
+    (centralizedMasterSurcharges || [])
+      .filter(s => s && !s.isDeleted && s.status === 'ACTIVE' && s.isActive !== false)
+      .map(s => s.id)
+  );
+  const itemsByIdMap = new Map<string, QuoteItem>();
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it && it.id && !itemsByIdMap.has(it.id)) itemsByIdMap.set(it.id, it);
+  }
 
   let accumulatedNetCost = 0;
   let accumulatedUnderlyingMarkup = 0;
@@ -4190,11 +4194,6 @@ export function calculateQuoteInternalBreakdown(
 
       // For unlocked/draft quotations, ensure cached item.calculation matches current Surcharge Management catalog version
       // and does not contain any deleted, deactivated, or non-existent surcharge IDs.
-      const activeCentralMasterIdSet = new Set(
-        (centralizedMasterSurcharges || [])
-          .filter(s => s && !s.isDeleted && s.status === 'ACTIVE' && s.isActive !== false)
-          .map(s => s.id)
-      );
       const hasStaleOrMissingDraftSurcharge =
         !preserveHistoricalSnapshot &&
         Array.isArray(existingSurchargesArr) &&
@@ -4668,7 +4667,7 @@ export function calculateQuoteInternalBreakdown(
       ib.finalCustomerSellingPrice = 0;
       continue;
     }
-    const matchedItem = items.find(i => i.id === ib.itemId) as any;
+    const matchedItem = itemsByIdMap.get(ib.itemId) as any;
     const catLower = (ib.category || matchedItem?.product?.category || '').toLowerCase();
     const ibIsHotel = Boolean(
       catLower.includes('hotel') ||

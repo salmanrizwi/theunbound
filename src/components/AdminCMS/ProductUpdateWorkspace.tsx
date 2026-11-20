@@ -66,6 +66,7 @@ import { calculateUnifiedPrice, calculateB2BAgentPrice, validateInventoryValidit
 import { RichTextEditor } from '../common/RichTextEditor';
 import { InventoryValidityAndSurchargesSection } from './common/InventoryValidityAndSurchargesSection';
 import { canonicalImageService } from '../../services/imageService';
+import { RailGeographySelector, hydrateRailGeographyState } from './RailGeographySelector';
 
 interface ProductUpdateWorkspaceProps {
   product: Product | null; // null means Create mode
@@ -137,10 +138,15 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     category: 'Private Tours',
     subcategory: '',
     destinationId: '',
+    destinationIds: [],
     destinationName: '',
     regionId: '',
+    regionIds: [],
     regionName: '',
+    regionNames: [],
     hubId: '',
+    hubIds: [],
+    hubNames: [],
     country: '',
     city: '',
     productType: 'Private Tour',
@@ -197,15 +203,19 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     if (product) {
       const vFrom = (product.validity?.validFrom ?? product.validityFrom ?? '').trim();
       const vTo = (product.validity?.validTo ?? product.validityTo ?? '').trim();
-      const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || product.category === 'Rail' || product.category === 'Rail / Shinkansen';
+      const normCat = normalizeWorkspaceCategory(product.category);
+      const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || normCat === 'Rail';
       const cleanImages = canonicalImageService.extractPersistedProductImages(product);
       const primaryUrl = isRail ? (product.imageUrl || product.heroImage || cleanImages[0] || null) : (cleanImages[0] || product.imageUrl || product.heroImage || null);
       const resolvedImages = primaryUrl
         ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)]
         : cleanImages;
+      const hydratedRailGeo = isRail
+        ? hydrateRailGeographyState(product, regions, cityHubs)
+        : null;
       return { 
         ...product,
-        category: normalizeWorkspaceCategory(product.category),
+        category: normCat,
         images: resolvedImages,
         heroImage: primaryUrl,
         imageUrl: primaryUrl,
@@ -216,7 +226,19 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
           validTo: vTo
         },
         surcharges: Array.isArray(product.surcharges) ? product.surcharges : [],
-        hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
+        destinationIds: product.destinationIds || (product.destinationId ? [product.destinationId] : []),
+        ...(hydratedRailGeo ? {
+          regionId: hydratedRailGeo.regionId || product.regionId || '',
+          regionName: hydratedRailGeo.regionName || product.regionName || '',
+          regionIds: hydratedRailGeo.regionIds,
+          regionNames: hydratedRailGeo.regionNames,
+          hubId: hydratedRailGeo.hubId || product.hubId || '',
+          city: hydratedRailGeo.city || product.city || '',
+          hubIds: hydratedRailGeo.hubIds,
+          hubNames: hydratedRailGeo.hubNames
+        } : {
+          hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
+        })
       };
     }
     return createCleanWorkspaceFormData();
@@ -258,12 +280,15 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       const vFrom = (product.validity?.validFrom ?? product.validityFrom ?? '').trim();
       const vTo = (product.validity?.validTo ?? product.validityTo ?? '').trim();
       const normCat = normalizeWorkspaceCategory(product.category);
-      const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || product.category === 'Rail' || product.category === 'Rail / Shinkansen';
+      const isRail = product.id === 'RAIL-JP-ORD-RESERVED' || product.id === 'RAIL-JP-GREEN-RESERVED' || normCat === 'Rail';
       const cleanImages = canonicalImageService.extractPersistedProductImages(product);
       const primaryUrl = isRail ? (product.imageUrl || product.heroImage || cleanImages[0] || null) : (cleanImages[0] || product.imageUrl || product.heroImage || null);
       const resolvedImages = primaryUrl
         ? [primaryUrl, ...cleanImages.filter(u => u !== primaryUrl)]
         : cleanImages;
+      const hydratedRailGeo = isRail
+        ? hydrateRailGeographyState(product, regions, cityHubs)
+        : null;
       setFormData({ 
         ...product,
         category: normCat,
@@ -277,6 +302,19 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
           validTo: vTo
         },
         surcharges: Array.isArray(product.surcharges) ? product.surcharges : [],
+        destinationIds: product.destinationIds || (product.destinationId ? [product.destinationId] : []),
+        ...(hydratedRailGeo ? {
+          regionId: hydratedRailGeo.regionId || product.regionId || '',
+          regionName: hydratedRailGeo.regionName || product.regionName || '',
+          regionIds: hydratedRailGeo.regionIds,
+          regionNames: hydratedRailGeo.regionNames,
+          hubId: hydratedRailGeo.hubId || product.hubId || '',
+          city: hydratedRailGeo.city || product.city || '',
+          hubIds: hydratedRailGeo.hubIds,
+          hubNames: hydratedRailGeo.hubNames
+        } : {
+          hubIds: product.hubIds || (product.hubId ? [product.hubId] : [])
+        }),
         upsells: resolvedUpsells
       });
       setActiveCategory(normCat);
@@ -304,12 +342,31 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     const isCap = category === 'Private Tours' || category === 'Transfers' || category === 'Private Yacht' || category === 'Ferry';
     const isHourly = category === 'Guides';
     
-    setFormData(prev => ({
-      ...prev,
-      category,
-      pricingMethod: isCap ? 'capacity_based' : isHourly ? 'hourly_based' : 'per_person',
-      productType: category.replace(/s$/, '')
-    }));
+    setFormData(prev => {
+      if (category === 'Rail') {
+        const hydrated = hydrateRailGeographyState({ ...prev, category }, regions, cityHubs);
+        return {
+          ...prev,
+          category,
+          pricingMethod: 'per_person',
+          productType: category.replace(/s$/, ''),
+          regionId: hydrated.regionId,
+          regionName: hydrated.regionName,
+          regionIds: hydrated.regionIds,
+          regionNames: hydrated.regionNames,
+          hubId: hydrated.hubId,
+          city: hydrated.city,
+          hubIds: hydrated.hubIds,
+          hubNames: hydrated.hubNames
+        };
+      }
+      return {
+        ...prev,
+        category,
+        pricingMethod: isCap ? 'capacity_based' : isHourly ? 'hourly_based' : 'per_person',
+        productType: category.replace(/s$/, '')
+      };
+    });
   };
 
   const defaultSurchargeBasis: SurchargeApplicationBasis =
@@ -669,25 +726,80 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     let validatedRegion: any;
     let validatedDestination: any;
     let validatedHub: any;
+    let railRegionIds: string[] = [];
+    let railRegionNames: string[] = [];
+    let railHubIds: string[] = [];
+    let railHubNames: string[] = [];
 
     if (activeCategory === 'Rail') {
-      const hubIds = formData.hubIds || [];
-      if (hubIds.length === 0) {
-        alert('At least one associated City Hub is required for Rail products.');
+      const selectedHubIds: string[] = Array.from(
+        new Set<string>(((formData.hubIds || []) as string[]).filter((id): id is string => typeof id === 'string' && Boolean(id)))
+      );
+      const selectedRegionIds: string[] = Array.from(
+        new Set<string>([
+          ...((formData.regionIds || []) as string[]),
+          ...(formData.regionId ? [String(formData.regionId)] : [])
+        ].filter((id): id is string => typeof id === 'string' && Boolean(id)))
+      );
+
+      if (selectedRegionIds.length === 0) {
+        setWorkspaceValidationError('At least one Region (Tier 2) must be selected for Rail products.');
         return;
       }
-      for (const hId of hubIds) {
-        const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, hId);
-        if (!hierarchy.valid) {
-          alert(`Data Integrity Error for Associated Hub (${hId}): ${hierarchy.error}`);
-          return;
-        }
-        validatedRegion = hierarchy.region;
-        validatedDestination = hierarchy.destination;
+      if (selectedHubIds.length === 0) {
+        setWorkspaceValidationError('At least one associated City Hub is required for Rail products.');
+        return;
       }
-      if (hubIds[0]) {
-        validatedHub = masterData.getHubById(hubIds[0]);
+
+      const primaryHubObj = masterData.getHubById(selectedHubIds[0], true);
+      const primaryRegId =
+        (primaryHubObj?.regionId && selectedRegionIds.includes(primaryHubObj.regionId) ? primaryHubObj.regionId : undefined) ||
+        selectedRegionIds[0];
+
+      const hierarchy = masterData.validateHierarchy(
+        primaryRegId,
+        formData.destinationId,
+        selectedHubIds[0],
+        selectedHubIds,
+        selectedRegionIds
+      );
+      if (!hierarchy.valid) {
+        setWorkspaceValidationError(`Data Integrity Error: ${hierarchy.error}`);
+        return;
       }
+
+      validatedDestination = hierarchy.destination;
+      validatedRegion = hierarchy.destinationRegion || hierarchy.region;
+      validatedHub = primaryHubObj || hierarchy.hub;
+
+      railRegionIds = Array.from(
+        new Set(
+          selectedRegionIds
+            .map(rid => masterData.getDestinationRegionById(rid, true)?.id || rid)
+            .filter(Boolean)
+        )
+      );
+      railRegionNames = Array.from(
+        new Set(
+          railRegionIds
+            .map(rid => masterData.getDestinationRegionById(rid, true)?.name)
+            .filter((name): name is string => Boolean(name))
+        )
+      );
+      railHubIds = Array.from(
+        new Set(
+          selectedHubIds
+            .map(hid => masterData.getHubById(hid, true)?.id || hid)
+            .filter(Boolean)
+        )
+      );
+      railHubNames = Array.from(
+        new Set(
+          railHubIds
+            .map(hid => masterData.getHubById(hid, true)?.name)
+            .filter((name): name is string => Boolean(name))
+        )
+      );
     } else {
       const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
       if (!hierarchy.valid) {
@@ -789,12 +901,20 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       category: activeCategory,
       regionId: validatedRegion.id,
       regionName: validatedRegion.name,
+      ...(activeCategory === 'Rail' ? {
+        destinationIds: [validatedDestination.id],
+        regionIds: railRegionIds,
+        regionNames: railRegionNames,
+        hubIds: railHubIds,
+        hubNames: railHubNames
+      } : {
+        hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : [])
+      }),
       destinationId: validatedDestination.id,
       destinationName: validatedDestination.name,
       country: validatedDestination.country || validatedDestination.name,
       hubId: validatedHub ? validatedHub.id : (formData.hubId || ''),
       city: validatedHub ? validatedHub.name : (formData.city || validatedDestination.name),
-      hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : []),
       pricingModel: isCap 
         ? 'CAPACITY_TIERED' 
         : (activeCategory === 'Guides' ? 'PER_HOUR' : (activeCategory === 'Lunch / Dinner Restaurant' ? 'MEAL_PASSENGER' : (activeCategory === 'Tickets' ? 'PER_PERSON' : 'PER_PERSON'))),
@@ -915,26 +1035,75 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
     let validatedRegion: any;
     let validatedDestination: any;
     let validatedHub: any;
+    let railRegionIds: string[] = [];
+    let railRegionNames: string[] = [];
+    let railHubIds: string[] = [];
+    let railHubNames: string[] = [];
 
     if (activeCategory === 'Rail') {
-      const hubIds = formData.hubIds || [];
-      if (hubIds.length > 0) {
-        for (const hId of hubIds) {
-          const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, hId);
-          if (hierarchy.valid) {
-            validatedRegion = hierarchy.region;
-            validatedDestination = hierarchy.destination;
-          }
+      const selectedHubIds: string[] = Array.from(
+        new Set<string>(((formData.hubIds || []) as string[]).filter((id): id is string => typeof id === 'string' && Boolean(id)))
+      );
+      const selectedRegionIds: string[] = Array.from(
+        new Set<string>([
+          ...((formData.regionIds || []) as string[]),
+          ...(formData.regionId ? [String(formData.regionId)] : [])
+        ].filter((id): id is string => typeof id === 'string' && Boolean(id)))
+      );
+
+      if (selectedHubIds.length > 0) {
+        const primaryHubObj = masterData.getHubById(selectedHubIds[0], true);
+        const primaryRegId =
+          (primaryHubObj?.regionId && selectedRegionIds.includes(primaryHubObj.regionId) ? primaryHubObj.regionId : undefined) ||
+          selectedRegionIds[0];
+
+        const hierarchy = masterData.validateHierarchy(
+          primaryRegId,
+          formData.destinationId,
+          selectedHubIds[0],
+          selectedHubIds,
+          selectedRegionIds.length > 0 ? selectedRegionIds : undefined
+        );
+        if (!hierarchy.valid) {
+          setWorkspaceValidationError(`Data Integrity Error: ${hierarchy.error}`);
+          return;
         }
-        if (hubIds[0]) {
-          validatedHub = masterData.getHubById(hubIds[0]);
-        }
+        validatedRegion = hierarchy.destinationRegion || hierarchy.region;
+        validatedDestination = hierarchy.destination;
+        validatedHub = primaryHubObj || hierarchy.hub;
+      } else {
+        validatedRegion = selectedRegionIds[0] ? masterData.getDestinationRegionById(selectedRegionIds[0], true) : undefined;
+        validatedDestination = formData.destinationId ? masterData.getDestinationById(formData.destinationId, true) : undefined;
       }
-      if (!validatedRegion || !validatedDestination) {
-        // Fallback checks
-        validatedRegion = masterData.getRegionById(formData.regionId!);
-        validatedDestination = masterData.getDestinationById(formData.destinationId!);
-      }
+
+      railRegionIds = Array.from(
+        new Set(
+          selectedRegionIds
+            .map(rid => masterData.getDestinationRegionById(rid, true)?.id || rid)
+            .filter(Boolean)
+        )
+      );
+      railRegionNames = Array.from(
+        new Set(
+          railRegionIds
+            .map(rid => masterData.getDestinationRegionById(rid, true)?.name)
+            .filter((name): name is string => Boolean(name))
+        )
+      );
+      railHubIds = Array.from(
+        new Set(
+          selectedHubIds
+            .map(hid => masterData.getHubById(hid, true)?.id || hid)
+            .filter(Boolean)
+        )
+      );
+      railHubNames = Array.from(
+        new Set(
+          railHubIds
+            .map(hid => masterData.getHubById(hid, true)?.name)
+            .filter((name): name is string => Boolean(name))
+        )
+      );
     } else {
       const hierarchy = masterData.validateHierarchy(formData.regionId, formData.destinationId, formData.hubId);
       if (!hierarchy.valid) {
@@ -961,7 +1130,15 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
       country: validatedDestination ? (validatedDestination.country || validatedDestination.name) : (formData.country || ''),
       hubId: validatedHub ? validatedHub.id : (formData.hubId || ''),
       city: validatedHub ? validatedHub.name : (formData.city || ''),
-      hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : []),
+      ...(activeCategory === 'Rail' ? {
+        destinationIds: validatedDestination ? [validatedDestination.id] : (formData.destinationIds || []),
+        regionIds: railRegionIds,
+        regionNames: railRegionNames,
+        hubIds: railHubIds,
+        hubNames: railHubNames
+      } : {
+        hubIds: formData.hubIds || (validatedHub ? [validatedHub.id] : [])
+      }),
       currency: chosenCurrency,
       nativeCurrency: chosenCurrency,
       images: cleanedImages,
@@ -1053,7 +1230,11 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
             <ProductPreviewCard
               name={formData.name || 'Untitled Master Experience'}
               category={activeCategory}
-              cityName={formData.city || 'Tokyo'}
+              cityName={
+                activeCategory === 'Rail' && Array.isArray(formData.hubNames) && formData.hubNames.length > 0
+                  ? formData.hubNames.join(', ')
+                  : (formData.city || 'Tokyo')
+              }
               destinationName={formData.destinationName || 'Japan'}
               duration={formData.duration || '8 Hours'}
               imageUrl={formData.images?.[0]}
@@ -1199,13 +1380,17 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                     setFormData({ 
                       ...formData, 
                       destinationId: dest?.id || '', 
+                      destinationIds: dest?.id ? [dest.id] : [],
                       destinationName: dest?.name || '',
                       country: dest?.country || dest?.name || '',
                       regionId: '',
                       regionName: '',
+                      regionIds: [],
+                      regionNames: [],
                       hubId: '',
                       city: '',
-                      hubIds: []
+                      hubIds: [],
+                      hubNames: []
                     });
                   }}
                   className="w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none"
@@ -1217,114 +1402,97 @@ export const ProductUpdateWorkspace: React.FC<ProductUpdateWorkspaceProps> = ({
                 </select>
               </FormField>
 
-              {/* Cascading Region (Tier 2) strictly filtered by selected Destination */}
-              <FormField label="2. Region (Tier 2)" required>
-                <select
-                  required
-                  disabled={!formData.destinationId}
-                  value={formData.regionId || ''}
-                  onChange={e => {
-                    const regId = e.target.value;
-                    const reg = regions.find(r => r.id === regId);
-                    setFormData({ 
-                      ...formData, 
-                      regionId: reg?.id || '', 
-                      regionName: reg?.name || '',
-                      hubId: '',
-                      city: '',
-                      hubIds: []
-                    });
-                  }}
-                  className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
-                >
-                  <option value="">{formData.destinationId ? '-- Select Region --' : '-- Select Destination First --'}</option>
-                  {regions
-                    .filter(r => r.destinationId === formData.destinationId)
-                    .map(r => (
-                      <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
-                    ))}
-                </select>
-              </FormField>
-
-              {/* Cascading City Hub (Tier 3) strictly filtered by selected Destination & Region */}
               {activeCategory === 'Rail' ? (
-                <FormField label="3. Associated City Hubs (Multi-Hub Selection)" required>
-                  <div className={`p-3 bg-white border border-slate-200 rounded-lg space-y-2 max-h-40 overflow-y-auto ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}>
-                    {!formData.destinationId ? (
-                      <div className="text-slate-400 text-xs">-- Select Destination First --</div>
-                    ) : (
-                      cityHubs
-                        .filter(h => h.destinationId === formData.destinationId)
-                        .map(h => {
-                          const isChecked = (formData.hubIds || []).includes(h.id);
-                          return (
-                            <label key={h.id} className="flex items-center space-x-2 text-xs font-semibold text-slate-700 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={e => {
-                                  const checked = e.target.checked;
-                                  const currentIds = formData.hubIds || [];
-                                  let nextIds: string[];
-                                  if (checked) {
-                                    nextIds = [...currentIds, h.id];
-                                  } else {
-                                    nextIds = currentIds.filter(id => id !== h.id);
-                                  }
-                                  const primaryHub = cityHubs.find(ch => ch.id === nextIds[0]);
-                                  const nextRegIds = Array.from(new Set(
-                                    nextIds
-                                      .map(id => cityHubs.find(ch => ch.id === id)?.regionId)
-                                      .filter(Boolean) as string[]
-                                  ));
-                                  setFormData({
-                                    ...formData,
-                                    hubIds: nextIds,
-                                    hubId: nextIds[0] || '',
-                                    city: primaryHub?.name || '',
-                                    regionId: primaryHub?.regionId || formData.regionId || '',
-                                    regionName: primaryHub?.regionName || formData.regionName || '',
-                                    regionIds: nextRegIds
-                                  });
-                                }}
-                                className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
-                              />
-                              <span>{h.name} ({h.regionName || h.id})</span>
-                            </label>
-                          );
-                        })
-                    )}
-                  </div>
-                </FormField>
+                <RailGeographySelector
+                  destinationId={formData.destinationId}
+                  regions={regions}
+                  cityHubs={cityHubs}
+                  selectedRegionIds={
+                    formData.regionIds && formData.regionIds.length > 0
+                      ? formData.regionIds
+                      : (formData.regionId ? [formData.regionId] : [])
+                  }
+                  selectedHubIds={
+                    formData.hubIds && formData.hubIds.length > 0
+                      ? formData.hubIds
+                      : (formData.hubId ? [formData.hubId] : [])
+                  }
+                  onApplyUpdate={update => {
+                    setWorkspaceValidationError(null);
+                    setFormData(prev => ({
+                      ...prev,
+                      regionId: update.regionId,
+                      regionName: update.regionName,
+                      regionIds: update.regionIds,
+                      regionNames: update.regionNames,
+                      hubId: update.hubId,
+                      city: update.city,
+                      hubIds: update.hubIds,
+                      hubNames: update.hubNames
+                    }));
+                  }}
+                />
               ) : (
-                <FormField label="3. City Hub (Tier 3)" required>
-                  <select
-                    required
-                    disabled={!formData.destinationId}
-                    value={formData.hubId || ''}
-                    onChange={e => {
-                      const hubId = e.target.value;
-                      const hub = cityHubs.find(h => h.id === hubId);
-                      setFormData({ 
-                        ...formData, 
-                        hubId: hub?.id || '', 
-                        city: hub?.name || '',
-                        hubIds: hub?.id ? [hub.id] : [],
-                        regionId: hub?.regionId || formData.regionId || '',
-                        regionName: hub?.regionName || formData.regionName || '',
-                        regionIds: hub?.regionId ? [hub.regionId] : []
-                      });
-                    }}
-                    className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
-                  >
-                    <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
-                    {cityHubs
-                      .filter(h => h.destinationId === formData.destinationId && (!formData.regionId || h.regionId === formData.regionId))
-                      .map(h => (
-                        <option key={h.id} value={h.id}>{h.name} ({h.regionName || h.id})</option>
-                      ))}
-                  </select>
-                </FormField>
+                <>
+                  {/* Cascading Region (Tier 2) strictly filtered by selected Destination */}
+                  <FormField label="2. Region (Tier 2)" required>
+                    <select
+                      required
+                      disabled={!formData.destinationId}
+                      value={formData.regionId || ''}
+                      onChange={e => {
+                        const regId = e.target.value;
+                        const reg = regions.find(r => r.id === regId);
+                        setFormData({ 
+                          ...formData, 
+                          regionId: reg?.id || '', 
+                          regionName: reg?.name || '',
+                          hubId: '',
+                          city: '',
+                          hubIds: []
+                        });
+                      }}
+                      className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                    >
+                      <option value="">{formData.destinationId ? '-- Select Region --' : '-- Select Destination First --'}</option>
+                      {regions
+                        .filter(r => r.destinationId === formData.destinationId)
+                        .map(r => (
+                          <option key={r.id} value={r.id}>{r.name} ({r.id})</option>
+                        ))}
+                    </select>
+                  </FormField>
+
+                  {/* Cascading City Hub (Tier 3) strictly filtered by selected Destination & Region */}
+                  <FormField label="3. City Hub (Tier 3)" required>
+                    <select
+                      required
+                      disabled={!formData.destinationId}
+                      value={formData.hubId || ''}
+                      onChange={e => {
+                        const hubId = e.target.value;
+                        const hub = cityHubs.find(h => h.id === hubId);
+                        setFormData({ 
+                          ...formData, 
+                          hubId: hub?.id || '', 
+                          city: hub?.name || '',
+                          hubIds: hub?.id ? [hub.id] : [],
+                          regionId: hub?.regionId || formData.regionId || '',
+                          regionName: hub?.regionName || formData.regionName || '',
+                          regionIds: hub?.regionId ? [hub.regionId] : []
+                        });
+                      }}
+                      className={`w-full p-2.5 bg-white border border-slate-200 rounded-lg text-xs focus:border-[#00C6A6] focus:outline-none ${!formData.destinationId ? 'bg-slate-100 cursor-not-allowed opacity-60' : ''}`}
+                    >
+                      <option value="">{formData.destinationId ? '-- Select City Hub --' : '-- Select Destination First --'}</option>
+                      {cityHubs
+                        .filter(h => h.destinationId === formData.destinationId && (!formData.regionId || h.regionId === formData.regionId))
+                        .map(h => (
+                          <option key={h.id} value={h.id}>{h.name} ({h.regionName || h.id})</option>
+                        ))}
+                    </select>
+                  </FormField>
+                </>
               )}
 
               <FormField label="Duration (Hours / Days)">

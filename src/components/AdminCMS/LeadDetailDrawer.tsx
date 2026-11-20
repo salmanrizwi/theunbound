@@ -14,7 +14,7 @@ import {
 } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency } from '../../services/pricingEngine';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
 import { ProformaInvoiceModal } from './leads/ProformaInvoiceModal';
@@ -89,6 +89,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   onCreateQuoteForLead
 }) => {
   const { user } = useAuth();
+  const { displayCurrency, fxVersion, convertForDisplay, formatDisplayCurrency } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
 
   const [activeTab, setActiveTab] = useState<
@@ -177,7 +178,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   const financialSummary = React.useMemo(() => {
     if (!lead) return null;
     return db.getFinancialSummaryForLead(lead.id, user);
-  }, [db, lead, user]);
+  }, [db, lead, user, displayCurrency, fxVersion]);
 
   if (!lead) return null;
 
@@ -870,11 +871,17 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                         {lead.quoteNumber ? `#${lead.quoteNumber}` : linkedQuotes.length > 0 ? `#${linkedQuotes[0].quoteNumber}` : 'Drafting'}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        {lead.quoteSnapshot?.totalSellingPrice 
-                          ? `${lead.quoteSnapshot.currency || 'USD'} ${Number(lead.quoteSnapshot.totalSellingPrice).toLocaleString()}`
-                          : linkedQuotes.length > 0
-                          ? `${linkedQuotes[0].currency} ${(linkedQuotes[0].totalSellingPrice || 0).toLocaleString()}`
-                          : `${linkedQuotes.length} Quotes Available`}
+                        {(() => {
+                          if (lead.quoteSnapshot?.totalSellingPrice) {
+                            const conv = convertForDisplay(Number(lead.quoteSnapshot.totalSellingPrice), lead.quoteSnapshot.currency || 'USD');
+                            return conv.isConverted ? `${conv.formatted} (${conv.nativeFormatted})` : conv.formatted;
+                          }
+                          if (linkedQuotes.length > 0) {
+                            const conv = convertForDisplay(Number(linkedQuotes[0].totalSellingPrice || 0), linkedQuotes[0].currency || 'USD');
+                            return conv.isConverted ? `${conv.formatted} (${conv.nativeFormatted})` : conv.formatted;
+                          }
+                          return `${linkedQuotes.length} Quotes Available`;
+                        })()}
                       </p>
                     </div>
                     <span className="text-[10px] text-[#008f77] font-bold mt-2 inline-flex items-center gap-1 group-hover:underline">
@@ -907,11 +914,17 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                         {lead.bookingReference ? `#${lead.bookingReference}` : lead.bookingId ? `#${lead.bookingId}` : linkedBookings.length > 0 ? `#${linkedBookings[0].bookingReference}` : 'Not Converted'}
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5">
-                        {lead.bookingValue 
-                          ? `${lead.currency || 'USD'} ${Number(lead.bookingValue).toLocaleString()}`
-                          : linkedBookings.length > 0
-                          ? `${linkedBookings[0].currency} ${(linkedBookings[0].totalAmount || 0).toLocaleString()}`
-                          : 'Pending Conversion'}
+                        {(() => {
+                          if (lead.bookingValue) {
+                            const conv = convertForDisplay(Number(lead.bookingValue), lead.currency || 'USD');
+                            return conv.isConverted ? `${conv.formatted} (${conv.nativeFormatted})` : conv.formatted;
+                          }
+                          if (linkedBookings.length > 0) {
+                            const conv = convertForDisplay(Number(linkedBookings[0].totalAmount || 0), linkedBookings[0].currency || 'USD');
+                            return conv.isConverted ? `${conv.formatted} (${conv.nativeFormatted})` : conv.formatted;
+                          }
+                          return 'Pending Conversion';
+                        })()}
                       </p>
                     </div>
                     <span className="text-[10px] text-emerald-700 font-bold mt-2 inline-flex items-center gap-1 group-hover:underline">
@@ -956,7 +969,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                       </p>
                       <p className="text-[11px] text-slate-500 mt-0.5">
                         {financialSummary 
-                          ? `Due: ${formatCurrency(financialSummary.totalBalanceDue, financialSummary.currency)}`
+                          ? `Due: ${formatDisplayCurrency(financialSummary.totalBalanceDue ?? financialSummary.pendingBalance ?? 0)}`
                           : 'No invoices yet'}
                       </p>
                     </div>

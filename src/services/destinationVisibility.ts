@@ -70,6 +70,24 @@ const KNOWN_ALIAS_GROUPS: string[][] = [
   ['dest-south-korea', 'dest-korea', 'dst-kor', 'south korea', 'korea', 'seoul'],
 ];
 
+const ALIAS_TO_GROUP = new Map<string, string[]>();
+for (const group of KNOWN_ALIAS_GROUPS) {
+  for (const alias of group) {
+    ALIAS_TO_GROUP.set(alias, group);
+  }
+}
+
+const BOUNDARY_REGEX_CACHE = new Map<string, RegExp>();
+function getBoundaryRegex(key: string): RegExp {
+  let re = BOUNDARY_REGEX_CACHE.get(key);
+  if (!re) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    re = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i');
+    BOUNDARY_REGEX_CACHE.set(key, re);
+  }
+  return re;
+}
+
 const NON_ACTIVE_ENTITY_STATUSES = new Set([
   'INACTIVE',
   'COMING_SOON',
@@ -161,9 +179,13 @@ function registerAliasKeys(
   }
 
   if (includeCountryAliases) {
-    for (const group of KNOWN_ALIAS_GROUPS) {
-      if (group.some(alias => candidates.has(alias))) {
-        group.forEach(alias => candidates.add(alias));
+    const baseCandidates = Array.from(candidates);
+    for (const c of baseCandidates) {
+      const group = ALIAS_TO_GROUP.get(c);
+      if (group) {
+        for (let i = 0; i < group.length; i++) {
+          candidates.add(group[i]);
+        }
       }
     }
   }
@@ -179,11 +201,27 @@ function registerAliasKeys(
  * Builds an authoritative lookup index mapping destination IDs, slugs, names,
  * countries, legacy IDs, canonical aliases, and city hubs to destination IDs.
  */
+const EMPTY_DELETED_SET = new Set<string>();
+const visibilityIndexCache = new WeakMap<
+  DestinationLike[],
+  WeakMap<CityHubLike[], WeakMap<Set<string>, DestinationVisibilityIndex>>
+>();
+
 export function buildDestinationVisibilityIndex(
   destinations: DestinationLike[] = [],
   cityHubs: CityHubLike[] = [],
   deletedIds?: Set<string>
 ): DestinationVisibilityIndex {
+  const effectiveDeleted = deletedIds || EMPTY_DELETED_SET;
+  let hubsMap = visibilityIndexCache.get(destinations);
+  if (hubsMap) {
+    const delMap = hubsMap.get(cityHubs);
+    if (delMap) {
+      const cached = delMap.get(effectiveDeleted);
+      if (cached) return cached;
+    }
+  }
+
   const allDestinationsById = new Map<string, DestinationLike>();
   const activeDestinations: DestinationLike[] = [];
   const activeDestinationIds = new Set<string>();
@@ -226,7 +264,7 @@ export function buildDestinationVisibilityIndex(
     });
   }
 
-  return {
+  const result: DestinationVisibilityIndex = {
     allDestinationsById,
     activeDestinations,
     activeDestinationIds,
@@ -235,6 +273,19 @@ export function buildDestinationVisibilityIndex(
     hubByKey,
     hasAnyActiveDestination: activeDestinations.length > 0,
   };
+
+  if (!hubsMap) {
+    hubsMap = new WeakMap();
+    visibilityIndexCache.set(destinations, hubsMap);
+  }
+  let delMap = hubsMap.get(cityHubs);
+  if (!delMap) {
+    delMap = new WeakMap();
+    hubsMap.set(cityHubs, delMap);
+  }
+  delMap.set(effectiveDeleted, result);
+
+  return result;
 }
 
 /**
@@ -255,21 +306,18 @@ export function resolveDestinationIdToken(
   for (const [key, destId] of index.keyToDestinationId.entries()) {
     if (key.length >= 3 && (norm === key || norm.includes(key))) {
       // Avoid accidental substring false positives on short words unless delimited
-      const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const boundary = new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i');
-      if (boundary.test(norm)) {
+      if (getBoundaryRegex(key).test(norm)) {
         return destId;
       }
     }
   }
 
   // Fallback to known alias groups even if destination ID uses custom prefix
-  for (const group of KNOWN_ALIAS_GROUPS) {
-    if (group.includes(norm)) {
-      for (const alias of group) {
-        const mapped = index.keyToDestinationId.get(alias);
-        if (mapped) return mapped;
-      }
+  const fallbackGroup = ALIAS_TO_GROUP.get(norm);
+  if (fallbackGroup) {
+    for (let i = 0; i < fallbackGroup.length; i++) {
+      const mapped = index.keyToDestinationId.get(fallbackGroup[i]);
+      if (mapped) return mapped;
     }
   }
 

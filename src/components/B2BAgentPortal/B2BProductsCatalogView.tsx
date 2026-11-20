@@ -705,7 +705,10 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
               {searchResult.items.map(prod => {
                 const inQuote = isProductInQuote(prod.id);
-                const cityDisplay = prod.city || prod.destinationName || 'Japan';
+                const hubList = Array.isArray(prod.hubNames) && prod.hubNames.length > 0 ? prod.hubNames : (prod.city ? [prod.city] : []);
+                const cityDisplay = hubList.length > 1
+                  ? `${hubList.slice(0, 2).join(', ')}${hubList.length > 2 ? ` +${hubList.length - 2}` : ''}`
+                  : (hubList[0] || prod.destinationName || 'Japan');
                 const countryDisplay = prod.country || 'Japan';
                 const categoryDisplay = prod.category || 'Tour';
                 const deliveredInfo = calculateDeliveredPriceForUser(prod, user, currency);
@@ -860,10 +863,26 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                             <div className="text-[10px] text-slate-400 font-mono">{prod.sku || prod.id}</div>
                           </td>
                           <td className="py-3.5 px-4">
-                            <span className="inline-flex items-center space-x-1 font-medium text-slate-700">
-                              <MapPin className="w-3 h-3 text-[#00C6A6]" />
-                              <span>{prod.city || 'Japan'}, {prod.country || 'Japan'}</span>
-                            </span>
+                            {(() => {
+                              const hubList = Array.isArray(prod.hubNames) && prod.hubNames.length > 0 ? prod.hubNames : (prod.city ? [prod.city] : []);
+                              const hubLabel = hubList.length > 1
+                                ? `${hubList.slice(0, 2).join(', ')}${hubList.length > 2 ? ` +${hubList.length - 2}` : ''}`
+                                : (hubList[0] || 'Japan');
+                              const regionList = Array.isArray(prod.regionNames) && prod.regionNames.length > 0 ? prod.regionNames : (prod.regionName ? [prod.regionName] : []);
+                              return (
+                                <div className="space-y-0.5" title={[regionList.join(', '), hubList.join(', ')].filter(Boolean).join(' • ')}>
+                                  <span className="inline-flex items-center space-x-1 font-medium text-slate-700">
+                                    <MapPin className="w-3 h-3 text-[#00C6A6] shrink-0" />
+                                    <span>{hubLabel}, {prod.country || 'Japan'}</span>
+                                  </span>
+                                  {regionList.length > 1 && (
+                                    <div className="text-[10px] text-slate-500 pl-4">
+                                      Regions: {regionList.join(', ')}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="py-3.5 px-4">
                             <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700">

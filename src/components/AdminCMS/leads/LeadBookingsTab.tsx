@@ -1,5 +1,6 @@
 import React from 'react';
 import { TravelLead, Booking, User, BookingItem } from '../../../types';
+import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../../services/pricingEngine';
 import { 
   Briefcase, 
@@ -41,6 +42,7 @@ export const LeadBookingsTab: React.FC<LeadBookingsTabProps> = ({
   onNavigateToVouchersTab,
   onNavigateToFinancialsTab
 }) => {
+  const { convertForDisplay } = useDisplayCurrency();
   return (
     <div className="space-y-6">
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
@@ -116,9 +118,21 @@ export const LeadBookingsTab: React.FC<LeadBookingsTabProps> = ({
                     <div className="flex items-center gap-3 self-start sm:self-auto">
                       <div className="text-right">
                         <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Selling</span>
-                        <span className="font-mono text-base font-black text-slate-900">
-                          {formatCurrency(booking.totalAmount || 0, booking.currency)}
-                        </span>
+                        {(() => {
+                          const bConv = convertForDisplay(booking.totalAmount || 0, booking.currency || 'USD');
+                          return (
+                            <>
+                              <span className="font-mono text-base font-black text-slate-900 block">
+                                {bConv.formatted}
+                              </span>
+                              {bConv.isConverted && (
+                                <span className="text-[10px] font-mono text-slate-400 block">
+                                  Booked: {bConv.nativeFormatted}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                       {onOpenBooking && (
                         <button

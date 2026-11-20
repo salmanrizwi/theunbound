@@ -7,4 +7,5 @@ coverage/
 !.env.example
 .next/
 .cache/
+dist/
 temp/

@@ -16,8 +16,9 @@
  * - Zero literal HTML tags displayed in the email
  */
 
-import { QuotePresentationModel, ServicePresentationItem } from './quotePresentationModel';
+import { QuotePresentationModel, ServicePresentationItem, HotelPresentationItem } from './quotePresentationModel';
 import { THEUNBOUND_REGISTERED_ADDRESS, THEUNBOUND_CURRENT_ADDRESS } from './db';
+import { formatCurrency } from './pricingEngine';
 
 /**
  * Safely decodes common HTML entities
@@ -1493,4 +1494,1009 @@ export function renderSimpleSemanticQuotationEmailFromModel(
   const htmlBody = formatPlainTextQuotationToHtml(textBody);
 
   return { htmlBody, textBody };
+}
+
+// ============================================================================
+// OPTION 2: COMPLETE FORMATTED QUOTATION (EXCEL-STYLE SPREADSHEET HTML)
+// ============================================================================
+
+const EXCEL_FONT = 'Arial, Helvetica, sans-serif';
+const EXCEL_NAVY = '#17365D';
+const EXCEL_HEADER_TEXT = '#FFFFFF';
+const EXCEL_BLUE_ROW = '#D9E2F3';
+const EXCEL_WHITE_ROW = '#FFFFFF';
+const EXCEL_BORDER = '#404040';
+const EXCEL_TEXT_PRIMARY = '#222222';
+const EXCEL_TEXT_SECONDARY = '#555555';
+const EXCEL_BRAND_TEAL = '#00C6A6';
+
+/**
+ * Formats rich-text / HTML / Markdown into compact, email-client-safe HTML for spreadsheet table cells.
+ * Zero literal HTML tags, preserves paragraphs, numbered lists, bullets, and bold headings.
+ */
+function renderSpreadsheetRichText(
+  content?: string | null,
+  options?: { fontSize?: string; color?: string; strongColor?: string }
+): string {
+  if (!content || typeof content !== 'string') return '';
+  const fontSize = options?.fontSize || '11px';
+  const color = options?.color || EXCEL_TEXT_PRIMARY;
+  const strongColor = options?.strongColor || EXCEL_TEXT_PRIMARY;
+  return renderRichTextForEmail(content, {
+    fontSize,
+    lineHeight: '1.42',
+    color,
+    darkHeadingColor: strongColor
+  });
+}
+
+function classifyServiceTypeLabel(s: ServicePresentationItem): string {
+  const cat = (s.categoryLabel || s.category || '').toLowerCase();
+  const name = (s.listingName || '').toLowerCase();
+  if (s.isRail || cat.includes('rail') || cat.includes('shinkansen') || cat.includes('train')) {
+    return 'Rail';
+  }
+  if (cat.includes('charter') || name.includes('charter')) {
+    return 'Private Charter';
+  }
+  if (cat.includes('transfer') || cat.includes('transport')) {
+    if (name.includes('airport') || name.includes('narita') || name.includes('haneda') || name.includes('kansai')) {
+      return 'Airport Transfer';
+    }
+    if (name.includes('intercity')) {
+      return 'Intercity Transfer';
+    }
+    return 'Private Transfer';
+  }
+  if (cat.includes('visa') || cat.includes('insurance') || cat.includes('connectivity') || cat.includes('vip')) {
+    return 'Visa / Ancillary';
+  }
+  if (cat.includes('guide')) {
+    return 'Guide';
+  }
+  if (cat.includes('yacht')) {
+    return 'Private Yacht';
+  }
+  if (cat.includes('ferry') || cat.includes('ferries')) {
+    return 'Ferry';
+  }
+  if (cat.includes('restaurant') || cat.includes('dining') || cat.includes('meal')) {
+    return 'Restaurant / Dining';
+  }
+  if (cat.includes('ticket')) {
+    return 'Ticket / Pass';
+  }
+  if (cat.includes('group tour')) {
+    return 'Group Tour';
+  }
+  if (cat.includes('tour') || cat.includes('sightseeing') || cat.includes('experience') || cat.includes('activity')) {
+    return 'Tour / Activity';
+  }
+  return s.categoryLabel || s.category || 'Service';
+}
+
+function isHotelPresentationService(s: ServicePresentationItem): boolean {
+  const cat = (s.categoryLabel || s.category || '').toLowerCase();
+  const pType = String(s.rawItem?.product?.productType || '').toLowerCase();
+  const sType = String((s.rawItem as any)?.service_type || '').toLowerCase();
+  return (
+    cat === 'hotels' ||
+    cat === 'accommodation' ||
+    cat === 'luxury accommodation' ||
+    pType === 'hotel' ||
+    sType === 'hotel' ||
+    Boolean(s.rawItem?.isManualHotel || s.rawItem?.hotelId) ||
+    String(s.id || '').startsWith('synth-hotel-')
+  );
+}
+
+function resolveServiceUnitText(s: ServicePresentationItem): string {
+  const raw: any = s.rawItem || {};
+  const vehiclesAllocated = raw?.calculation?.vehicleDetails?.vehiclesAllocated;
+  if (typeof vehiclesAllocated === 'number' && vehiclesAllocated > 0) {
+    return `${vehiclesAllocated} ${vehiclesAllocated === 1 ? 'Vehicle' : 'Vehicles'}`;
+  }
+  const qty = Number(raw?.quantity);
+  if (Number.isFinite(qty) && qty > 0 && qty !== 1) {
+    return `${qty} Units`;
+  }
+  if (s.paxText) {
+    return s.paxText;
+  }
+  return '1 Unit';
+}
+
+function buildOption2ServiceDetailsHtml(s: ServicePresentationItem, dateLabel: string): string {
+  const raw: any = s.rawItem || {};
+  const prod: any = raw.product || {};
+  const configSnap: any = raw.configuration_snapshot || raw.metadata?.configuration_payload || {};
+  const selOpts: any = raw.selected_options || {};
+  const vehicleCalc: any = raw.calculation?.vehicleDetails || {};
+
+  const parts: string[] = [];
+  const lowerCat = (s.categoryLabel || s.category || '').toLowerCase();
+  const isTransfer = lowerCat.includes('transfer') || lowerCat.includes('transport') || lowerCat.includes('charter') || (s.listingName || '').toLowerCase().includes('charter');
+  const isCharter = lowerCat.includes('charter') || (s.listingName || '').toLowerCase().includes('charter');
+
+  // Primary bold listing title
+  parts.push(
+    `<div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_TEXT_PRIMARY}; margin: 0 0 4px 0;">${cleanInlineFormattedText(s.listingName)}</div>`
+  );
+
+  // Meta badges line (plain text, zero rounded pill CSS)
+  const metaItems: string[] = [];
+  if (s.categoryLabel) metaItems.push(`<strong>Category:</strong> ${cleanInlineFormattedText(s.categoryLabel)}`);
+  if (s.duration) metaItems.push(`<strong>${isCharter ? 'Charter Duration' : 'Duration'}:</strong> ${cleanInlineFormattedText(s.duration)}`);
+  const reportingTime = s.serviceTime || raw.metadata?.reportingTime || selOpts.reportingTime || prod.guideConfig?.reportingTime || prod.reportingTime;
+  if (reportingTime) metaItems.push(`<strong>Reporting / Time:</strong> ${cleanInlineFormattedText(String(reportingTime))}`);
+  if (dateLabel) metaItems.push(`<strong>Service Date:</strong> ${cleanInlineFormattedText(dateLabel)}`);
+  if (metaItems.length > 0) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin: 0 0 4px 0; line-height: 1.4;">${metaItems.join(' &nbsp;|&nbsp; ')}</div>`
+    );
+  }
+
+  // Rail details
+  if (s.isRail && s.railDetails) {
+    const rd = s.railDetails;
+    const rawRail: any = raw.railJourneyDetails || {};
+    const railLines: string[] = [
+      `<strong>Stations:</strong> ${cleanInlineFormattedText(rd.origin)} &rarr; ${cleanInlineFormattedText(rd.destination)}`,
+      `<strong>Train / Service:</strong> ${cleanInlineFormattedText(rd.serviceGroup)}${rawRail.trainNumber ? ` (#${cleanInlineFormattedText(String(rawRail.trainNumber))})` : ''}`,
+      `<strong>Class &amp; Seat:</strong> ${cleanInlineFormattedText(rd.carType)} (${cleanInlineFormattedText(rd.seatType)})${rd.seatPreference ? ` &bull; ${cleanInlineFormattedText(rd.seatPreference)}` : ''}`,
+      `<strong>Travel Date &amp; Pax:</strong> ${cleanInlineFormattedText(dateLabel)} &bull; ${cleanInlineFormattedText(s.paxText)}`
+    ];
+    if (rd.pnrReference) {
+      railLines.push(`<strong>PNR / Reference:</strong> ${cleanInlineFormattedText(rd.pnrReference)}`);
+    }
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 11px; color: ${EXCEL_TEXT_PRIMARY}; margin: 4px 0; padding: 4px 6px; border-left: 3px solid ${EXCEL_NAVY}; background-color: ${EXCEL_WHITE_ROW}; line-height: 1.45;">${railLines.join('<br/>')}</div>`
+    );
+  }
+
+  // Vehicle & Transfer / Charter capacity & route specifications
+  const vehicleModel =
+    vehicleCalc.vehicleModel ||
+    vehicleCalc.vehicleName ||
+    raw.vehicleNameSnapshot ||
+    configSnap.vehicleName ||
+    raw.vehicleConfig?.vehicleModel ||
+    raw.vehicleConfig?.vehicleName ||
+    prod.vehicleConfig?.vehicleModel ||
+    prod.vehicleConfig?.vehicleName ||
+    prod.vehicleNameSnapshot ||
+    raw.vehicleType;
+  const vehicleCategory =
+    vehicleCalc.vehicleType ||
+    raw.vehicleTypeSnapshot ||
+    prod.vehicleTypeSnapshot ||
+    prod.vehicleConfig?.vehicleType ||
+    raw.vehicleConfig?.vehicleType;
+  const paxCapacity =
+    vehicleCalc.maxSeats ||
+    raw.vehicleCapacitySnapshot ||
+    configSnap.vehicleCapacity ||
+    configSnap.masterCapacity ||
+    prod.vehicleConfig?.maxSeats ||
+    prod.vehicleConfig?.passengerCapacity ||
+    prod.capacitySnapshot ||
+    (prod.maxPax ? `${prod.minPax || 1}-${prod.maxPax}` : undefined);
+  const luggageCapacity =
+    raw.metadata?.luggageCapacity ||
+    raw.luggageAllowanceBags ||
+    raw.vehicleConfig?.luggageCapacity ||
+    prod.vehicleConfig?.luggageCapacity ||
+    prod.luggageAllowanceBags;
+
+  const transferLines: string[] = [];
+  if (vehicleModel || vehicleCategory) {
+    const vText = [
+      vehicleCategory ? cleanInlineFormattedText(String(vehicleCategory)) : '',
+      vehicleModel && String(vehicleModel).toLowerCase() !== String(vehicleCategory || '').toLowerCase()
+        ? cleanInlineFormattedText(String(vehicleModel))
+        : ''
+    ].filter(Boolean).join(' — ');
+    if (vText) transferLines.push(`<strong>Vehicle:</strong> ${vText}`);
+  }
+  if (paxCapacity || luggageCapacity) {
+    const capBits: string[] = [];
+    if (paxCapacity) capBits.push(`Up to ${cleanInlineFormattedText(String(paxCapacity))} Passengers`);
+    if (luggageCapacity) capBits.push(`${cleanInlineFormattedText(String(luggageCapacity))} Standard Suitcases`);
+    transferLines.push(`<strong>Capacity:</strong> ${capBits.join(' &bull; ')}`);
+  }
+
+  const pickupLoc = s.pickupPoint || selOpts.pickupLocation || prod.pickupPoint || prod.pickupInformation;
+  const dropoffLoc = s.dropoffPoint || selOpts.dropoffLocation || prod.dropoffPoint || prod.dropoffLocation;
+  const meetingLoc = s.meetingPoint || raw.metadata?.reportingLocation || selOpts.reportingLocation;
+  if (pickupLoc) transferLines.push(`<strong>Pickup Location:</strong> ${cleanInlineFormattedText(String(pickupLoc))}`);
+  if (dropoffLoc) transferLines.push(`<strong>Drop-off Location:</strong> ${cleanInlineFormattedText(String(dropoffLoc))}`);
+  if (meetingLoc && String(meetingLoc) !== String(pickupLoc || '')) {
+    transferLines.push(`<strong>Meeting / Reporting Point:</strong> ${cleanInlineFormattedText(String(meetingLoc))}`);
+  }
+
+  const routeSequence = raw.metadata?.routeSequence || selOpts.routeSequence || (isCharter && prod.location ? prod.location : '');
+  if (routeSequence) {
+    transferLines.push(`<strong>Route / Sequence:</strong> ${cleanInlineFormattedText(String(routeSequence))}`);
+  }
+
+  if (transferLines.length > 0) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 3px 0 4px 0; line-height: 1.45;">${transferLines.join('<br/>')}</div>`
+    );
+  } else if (s.configurationSummary && !s.isRail && !isTransfer) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 2px 0 4px 0; line-height: 1.4;"><strong>Configuration:</strong> ${cleanInlineFormattedText(s.configurationSummary)}</div>`
+    );
+  } else if (s.configurationSummary && isTransfer) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 2px 0 4px 0; line-height: 1.4;"><strong>Specs:</strong> ${cleanInlineFormattedText(s.configurationSummary)}</div>`
+    );
+  }
+
+  // Ticket / Pass tier & requirements
+  const ticketTier = selOpts.ticketTierName || configSnap.ticketTierName || configSnap.tierName || raw.metadata?.ticketRequirements;
+  if (ticketTier) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 2px 0 4px 0;"><strong>Ticket / Tier Requirements:</strong> ${cleanInlineFormattedText(String(ticketTier))}</div>`
+    );
+  }
+
+  // Overview / Full Service & Attraction Descriptions
+  if (s.overview && s.overview.trim()) {
+    const renderedOverview = renderSpreadsheetRichText(s.overview, {
+      fontSize: '11px',
+      color: EXCEL_TEXT_PRIMARY,
+      strongColor: EXCEL_NAVY
+    });
+    if (renderedOverview) {
+      parts.push(
+        `<div style="margin: 4px 0;">${renderedOverview}</div>`
+      );
+    }
+  }
+
+  // Inclusions
+  if (s.inclusions && s.inclusions.length > 0) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 4px 0; line-height: 1.4;"><strong>Inclusions:</strong><ul style="margin: 2px 0 2px 0; padding-left: 16px; list-style-type: disc;">${s.inclusions.map(inc => `<li style="margin-bottom: 1px;">${cleanInlineFormattedText(inc)}</li>`).join('')}</ul></div>`
+    );
+  }
+
+  // Exclusions
+  if (s.exclusions && s.exclusions.length > 0) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin: 4px 0; line-height: 1.4;"><strong style="color: ${EXCEL_TEXT_PRIMARY};">Exclusions:</strong><ul style="margin: 2px 0 2px 0; padding-left: 16px; list-style-type: disc;">${s.exclusions.map(exc => `<li style="margin-bottom: 1px;">${cleanInlineFormattedText(exc)}</li>`).join('')}</ul></div>`
+    );
+  }
+
+  // Product important information & operational instructions
+  const importantNotes: string[] = Array.isArray(prod.importantInformation)
+    ? prod.importantInformation.filter((n: any) => typeof n === 'string' && n.trim())
+    : (typeof prod.importantInformation === 'string' && prod.importantInformation.trim() ? [prod.importantInformation.trim()] : []);
+  if (importantNotes.length > 0) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin: 4px 0; line-height: 1.4;"><strong style="color: ${EXCEL_TEXT_PRIMARY};">Important Notes / Ticket Rules:</strong> ${importantNotes.map(n => cleanInlineFormattedText(n)).join(' &bull; ')}</div>`
+    );
+  }
+
+  if (s.specialInstructions && s.specialInstructions.trim()) {
+    parts.push(
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 4px 0 0 0; line-height: 1.4;"><strong>Operational Instructions:</strong> ${renderSpreadsheetRichText(s.specialInstructions, { fontSize: '10.5px', color: EXCEL_TEXT_PRIMARY })}</div>`
+    );
+  }
+
+  return parts.join('');
+}
+
+/**
+ * OPTION 2: COMPLETE FORMATTED QUOTATION (EXCEL-STYLE SPREADSHEET HTML)
+ *
+ * Email-client-compatible table layout built for Gmail, Google Workspace, and Outlook:
+ * - Dark navy headers (#17365D) with white bold text (#FFFFFF)
+ * - Pale blue service detail rows (#D9E2F3) alternating with crisp white (#FFFFFF)
+ * - Explicit dark grey borders (#404040) on every cell
+ * - Arial typography, table-only layout (no Flexbox/Grid/hero banners/CTAs)
+ * - Strict confidentiality: zero supplier nett cost, zero internal margins
+ */
+export function renderOption2CompleteFormattedHtmlEmail(
+  model: QuotePresentationModel,
+  customNote?: string
+): string {
+  const brandBorderColor = model.isWhiteLabel ? (model.brandPrimaryColor || EXCEL_NAVY) : EXCEL_BRAND_TEAL;
+  const brandTitle = model.isWhiteLabel ? model.agencyName.toUpperCase() : 'THEUNBOUND';
+  const routeString = model.routeHubs.length > 0
+    ? model.routeHubs.map(h => `${h.hubName} (${h.nights}N)`).join(' &rarr; ')
+    : model.destination;
+
+  const thStyle = `background-color: ${EXCEL_NAVY}; color: ${EXCEL_HEADER_TEXT}; font-family: ${EXCEL_FONT}; font-size: 11px; font-weight: bold; padding: 7px 8px; border: 1px solid ${EXCEL_BORDER}; text-align: left; vertical-align: middle;`;
+  const thCenterStyle = `background-color: ${EXCEL_NAVY}; color: ${EXCEL_HEADER_TEXT}; font-family: ${EXCEL_FONT}; font-size: 11px; font-weight: bold; padding: 7px 8px; border: 1px solid ${EXCEL_BORDER}; text-align: center; vertical-align: middle;`;
+  const tdBase = `font-family: ${EXCEL_FONT}; font-size: 11px; color: ${EXCEL_TEXT_PRIMARY}; padding: 7px 8px; border: 1px solid ${EXCEL_BORDER}; vertical-align: top; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; line-height: 1.45;`;
+
+  // --------------------------------------------------------------------------
+  // A. COMPACT STRUCTURED QUOTATION HEADING
+  // --------------------------------------------------------------------------
+  const brandMetaLines: string[] = [];
+  if (model.agentEmail) brandMetaLines.push(`Email: ${cleanInlineFormattedText(model.agentEmail)}`);
+  if (model.agentPhone) brandMetaLines.push(`Phone: ${cleanInlineFormattedText(model.agentPhone)}`);
+  if (model.agencyWebsite) brandMetaLines.push(`Web: ${cleanInlineFormattedText(model.agencyWebsite)}`);
+  if (model.isWhiteLabel) {
+    if (model.agencyAddress) brandMetaLines.push(`Address: ${cleanInlineFormattedText(model.agencyAddress)}`);
+  } else if (model.agencyCurrentAddress) {
+    brandMetaLines.push(`Desk: ${cleanInlineFormattedText(model.agencyCurrentAddress.replace(/\r?\n/g, ', '))}`);
+  }
+
+  const headingSectionHtml = `
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; border: 1px solid ${EXCEL_BORDER}; border-top: 3px solid ${brandBorderColor}; margin-bottom: 12px; background-color: ${EXCEL_WHITE_ROW};">
+      <tr>
+        <td style="padding: 10px 12px; border-bottom: 1px solid ${EXCEL_BORDER}; vertical-align: middle;">
+          <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="vertical-align: middle;">
+                ${model.agentLogoUrl ? `<img src="${escapeHtml(model.agentLogoUrl)}" alt="${cleanInlineFormattedText(model.agencyName)}" style="max-height: 32px; max-width: 120px; vertical-align: middle; margin-right: 10px;" />` : ''}
+                <h1 style="margin: 0; display: inline-block; vertical-align: middle; font-family: ${EXCEL_FONT}; font-size: 15px; font-weight: bold; color: ${EXCEL_NAVY}; letter-spacing: 0.3px;">
+                  ${cleanInlineFormattedText(brandTitle)} &mdash; COMPLETE TRAVEL QUOTATION
+                </h1>
+                <div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin-top: 2px;">
+                  ${cleanInlineFormattedText(model.agentAgencySubtitle)}
+                  ${brandMetaLines.length > 0 ? `<br/>${brandMetaLines.join(' &nbsp;|&nbsp; ')}` : ''}
+                </div>
+              </td>
+              <td style="vertical-align: middle; text-align: right; font-family: ${EXCEL_FONT}; font-size: 11px; color: ${EXCEL_TEXT_PRIMARY}; white-space: nowrap;">
+                <div style="font-weight: bold; color: ${EXCEL_NAVY}; font-size: 12px;">${cleanInlineFormattedText(model.quoteNumber)} (v${model.version})</div>
+                <div style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">Generated: ${cleanInlineFormattedText(model.createdDateFormatted)}</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0;">
+          <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; table-layout: fixed;">
+            <tr>
+              <td style="${tdBase} width: 17%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Client / Lead Name</td>
+              <td style="${tdBase} width: 33%; background-color: ${EXCEL_WHITE_ROW};">
+                <strong>${cleanInlineFormattedText(model.clientName)}</strong>
+                ${model.clientCompany ? `<br/><span style="color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">${cleanInlineFormattedText(model.clientCompany)}</span>` : ''}
+                ${(model.clientEmail || model.clientPhone) ? `<br/><span style="color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">${[model.clientEmail, model.clientPhone].filter(Boolean).map(v => cleanInlineFormattedText(String(v))).join(' &bull; ')}</span>` : ''}
+              </td>
+              <td style="${tdBase} width: 17%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Quotation Reference</td>
+              <td style="${tdBase} width: 33%; background-color: ${EXCEL_WHITE_ROW};">
+                <strong>${cleanInlineFormattedText(model.quoteNumber)} (v${model.version})</strong> &bull; Status: ${cleanInlineFormattedText(model.status)}<br/>
+                <span style="color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">Generated: ${cleanInlineFormattedText(model.createdDateFormatted)} &bull; Valid Until: ${cleanInlineFormattedText(model.validUntilFormatted)}</span>
+              </td>
+            </tr>
+            <tr>
+              <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Destination &amp; Route</td>
+              <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">
+                <strong>${cleanInlineFormattedText(model.destination)}</strong>
+                ${routeString ? `<br/><span style="color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">${routeString}</span>` : ''}
+              </td>
+              <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Travel Dates</td>
+              <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">
+                <strong>${cleanInlineFormattedText(model.dateSpanText || 'As specified in quotation')}</strong><br/>
+                <span style="color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">${model.totalDays} Days / ${model.totalNights} Nights</span>
+              </td>
+            </tr>
+            <tr>
+              <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Passengers</td>
+              <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">
+                ${cleanInlineFormattedText(model.paxDetailsText)}
+                ${(model.nationality || model.travelStyle) ? `<br/><span style="color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">${[model.nationality ? `Nationality: ${model.nationality}` : '', model.travelStyle ? `Style: ${model.travelStyle}` : ''].filter(Boolean).map(cleanInlineFormattedText).join(' &bull; ')}</span>` : ''}
+              </td>
+              <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Prepared By</td>
+              <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">
+                <strong>${cleanInlineFormattedText(model.agentName)}</strong> (${cleanInlineFormattedText(model.agencyName)})
+                ${model.selectedOptionTitle ? `<br/><span style="color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">Selected Option: ${cleanInlineFormattedText(model.selectedOptionTitle)}</span>` : ''}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  `;
+
+  const customNoteHtml = customNote && customNote.trim() ? `
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid ${EXCEL_BORDER}; margin-bottom: 12px; background-color: ${EXCEL_WHITE_ROW};">
+      <tr>
+        <td style="${tdBase} width: 17%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Specialist Note</td>
+        <td style="${tdBase} width: 83%; background-color: ${EXCEL_WHITE_ROW};">${renderSpreadsheetRichText(customNote.trim(), { fontSize: '11px' })}</td>
+      </tr>
+    </table>
+  ` : '';
+
+  const tripOverviewHtml = model.itineraryOverview && model.itineraryOverview.trim() ? `
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid ${EXCEL_BORDER}; margin-bottom: 12px; background-color: ${EXCEL_WHITE_ROW};">
+      <tr>
+        <th style="${thStyle}">TRIP OVERVIEW</th>
+      </tr>
+      <tr>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">${renderSpreadsheetRichText(model.itineraryOverview, { fontSize: '11px' })}</td>
+      </tr>
+    </table>
+  ` : '';
+
+  // --------------------------------------------------------------------------
+  // B. HOTEL ACCOMMODATION TABLE
+  // Columns: Type | Hotel City / Area | Details (Dynamic Hotel Price) | Nights | Dates | No.
+  // --------------------------------------------------------------------------
+  interface MergedHotelRow {
+    typeLabel: string;
+    cityArea: string;
+    hotelName: string;
+    starRating?: string;
+    roomType: string;
+    mealPlan: string;
+    occupancy: string;
+    nights: number;
+    checkInDate: string;
+    checkOutDate: string;
+    roomsCount: number;
+    overview?: string;
+    inclusions: string[];
+    exclusions: string[];
+    notes?: string;
+    isNoAccommodation: boolean;
+  }
+
+  const hotelRows: MergedHotelRow[] = [];
+  const remainingHotels: HotelPresentationItem[] = [...(model.hotels || [])];
+
+  if (model.accommodations && model.accommodations.length > 0) {
+    model.accommodations.forEach((acc) => {
+      if (acc.isNoAccommodation) {
+        hotelRows.push({
+          typeLabel: 'Accommodation',
+          cityArea: acc.city,
+          hotelName: acc.hotelName || 'No Accommodation (Arranged by Client)',
+          roomType: acc.roomSummary || 'Arranged directly by traveler',
+          mealPlan: 'N/A',
+          occupancy: model.paxDetailsText,
+          nights: acc.nights,
+          checkInDate: acc.checkInDate || model.travelStartDate || 'TBD',
+          checkOutDate: acc.checkOutDate || model.travelEndDate || 'TBD',
+          roomsCount: 0,
+          inclusions: [],
+          exclusions: [],
+          isNoAccommodation: true
+        });
+      } else {
+        const matchIdx = remainingHotels.findIndex(
+          (h) =>
+            (acc.hubId && h.id === acc.hubId) ||
+            (h.hotelName.toLowerCase() === acc.hotelName.toLowerCase() && h.cityHub.toLowerCase() === acc.city.toLowerCase())
+        );
+        const matched = matchIdx >= 0 ? remainingHotels.splice(matchIdx, 1)[0] : remainingHotels.shift();
+        hotelRows.push({
+          typeLabel: 'Hotel',
+          cityArea: matched?.cityHub || acc.city,
+          hotelName: matched?.hotelName || acc.hotelName,
+          starRating: matched?.starRating,
+          roomType: matched?.roomType || acc.roomSummary || 'Standard Room',
+          mealPlan: matched?.mealPlan || acc.mealPlan || 'Daily Breakfast Included',
+          occupancy: matched?.occupancy || model.paxDetailsText,
+          nights: matched?.nightsCount ?? acc.nights,
+          checkInDate: matched?.checkInDate || acc.checkInDate || model.travelStartDate || 'TBD',
+          checkOutDate: matched?.checkOutDate || acc.checkOutDate || model.travelEndDate || 'TBD',
+          roomsCount: matched?.roomsCount ?? 1,
+          overview: matched?.overview,
+          inclusions: matched?.inclusions || [],
+          exclusions: matched?.exclusions || [],
+          notes: matched?.notes,
+          isNoAccommodation: false
+        });
+      }
+    });
+  }
+  remainingHotels.forEach((h) => {
+    hotelRows.push({
+      typeLabel: 'Hotel',
+      cityArea: h.cityHub,
+      hotelName: h.hotelName,
+      starRating: h.starRating,
+      roomType: h.roomType,
+      mealPlan: h.mealPlan,
+      occupancy: h.occupancy,
+      nights: h.nightsCount,
+      checkInDate: h.checkInDate,
+      checkOutDate: h.checkOutDate,
+      roomsCount: h.roomsCount,
+      overview: h.overview,
+      inclusions: h.inclusions || [],
+      exclusions: h.exclusions || [],
+      notes: h.notes,
+      isNoAccommodation: false
+    });
+  });
+
+  const hotelTableHtml = `
+    <div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; text-transform: uppercase; margin: 10px 0 4px 0; page-break-after: avoid;">
+      1. Hotel Accommodation
+    </div>
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; min-width: 580px; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; border: 1px solid ${EXCEL_BORDER}; table-layout: fixed; margin-bottom: 14px;">
+      <thead>
+        <tr>
+          <th style="${thStyle} width: 11%;">Type</th>
+          <th style="${thStyle} width: 16%;">Hotel City / Area</th>
+          <th style="${thStyle} width: 43%;">Details (Dynamic Hotel Price)</th>
+          <th style="${thCenterStyle} width: 8%;">Nights</th>
+          <th style="${thStyle} width: 15%;">Dates</th>
+          <th style="${thCenterStyle} width: 7%;">No.</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${hotelRows.length === 0 ? `
+          <tr>
+            <td colspan="6" style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; color: ${EXCEL_TEXT_SECONDARY}; text-align: center;">
+              Land-Only Quotation &mdash; No Hotel Accommodation Included
+            </td>
+          </tr>
+        ` : hotelRows.map((row, idx) => {
+          const rowBg = idx % 2 === 0 ? EXCEL_BLUE_ROW : EXCEL_WHITE_ROW;
+          const detailsHtml = row.isNoAccommodation
+            ? `
+              <div style="font-weight: bold; color: ${EXCEL_TEXT_PRIMARY};">${cleanInlineFormattedText(row.hotelName)}</div>
+              <div style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin-top: 2px;">${cleanInlineFormattedText(row.roomType)}</div>
+            `
+            : `
+              <div style="font-weight: bold; font-size: 11.5px; color: ${EXCEL_TEXT_PRIMARY}; margin-bottom: 3px;">
+                ${cleanInlineFormattedText(row.hotelName)}${row.starRating ? ` <span style="font-weight: normal; color: ${EXCEL_TEXT_SECONDARY}; font-size: 10.5px;">(${cleanInlineFormattedText(row.starRating)})</span>` : ''}
+              </div>
+              <div style="font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; line-height: 1.45;">
+                <strong>Room Configuration:</strong> ${cleanInlineFormattedText(row.roomType)}<br/>
+                <strong>Meal Plan:</strong> ${cleanInlineFormattedText(row.mealPlan)}<br/>
+                <strong>Occupancy:</strong> ${cleanInlineFormattedText(row.occupancy)}
+              </div>
+              ${row.overview ? `<div style="margin-top: 4px;">${renderSpreadsheetRichText(row.overview, { fontSize: '10.5px' })}</div>` : ''}
+              ${row.inclusions.length > 0 ? `<div style="font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin-top: 3px;"><strong>Inclusions:</strong> ${row.inclusions.map(cleanInlineFormattedText).join(' &bull; ')}</div>` : ''}
+              ${row.exclusions.length > 0 ? `<div style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin-top: 2px;"><strong>Exclusions:</strong> ${row.exclusions.map(cleanInlineFormattedText).join(' &bull; ')}</div>` : ''}
+              ${row.notes ? `<div style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin-top: 3px;"><strong>Stay Notes:</strong> ${renderSpreadsheetRichText(row.notes, { fontSize: '10.5px', color: EXCEL_TEXT_SECONDARY })}</div>` : ''}
+            `;
+
+          return `
+            <tr>
+              <td style="${tdBase} background-color: ${rowBg}; font-weight: bold;">${cleanInlineFormattedText(row.typeLabel)}</td>
+              <td style="${tdBase} background-color: ${rowBg}; font-weight: bold;">${cleanInlineFormattedText(row.cityArea)}</td>
+              <td style="${tdBase} background-color: ${rowBg};">${detailsHtml}</td>
+              <td style="${tdBase} background-color: ${rowBg}; text-align: center; font-weight: bold;">${row.nights}</td>
+              <td style="${tdBase} background-color: ${rowBg}; font-size: 10.5px;">
+                <strong>In:</strong> ${cleanInlineFormattedText(row.checkInDate)}<br/>
+                <strong>Out:</strong> ${cleanInlineFormattedText(row.checkOutDate)}
+              </td>
+              <td style="${tdBase} background-color: ${rowBg}; text-align: center; font-weight: bold;">
+                ${row.isNoAccommodation ? '&mdash;' : `${row.roomsCount} ${row.roomsCount === 1 ? 'Rm' : 'Rms'}`}
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+
+  // --------------------------------------------------------------------------
+  // C & D. SERVICES, TRANSFERS AND ACTIVITIES TABLE
+  // Columns: Type | Service / Hotel City / Area | Details | Day | Dates | Unit
+  // Preserves exact chronological Day 1..N order
+  // --------------------------------------------------------------------------
+  const serviceRowsHtml: string[] = [];
+  let serviceZebraIndex = 0;
+
+  // 1. Pre-Departure Visa & Ancillary Services (if configured)
+  if (model.visaServices && model.visaServices.length > 0) {
+    model.visaServices.forEach((v) => {
+      const bg = serviceZebraIndex % 2 === 0 ? EXCEL_BLUE_ROW : EXCEL_WHITE_ROW;
+      serviceZebraIndex++;
+      const visaDate = v.rawItem?.travelDate || model.travelStartDate || 'Pre-Departure';
+      serviceRowsHtml.push(`
+        <tr>
+          <td style="${tdBase} background-color: ${bg}; font-weight: bold;">${cleanInlineFormattedText(classifyServiceTypeLabel(v))}</td>
+          <td style="${tdBase} background-color: ${bg};">
+            <strong>${cleanInlineFormattedText(v.listingName)}</strong><br/>
+            <span style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">${cleanInlineFormattedText(model.destination)}</span>
+          </td>
+          <td style="${tdBase} background-color: ${bg};">${buildOption2ServiceDetailsHtml(v, visaDate)}</td>
+          <td style="${tdBase} background-color: ${bg}; text-align: center; font-weight: bold;">Pre-Trip</td>
+          <td style="${tdBase} background-color: ${bg}; font-size: 10.5px;">${cleanInlineFormattedText(visaDate)}</td>
+          <td style="${tdBase} background-color: ${bg}; text-align: center;">${cleanInlineFormattedText(resolveServiceUnitText(v))}</td>
+        </tr>
+      `);
+    });
+  }
+
+  // 2. Day 1..N Chronological Itinerary Services
+  model.days.forEach((day) => {
+    const nonHotelServices = day.services.filter((s) => !isHotelPresentationService(s));
+    const dayDateLabel = `${day.dayOfWeek}, ${day.formattedDate}`;
+
+    // Optional Day Transition / Theme / Overview banner row in crisp white
+    if (day.dayOverview || day.customTheme || day.isTransitionDay) {
+      const transitionTag = day.isTransitionDay && day.prevHubName
+        ? ` [Transfer: ${cleanInlineFormattedText(day.prevHubName)} &rarr; ${cleanInlineFormattedText(day.hubName)}]`
+        : '';
+      const themeTag = day.customTheme ? ` &mdash; ${cleanInlineFormattedText(day.customTheme)}` : '';
+      serviceRowsHtml.push(`
+        <tr>
+          <td colspan="6" style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">
+            <strong style="color: ${EXCEL_NAVY};">Day ${day.dayNumber} (${cleanInlineFormattedText(dayDateLabel)}) &mdash; ${cleanInlineFormattedText(day.hubName)}</strong>${transitionTag}${themeTag}
+            ${day.dayOverview ? `<div style="margin-top: 3px;">${renderSpreadsheetRichText(day.dayOverview, { fontSize: '10.5px' })}</div>` : ''}
+          </td>
+        </tr>
+      `);
+    }
+
+    if (nonHotelServices.length === 0) {
+      serviceRowsHtml.push(`
+        <tr>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; font-weight: bold;">Leisure</td>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">
+            <strong>Day at Leisure</strong><br/>
+            <span style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">${cleanInlineFormattedText(day.hubName)}</span>
+          </td>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">
+            <strong>Day at Leisure in ${cleanInlineFormattedText(day.hubName)} (Self-Paced)</strong><br/>
+            <span style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">Free time for personal exploration, neighborhood shopping, and local dining discoveries.</span>
+          </td>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: center; font-weight: bold;">Day ${day.dayNumber}</td>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; font-size: 10.5px;">${cleanInlineFormattedText(day.formattedDate)}</td>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: center;">&mdash;</td>
+        </tr>
+      `);
+    } else {
+      nonHotelServices.forEach((s) => {
+        const bg = serviceZebraIndex % 2 === 0 ? EXCEL_BLUE_ROW : EXCEL_WHITE_ROW;
+        serviceZebraIndex++;
+        const cityLabel = s.rawItem?.product?.city || day.hubName;
+        serviceRowsHtml.push(`
+          <tr>
+            <td style="${tdBase} background-color: ${bg}; font-weight: bold;">${cleanInlineFormattedText(classifyServiceTypeLabel(s))}</td>
+            <td style="${tdBase} background-color: ${bg};">
+              <strong>${cleanInlineFormattedText(s.listingName)}</strong><br/>
+              <span style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">${cleanInlineFormattedText(cityLabel)}</span>
+            </td>
+            <td style="${tdBase} background-color: ${bg};">${buildOption2ServiceDetailsHtml(s, day.formattedDate)}</td>
+            <td style="${tdBase} background-color: ${bg}; text-align: center; font-weight: bold;">Day ${day.dayNumber}</td>
+            <td style="${tdBase} background-color: ${bg}; font-size: 10.5px;">
+              ${cleanInlineFormattedText(day.formattedDate)}
+              ${s.serviceTime ? `<br/><span style="color: ${EXCEL_TEXT_SECONDARY};">${cleanInlineFormattedText(s.serviceTime)}</span>` : ''}
+            </td>
+            <td style="${tdBase} background-color: ${bg}; text-align: center;">${cleanInlineFormattedText(resolveServiceUnitText(s))}</td>
+          </tr>
+        `);
+      });
+    }
+
+    if (day.dayNotes && day.dayNotes.trim()) {
+      serviceRowsHtml.push(`
+        <tr>
+          <td colspan="6" style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">
+            <strong style="color: ${EXCEL_TEXT_PRIMARY};">Day ${day.dayNumber} Operational Notes:</strong> ${renderSpreadsheetRichText(day.dayNotes, { fontSize: '10.5px', color: EXCEL_TEXT_SECONDARY })}
+          </td>
+        </tr>
+      `);
+    }
+  });
+
+  // 3. Additional unscheduled / trip-wide services (if any)
+  if (model.additionalServices && model.additionalServices.length > 0) {
+    model.additionalServices.forEach((a) => {
+      const bg = serviceZebraIndex % 2 === 0 ? EXCEL_BLUE_ROW : EXCEL_WHITE_ROW;
+      serviceZebraIndex++;
+      serviceRowsHtml.push(`
+        <tr>
+          <td style="${tdBase} background-color: ${bg}; font-weight: bold;">${cleanInlineFormattedText(a.category || 'Package Service')}</td>
+          <td style="${tdBase} background-color: ${bg};">
+            <strong>${cleanInlineFormattedText(a.name)}</strong><br/>
+            <span style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">${cleanInlineFormattedText(model.destination)}</span>
+          </td>
+          <td style="${tdBase} background-color: ${bg};">
+            <div style="font-weight: bold; margin-bottom: 3px;">${cleanInlineFormattedText(a.name)}</div>
+            ${a.summary ? `<div style="font-size: 10.5px; margin-bottom: 3px;">${cleanInlineFormattedText(a.summary)}</div>` : ''}
+            ${a.overview ? `<div>${renderSpreadsheetRichText(a.overview, { fontSize: '10.5px' })}</div>` : ''}
+            ${a.inclusions && a.inclusions.length > 0 ? `<div style="font-size: 10.5px; margin-top: 3px;"><strong>Inclusions:</strong> ${a.inclusions.map(cleanInlineFormattedText).join(' &bull; ')}</div>` : ''}
+            ${a.exclusions && a.exclusions.length > 0 ? `<div style="font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY}; margin-top: 2px;"><strong>Exclusions:</strong> ${a.exclusions.map(cleanInlineFormattedText).join(' &bull; ')}</div>` : ''}
+            ${a.specialInstructions ? `<div style="font-size: 10.5px; margin-top: 3px;"><strong>Notes:</strong> ${renderSpreadsheetRichText(a.specialInstructions, { fontSize: '10.5px' })}</div>` : ''}
+          </td>
+          <td style="${tdBase} background-color: ${bg}; text-align: center; font-weight: bold;">Trip-Wide</td>
+          <td style="${tdBase} background-color: ${bg}; font-size: 10.5px;">${cleanInlineFormattedText(model.dateSpanText || 'Included')}</td>
+          <td style="${tdBase} background-color: ${bg}; text-align: center;">Included</td>
+        </tr>
+      `);
+    });
+  }
+
+  const servicesTableHtml = `
+    <div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; text-transform: uppercase; margin: 12px 0 4px 0; page-break-after: avoid;">
+      2. Services, Transfers &amp; Activities
+    </div>
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; min-width: 600px; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; border: 1px solid ${EXCEL_BORDER}; table-layout: fixed; margin-bottom: 14px;">
+      <thead>
+        <tr>
+          <th style="${thStyle} width: 13%;">Type</th>
+          <th style="${thStyle} width: 17%;">Service / Hotel City / Area</th>
+          <th style="${thStyle} width: 44%;">Details</th>
+          <th style="${thCenterStyle} width: 8%;">Day</th>
+          <th style="${thStyle} width: 11%;">Dates</th>
+          <th style="${thCenterStyle} width: 7%;">Unit</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${serviceRowsHtml.length > 0 ? serviceRowsHtml.join('') : `
+          <tr>
+            <td colspan="6" style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; color: ${EXCEL_TEXT_SECONDARY}; text-align: center;">
+              No ground services configured for this quotation.
+            </td>
+          </tr>
+        `}
+      </tbody>
+    </table>
+  `;
+
+  // --------------------------------------------------------------------------
+  // E. PRICING AND QUOTATION SUMMARY
+  // Consumes ONLY committed snapshot / authoritative model values (zero recalculation)
+  // --------------------------------------------------------------------------
+  const pricingRows: string[] = [];
+
+  if (model.hasHotelAccommodation && model.hotelAccommodationTotalFormatted) {
+    pricingRows.push(`
+      <tr>
+        <td style="${tdBase} width: 68%; background-color: ${EXCEL_WHITE_ROW}; font-weight: bold;">Hotel Accommodation Total</td>
+        <td style="${tdBase} width: 32%; background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-weight: bold;">${cleanInlineFormattedText(model.hotelAccommodationTotalFormatted)}</td>
+      </tr>
+    `);
+  }
+
+  pricingRows.push(`
+    <tr>
+      <td style="${tdBase} width: 68%; background-color: ${EXCEL_WHITE_ROW}; font-weight: bold;">
+        Land Part Total
+        <div style="font-weight: normal; font-size: 10px; color: ${EXCEL_TEXT_SECONDARY};">Covers included tours, activities, transfers, rail, and ground services.</div>
+      </td>
+      <td style="${tdBase} width: 32%; background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-weight: bold;">${cleanInlineFormattedText(model.landPartTotalFormatted)}</td>
+    </tr>
+  `);
+
+  if (model.surchargesTotalNumeric > 0) {
+    pricingRows.push(`
+      <tr>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Surcharges${model.appliedSurchargesCount > 0 ? ` (${model.appliedSurchargesCount} seasonal/date adjustments)` : ''}</td>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">${cleanInlineFormattedText(formatCurrency(model.surchargesTotalNumeric, model.currency))}</td>
+      </tr>
+    `);
+  }
+
+  if (model.taxesTotalNumeric > 0) {
+    pricingRows.push(`
+      <tr>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Taxes &amp; Statutory Levies</td>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">${cleanInlineFormattedText(formatCurrency(model.taxesTotalNumeric, model.currency))}</td>
+      </tr>
+    `);
+  }
+
+  if (model.serviceFeesTotalNumeric > 0) {
+    pricingRows.push(`
+      <tr>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Service &amp; Facilitation Fees</td>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">${cleanInlineFormattedText(formatCurrency(model.serviceFeesTotalNumeric, model.currency))}</td>
+      </tr>
+    `);
+  }
+
+  if (model.discountsTotalNumeric > 0) {
+    pricingRows.push(`
+      <tr>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Applicable Discounts</td>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right;">-${cleanInlineFormattedText(formatCurrency(model.discountsTotalNumeric, model.currency))}</td>
+      </tr>
+    `);
+  }
+
+  pricingRows.push(`
+    <tr>
+      <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; font-size: 12px; font-weight: bold; color: ${EXCEL_NAVY};">
+        Final Quotation Total (${cleanInlineFormattedText(model.currency)})
+      </td>
+      <td style="${tdBase} background-color: ${EXCEL_BLUE_ROW}; text-align: right; font-size: 13px; font-weight: bold; color: ${EXCEL_NAVY};">
+        ${cleanInlineFormattedText(model.finalCustomerSellingPriceFormatted)}
+      </td>
+    </tr>
+  `);
+
+  if (model.effectivePax > 0 && model.pricePerPersonFormatted) {
+    pricingRows.push(`
+      <tr>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">Per-Person Rate (${model.effectivePax} Guests)</td>
+        <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-weight: bold;">${cleanInlineFormattedText(model.pricePerPersonFormatted)} / person</td>
+      </tr>
+    `);
+  }
+
+  pricingRows.push(`
+    <tr>
+      <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">Currency &amp; Quotation Validity</td>
+      <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW}; text-align: right; font-size: 10.5px; color: ${EXCEL_TEXT_SECONDARY};">
+        ${cleanInlineFormattedText(model.guaranteedCurrencyLine)} &bull; Valid Until: ${cleanInlineFormattedText(model.validUntilFormatted)}
+      </td>
+    </tr>
+  `);
+
+  const pricingSummaryHtml = `
+    <div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; text-transform: uppercase; margin: 12px 0 4px 0; page-break-after: avoid;">
+      3. Quotation Pricing Summary
+    </div>
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; border: 1px solid ${EXCEL_BORDER}; table-layout: fixed; margin-bottom: 14px;">
+      <thead>
+        <tr>
+          <th style="${thStyle} width: 68%;">Quotation Component</th>
+          <th style="${thStyle} width: 32%; text-align: right;">Amount (${cleanInlineFormattedText(model.currency)})</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${pricingRows.join('')}
+      </tbody>
+    </table>
+  `;
+
+  // Package Inclusions / Exclusions / Policies table (when present)
+  const policyRows: string[] = [];
+  if (model.inclusions.length > 0) {
+    policyRows.push(`
+      <tr>
+        <td style="${tdBase} width: 24%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Package Inclusions</td>
+        <td style="${tdBase} width: 76%; background-color: ${EXCEL_WHITE_ROW};">
+          <ul style="margin: 0; padding-left: 16px; list-style-type: disc;">${model.inclusions.map(inc => `<li style="margin-bottom: 2px;">${cleanInlineFormattedText(inc)}</li>`).join('')}</ul>
+        </td>
+      </tr>
+    `);
+  }
+  if (model.exclusions.length > 0) {
+    policyRows.push(`
+      <tr>
+        <td style="${tdBase} width: 24%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Package Exclusions</td>
+        <td style="${tdBase} width: 76%; background-color: ${EXCEL_WHITE_ROW};">
+          <ul style="margin: 0; padding-left: 16px; list-style-type: disc;">${model.exclusions.map(exc => `<li style="margin-bottom: 2px;">${cleanInlineFormattedText(exc)}</li>`).join('')}</ul>
+        </td>
+      </tr>
+    `);
+  }
+  if (model.importantInformation) {
+    policyRows.push(`
+      <tr>
+        <td style="${tdBase} width: 24%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Important Information</td>
+        <td style="${tdBase} width: 76%; background-color: ${EXCEL_WHITE_ROW};">${renderSpreadsheetRichText(model.importantInformation, { fontSize: '11px' })}</td>
+      </tr>
+    `);
+  }
+  if (model.cancellationPolicy) {
+    policyRows.push(`
+      <tr>
+        <td style="${tdBase} width: 24%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Cancellation Policy</td>
+        <td style="${tdBase} width: 76%; background-color: ${EXCEL_WHITE_ROW};">${renderSpreadsheetRichText(model.cancellationPolicy, { fontSize: '11px' })}</td>
+      </tr>
+    `);
+  }
+  if (model.childAndAttractionPolicies && model.childAndAttractionPolicies.length > 0) {
+    policyRows.push(`
+      <tr>
+        <td style="${tdBase} width: 24%; background-color: ${EXCEL_BLUE_ROW}; font-weight: bold;">Operational &amp; Child Policies</td>
+        <td style="${tdBase} width: 76%; background-color: ${EXCEL_WHITE_ROW};">
+          <ul style="margin: 0; padding-left: 16px; list-style-type: disc;">${model.childAndAttractionPolicies.map(p => `<li style="margin-bottom: 2px;">${cleanInlineFormattedText(p)}</li>`).join('')}</ul>
+        </td>
+      </tr>
+    `);
+  }
+
+  const policiesSectionHtml = policyRows.length > 0 ? `
+    <div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; text-transform: uppercase; margin: 12px 0 4px 0; page-break-after: avoid;">
+      4. Policies &amp; Operational Notes
+    </div>
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; border: 1px solid ${EXCEL_BORDER}; table-layout: fixed; margin-bottom: 14px;">
+      <tbody>
+        ${policyRows.join('')}
+      </tbody>
+    </table>
+  ` : '';
+
+  // --------------------------------------------------------------------------
+  // F. COMPLETE DESTINATION-SPECIFIC COMMERCIAL QUOTATION TERMS
+  // Preserves destination headings, numbered clauses, paragraphs, and bullets
+  // --------------------------------------------------------------------------
+  let renderedTermsInnerHtml = '';
+  const termsEntries = model.commercialTermsSnapshot?.entries;
+  if (termsEntries && termsEntries.length > 0) {
+    renderedTermsInnerHtml = termsEntries
+      .map((entry) => {
+        const activeSecs = [...(entry.sections || [])]
+          .filter((sec) => sec.isActive !== false && (sec.heading?.trim() || sec.htmlContent?.trim()))
+          .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+
+        if (activeSecs.length === 0) return '';
+
+        const entryTitle = termsEntries.length > 1 || entry.targetName
+          ? `<div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; border-bottom: 1px solid ${EXCEL_BORDER}; padding-bottom: 3px; margin: 8px 0 6px 0; text-transform: uppercase;">${cleanInlineFormattedText(entry.targetName)} &mdash; Commercial Terms</div>`
+          : '';
+
+        const sectionsHtml = activeSecs
+          .map((sec) => {
+            const secHeading = sec.heading
+              ? `<div style="font-family: ${EXCEL_FONT}; font-size: 11px; font-weight: bold; color: ${EXCEL_TEXT_PRIMARY}; margin: 6px 0 2px 0;">${cleanInlineFormattedText(sec.heading)}</div>`
+              : '';
+            const secBody = renderSpreadsheetRichText(sec.htmlContent, {
+              fontSize: '11px',
+              color: EXCEL_TEXT_PRIMARY,
+              strongColor: EXCEL_NAVY
+            });
+            return `<div style="margin: 0 0 6px 0;">${secHeading}${secBody}</div>`;
+          })
+          .join('');
+
+        return `${entryTitle}${sectionsHtml}`;
+      })
+      .filter(Boolean)
+      .join('');
+  }
+
+  if (!renderedTermsInnerHtml) {
+    renderedTermsInnerHtml = model.commercialTermsHtml
+      ? renderSpreadsheetRichText(model.commercialTermsHtml, {
+          fontSize: '11px',
+          color: EXCEL_TEXT_PRIMARY,
+          strongColor: EXCEL_NAVY
+        })
+      : (model.commercialTermsItems && model.commercialTermsItems.length > 0
+          ? model.commercialTermsItems
+              .map((it) => `<p style="margin: 0 0 6px 0; font-family: ${EXCEL_FONT}; font-size: 11px; line-height: 1.45; color: ${EXCEL_TEXT_PRIMARY};"><strong>${cleanInlineFormattedText(it.heading)}</strong> ${cleanInlineFormattedText(it.body)}</p>`)
+              .join('')
+          : renderSpreadsheetRichText(model.commercialTerms, { fontSize: '11px' }));
+  }
+
+  const termsSectionHtml = `
+    <div style="font-family: ${EXCEL_FONT}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY}; text-transform: uppercase; margin: 12px 0 4px 0; page-break-after: avoid;">
+      5. ${cleanInlineFormattedText(model.commercialTermsHeading || 'Commercial Quotation Terms')}
+    </div>
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; border: 1px solid ${EXCEL_BORDER}; table-layout: fixed; margin-bottom: 12px;">
+      <thead>
+        <tr>
+          <th style="${thStyle}">${cleanInlineFormattedText(model.commercialTermsHeading || 'Commercial Quotation Terms & Conditions')}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="${tdBase} background-color: ${EXCEL_WHITE_ROW};">${renderedTermsInnerHtml}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+
+  // --------------------------------------------------------------------------
+  // G. FOOTER ROW
+  // --------------------------------------------------------------------------
+  const footerHtml = `
+    <table role="presentation" width="100%" border="0" cellspacing="0" cellpadding="0" style="width: 100%; border-collapse: collapse; border: 1px solid ${EXCEL_BORDER}; background-color: ${EXCEL_WHITE_ROW};">
+      <tr>
+        <td style="${tdBase} width: 75%; font-size: 10px; color: ${EXCEL_TEXT_SECONDARY};">
+          ${cleanInlineFormattedText(model.footerContactLine)}
+        </td>
+        <td style="${tdBase} width: 25%; text-align: right; font-size: 10px; font-weight: bold; color: ${EXCEL_NAVY};">
+          ${cleanInlineFormattedText(model.footerRightTitle)}
+        </td>
+      </tr>
+    </table>
+  `;
+
+  return `
+    <div style="width: 100%; background-color: ${EXCEL_WHITE_ROW}; margin: 0; padding: 12px 0; font-family: ${EXCEL_FONT}; color: ${EXCEL_TEXT_PRIMARY};">
+      <div style="max-width: 780px; width: 100%; margin: 0 auto; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+        ${headingSectionHtml}
+        ${customNoteHtml}
+        ${tripOverviewHtml}
+        ${hotelTableHtml}
+        ${servicesTableHtml}
+        ${pricingSummaryHtml}
+        ${policiesSectionHtml}
+        ${termsSectionHtml}
+        ${footerHtml}
+      </div>
+    </div>
+  `.trim();
 }

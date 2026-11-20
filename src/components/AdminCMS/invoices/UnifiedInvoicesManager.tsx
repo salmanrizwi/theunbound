@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { AppDatabase } from '../../../services/db';
 import { BookingInvoice, BookingUploadedInvoice, Booking, User } from '../../../types';
 import { useAuth } from '../../../context/AuthContext';
+import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../../services/pricingEngine';
 import { 
   validateProformaInvoicePreflight, 
@@ -40,6 +41,7 @@ import {
 
 export const UnifiedInvoicesManager: React.FC = () => {
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
 
   const [activeTab, setActiveTab] = useState<'ALL' | 'PROFORMA' | 'MANUAL' | 'PAYMENT_LEDGER'>('ALL');
@@ -463,9 +465,21 @@ export const UnifiedInvoicesManager: React.FC = () => {
                       <td className="py-3.5 px-4 font-bold text-slate-900">
                         {inv.customerOrAgent}
                       </td>
-                      <td className="py-3.5 px-4 font-mono font-black text-right text-slate-900">
-                        {formatCurrency(inv.amount, inv.currency)}
-                      </td>
+                      {(() => {
+                        const invConv = convertForDisplay(inv.amount || 0, inv.currency || 'USD');
+                        return (
+                          <td className="py-3.5 px-4 font-mono font-black text-right text-slate-900">
+                            <span className={invConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-900'}>
+                              {invConv.formatted}
+                            </span>
+                            {invConv.isConverted && (
+                              <span className="block text-[10px] font-medium text-slate-400">
+                                Billed: {invConv.nativeFormatted}
+                              </span>
+                            )}
+                          </td>
+                        );
+                      })()}
                       <td className="py-3.5 px-4 text-center">
                         <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                           inv.status === 'PAID' 
@@ -551,16 +565,28 @@ export const UnifiedInvoicesManager: React.FC = () => {
                     {b.customer?.leadTravelerName || 'Valued Guest'}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-200">
-                    <div>
-                      <span className="text-[10px] text-slate-400 block font-semibold">Total Price</span>
-                      <span className="font-mono font-bold text-slate-900">{formatCurrency(totalTurnover, b.currency)}</span>
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-slate-400 block font-semibold">Balance Due</span>
-                      <span className="font-mono font-black text-rose-700">{formatCurrency(balance, b.currency)}</span>
-                    </div>
-                  </div>
+                  {(() => {
+                    const turnoverConv = convertForDisplay(totalTurnover, b.currency || 'USD');
+                    const balanceConv = convertForDisplay(balance, b.currency || 'USD');
+                    return (
+                      <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-200">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-semibold">Total Price</span>
+                          <span className="font-mono font-bold text-slate-900 block">{turnoverConv.formatted}</span>
+                          {turnoverConv.isConverted && (
+                            <span className="text-[9px] font-mono text-slate-400 block">Native: {turnoverConv.nativeFormatted}</span>
+                          )}
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-semibold">Balance Due</span>
+                          <span className="font-mono font-black text-rose-700 block">{balanceConv.formatted}</span>
+                          {balanceConv.isConverted && (
+                            <span className="text-[9px] font-mono text-slate-400 block">Native: {balanceConv.nativeFormatted}</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="pt-2 flex items-center justify-between text-[11px] text-slate-500">
                     <span>{invoices.length} Proforma Invoices</span>
@@ -627,7 +653,17 @@ export const UnifiedInvoicesManager: React.FC = () => {
                         <div className="text-[11px] text-slate-500 mt-0.5">{b.customer?.leadTravelerName || 'Valued Guest'}</div>
                       </div>
                       <div className="text-right">
-                        <div className="font-mono font-black text-slate-900">{formatCurrency(b.totalAmount || 0, b.currency)}</div>
+                        {(() => {
+                          const modConv = convertForDisplay(b.totalAmount || 0, b.currency || 'USD');
+                          return (
+                            <>
+                              <div className="font-mono font-black text-slate-900">{modConv.formatted}</div>
+                              {modConv.isConverted && (
+                                <div className="text-[9px] font-mono text-slate-400">Booked: {modConv.nativeFormatted}</div>
+                              )}
+                            </>
+                          );
+                        })()}
                         <div className="text-[10px] text-slate-400">{b.status}</div>
                       </div>
                     </div>

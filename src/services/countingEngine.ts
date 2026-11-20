@@ -1,8 +1,10 @@
 import { AppDatabase } from './db';
 import { MasterDataService } from './masterDataService';
+import { masterDataCache } from './masterDataCache';
 import { Product, Hotel, CityHub, Destination, DestinationRegionItem, MasterRegion, ProductCategory } from '../types';
 import {
   buildDestinationVisibilityIndex,
+  DestinationVisibilityIndex,
   isProductActiveForB2B,
   isHotelActiveForB2B,
   isCityHubActiveForB2B,
@@ -40,6 +42,9 @@ export interface InventoryCountsBreakdown {
 export class GlobalCountingEngine {
   private static instance: GlobalCountingEngine;
   private db: AppDatabase;
+  private cachedVisKey: string = '';
+  private cachedDeletedSet: Set<string> | null = null;
+  private cachedVisIndex: DestinationVisibilityIndex | null = null;
 
   private constructor() {
     this.db = AppDatabase.getInstance();
@@ -50,6 +55,22 @@ export class GlobalCountingEngine {
       GlobalCountingEngine.instance = new GlobalCountingEngine();
     }
     return GlobalCountingEngine.instance;
+  }
+
+  private getVisibilityContext(): { deletedSet: Set<string>; visIndex: DestinationVisibilityIndex } {
+    const dVer = masterDataCache.getVersion('destinations');
+    const hVer = masterDataCache.getVersion('city_hubs');
+    const tVer = masterDataCache.getVersion('inventory_tombstones');
+    const key = `${dVer}:${hVer}:${tVer}`;
+    if (this.cachedVisIndex && this.cachedDeletedSet && this.cachedVisKey === key) {
+      return { deletedSet: this.cachedDeletedSet, visIndex: this.cachedVisIndex };
+    }
+    const deletedSet = this.db.getDeletedEntityIds();
+    const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+    this.cachedVisKey = key;
+    this.cachedDeletedSet = deletedSet;
+    this.cachedVisIndex = visIndex;
+    return { deletedSet, visIndex };
   }
 
   /**
@@ -99,8 +120,7 @@ export class GlobalCountingEngine {
     const onlyPublished = filter.onlyPublished !== false;
     if (onlyPublished) {
       if ((product as any).isPublished === false) return false;
-      const deletedSet = this.db.getDeletedEntityIds();
-      const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+      const { deletedSet, visIndex } = this.getVisibilityContext();
       if (!isProductActiveForB2B(product, visIndex, deletedSet)) return false;
     }
 
@@ -112,12 +132,15 @@ export class GlobalCountingEngine {
       if (!pDest || pDest.regionId !== macroRegion.id) return false;
     }
 
-    // 2. Destination filter (strictly by destinationId relationship)
+    // 2. Destination filter (strictly by destinationId / destinationIds relationship)
     if (filter.destinationId && filter.destinationId !== 'all') {
       const targetDest = this.resolveDestination(filter.destinationId);
       if (!targetDest) return false;
       const pDest = masterData.getDestinationById(product.destinationId, true);
-      if (!pDest || pDest.id !== targetDest.id) return false;
+      const matchesPrimaryDest = pDest?.id === targetDest.id;
+      const matchesMultiDest = Array.isArray(product.destinationIds) &&
+        product.destinationIds.some(did => masterData.getDestinationById(did, true)?.id === targetDest.id);
+      if (!matchesPrimaryDest && !matchesMultiDest) return false;
     }
 
     // 3. Region filter (strictly by regionId / regionIds / associated hub's regionId)
@@ -125,14 +148,16 @@ export class GlobalCountingEngine {
       const targetRegion = this.resolveRegion(filter.regionId);
       if (!targetRegion) return false;
       const pDest = masterData.getDestinationById(product.destinationId, true);
-      if (!pDest || pDest.id !== targetRegion.destinationId) return false;
+      const matchesDest = pDest?.id === targetRegion.destinationId ||
+        (Array.isArray(product.destinationIds) && product.destinationIds.some(did => masterData.getDestinationById(did, true)?.id === targetRegion.destinationId));
+      if (!matchesDest) return false;
 
       const directMatch =
-        product.regionId === targetRegion.id ||
-        (Array.isArray((product as any).regionIds) && (product as any).regionIds.includes(targetRegion.id));
+        (product.regionId && (product.regionId === targetRegion.id || masterData.getDestinationRegionById(product.regionId, true)?.id === targetRegion.id)) ||
+        (Array.isArray(product.regionIds) && product.regionIds.some(rid => rid === targetRegion.id || masterData.getDestinationRegionById(rid, true)?.id === targetRegion.id));
 
       let multiHubRegionMatch = false;
-      if (!directMatch && Array.isArray(product.hubIds) && product.hubIds.length > 1) {
+      if (!directMatch && Array.isArray(product.hubIds) && product.hubIds.length > 0) {
         multiHubRegionMatch = product.hubIds.some(hid => {
           const h = masterData.getHubById(hid, true);
           return h && h.regionId === targetRegion.id && h.destinationId === targetRegion.destinationId;
@@ -147,7 +172,9 @@ export class GlobalCountingEngine {
       const targetHub = this.resolveHub(filter.hubId);
       if (!targetHub) return false;
       const pDest = masterData.getDestinationById(product.destinationId, true);
-      if (!pDest || pDest.id !== targetHub.destinationId) return false;
+      const matchesDest = pDest?.id === targetHub.destinationId ||
+        (Array.isArray(product.destinationIds) && product.destinationIds.some(did => masterData.getDestinationById(did, true)?.id === targetHub.destinationId));
+      if (!matchesDest) return false;
 
       const primaryResolved = product.hubId ? masterData.getHubById(product.hubId, true) : undefined;
       const matchesPrimary = primaryResolved?.id === targetHub.id;
@@ -173,8 +200,11 @@ export class GlobalCountingEngine {
       const inShortDesc = (product.shortDescription || '').toLowerCase().includes(q);
       const inLongDesc = (product.longDescription || '').toLowerCase().includes(q);
       const inCity = (product.city || '').toLowerCase().includes(q);
+      const inRegionName = (product.regionName || '').toLowerCase().includes(q);
+      const inRegionNames = Array.isArray(product.regionNames) && product.regionNames.some(r => (r || '').toLowerCase().includes(q));
+      const inHubNames = Array.isArray(product.hubNames) && product.hubNames.some(h => (h || '').toLowerCase().includes(q));
       const inSku = (product.sku || '').toLowerCase().includes(q);
-      if (!inTitle && !inShortDesc && !inLongDesc && !inCity && !inSku) return false;
+      if (!inTitle && !inShortDesc && !inLongDesc && !inCity && !inRegionName && !inRegionNames && !inHubNames && !inSku) return false;
     }
 
     return true;
@@ -193,8 +223,7 @@ export class GlobalCountingEngine {
     const onlyPublished = filter.onlyPublished !== false;
     if (onlyPublished) {
       if ((hotel as any).isPublished === false) return false;
-      const deletedSet = this.db.getDeletedEntityIds();
-      const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+      const { deletedSet, visIndex } = this.getVisibilityContext();
       if (!isHotelActiveForB2B(hotel, visIndex, deletedSet)) return false;
     }
 
@@ -252,8 +281,7 @@ export class GlobalCountingEngine {
 
     const onlyPublished = filter.onlyPublished !== false;
     if (onlyPublished) {
-      const deletedSet = this.db.getDeletedEntityIds();
-      const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+      const { deletedSet, visIndex } = this.getVisibilityContext();
       if (!isCityHubActiveForB2B(hub, visIndex, deletedSet)) return false;
     }
 
@@ -327,8 +355,7 @@ export class GlobalCountingEngine {
   public getFilteredRegions(filter: UniversalCountFilter = {}): DestinationRegionItem[] {
     const allRegions = this.db.getRegions();
     const onlyPublished = filter.onlyPublished !== false;
-    const deletedSet = this.db.getDeletedEntityIds();
-    const visIndex = buildDestinationVisibilityIndex(this.db.getDestinations(), this.db.getCityHubs(), deletedSet);
+    const { deletedSet, visIndex } = this.getVisibilityContext();
     return allRegions.filter(r => {
       if (!r || !r.id || (r as any).status === 'DELETED') return false;
       if (onlyPublished && !isRegionActiveForB2B(r, visIndex, deletedSet)) return false;

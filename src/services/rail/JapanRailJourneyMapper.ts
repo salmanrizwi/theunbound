@@ -40,6 +40,11 @@ export class JapanRailJourneyMapper {
       segments: journey.segments.map(seg => ({
         segmentId: seg.segmentId,
         sequence: seg.sequence,
+        routeId: seg.pricing?.routeId || seg.pricing?.route?.routeId,
+        routeCode: seg.pricing?.routeCode || seg.pricing?.route?.routeCode,
+        adultRateId: seg.pricing?.adultRateId,
+        childRateId: seg.pricing?.childRateId,
+        distanceKm: seg.pricing?.route?.distanceKm,
         origin: {
           id: seg.origin.stationId,
           name: seg.origin.stationName,
@@ -85,6 +90,11 @@ export class JapanRailJourneyMapper {
     const segmentSnapshots: JapanRailSegmentSnapshot[] = journey.segments.map(seg => ({
       segmentId: seg.segmentId,
       sequence: seg.sequence,
+      routeId: seg.pricing?.routeId || seg.pricing?.route?.routeId,
+      routeCode: seg.pricing?.routeCode || seg.pricing?.route?.routeCode,
+      adultRateId: seg.pricing?.adultRateId,
+      childRateId: seg.pricing?.childRateId,
+      distanceKm: seg.pricing?.route?.distanceKm,
       originStationId: seg.origin.stationId,
       originStationName: seg.origin.stationName,
       originStationCode: seg.origin.stationCode,
@@ -188,6 +198,11 @@ export class JapanRailJourneyMapper {
 
     const totalPax = journey.passengers.adults + journey.passengers.children + journey.passengers.infants;
 
+    const totalDistanceKm = journey.segments.reduce(
+      (acc, s) => acc + (typeof s.pricing?.route?.distanceKm === 'number' && s.pricing.route.distanceKm > 0 ? s.pricing.route.distanceKm : 0),
+      0
+    );
+
     const bookingDetails: RailBookingItemDetails = {
       type: 'JAPAN_RAIL',
       productId: primarySegment?.productId || (isGreen ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED'),
@@ -195,6 +210,10 @@ export class JapanRailJourneyMapper {
       carType: primarySegment?.carClass || (isGreen ? 'Green' : 'Ordinary'),
       seatType: 'Reserved',
       serviceGroup: primarySegment?.serviceGroup || 'NOZOMI_MIZUHO',
+      routeId: primarySegment?.pricing?.routeId || primarySegment?.pricing?.route?.routeId,
+      routeCode: primarySegment?.pricing?.routeCode || primarySegment?.pricing?.route?.routeCode,
+      adultRateId: primarySegment?.pricing?.adultRateId,
+      childRateId: primarySegment?.pricing?.childRateId,
       originStationId: primarySegment?.origin.stationId || 'JP-ST-TOKYO',
       originStationName: primarySegment?.origin.stationName || 'Tokyo',
       originStationCode: primarySegment?.origin.stationCode || 'TYO',
@@ -227,7 +246,7 @@ export class JapanRailJourneyMapper {
       category: 'Rail',
       travelDate: journey.startDate,
       serviceTime: primarySegment?.departureTime || '09:00',
-      notes: `Dynamic Multi-Sector Rail Journey (${journey.segments.length} Sectors: ${routeSummary}):\n${segmentNotes}\nDay ${dayNumber}. Currency: ${journey.currency}. Total Distance: ${journey.segments.reduce((acc, s) => acc + (s.pricing.route.distanceKm || 0), 0)} km.`,
+      notes: `Dynamic Multi-Sector Rail Journey (${journey.segments.length} Sectors: ${routeSummary}):\n${segmentNotes}\nDay ${dayNumber}. Currency: ${journey.currency}.${totalDistanceKm > 0 ? ` Total Distance: ${totalDistanceKm} km.` : ''}`,
       pax: {
         adults: journey.passengers.adults,
         children: journey.passengers.children,

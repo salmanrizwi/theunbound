@@ -8,6 +8,7 @@ import {
   renderStructuredQuotationHtmlEmail, 
   formatPlainTextQuotationToHtml,
   renderSimpleSemanticQuotationEmailFromModel,
+  renderOption2CompleteFormattedHtmlEmail,
   convertHtmlToCleanPlainText
 } from './quoteEmailFormatter';
 import { richTextToWhatsApp, richTextToPlainText } from '../utils/richTextFormatter';
@@ -712,6 +713,37 @@ export function transformQuoteItemToPresentation(item: QuoteItem, currency: stri
   };
 }
 
+function hasVisibleDayContentOrMedia(val: unknown): val is string {
+  if (typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  if (!trimmed) return false;
+  if (/<img\b/i.test(trimmed)) return true;
+  const plain = trimmed
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return plain.length > 0;
+}
+
+function pickDayMapValue(
+  dayNum: number,
+  sources: Array<Record<string | number, any> | undefined | null>
+): string | undefined {
+  const keys: Array<string | number> = [dayNum, String(dayNum), `day-${dayNum}`, `Day ${dayNum}`];
+  for (const src of sources) {
+    if (!src || typeof src !== 'object') continue;
+    for (const k of keys) {
+      const candidate = src[k];
+      if (hasVisibleDayContentOrMedia(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return undefined;
+}
+
 export function buildQuotePresentationModel(
   quote: Quotation,
   agentOverride?: {
@@ -1258,9 +1290,46 @@ export function buildQuotePresentationModel(
       }
     }
 
-    const customTheme = quote.dayThemes?.[calDay.dayNumber];
-    const dayOverview = (quote as any).dayOverviews?.[calDay.dayNumber] || (quote as any).dayDescriptions?.[calDay.dayNumber];
-    const dayNotes = (quote as any).dayNotes?.[calDay.dayNumber];
+    const authItinerary = (quote.authoritativeSnapshot as any)?.itinerary;
+    const rawDaysFallbackEntry = Array.isArray((quote as any).days)
+      ? (quote as any).days.find((d: any) => Number(d?.dayNumber) === calDay.dayNumber)
+      : undefined;
+
+    const customTheme = pickDayMapValue(calDay.dayNumber, [
+      (activeOption as any)?.dayThemes,
+      quote.dayThemes,
+      authItinerary?.dayThemes
+    ]);
+
+    const dayOverview =
+      pickDayMapValue(calDay.dayNumber, [
+        (activeOption as any)?.dayOverviews,
+        (activeOption as any)?.dayDescriptions,
+        (quote as any).dayOverviews,
+        (quote as any).dayDescriptions,
+        authItinerary?.dayOverviews,
+        authItinerary?.dayDescriptions
+      ]) ??
+      (hasVisibleDayContentOrMedia(rawDaysFallbackEntry?.dayOverview)
+        ? rawDaysFallbackEntry.dayOverview
+        : hasVisibleDayContentOrMedia(rawDaysFallbackEntry?.overview)
+          ? rawDaysFallbackEntry.overview
+          : hasVisibleDayContentOrMedia(rawDaysFallbackEntry?.description)
+            ? rawDaysFallbackEntry.description
+            : undefined);
+
+    const dayNotes =
+      pickDayMapValue(calDay.dayNumber, [
+        (activeOption as any)?.dayNotes,
+        (activeOption as any)?.dayOperationalNotes,
+        (quote as any).dayNotes,
+        (quote as any).dayOperationalNotes,
+        authItinerary?.dayNotes,
+        authItinerary?.dayOperationalNotes
+      ]) ??
+      (hasVisibleDayContentOrMedia(rawDaysFallbackEntry?.dayNotes)
+        ? rawDaysFallbackEntry.dayNotes
+        : undefined);
 
     return {
       dayId: `day-${calDay.dayNumber}`,
@@ -1981,8 +2050,8 @@ export function renderQuoteEmailFromPresentationModel(
     ? sanitizeWhiteLabelString(rawProposalViewHtml, model.agencyName, model.agentEmail, model.agentPhone)
     : rawProposalViewHtml;
 
-  // Option 2: Complete Plain-Text Quotation (Simple Semantic Formatted HTML)
-  const rawSimpleSemanticHtml = formatPlainTextQuotationToHtml(textBody);
+  // Option 2: Complete Formatted Quotation (Excel-Style Tabular Quotation HTML)
+  const rawSimpleSemanticHtml = renderOption2CompleteFormattedHtmlEmail(model, customNote);
   const simpleSemanticHtml = model.isWhiteLabel
     ? sanitizeWhiteLabelString(rawSimpleSemanticHtml, model.agencyName, model.agentEmail, model.agentPhone)
     : rawSimpleSemanticHtml;
@@ -2527,7 +2596,8 @@ export {
   renderStructuredQuotationHtmlEmail, 
   formatPlainTextQuotationToHtml,
   formatPlainTextQuotationToSimpleSemanticHtml,
-  renderSimpleSemanticQuotationEmailFromModel
+  renderSimpleSemanticQuotationEmailFromModel,
+  renderOption2CompleteFormattedHtmlEmail
 } from './quoteEmailFormatter';
 
 

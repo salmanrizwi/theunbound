@@ -118,6 +118,7 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
   const [isSuccessFeedback, setIsSuccessFeedback] = useState<boolean>(false);
   const [isValidationDetailsOpen, setIsValidationDetailsOpen] = useState<boolean>(false);
   const [isRetryingFx, setIsRetryingFx] = useState<boolean>(false);
+  const [inventoryVersion, setInventoryVersion] = useState<number>(0);
 
   // Auto-recalculate journey price when exchange rates arrive asynchronously from Google Finance feed
   useEffect(() => {
@@ -125,6 +126,16 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
       setJourney(prev => {
         return japanRailJourneyService.validateAndRecalculate(prev, user?.role);
       });
+    });
+    return unsub;
+  }, [user?.role]);
+
+  // Auto-refresh stations, routes, and pricing when Admin CMS / Firestore rail inventory updates
+  useEffect(() => {
+    const db = AppDatabase.getInstance();
+    const unsub = db.subscribe(() => {
+      setInventoryVersion(v => v + 1);
+      setJourney(prev => japanRailJourneyService.validateAndRecalculate(prev, user?.role));
     });
     return unsub;
   }, [user?.role]);
@@ -159,10 +170,10 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filtered stations for active search
+  // Filtered stations for active search (show all active stations without arbitrary truncation)
   const filteredStations = useMemo(() => {
-    return japanRailJourneyDataService.searchStations(stationSearchQuery).slice(0, 12);
-  }, [stationSearchQuery]);
+    return japanRailJourneyDataService.searchStations(stationSearchQuery);
+  }, [stationSearchQuery, inventoryVersion]);
 
   // Role permissions
   const isAdmin = user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER' || portalOrigin === 'ADMIN_CMS' || portalOrigin === 'PRODUCT_MANAGEMENT';
@@ -541,7 +552,19 @@ export const JapanRailJourneyConfigurator: React.FC<JapanRailJourneyConfigurator
             <div className="flex items-center space-x-3 text-xs text-slate-500 font-medium">
               <span>Dates: <strong className="text-slate-800">{journey.startDate}</strong> to <strong className="text-slate-800">{journey.endDate}</strong></span>
               <span>•</span>
-              <span>Total Est. Travel: <strong className="text-slate-800">{Math.round(journey.segments.reduce((acc, s) => acc + (s.pricing.estimatedDurationMinutes || 0), 0) / 60)}h {journey.segments.reduce((acc, s) => acc + (s.pricing.estimatedDurationMinutes || 0), 0) % 60}m</strong></span>
+              {(() => {
+                const totalMins = journey.segments.reduce((acc, s) => acc + (s.pricing.estimatedDurationMinutes || 0), 0);
+                if (totalMins <= 0) {
+                  return <span>Travel Time: <strong className="text-slate-800">Schedule TBC</strong></span>;
+                }
+                const hrs = Math.floor(totalMins / 60);
+                const mins = totalMins % 60;
+                return (
+                  <span>
+                    Total Est. Travel: <strong className="text-slate-800">{hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`}</strong>
+                  </span>
+                );
+              })()}
             </div>
           </div>
 

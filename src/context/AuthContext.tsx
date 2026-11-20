@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { User, UserRole } from '../types';
 import { 
   authService, 
@@ -55,7 +55,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState<string>('Access Protected Pricing Calculator');
-  const [pendingCallback, setPendingCallback] = useState<(() => void) | null>(null);
+  const pendingCallbackRef = useRef<(() => void) | null>(null);
 
   // Synchronize state with authoritative AuthService state machine
   useEffect(() => {
@@ -117,7 +117,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Universal Login Handler
    * Authenticates against Firebase Authentication, then resolves Firestore /users/{uid} profile.
    */
-  const login = async (email: string, role: UserRole = 'B2B_AGENT', password?: string): Promise<AuthResult> => {
+  const login = useCallback(async (email: string, role: UserRole = 'B2B_AGENT', password?: string): Promise<AuthResult> => {
     if (role === 'BUYER') {
       return {
         success: false,
@@ -137,9 +137,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(sanitizeUserForClientSession(result.user));
       setIsAuthModalOpen(false);
 
-      if (pendingCallback) {
-        pendingCallback();
-        setPendingCallback(null);
+      const pendingCb = pendingCallbackRef.current;
+      if (pendingCb) {
+        pendingCallbackRef.current = null;
+        pendingCb();
       }
 
       // Navigate to correct portal destination based on role and intended path
@@ -148,13 +149,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     return result;
-  };
+  }, []);
 
   /**
    * Universal Registration Handler
    * Creates real user account in Firebase Authentication, writes /users/{uid} in Firestore.
    */
-  const register = async (profileData: RegisterProfileData): Promise<AuthResult> => {
+  const register = useCallback(async (profileData: RegisterProfileData): Promise<AuthResult> => {
     const result = await authService.register(profileData);
 
     if (!result.success || !result.user) {
@@ -170,23 +171,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(sanitizeUserForClientSession(result.user));
     setIsAuthModalOpen(false);
 
-    if (pendingCallback) {
-      pendingCallback();
-      setPendingCallback(null);
+    const pendingCb = pendingCallbackRef.current;
+    if (pendingCb) {
+      pendingCallbackRef.current = null;
+      pendingCb();
     }
 
     const targetRoute = resolvePostLoginDestination(result.user);
     navigateTo(targetRoute);
 
     return result;
-  };
+  }, []);
 
   /**
    * Universal Logout Handler
    */
-  const logout = async (): Promise<void> => {
+  const logout = useCallback(async (): Promise<void> => {
     await authService.logout('USER_INITIATED');
     setUser(null);
+    pendingCallbackRef.current = null;
     try {
       localStorage.removeItem(STORAGE_KEY_AUTH);
       sessionStorage.removeItem('theunbound_b2b_session');
@@ -196,12 +199,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     clearIntendedPath();
     navigateTo('/');
-  };
+  }, []);
 
   /**
    * Update Profile Information across Firestore and active state
    */
-  const updateUserProfile = async (updates: Partial<User>): Promise<User | null> => {
+  const updateUserProfile = useCallback(async (updates: Partial<User>): Promise<User | null> => {
     if (!user) return null;
     const safeUpdates = { ...updates };
     if (user.role === 'B2B_AGENT' || user.role === 'AGENT' || user.role === 'AGENCY_OWNER') {
@@ -236,51 +239,70 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Ignore
     }
     return fallbackUser;
-  };
+  }, [user]);
 
-  const openAuthModal = (reason = 'Access Protected Pricing Calculator', callback?: () => void) => {
+  const openAuthModal = useCallback((reason = 'Access Protected Pricing Calculator', callback?: () => void) => {
     setAuthModalReason(reason);
     if (callback) {
-      setPendingCallback(() => callback);
+      pendingCallbackRef.current = callback;
     }
     setIsAuthModalOpen(true);
-  };
+  }, []);
 
-  const closeAuthModal = () => {
+  const closeAuthModal = useCallback(() => {
     setIsAuthModalOpen(false);
-    setPendingCallback(null);
-  };
+    pendingCallbackRef.current = null;
+  }, []);
 
-  const requireAuth = (callback: () => void, reason = 'Login required to access dynamic pricing and quotations'): boolean => {
+  const requireAuth = useCallback((callback: () => void, reason = 'Login required to access dynamic pricing and quotations'): boolean => {
     if (isAuthenticated && user) {
       callback();
       return true;
     }
     openAuthModal(reason, callback);
     return false;
-  };
+  }, [isAuthenticated, user, openAuthModal]);
+
+  const role: UserRole = user ? user.role : 'PUBLIC';
+
+  const contextValue = useMemo<AuthContextType>(() => ({
+    user,
+    isAuthenticated,
+    authState,
+    isInitializing,
+    isProfileLoading,
+    authError,
+    role,
+    isAuthModalOpen,
+    authModalReason,
+    login,
+    register,
+    logout,
+    updateUserProfile,
+    openAuthModal,
+    closeAuthModal,
+    requireAuth
+  }), [
+    user,
+    isAuthenticated,
+    authState,
+    isInitializing,
+    isProfileLoading,
+    authError,
+    role,
+    isAuthModalOpen,
+    authModalReason,
+    login,
+    register,
+    logout,
+    updateUserProfile,
+    openAuthModal,
+    closeAuthModal,
+    requireAuth
+  ]);
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated,
-        authState,
-        isInitializing,
-        isProfileLoading,
-        authError,
-        role: user ? user.role : 'PUBLIC',
-        isAuthModalOpen,
-        authModalReason,
-        login,
-        register,
-        logout,
-        updateUserProfile,
-        openAuthModal,
-        closeAuthModal,
-        requireAuth
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

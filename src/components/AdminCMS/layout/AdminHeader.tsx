@@ -22,6 +22,7 @@ import {
 import { User } from '../../../types';
 import { CMSNotificationsDropdown } from '../CMSNotificationsDropdown';
 import { navigateTo } from '../../../services/portalRouter';
+import { GlobalDisplayCurrencySelector } from './GlobalDisplayCurrencySelector';
 
 interface AdminHeaderProps {
   currentUser: User;
@@ -163,6 +164,9 @@ export const AdminHeader: React.FC<AdminHeaderProps> = ({
                 Buyer: {activePortalStats.buyer}
               </span>
             </div>
+
+            {/* Global Portal Display Currency Selector */}
+            <GlobalDisplayCurrencySelector currentUser={currentUser} />
 
             {/* Quick "+ Create" Dropdown Menu */}
             <div className="relative" ref={createRef}>

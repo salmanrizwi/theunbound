@@ -50,7 +50,10 @@ import {
   AlertCircle,
   Eye,
   Sliders,
-  CalendarDays
+  CalendarDays,
+  ArrowRightLeft,
+  Power,
+  Loader2
 } from 'lucide-react';
 
 import { JapanRailJourneyConfigurator } from '../../JapanRail/JapanRailJourneyConfigurator';
@@ -123,6 +126,31 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   const [routeSearch, setRouteSearch] = useState('');
   const [rateOriginFilter, setRateOriginFilter] = useState('JP-ST-TOKYO');
   const [rateDestFilter, setRateDestFilter] = useState('JP-ST-KYOTO');
+  const [rateLookupDate, setRateLookupDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [rateLookupService, setRateLookupService] = useState<RailServiceGroup>('NOZOMI_MIZUHO');
+
+  // Route Create / Edit Modal state
+  const [isRouteModalOpen, setIsRouteModalOpen] = useState(false);
+  const [routeModalMode, setRouteModalMode] = useState<'CREATE' | 'EDIT'>('CREATE');
+  const [routeFormData, setRouteFormData] = useState<Partial<RailRoute>>({
+    routeId: '',
+    routeCode: '',
+    originStationId: '',
+    destinationStationId: '',
+    railOperator: 'JR Central / JR West',
+    availableServiceGroups: ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
+    availableProductIds: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
+    distanceKm: undefined,
+    travelDurationMinutes: undefined,
+    notes: '',
+    active: true
+  });
+  const [routeOriginSearch, setRouteOriginSearch] = useState('');
+  const [routeDestSearch, setRouteDestSearch] = useState('');
+  const [routeFormError, setRouteFormError] = useState<string | null>(null);
+  const [duplicateRouteConflict, setDuplicateRouteConflict] = useState<RailRoute | null>(null);
+  const [isSavingRoute, setIsSavingRoute] = useState(false);
+  const [togglingRouteId, setTogglingRouteId] = useState<string | null>(null);
 
   // Season year filter
   const [seasonYearFilter, setSeasonYearFilter] = useState<string>('ALL');
@@ -399,20 +427,78 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   const filteredRoutes = useMemo(() => {
     if (!routeSearch.trim()) return routes;
     const q = routeSearch.toLowerCase().trim();
-    return routes.filter(r => 
+    return routes.filter(r =>
       r.originStationName.toLowerCase().includes(q) ||
       r.destinationStationName.toLowerCase().includes(q) ||
-      r.routeId.toLowerCase().includes(q)
+      r.routeId.toLowerCase().includes(q) ||
+      (r.routeCode || '').toLowerCase().includes(q) ||
+      (r.railOperator || '').toLowerCase().includes(q) ||
+      (r.notes || '').toLowerCase().includes(q)
     );
   }, [routes, routeSearch]);
 
-  // Rates for selected origin/destination pair
+  // Helper to filter stations for searchable Route modal pickers
+  const filterStationsForPicker = (query: string, includeStationId?: string): RailStation[] => {
+    const q = query.trim().toLowerCase();
+    return stations.filter(s => {
+      if (!s.active && s.stationId !== includeStationId) return false;
+      if (!q) return true;
+      return (
+        s.stationName.toLowerCase().includes(q) ||
+        s.stationCode.toLowerCase().includes(q) ||
+        s.city.toLowerCase().includes(q) ||
+        s.displayName.toLowerCase().includes(q) ||
+        (s.shinkansenLine || '').toLowerCase().includes(q) ||
+        (s.railOperator || '').toLowerCase().includes(q) ||
+        (s.searchAliases || []).some(a => a.toLowerCase().includes(q))
+      );
+    });
+  };
+
+  // Rates for selected origin/destination pair (exact direction sorted first)
   const selectedRates = useMemo(() => {
-    return rates.filter(r => 
+    const list = rates.filter(r =>
       (r.originStationId === rateOriginFilter && r.destinationStationId === rateDestFilter) ||
       (r.originStationId === rateDestFilter && r.destinationStationId === rateOriginFilter)
     );
+    return [...list].sort((a, b) => {
+      const aExact = a.originStationId === rateOriginFilter && a.destinationStationId === rateDestFilter ? 1 : 0;
+      const bExact = b.originStationId === rateOriginFilter && b.destinationStationId === rateDestFilter ? 1 : 0;
+      if (bExact !== aExact) return bExact - aExact;
+      if (a.carType !== b.carType) return a.carType.localeCompare(b.carType);
+      return String(a.passengerType).localeCompare(String(b.passengerType));
+    });
   }, [rates, rateOriginFilter, rateDestFilter]);
+
+  // Live Central Pricing Engine resolution for Rate Explorer (Single Source of Truth)
+  const rateExplorerResolution = useMemo(() => {
+    if (!rateOriginFilter || !rateDestFilter || rateOriginFilter === rateDestFilter) {
+      return null;
+    }
+    const ordinary = railPricingEngine.calculatePrice({
+      originStationId: rateOriginFilter,
+      destinationStationId: rateDestFilter,
+      productId: 'RAIL-JP-ORD-RESERVED',
+      serviceGroup: rateLookupService,
+      travelDate: rateLookupDate,
+      adultsCount: 1,
+      childrenCount: 0,
+      userRole: 'B2B_AGENT',
+      targetCurrency: 'JPY'
+    });
+    const green = railPricingEngine.calculatePrice({
+      originStationId: rateOriginFilter,
+      destinationStationId: rateDestFilter,
+      productId: 'RAIL-JP-GREEN-RESERVED',
+      serviceGroup: rateLookupService,
+      travelDate: rateLookupDate,
+      adultsCount: 1,
+      childrenCount: 0,
+      userRole: 'B2B_AGENT',
+      targetCurrency: 'JPY'
+    });
+    return { ordinary, green };
+  }, [rateOriginFilter, rateDestFilter, rateLookupDate, rateLookupService, dbVersion]);
 
   // Detect season overlap conflicts
   const seasonOverlaps = useMemo(() => {
@@ -579,6 +665,237 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
   };
 
   // =========================================================================
+  // ROUTE MANAGEMENT (CREATE / EDIT / ACTIVATE / DEACTIVATE)
+  // =========================================================================
+  const buildSuggestedRouteMeta = (originId: string, destId: string) => {
+    const originSt = stations.find(s => s.stationId === originId);
+    const destSt = stations.find(s => s.stationId === destId);
+    const suggestedId = originId && destId ? db.buildCanonicalRailRouteId(originId, destId) : '';
+    const suggestedCode = originSt?.stationCode && destSt?.stationCode
+      ? `${originSt.stationCode}-${destSt.stationCode}`
+      : '';
+    const operators = Array.from(
+      new Set([originSt?.railOperator, destSt?.railOperator].filter(Boolean))
+    ).join(' / ');
+    return {
+      routeId: suggestedId,
+      routeCode: suggestedCode,
+      originStationName: originSt?.stationName || '',
+      destinationStationName: destSt?.stationName || '',
+      railOperator: operators || 'JR East / JR Central / JR West',
+      originRegionId: originSt?.regionId,
+      destinationRegionId: destSt?.regionId
+    };
+  };
+
+  const handleOpenCreateRoute = (prefill?: { originStationId?: string; destinationStationId?: string }) => {
+    if (!canModifyInventory) return;
+    setRouteModalMode('CREATE');
+    setRouteFormError(null);
+    setDuplicateRouteConflict(null);
+    setRouteOriginSearch('');
+    setRouteDestSearch('');
+
+    const activeStations = stations.filter(s => s.active);
+    const defaultOrigin = prefill?.originStationId || activeStations[0]?.stationId || '';
+    const defaultDest = prefill?.destinationStationId || activeStations.find(s => s.stationId !== defaultOrigin)?.stationId || '';
+    const meta = buildSuggestedRouteMeta(defaultOrigin, defaultDest);
+
+    setRouteFormData({
+      routeId: meta.routeId,
+      routeCode: meta.routeCode,
+      originStationId: defaultOrigin,
+      destinationStationId: defaultDest,
+      originStationName: meta.originStationName,
+      destinationStationName: meta.destinationStationName,
+      originRegionId: meta.originRegionId,
+      destinationRegionId: meta.destinationRegionId,
+      railOperator: meta.railOperator,
+      availableServiceGroups: ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
+      availableProductIds: ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
+      distanceKm: undefined,
+      travelDurationMinutes: undefined,
+      notes: '',
+      active: true
+    });
+    setIsRouteModalOpen(true);
+  };
+
+  const handleOpenEditRoute = (route: RailRoute) => {
+    if (!canModifyInventory) return;
+    setRouteModalMode('EDIT');
+    setRouteFormError(null);
+    setDuplicateRouteConflict(null);
+    setRouteOriginSearch('');
+    setRouteDestSearch('');
+    setRouteFormData({
+      ...route,
+      availableServiceGroups: route.availableServiceGroups?.length
+        ? [...route.availableServiceGroups]
+        : ['NOZOMI_MIZUHO', 'HIKARI_KODAMA_SAKURA_TSUBAME'],
+      availableProductIds: route.availableProductIds?.length
+        ? [...route.availableProductIds]
+        : ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
+      travelDurationMinutes: route.travelDurationMinutes ? { ...route.travelDurationMinutes } : undefined
+    });
+    setIsRouteModalOpen(true);
+  };
+
+  const updateRouteStationSelection = (field: 'originStationId' | 'destinationStationId', stationId: string) => {
+    setRouteFormError(null);
+    setDuplicateRouteConflict(null);
+    setRouteFormData(prev => {
+      const nextOrigin = field === 'originStationId' ? stationId : (prev.originStationId || '');
+      const nextDest = field === 'destinationStationId' ? stationId : (prev.destinationStationId || '');
+      const meta = buildSuggestedRouteMeta(nextOrigin, nextDest);
+      return {
+        ...prev,
+        originStationId: nextOrigin,
+        destinationStationId: nextDest,
+        originStationName: meta.originStationName,
+        destinationStationName: meta.destinationStationName,
+        originRegionId: meta.originRegionId,
+        destinationRegionId: meta.destinationRegionId,
+        railOperator: routeModalMode === 'CREATE' ? meta.railOperator : (prev.railOperator || meta.railOperator),
+        routeId: routeModalMode === 'CREATE' ? meta.routeId : prev.routeId,
+        routeCode: routeModalMode === 'CREATE' ? meta.routeCode : (prev.routeCode || meta.routeCode)
+      };
+    });
+  };
+
+  const handleSwapRouteFormStations = () => {
+    setRouteFormError(null);
+    setDuplicateRouteConflict(null);
+    setRouteFormData(prev => {
+      const nextOrigin = prev.destinationStationId || '';
+      const nextDest = prev.originStationId || '';
+      const meta = buildSuggestedRouteMeta(nextOrigin, nextDest);
+      return {
+        ...prev,
+        originStationId: nextOrigin,
+        destinationStationId: nextDest,
+        originStationName: meta.originStationName,
+        destinationStationName: meta.destinationStationName,
+        originRegionId: meta.originRegionId,
+        destinationRegionId: meta.destinationRegionId,
+        routeId: routeModalMode === 'CREATE' ? meta.routeId : prev.routeId,
+        routeCode: routeModalMode === 'CREATE' ? meta.routeCode : meta.routeCode
+      };
+    });
+  };
+
+  const handleToggleRouteServiceGroup = (group: RailServiceGroup) => {
+    setRouteFormError(null);
+    setRouteFormData(prev => {
+      const current = prev.availableServiceGroups || [];
+      const exists = current.includes(group);
+      const next = exists ? current.filter(g => g !== group) : [...current, group];
+      return { ...prev, availableServiceGroups: next };
+    });
+  };
+
+  const handleSaveRouteForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSavingRoute) return;
+    setRouteFormError(null);
+    setDuplicateRouteConflict(null);
+
+    if (!canModifyInventory) {
+      setRouteFormError('Permission Denied: Only authorized administrators can create or edit rail routes.');
+      return;
+    }
+
+    const originId = (routeFormData.originStationId || '').trim();
+    const destId = (routeFormData.destinationStationId || '').trim();
+    if (!originId || !destId) {
+      setRouteFormError('Origin and Destination stations are both required.');
+      return;
+    }
+    if (originId === destId) {
+      setRouteFormError('Origin and Destination stations must be different.');
+      return;
+    }
+    const groups = routeFormData.availableServiceGroups || [];
+    if (groups.length === 0) {
+      setRouteFormError('Select at least one supported train service group.');
+      return;
+    }
+
+    setIsSavingRoute(true);
+    try {
+      const originSt = stations.find(s => s.stationId === originId);
+      const destSt = stations.find(s => s.stationId === destId);
+      const routeId = (routeFormData.routeId || '').trim() || db.buildCanonicalRailRouteId(originId, destId);
+
+      const distVal = routeFormData.distanceKm !== undefined && routeFormData.distanceKm !== null && String(routeFormData.distanceKm).trim() !== ''
+        ? Number(routeFormData.distanceKm)
+        : undefined;
+      const nozomiDur = routeFormData.travelDurationMinutes?.nozomiMizuho;
+      const hikariDur = routeFormData.travelDurationMinutes?.hikariKodamaSakura;
+      const hasAnyDuration = (typeof nozomiDur === 'number' && Number.isFinite(nozomiDur) && nozomiDur > 0) ||
+        (typeof hikariDur === 'number' && Number.isFinite(hikariDur) && hikariDur > 0);
+
+      const routePayload: RailRoute = {
+        routeId,
+        routeCode: (routeFormData.routeCode || '').trim() || (originSt?.stationCode && destSt?.stationCode ? `${originSt.stationCode}-${destSt.stationCode}` : undefined),
+        originStationId: originId,
+        destinationStationId: destId,
+        originStationName: originSt?.stationName || routeFormData.originStationName || originId,
+        destinationStationName: destSt?.stationName || routeFormData.destinationStationName || destId,
+        originRegionId: originSt?.regionId || routeFormData.originRegionId,
+        destinationRegionId: destSt?.regionId || routeFormData.destinationRegionId,
+        country: 'Japan',
+        destinationId: 'dest-japan',
+        railOperator: (routeFormData.railOperator || '').trim() || [originSt?.railOperator, destSt?.railOperator].filter(Boolean).join(' / ') || 'JR Central / JR West',
+        availableProductIds: routeFormData.availableProductIds?.length
+          ? routeFormData.availableProductIds
+          : ['RAIL-JP-ORD-RESERVED', 'RAIL-JP-GREEN-RESERVED'],
+        availableServiceGroups: groups,
+        distanceKm: distVal !== undefined && Number.isFinite(distVal) && distVal > 0 ? distVal : undefined,
+        travelDurationMinutes: hasAnyDuration
+          ? {
+              ...(typeof nozomiDur === 'number' && nozomiDur > 0 ? { nozomiMizuho: nozomiDur } : {}),
+              ...(typeof hikariDur === 'number' && hikariDur > 0 ? { hikariKodamaSakura: hikariDur } : {})
+            }
+          : undefined,
+        notes: (routeFormData.notes || '').trim() || undefined,
+        active: routeFormData.active !== false
+      };
+
+      const saved = await db.saveRailRouteAsync(routePayload, user);
+      setRoutes(db.getRailRoutes());
+      setIsRouteModalOpen(false);
+      setSuccessToast(
+        `Route ${saved.originStationName} → ${saved.destinationStationName} (${saved.routeId}) saved and verified in Firestore.`
+      );
+    } catch (err: any) {
+      if (err?.existingRoute) {
+        setDuplicateRouteConflict(err.existingRoute as RailRoute);
+      }
+      setRouteFormError(err?.message || 'Failed to save rail route to Firestore.');
+    } finally {
+      setIsSavingRoute(false);
+    }
+  };
+
+  const handleToggleRouteActive = async (route: RailRoute) => {
+    if (!canModifyInventory || togglingRouteId) return;
+    setTogglingRouteId(route.routeId);
+    try {
+      const updated: RailRoute = { ...route, active: !route.active };
+      await db.saveRailRouteAsync(updated, user);
+      setRoutes(db.getRailRoutes());
+      setSuccessToast(
+        `Route ${route.originStationName} → ${route.destinationStationName} is now ${updated.active ? 'Active' : 'Inactive'}.`
+      );
+    } catch (err: any) {
+      setRouteFormError(err?.message || 'Failed to update route status.');
+    } finally {
+      setTogglingRouteId(null);
+    }
+  };
+
+  // =========================================================================
   // FARE / RATE MANAGEMENT (Section 10, 26, 27, 28)
   // =========================================================================
   const handleOpenAddRate = () => {
@@ -587,19 +904,22 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
     }
     setRateModalMode('CREATE');
     setRateFormError(null);
-    const matchedRoute = routes.find(r =>
-      (r.originStationId === rateOriginFilter && r.destinationStationId === rateDestFilter) ||
-      (r.originStationId === rateDestFilter && r.destinationStationId === rateOriginFilter)
+    const exactRoute = routes.find(
+      r => r.originStationId === rateOriginFilter && r.destinationStationId === rateDestFilter
     );
+    const reverseRoute = routes.find(
+      r => r.originStationId === rateDestFilter && r.destinationStationId === rateOriginFilter
+    );
+    const matchedRoute = exactRoute || reverseRoute;
     setRateFormData({
       rateId: `JP-RR-${Date.now().toString().slice(-6)}`,
       originStationId: rateOriginFilter,
       destinationStationId: rateDestFilter,
-      routeId: matchedRoute?.routeId || `JP-RT-${rateOriginFilter}-${rateDestFilter}`,
+      routeId: matchedRoute?.routeId || db.buildCanonicalRailRouteId(rateOriginFilter, rateDestFilter),
       productId: 'RAIL-JP-ORD-RESERVED',
       carType: 'Ordinary',
       seatType: 'Reserved',
-      serviceGroup: 'NOZOMI_MIZUHO',
+      serviceGroup: rateLookupService || 'NOZOMI_MIZUHO',
       passengerType: 'ADULT',
       nettPrice: undefined,
       nativeCurrency: 'JPY',
@@ -672,6 +992,11 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
       return;
     }
 
+    if (rateFormData.originStationId === rateFormData.destinationStationId) {
+      setRateFormError('Validation Error: Origin and Destination stations must be different.');
+      return;
+    }
+
     try {
       const rawNett = rateFormData.nettPrice;
       const parsedNett = typeof rawNett === 'number' ? rawNett : Number(rawNett);
@@ -696,13 +1021,19 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
         ? 'HIKARI_KODAMA_SAKURA_TSUBAME'
         : 'NOZOMI_MIZUHO';
 
+      const exactMatchedRoute = routes.find(
+        r => r.originStationId === rateFormData.originStationId && r.destinationStationId === rateFormData.destinationStationId
+      );
+      const resolvedRouteId = exactMatchedRoute?.routeId
+        || db.buildCanonicalRailRouteId(rateFormData.originStationId, rateFormData.destinationStationId);
+
       const rateId = rateFormData.rateId || `JP-RR-${rateFormData.originStationId}-${rateFormData.destinationStationId}-${rateFormData.carType}-${normalizedPax}-${Date.now().toString().slice(-4)}`;
 
       const rate: RailRate = {
         rateId,
         originStationId: rateFormData.originStationId,
         destinationStationId: rateFormData.destinationStationId,
-        routeId: rateFormData.routeId || `JP-RT-${rateFormData.originStationId}-${rateFormData.destinationStationId}`,
+        routeId: resolvedRouteId,
         productId: rateFormData.carType === 'Green' ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED',
         carType: (rateFormData.carType as RailCarType) || 'Ordinary',
         seatType: (rateFormData.seatType as any) || 'Reserved',
@@ -1339,81 +1670,156 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
       {/* ========================================================================= */}
       {activeTab === 'ROUTES' && (
         <div className="space-y-4">
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex items-center justify-between gap-3">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="relative flex-1 max-w-md">
               <input
                 type="text"
-                placeholder="Search route by origin or destination..."
+                placeholder="Search route by origin, destination, code, or operator..."
                 value={routeSearch}
                 onChange={(e) => setRouteSearch(e.target.value)}
                 className="w-full text-xs px-3 py-2 pl-9 rounded-lg border border-slate-300 focus:outline-none focus:ring-1 focus:ring-[#00C6A6]"
               />
               <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
             </div>
-            <div className="text-xs text-slate-500 font-medium">
-              Showing {filteredRoutes.length} of {routes.length} routes
+            <div className="flex items-center justify-between sm:justify-end gap-3">
+              <div className="text-xs text-slate-500 font-medium">
+                Showing {filteredRoutes.length} of {routes.length} routes
+              </div>
+              {canModifyInventory && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenCreateRoute()}
+                  className="px-4 py-2 rounded-lg bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add New Route</span>
+                </button>
+              )}
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredRoutes.map(r => (
-              <div key={r.routeId} className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:border-slate-300 transition-colors space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono font-bold text-slate-400">
-                    {r.routeId}
-                  </span>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                      r.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
-                    }`}>
-                      {r.active ? 'Active' : 'Disabled'}
+            {filteredRoutes.map(r => {
+              const linkedRatesCount = rates.filter(
+                rate =>
+                  rate.active &&
+                  ((rate.originStationId === r.originStationId && rate.destinationStationId === r.destinationStationId) ||
+                    (rate.originStationId === r.destinationStationId && rate.destinationStationId === r.originStationId))
+              ).length;
+              const nozomiMins = r.travelDurationMinutes?.nozomiMizuho;
+              const hikariMins = r.travelDurationMinutes?.hikariKodamaSakura;
+              const hasDistance = typeof r.distanceKm === 'number' && Number.isFinite(r.distanceKm) && r.distanceKm > 0;
+
+              return (
+                <div key={r.routeId} className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs hover:border-slate-300 transition-colors space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-mono font-bold text-slate-400 block truncate">
+                        {r.routeId}
+                      </span>
+                      {r.routeCode && (
+                        <span className="text-[10px] font-mono font-bold text-teal-700">
+                          {r.routeCode}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        r.active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {r.active ? 'Active' : 'Inactive'}
+                      </span>
+                      {canModifyInventory && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditRoute(r)}
+                            className="p-1 text-slate-400 hover:text-teal-600 rounded hover:bg-teal-50 cursor-pointer transition-colors"
+                            title="Edit Route"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={togglingRouteId === r.routeId}
+                            onClick={() => handleToggleRouteActive(r)}
+                            className={`p-1 rounded cursor-pointer transition-colors disabled:opacity-40 ${
+                              r.active
+                                ? 'text-slate-400 hover:text-amber-600 hover:bg-amber-50'
+                                : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                            }`}
+                            title={r.active ? 'Deactivate Route' : 'Activate Route'}
+                          >
+                            <Power className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDeleteModal({
+                              type: 'ROUTE',
+                              id: r.routeId,
+                              title: `${r.originStationName} ➔ ${r.destinationStationName}`,
+                              subtitle: hasDistance ? `Distance: ${r.distanceKm} km` : `Operator: ${r.railOperator}`,
+                              itemTypeLabel: 'Route'
+                            })}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer transition-colors"
+                            title="Delete Route"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between py-1">
+                    <div className="text-center min-w-0">
+                      <span className="text-sm font-bold text-slate-900 block truncate">{r.originStationName}</span>
+                      <span className="text-[10px] text-slate-400 block font-mono">Origin</span>
+                    </div>
+                    <div className="flex-1 px-3 flex flex-col items-center">
+                      <span className="text-[10px] font-bold text-slate-500 mb-0.5">
+                        {hasDistance ? `${r.distanceKm} km` : 'Distance TBC'}
+                      </span>
+                      <div className="w-full h-0.5 bg-slate-200 relative flex items-center justify-center">
+                        <Train className="w-3.5 h-3.5 text-[#00C6A6] bg-white px-0.5" />
+                      </div>
+                    </div>
+                    <div className="text-center min-w-0">
+                      <span className="text-sm font-bold text-slate-900 block truncate">{r.destinationStationName}</span>
+                      <span className="text-[10px] text-slate-400 block font-mono">Destination</span>
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 gap-2">
+                    <div>
+                      Express: {typeof nozomiMins === 'number' && nozomiMins > 0 ? `~${nozomiMins}m` : 'Schedule TBC'}
+                    </div>
+                    <div>
+                      Standard: {typeof hikariMins === 'number' && hikariMins > 0 ? `~${hikariMins}m` : 'Schedule TBC'}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-400 truncate max-w-[140px]" title={r.railOperator}>
+                      {r.railOperator}
                     </span>
                     <button
                       type="button"
-                      onClick={() => handleOpenDeleteModal({
-                        type: 'ROUTE',
-                        id: r.routeId,
-                        title: `${r.originStationName} ➔ ${r.destinationStationName}`,
-                        subtitle: `Distance: ${r.distanceKm} km`,
-                        itemTypeLabel: 'Route'
-                      })}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer transition-colors"
-                      title="Delete Route"
+                      onClick={() => {
+                        setRateOriginFilter(r.originStationId);
+                        setRateDestFilter(r.destinationStationId);
+                        handleTabChange('RATES');
+                      }}
+                      className={`font-bold cursor-pointer hover:underline ${
+                        linkedRatesCount > 0 ? 'text-[#008F77]' : 'text-amber-600'
+                      }`}
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      {linkedRatesCount > 0 ? `${linkedRatesCount} active fare${linkedRatesCount === 1 ? '' : 's'} →` : 'No fares yet →'}
                     </button>
                   </div>
                 </div>
-
-                <div className="flex items-center justify-between py-1">
-                  <div className="text-center">
-                    <span className="text-sm font-bold text-slate-900 block">{r.originStationName}</span>
-                    <span className="text-[10px] text-slate-400 block font-mono">Origin</span>
-                  </div>
-                  <div className="flex-1 px-3 flex flex-col items-center">
-                    <span className="text-[10px] font-bold text-slate-500 mb-0.5">
-                      {r.distanceKm} km
-                    </span>
-                    <div className="w-full h-0.5 bg-slate-200 relative flex items-center justify-center">
-                      <Train className="w-3.5 h-3.5 text-[#00C6A6] bg-white px-0.5" />
-                    </div>
-                  </div>
-                  <div className="text-center">
-                    <span className="text-sm font-bold text-slate-900 block">{r.destinationStationName}</span>
-                    <span className="text-[10px] text-slate-400 block font-mono">Destination</span>
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-                  <div>
-                    Nozomi: ~{r.travelDurationMinutes?.nozomiMizuho || 135}m
-                  </div>
-                  <div>
-                    Hikari: ~{r.travelDurationMinutes?.hikariKodamaSakura || 160}m
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1426,12 +1832,27 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
           
           {/* Rate Lookup Selector */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-[#00C6A6]" />
-              <span>smartEX Source Rate Table Explorer</span>
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <DollarSign className="w-4 h-4 text-[#00C6A6]" />
+                <span>smartEX Source Rate Table Explorer</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  const prevOrigin = rateOriginFilter;
+                  setRateOriginFilter(rateDestFilter);
+                  setRateDestFilter(prevOrigin);
+                }}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 hover:border-[#00C6A6] bg-slate-50 hover:bg-teal-50/40 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Swap Origin and Destination Direction"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5 text-[#00A88F]" />
+                <span>Swap Direction</span>
+              </button>
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
               <div>
                 <label className="block text-xs font-bold text-slate-600 mb-1">Select Origin Station</label>
                 <select
@@ -1461,7 +1882,106 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                   ))}
                 </select>
               </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Train Service Group</label>
+                <select
+                  value={rateLookupService}
+                  onChange={(e) => setRateLookupService(e.target.value as RailServiceGroup)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 font-medium focus:ring-1 focus:ring-[#00C6A6] bg-white"
+                >
+                  <option value="NOZOMI_MIZUHO">Nozomi / Mizuho / Express</option>
+                  <option value="HIKARI_KODAMA_SAKURA_TSUBAME">Hikari / Kodama / Sakura</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-600 mb-1">Travel Date (Season Evaluation)</label>
+                <input
+                  type="date"
+                  value={rateLookupDate}
+                  onChange={(e) => setRateLookupDate(e.target.value)}
+                  className="w-full text-xs p-2.5 rounded-xl border border-slate-300 font-medium focus:ring-1 focus:ring-[#00C6A6] bg-white"
+                />
+              </div>
             </div>
+
+            {/* Live Central Pricing Engine Resolution Strip */}
+            {rateExplorerResolution && (
+              <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span className="font-bold uppercase tracking-wider text-slate-500">
+                    Live Central Pricing Engine Resolution (1 Adult • B2B Wholesale)
+                  </span>
+                  {rateExplorerResolution.ordinary.routeId && (
+                    <span className="font-mono text-slate-600">
+                      Route: <strong>{rateExplorerResolution.ordinary.routeId}</strong>
+                      {rateExplorerResolution.ordinary.routeMatchType ? ` (${rateExplorerResolution.ordinary.routeMatchType})` : ''}
+                    </span>
+                  )}
+                </div>
+
+                {rateExplorerResolution.ordinary.diagnosticCode === 'MISSING_ROUTE' ? (
+                  <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-950">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold block">Route Not Configured for Selected Corridor</span>
+                        <span className="text-amber-800">{rateExplorerResolution.ordinary.priceUnavailableReason}</span>
+                      </div>
+                    </div>
+                    {canModifyInventory && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenCreateRoute({
+                          originStationId: rateOriginFilter,
+                          destinationStationId: rateDestFilter
+                        })}
+                        className="px-3.5 py-2 rounded-lg bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-black text-xs shrink-0 cursor-pointer"
+                      >
+                        Create Route Now
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {([
+                      { label: 'Ordinary Car (Reserved)', res: rateExplorerResolution.ordinary },
+                      { label: 'Green Car (First Class)', res: rateExplorerResolution.green }
+                    ] as const).map(({ label, res }) => (
+                      <div key={label} className={`p-3 rounded-xl border text-xs ${
+                        res.isPriceAvailable ? 'bg-slate-50 border-slate-200' : 'bg-rose-50/60 border-rose-200'
+                      }`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-slate-800">{label}</span>
+                          {res.isPriceAvailable ? (
+                            <span className="font-mono font-black text-sm text-[#008F77]">
+                              ¥{res.finalSellingPriceJPY.toLocaleString()} JPY
+                            </span>
+                          ) : (
+                            <span className="text-[11px] font-bold text-rose-700">
+                              {res.diagnosticCode || 'UNAVAILABLE'}
+                            </span>
+                          )}
+                        </div>
+                        {res.isPriceAvailable ? (
+                          <div className="mt-1.5 text-[11px] text-slate-500 flex flex-wrap gap-x-3 gap-y-0.5 font-mono">
+                            <span>Nett: ¥{res.fareBreakdown.nettPriceTotalJPY.toLocaleString()}</span>
+                            <span>Season ({res.seasonType}): {res.adultSeasonAdjustmentJPY >= 0 ? `+¥${res.adultSeasonAdjustmentJPY}` : `-¥${Math.abs(res.adultSeasonAdjustmentJPY)}`}</span>
+                            <span>Markup: {res.appliedMarkupPercent}%</span>
+                            {res.adultRateId && <span>Rate: {res.adultRateId}</span>}
+                          </div>
+                        ) : (
+                          <p className="mt-1 text-[11px] text-rose-800">
+                            {res.priceUnavailableReason || 'Price unavailable — Admin configuration required.'}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Unverified Nett Price Admin Review Banner */}
@@ -1484,10 +2004,10 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
             <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <span className="text-xs font-bold text-slate-900">
-                  Normalized Fares for {stations.find(s => s.stationId === rateOriginFilter)?.stationName} ↔ {stations.find(s => s.stationId === rateDestFilter)?.stationName}
+                  Normalized Fares for {stations.find(s => s.stationId === rateOriginFilter)?.stationName} ➔ {stations.find(s => s.stationId === rateDestFilter)?.stationName}
                 </span>
                 <span className="text-[11px] text-slate-400 block">
-                  Authoritative supplier Nett Price (JPY) per rail fare record
+                  Authoritative supplier Nett Price (JPY) per rail fare record (Exact direction fares prioritized over symmetric reverse fares)
                 </span>
               </div>
               <div className="flex items-center gap-3">
@@ -1511,6 +2031,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                 <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 uppercase text-[10px]">
                   <tr>
                     <th className="px-4 py-3">Rate ID</th>
+                    <th className="px-3 py-3">Direction</th>
                     <th className="px-3 py-3">Car Class</th>
                     <th className="px-3 py-3">Service Group</th>
                     <th className="px-3 py-3">Pax Type</th>
@@ -1523,10 +2044,20 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                     const isGreen = r.carType === 'Green';
                     const resolvedNett = resolveRailRateNettPrice(r);
                     const isFlagged = r.needsAdminReview || resolvedNett === null;
+                    const isExactDir = r.originStationId === rateOriginFilter && r.destinationStationId === rateDestFilter;
+                    const rOriginName = stations.find(s => s.stationId === r.originStationId)?.stationCode || r.originStationId;
+                    const rDestName = stations.find(s => s.stationId === r.destinationStationId)?.stationCode || r.destinationStationId;
                     return (
                       <tr key={r.rateId} className="hover:bg-slate-50 transition-colors">
                         <td className="px-4 py-3 font-semibold text-slate-700 text-[11px]">
                           {r.rateId}
+                        </td>
+                        <td className="px-3 py-3 font-sans">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            isExactDir ? 'bg-teal-100 text-teal-800' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {isExactDir ? `Exact (${rOriginName}→${rDestName})` : `Symmetric (${rOriginName}→${rDestName})`}
+                          </span>
                         </td>
                         <td className="px-3 py-3 font-sans font-bold">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] ${
@@ -2309,7 +2840,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                       setRateFormData({
                         ...rateFormData,
                         originStationId: origin,
-                        routeId: matchedRoute?.routeId || `JP-RT-${origin}-${rateFormData.destinationStationId || ''}`
+                        routeId: matchedRoute?.routeId || (rateFormData.destinationStationId ? db.buildCanonicalRailRouteId(origin, rateFormData.destinationStationId) : '')
                       });
                     }}
                     className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
@@ -2331,7 +2862,7 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                       setRateFormData({
                         ...rateFormData,
                         destinationStationId: dest,
-                        routeId: matchedRoute?.routeId || `JP-RT-${rateFormData.originStationId || ''}-${dest}`
+                        routeId: matchedRoute?.routeId || (rateFormData.originStationId ? db.buildCanonicalRailRouteId(rateFormData.originStationId, dest) : '')
                       });
                     }}
                     className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
@@ -2493,6 +3024,292 @@ export const RailManager: React.FC<RailManagerProps> = ({ initialTab, onSubTabCh
                   className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-bold shadow-xs cursor-pointer"
                 >
                   Save Fare / Rate
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* ROUTE CREATE / EDIT MODAL */}
+      {/* ========================================================================= */}
+      {isRouteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
+                  <RouteIcon className="w-5 h-5 text-[#00C6A6]" />
+                  <span>{routeModalMode === 'CREATE' ? 'Add New Rail Route' : 'Edit Rail Route'}</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Configure directional railway corridors across any active Japan stations (same-region or cross-region).
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isSavingRoute}
+                onClick={() => setIsRouteModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {routeFormError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 space-y-2">
+                <div className="flex items-start gap-2 font-medium">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{routeFormError}</span>
+                </div>
+                {duplicateRouteConflict && (
+                  <div className="pl-6">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditRoute(duplicateRouteConflict)}
+                      className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-bold text-[11px] cursor-pointer"
+                    >
+                      Edit Existing Route ({duplicateRouteConflict.routeId})
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveRouteForm} className="space-y-4 text-xs">
+              {/* Origin & Destination searchable pickers + Swap */}
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-2.5 items-end">
+                <div className="space-y-1.5">
+                  <label className="block font-bold text-slate-700">Origin Station *</label>
+                  <input
+                    type="text"
+                    placeholder="Filter origin station..."
+                    value={routeOriginSearch}
+                    onChange={(e) => setRouteOriginSearch(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[11px] focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                  <select
+                    required
+                    value={routeFormData.originStationId || ''}
+                    onChange={(e) => updateRouteStationSelection('originStationId', e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    <option value="">Select origin station...</option>
+                    {filterStationsForPicker(routeOriginSearch, routeFormData.originStationId).map(s => (
+                      <option key={s.stationId} value={s.stationId}>
+                        {s.stationName} ({s.stationCode}) — {s.city}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSwapRouteFormStations}
+                  className="p-2.5 rounded-xl border border-slate-200 hover:border-[#00C6A6] bg-slate-50 hover:bg-teal-50/40 text-slate-600 cursor-pointer self-end"
+                  title="Swap Origin & Destination"
+                >
+                  <ArrowRightLeft className="w-4 h-4" />
+                </button>
+
+                <div className="space-y-1.5">
+                  <label className="block font-bold text-slate-700">Destination Station *</label>
+                  <input
+                    type="text"
+                    placeholder="Filter destination station..."
+                    value={routeDestSearch}
+                    onChange={(e) => setRouteDestSearch(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 text-[11px] focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                  <select
+                    required
+                    value={routeFormData.destinationStationId || ''}
+                    onChange={(e) => updateRouteStationSelection('destinationStationId', e.target.value)}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 bg-white font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  >
+                    <option value="">Select destination station...</option>
+                    {filterStationsForPicker(routeDestSearch, routeFormData.destinationStationId).map(s => (
+                      <option key={s.stationId} value={s.stationId}>
+                        {s.stationName} ({s.stationCode}) — {s.city}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Route ID *</label>
+                  <input
+                    type="text"
+                    required
+                    readOnly={routeModalMode === 'EDIT'}
+                    value={routeFormData.routeId || ''}
+                    onChange={(e) => setRouteFormData({ ...routeFormData, routeId: e.target.value.toUpperCase() })}
+                    placeholder="e.g. JP-RT-TOKYO-NAGANO"
+                    className={`w-full p-2.5 rounded-xl border border-slate-300 font-mono text-[11px] font-bold ${
+                      routeModalMode === 'EDIT' ? 'bg-slate-100 text-slate-500' : 'bg-white focus:ring-1 focus:ring-[#00C6A6]'
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Route Code</label>
+                  <input
+                    type="text"
+                    value={routeFormData.routeCode || ''}
+                    onChange={(e) => setRouteFormData({ ...routeFormData, routeCode: e.target.value.toUpperCase() })}
+                    placeholder="e.g. TYO-NGN"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 font-mono font-bold uppercase focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Rail Operator *</label>
+                  <input
+                    type="text"
+                    required
+                    value={routeFormData.railOperator || ''}
+                    onChange={(e) => setRouteFormData({ ...routeFormData, railOperator: e.target.value })}
+                    placeholder="e.g. JR East / Hokuriku Shinkansen"
+                    className="w-full p-2.5 rounded-xl border border-slate-300 font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                </div>
+              </div>
+
+              {/* Supported Train Service Groups */}
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-2">
+                <span className="block font-bold text-slate-700">Applicable Train Service Groups *</span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {([
+                    { id: 'NOZOMI_MIZUHO' as RailServiceGroup, label: 'Nozomi / Mizuho / Express' },
+                    { id: 'HIKARI_KODAMA_SAKURA_TSUBAME' as RailServiceGroup, label: 'Hikari / Kodama / Sakura / Tsubame' }
+                  ]).map(sg => {
+                    const checked = (routeFormData.availableServiceGroups || []).includes(sg.id);
+                    return (
+                      <label
+                        key={sg.id}
+                        className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${
+                          checked ? 'bg-teal-50/70 border-[#00C6A6] text-slate-900' : 'bg-white border-slate-200 text-slate-600'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => handleToggleRouteServiceGroup(sg.id)}
+                          className="rounded text-[#00C6A6] focus:ring-[#00C6A6]"
+                        />
+                        <span className="font-bold text-[11px]">{sg.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Optional Verified Distance & Travel Durations (never fabricated) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Distance (km, optional)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="0.1"
+                    placeholder="Leave blank if TBC"
+                    value={routeFormData.distanceKm ?? ''}
+                    onChange={(e) => setRouteFormData({
+                      ...routeFormData,
+                      distanceKm: e.target.value === '' ? undefined : Number(e.target.value)
+                    })}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 font-mono focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Express Duration (min)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Optional"
+                    value={routeFormData.travelDurationMinutes?.nozomiMizuho ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? undefined : Number(e.target.value);
+                      setRouteFormData({
+                        ...routeFormData,
+                        travelDurationMinutes: {
+                          ...routeFormData.travelDurationMinutes,
+                          nozomiMizuho: val
+                        }
+                      });
+                    }}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 font-mono focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Standard Duration (min)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Optional"
+                    value={routeFormData.travelDurationMinutes?.hikariKodamaSakura ?? ''}
+                    onChange={(e) => {
+                      const val = e.target.value === '' ? undefined : Number(e.target.value);
+                      setRouteFormData({
+                        ...routeFormData,
+                        travelDurationMinutes: {
+                          ...routeFormData.travelDurationMinutes,
+                          hikariKodamaSakura: val
+                        }
+                      });
+                    }}
+                    className="w-full p-2.5 rounded-xl border border-slate-300 font-mono focus:ring-1 focus:ring-[#00C6A6]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Operational Notes (optional)</label>
+                <textarea
+                  rows={2}
+                  placeholder="e.g. Hokuriku Shinkansen direct corridor (Kagayaki / Hakutaka / Asama)..."
+                  value={routeFormData.notes || ''}
+                  onChange={(e) => setRouteFormData({ ...routeFormData, notes: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 font-medium focus:ring-1 focus:ring-[#00C6A6]"
+                />
+              </div>
+
+              <div className="flex items-center space-x-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="routeActiveCheckbox"
+                  checked={routeFormData.active !== false}
+                  onChange={(e) => setRouteFormData({ ...routeFormData, active: e.target.checked })}
+                  className="rounded text-[#00C6A6] focus:ring-[#00C6A6] h-4 w-4"
+                />
+                <label htmlFor="routeActiveCheckbox" className="font-bold text-slate-800">
+                  Active in Route Network & Dynamic Pricing Engine
+                </label>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end space-x-2">
+                <button
+                  type="button"
+                  disabled={isSavingRoute}
+                  onClick={() => setIsRouteModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 font-bold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingRoute}
+                  className="px-5 py-2 rounded-xl bg-[#00C6A6] hover:bg-[#00b296] text-slate-950 font-black shadow-xs cursor-pointer disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isSavingRoute ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Saving & Verifying...</span>
+                    </>
+                  ) : (
+                    <span>{routeModalMode === 'CREATE' ? 'Create Route' : 'Save Route Changes'}</span>
+                  )}
                 </button>
               </div>
             </form>

@@ -33,6 +33,7 @@ export interface GmailSendJob {
 
 export interface EmailLogRecord {
   emailId: string;
+  idempotencyKey?: string;
   messageId?: string;
   recipient: string;
   sender: string;
@@ -44,7 +45,10 @@ export interface EmailLogRecord {
   sentByName?: string;
   createdAt: string;
   sentAt?: string;
-  status: 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'RETRYING' | 'PERMANENTLY_FAILED' | 'AUTHENTICATION_REQUIRED' | 'ALREADY_SENT';
+  status: 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'RETRYING' | 'PERMANENTLY_FAILED' | 'AUTHENTICATION_REQUIRED' | 'CONFIGURATION_ERROR' | 'ALREADY_SENT';
+  provider?: string;
+  acceptedByProvider?: boolean;
+  deliveryConfirmed?: boolean;
   providerResponse?: any;
   failureCode?: string;
   failureReason?: string;
@@ -91,8 +95,8 @@ class ServerIntegrationStore {
     lastErrorAt: null as string | null,
   };
 
-  // Sent emails index for Idempotency
-  public sentIdempotencyMap = new Map<string, { messageId: string; sentAt: string; recipient: string }>();
+  // Sent emails index for Idempotency & timeout status verification
+  public sentIdempotencyMap = new Map<string, { messageId: string; sentAt: string; recipient: string; provider: string; simulated: boolean }>();
 
   // In-memory email logs (most recent 200)
   public emailLogs: EmailLogRecord[] = [];
@@ -428,9 +432,13 @@ export function createIntegrationsRouter(): Router {
       return res.json({
         success: true,
         alreadySent: true,
+        acceptedByProvider: true,
+        deliveryConfirmed: false,
+        provider: existing.provider,
+        simulated: existing.simulated,
         messageId: existing.messageId,
         sentAt: existing.sentAt,
-        details: `Idempotent request: this email event was already delivered at ${existing.sentAt}.`
+        details: `Idempotent request: this email event was already accepted by ${existing.provider} at ${existing.sentAt}.`
       });
     }
 
@@ -439,8 +447,8 @@ export function createIntegrationsRouter(): Router {
     // 2. Retrieve valid Access Token
     let tokenResult = await getServerAccessToken(clientToken);
 
-    // 2b. If in simulation mode or OAuth env vars are not configured in preview, dispatch via Workspace Transactional Relay
-    if (tokenResult.status === 'SIMULATED' || tokenResult.status === 'CONFIG_ERROR') {
+    // 2b. If explicitly using verified Workspace Sandbox / Transactional Relay token, dispatch via Transactional Relay
+    if (tokenResult.status === 'SIMULATED') {
       const sentAt = new Date().toISOString();
       const messageId = `tx-msg-${Date.now()}`;
       store.gmailStats.emailSuccesses++;
@@ -450,7 +458,9 @@ export function createIntegrationsRouter(): Router {
         store.sentIdempotencyMap.set(idempotencyKey, {
           messageId,
           sentAt,
-          recipient: to
+          recipient: to,
+          provider: 'TRANSACTIONAL_RELAY',
+          simulated: true
         });
       }
 
@@ -460,6 +470,7 @@ export function createIntegrationsRouter(): Router {
 
       const logRecord: EmailLogRecord = {
         emailId,
+        idempotencyKey,
         messageId,
         recipient: ccList.length > 0 ? `${to} (CC: ${ccList.join(', ')})` : to,
         sender: resolvedSender,
@@ -470,7 +481,11 @@ export function createIntegrationsRouter(): Router {
         sentBy: meta?.sentBy,
         sentByName: meta?.sentByName || customSenderName,
         createdAt: sentAt,
+        sentAt,
         status: 'SENT',
+        provider: 'TRANSACTIONAL_RELAY',
+        acceptedByProvider: true,
+        deliveryConfirmed: false,
         durationMs: Date.now() - startTime,
         retryCount: 0
       };
@@ -482,11 +497,13 @@ export function createIntegrationsRouter(): Router {
         messageId,
         sentAt,
         simulated: true,
+        acceptedByProvider: true,
+        deliveryConfirmed: false,
         provider: 'TRANSACTIONAL_RELAY',
         recipient: to,
         cc: ccList,
         sender: resolvedSender,
-        details: 'Email accepted via Transactional Relay (Google Workspace OAuth not actively linked).'
+        details: 'Email accepted via Transactional Relay (Google Workspace OAuth not actively linked; recipient inbox delivery is not independently confirmed).'
       });
     }
 
@@ -495,8 +512,10 @@ export function createIntegrationsRouter(): Router {
       store.gmailStats.lastFailedEmail = new Date().toISOString();
       store.gmailStats.lastError = tokenResult.error || 'No valid OAuth access token';
 
+      const isConfigErr = tokenResult.status === 'CONFIG_ERROR';
       const logRecord: EmailLogRecord = {
         emailId,
+        idempotencyKey,
         recipient: to,
         sender: customSenderEmail || process.env.GOOGLE_WORKSPACE_EMAIL || 'business@theunbound.in',
         subject,
@@ -506,7 +525,7 @@ export function createIntegrationsRouter(): Router {
         sentBy: meta?.sentBy,
         sentByName: meta?.sentByName || customSenderName,
         createdAt: new Date().toISOString(),
-        status: 'AUTHENTICATION_REQUIRED',
+        status: isConfigErr ? 'CONFIGURATION_ERROR' : 'AUTHENTICATION_REQUIRED',
         failureCode: tokenResult.status,
         failureReason: tokenResult.error,
         retryCount: 0,
@@ -514,10 +533,12 @@ export function createIntegrationsRouter(): Router {
       };
       store.emailLogs.unshift(logRecord);
 
-      return res.status(401).json({
+      return res.status(isConfigErr ? 400 : 401).json({
         success: false,
-        status: 'AUTHENTICATION_REQUIRED',
-        error: tokenResult.error || 'Gmail authentication required. Please connect Google Workspace.'
+        status: isConfigErr ? 'CONFIGURATION_ERROR' : 'AUTHENTICATION_REQUIRED',
+        acceptedByProvider: false,
+        deliveryConfirmed: false,
+        error: tokenResult.error || 'Gmail authentication required. Please configure server Google OAuth credentials or connect Google Workspace.'
       });
     }
 
@@ -605,12 +626,15 @@ export function createIntegrationsRouter(): Router {
             store.sentIdempotencyMap.set(idempotencyKey, {
               messageId: sendData.id,
               sentAt,
-              recipient: to
+              recipient: to,
+              provider: 'GMAIL_API',
+              simulated: false
             });
           }
 
           const logRecord: EmailLogRecord = {
             emailId,
+            idempotencyKey,
             messageId: sendData.id,
             recipient: to,
             sender: process.env.GOOGLE_WORKSPACE_EMAIL || 'business@theunbound.in',
@@ -623,6 +647,9 @@ export function createIntegrationsRouter(): Router {
             createdAt: new Date().toISOString(),
             sentAt,
             status: 'SENT',
+            provider: 'GMAIL_API',
+            acceptedByProvider: true,
+            deliveryConfirmed: false,
             providerResponse: sendData,
             retryCount: attempts - 1,
             durationMs: Date.now() - startTime
@@ -631,6 +658,10 @@ export function createIntegrationsRouter(): Router {
 
           return res.json({
             success: true,
+            acceptedByProvider: true,
+            deliveryConfirmed: false,
+            provider: 'GMAIL_API',
+            simulated: false,
             messageId: sendData.id,
             threadId: sendData.threadId,
             sentAt,
@@ -681,6 +712,7 @@ export function createIntegrationsRouter(): Router {
 
     const failedRecord: EmailLogRecord = {
       emailId,
+      idempotencyKey,
       recipient: to,
       sender: process.env.GOOGLE_WORKSPACE_EMAIL || 'business@theunbound.in',
       subject,
@@ -691,6 +723,8 @@ export function createIntegrationsRouter(): Router {
       sentByName: meta?.sentByName,
       createdAt: new Date().toISOString(),
       status: 'PERMANENTLY_FAILED',
+      acceptedByProvider: false,
+      deliveryConfirmed: false,
       failureReason: lastErrorMsg,
       retryCount: attempts - 1,
       durationMs: Date.now() - startTime
@@ -700,8 +734,61 @@ export function createIntegrationsRouter(): Router {
     return res.status(502).json({
       success: false,
       status: 'FAILED',
+      acceptedByProvider: false,
+      deliveryConfirmed: false,
       error: lastErrorMsg || 'Failed to dispatch email after multiple attempts.',
       retryCount: attempts - 1
+    });
+  });
+
+  // =========================================================================
+  // 5B. CHECK EMAIL OPERATION STATUS BY IDEMPOTENCY KEY (TIMEOUT/RETRY GUARD)
+  // =========================================================================
+  router.get('/gmail/status', (req: Request, res: Response) => {
+    const idempotencyKey = String(req.query.idempotencyKey || '').trim();
+    if (!idempotencyKey) {
+      return res.status(400).json({ success: false, error: 'idempotencyKey query parameter is required.' });
+    }
+
+    const accepted = store.sentIdempotencyMap.get(idempotencyKey);
+    if (accepted) {
+      return res.json({
+        success: true,
+        found: true,
+        status: 'ACCEPTED_BY_PROVIDER',
+        acceptedByProvider: true,
+        deliveryConfirmed: false,
+        messageId: accepted.messageId,
+        sentAt: accepted.sentAt,
+        recipient: accepted.recipient,
+        provider: accepted.provider,
+        simulated: accepted.simulated
+      });
+    }
+
+    const matchedLog = store.emailLogs.find((l) => l.idempotencyKey === idempotencyKey);
+    if (matchedLog) {
+      const isAccepted = matchedLog.status === 'SENT' || matchedLog.status === 'ALREADY_SENT';
+      return res.json({
+        success: true,
+        found: true,
+        status: isAccepted ? 'ACCEPTED_BY_PROVIDER' : matchedLog.status,
+        acceptedByProvider: isAccepted,
+        deliveryConfirmed: false,
+        messageId: matchedLog.messageId,
+        sentAt: matchedLog.sentAt,
+        recipient: matchedLog.recipient,
+        provider: matchedLog.provider,
+        error: matchedLog.failureReason
+      });
+    }
+
+    return res.json({
+      success: true,
+      found: false,
+      status: 'NOT_FOUND',
+      acceptedByProvider: false,
+      deliveryConfirmed: false
     });
   });
 

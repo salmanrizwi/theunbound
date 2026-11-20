@@ -1249,7 +1249,7 @@
         "operationType": {
           "type": "string",
           "required": true,
-          "enum": ["SAVE_DRAFT", "SNAPSHOT_CREATE", "PDF_GENERATE", "EMAIL_SEND", "WHATSAPP_SHARE"]
+          "enum": ["SAVE_DRAFT", "SNAPSHOT_CREATE", "PDF_GENERATE", "EMAIL_SEND", "WHATSAPP_SHARE", "SAVE_MASTER_PACKAGE", "CONVERT_BOOKING"]
         },
         "status": {
           "type": "string",
@@ -1264,6 +1264,26 @@
         "safeUserMessage": { "type": "string", "required": false },
         "retryCount": { "type": "number", "required": true },
         "resultRef": { "type": "string", "required": false }
+      }
+    },
+    "GlobalDisplayCurrencyConfig": {
+      "collection": "systemSettings",
+      "fields": {
+        "displayCurrency": {
+          "type": "string",
+          "required": true,
+          "enum": ["USD", "EUR", "GBP", "JPY", "AED", "THB", "AUD", "CAD", "SGD", "INR", "CHF"]
+        },
+        "updatedAt": { "type": "string", "required": true },
+        "updatedBy": { "type": "string", "required": true },
+        "updatedByName": { "type": "string", "required": false },
+        "updatedByEmail": { "type": "string", "required": false },
+        "updatedByRole": {
+          "type": "string",
+          "required": false,
+          "enum": ["ADMIN", "SUPER_ADMIN"]
+        },
+        "fxSource": { "type": "string", "required": false }
       }
     }
   }

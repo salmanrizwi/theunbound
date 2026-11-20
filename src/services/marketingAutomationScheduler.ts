@@ -142,6 +142,9 @@ export class MarketingAutomationScheduler {
   private schedulerInterval: any = null;
   private cachedSeedCampaigns: EmailCampaignConfig[] = [];
   private seedLoadPromise: Promise<EmailCampaignConfig[]> | null = null;
+  private cachedScheduledJobs: ScheduledAutomationJob[] | null = null;
+  private lastRawJobsJson: string | null = null;
+  private lastDbJobsRef: any[] | null = null;
 
   private getSeedCampaignsSync(): EmailCampaignConfig[] {
     if (this.cachedSeedCampaigns.length > 0) return this.cachedSeedCampaigns;
@@ -311,7 +314,13 @@ export class MarketingAutomationScheduler {
    * Evaluates and processes all SCHEDULED jobs whose scheduledFor timestamp is <= now.
    */
   public async processDueScheduledJobs(): Promise<number> {
+    if (typeof document !== 'undefined' && document.hidden) {
+      return 0;
+    }
     const jobs = this.getScheduledJobs();
+    if (jobs.length === 0 || !jobs.some(j => j && j.status === 'SCHEDULED')) {
+      return 0;
+    }
     const now = Date.now();
     const dueJobs = jobs.filter(
       j =>
@@ -320,6 +329,9 @@ export class MarketingAutomationScheduler {
         !this.inFlightJobIds.has(j.id) &&
         new Date(j.scheduledFor).getTime() <= now
     );
+    if (dueJobs.length === 0) {
+      return 0;
+    }
 
     let processedCount = 0;
     for (const job of dueJobs) {
@@ -841,6 +853,15 @@ export class MarketingAutomationScheduler {
       const db = AppDatabase.getInstance();
       const dbJobs = db.getAutomationJobs<any>();
       const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEYS.JOBS) : null;
+
+      if (
+        this.cachedScheduledJobs !== null &&
+        raw === this.lastRawJobsJson &&
+        dbJobs === this.lastDbJobsRef
+      ) {
+        return this.cachedScheduledJobs;
+      }
+
       const localJobs: ScheduledAutomationJob[] = raw ? JSON.parse(raw) : [];
 
       const map = new Map<string, ScheduledAutomationJob>();
@@ -856,9 +877,13 @@ export class MarketingAutomationScheduler {
         }
       }
 
-      return Array.from(map.values()).sort(
+      const sorted = Array.from(map.values()).sort(
         (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
       );
+      this.cachedScheduledJobs = sorted;
+      this.lastRawJobsJson = raw;
+      this.lastDbJobsRef = dbJobs;
+      return sorted;
     } catch {
       return [];
     }
@@ -867,12 +892,21 @@ export class MarketingAutomationScheduler {
   private saveScheduledJobs(jobs: ScheduledAutomationJob[]): void {
     try {
       const cleanJobs = jobs.filter(j => j && j.id && !LEGACY_FABRICATED_JOB_IDS.has(j.id));
+      const serialized = JSON.stringify(cleanJobs);
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(cleanJobs));
+        localStorage.setItem(STORAGE_KEYS.JOBS, serialized);
       }
       const db = AppDatabase.getInstance();
       db.saveAllAutomationJobs(cleanJobs.map(j => ({ ...j, jobId: j.id })));
+      this.lastRawJobsJson = serialized;
+      this.lastDbJobsRef = db.getAutomationJobs<any>();
+      this.cachedScheduledJobs = [...cleanJobs].sort(
+        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
     } catch (e) {
+      this.cachedScheduledJobs = null;
+      this.lastRawJobsJson = null;
+      this.lastDbJobsRef = null;
       console.error('Failed to save scheduled automation jobs:', e);
     }
   }

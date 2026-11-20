@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { CurrencyCode, User } from '../../../types';
 import { DateRangeOption } from '../../../services/dashboardMetricsService';
+import { canUserEditDisplayCurrency } from '../../../services/displayCurrencyService';
 
 interface OverviewHeaderProps {
   currentUser: User | null;
@@ -205,14 +206,20 @@ export const OverviewHeader: React.FC<OverviewHeaderProps> = ({
           </div>
 
           {/* Currency Switcher */}
-          <div className="flex items-center space-x-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200/80">
+          <div
+            className="flex items-center space-x-1.5 bg-slate-50 px-2.5 py-1 rounded-xl border border-slate-200/80"
+            title={canUserEditDisplayCurrency(currentUser) ? 'Switch Global Display Currency' : 'Global Display Currency is controlled by Admin'}
+          >
             <DollarSign className="w-3.5 h-3.5 text-slate-400" />
             <span className="text-xs font-bold text-slate-500">Display Currency:</span>
             <select
               id="cms-currency-select"
               value={selectedCurrency}
+              disabled={!canUserEditDisplayCurrency(currentUser)}
               onChange={(e) => onSelectCurrency(e.target.value as CurrencyCode)}
-              className="bg-transparent text-xs font-extrabold text-slate-800 border-none outline-hidden cursor-pointer"
+              className={`bg-transparent text-xs font-extrabold text-slate-800 border-none outline-hidden ${
+                canUserEditDisplayCurrency(currentUser) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'
+              }`}
             >
               {SUPPORTED_CURRENCIES.map(c => (
                 <option key={c} value={c}>
@@ -220,6 +227,9 @@ export const OverviewHeader: React.FC<OverviewHeaderProps> = ({
                 </option>
               ))}
             </select>
+            {!canUserEditDisplayCurrency(currentUser) && (
+              <span className="text-[10px] font-semibold text-slate-400">(Admin only)</span>
+            )}
           </div>
 
           {/* Last Updated */}

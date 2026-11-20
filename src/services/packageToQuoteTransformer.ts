@@ -2163,3 +2163,116 @@ export function saveAndVerifyMasterPackageFromQuote(
   }
 }
 
+/**
+ * Async Transactional Save, Referential Integrity Verification, Firestore Persistence,
+ * and Ready-Made Packages Catalog Availability Verification.
+ */
+export async function saveAndVerifyMasterPackageFromQuoteAsync(
+  input: QuoteWorkspaceToPackageInput
+): Promise<{
+  success: boolean;
+  pkg?: B2BPackage;
+  isUpdate?: boolean;
+  error?: string;
+  verificationReport?: MasterPackageVerificationReport;
+}> {
+  try {
+    const built = buildMasterPackageFromQuoteWorkspace(input);
+    if (built.validationErrors.length > 0) {
+      return {
+        success: false,
+        error: built.validationErrors.join(' ')
+      };
+    }
+
+    const { pkg, isUpdate, autoRegisteredProducts, livePricing } = built;
+
+    // Verify all referenced products exist in db.getProducts() prior to saving
+    const currentProducts = db.getProducts();
+    const verifiedProductIds: string[] = [];
+    const missingProductIds: string[] = [];
+
+    (pkg.productIds || []).forEach(pid => {
+      const exists = currentProducts.some(
+        p => p.id === pid || p.product_id === pid || p.sku === pid
+      );
+      if (exists) {
+        verifiedProductIds.push(pid);
+      } else {
+        missingProductIds.push(pid);
+      }
+    });
+
+    if (missingProductIds.length > 0) {
+      return {
+        success: false,
+        error: `Referential integrity check failed: Missing product IDs in catalog (${missingProductIds.join(', ')}).`
+      };
+    }
+
+    // Save Master Package to authoritative `b2b_packages` store & await Firestore persistence
+    const savedPkg = await db.savePackageAsync(pkg, input.user || null);
+
+    // Read back from database to verify persistence and normalization
+    const retrieved = db.getPackageById(savedPkg.id) || db.getPackageById(pkg.id);
+    if (!retrieved) {
+      return {
+        success: false,
+        error: `Package "${pkg.title}" (${pkg.id}) could not be retrieved from Ready-Made Packages store after saving.`
+      };
+    }
+
+    const normalizedRetrieved = normalizePackageRecord(retrieved);
+    const inAllPackages = db.getPackages().some(p => p.id === normalizedRetrieved.id);
+    const inPublishedPackages = pkg.isPublished
+      ? db.getPublishedB2BPackages().some(p => p.id === normalizedRetrieved.id)
+      : true;
+    const visibleToAgent = pkg.isPublished
+      ? isPackageVisibleToB2BAgent(normalizedRetrieved)
+      : false;
+
+    if (!inAllPackages || (pkg.isPublished && (!inPublishedPackages || !visibleToAgent))) {
+      return {
+        success: false,
+        error: `Package "${pkg.title}" (${pkg.id}) saved but failed Ready-Made Packages visibility verification.`
+      };
+    }
+
+    const report: MasterPackageVerificationReport = {
+      packageId: normalizedRetrieved.id,
+      packageSlug: normalizedRetrieved.slug,
+      isUpdate,
+      durationDays: normalizedRetrieved.durationDays,
+      durationNights: normalizedRetrieved.durationNights,
+      itineraryDaysCount: (normalizedRetrieved.itinerary || []).length,
+      referencedProductIds: pkg.productIds || [],
+      verifiedProductIds,
+      missingProductIds,
+      autoRegisteredProductsCount: autoRegisteredProducts.length,
+      hotelsCount: (normalizedRetrieved.hotelsSummary || []).length,
+      hubsCount: (normalizedRetrieved.hubIds || []).length,
+      netPriceTarget: livePricing.netPriceTarget,
+      sellingPriceTarget: livePricing.sellingPriceTarget,
+      calculatedSellingPriceTarget: livePricing.sellingPriceTarget,
+      netPriceUSD: livePricing.netPriceUSD,
+      sellingPriceUSD: livePricing.sellingPriceUSD,
+      calculatedSellingPriceUSD: livePricing.sellingPriceUSD,
+      currency: livePricing.currency,
+      retrievableById: Boolean(retrieved),
+      visibleInReadyMadeCatalog: inAllPackages,
+      visibleToB2BAgent: visibleToAgent
+    };
+
+    return {
+      success: true,
+      pkg: normalizedRetrieved,
+      isUpdate,
+      verificationReport: report
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err?.message || 'Unexpected error while saving and verifying Master Package.'
+    };
+  }
+}

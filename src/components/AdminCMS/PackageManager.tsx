@@ -14,6 +14,7 @@ import {
   User
 } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { formatCurrency, calculateProductPrice, calculatePackagePrice } from '../../services/pricingEngine';
 import { 
   Package, 
@@ -81,6 +82,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
 }) => {
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const [packages, setPackages] = useState<B2BPackage[]>(() => db.getPackages());
   const [products, setProducts] = useState<Product[]>(() => propProducts.length > 0 ? propProducts : db.getProducts());
   const [hotels, setHotels] = useState<Hotel[]>(() => db.getHotels());
@@ -757,24 +759,36 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                       const dispCurrency = livePrices?.currency || pkg.currency || 'USD';
                       const dispNett = livePrices?.netPrice ?? pkg.baseNetCostUSD ?? 0;
                       const dispSelling = livePrices?.sellingPrice ?? pkg.finalSellingPriceUSD ?? pkg.suggestedSellingPriceUSD ?? 0;
+                      const nettConv = convertForDisplay(dispNett, dispCurrency);
+                      const sellingConv = convertForDisplay(dispSelling, dispCurrency);
                       return (
-                        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex items-center justify-between">
+                        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex items-center justify-between gap-2">
                           <div>
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                               Nett Price
                             </span>
-                            <span className="text-xs font-black text-slate-700">
-                              {formatCurrency(dispNett, dispCurrency)}
+                            <span className="text-xs font-black text-slate-700 block">
+                              {nettConv.formatted}
                             </span>
+                            {nettConv.isConverted && (
+                              <span className="text-[9px] text-slate-400 font-mono block">
+                                Native: {nettConv.nativeFormatted}
+                              </span>
+                            )}
                           </div>
 
                           <div className="text-right">
                             <span className="text-[10px] font-bold text-[#008972] uppercase tracking-wider block">
                               Calculated Selling Price
                             </span>
-                            <span className="text-sm font-black text-slate-900">
-                              {formatCurrency(dispSelling, dispCurrency)}
+                            <span className={`text-sm font-black block ${sellingConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-900'}`}>
+                              {sellingConv.formatted}
                             </span>
+                            {sellingConv.isConverted && (
+                              <span className="text-[9px] text-slate-400 font-mono block">
+                                Native: {sellingConv.nativeFormatted}
+                              </span>
+                            )}
                           </div>
                         </div>
                       );
@@ -897,18 +911,33 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                           {pkg.tripType || 'LUXURY'}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right font-mono text-slate-700">
-                        {formatCurrency(
+                      {(() => {
+                        const rowCurr = packagePricingMap.get(pkg.id)?.currency || pkg.currency || 'USD';
+                        const rowNetConv = convertForDisplay(
                           packagePricingMap.get(pkg.id)?.netPrice ?? pkg.baseNetCostUSD ?? 0,
-                          packagePricingMap.get(pkg.id)?.currency || pkg.currency || 'USD'
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                        {formatCurrency(
+                          rowCurr
+                        );
+                        const rowSellConv = convertForDisplay(
                           packagePricingMap.get(pkg.id)?.sellingPrice ?? pkg.suggestedSellingPriceUSD ?? 0,
-                          packagePricingMap.get(pkg.id)?.currency || pkg.currency || 'USD'
-                        )}
-                      </td>
+                          rowCurr
+                        );
+                        return (
+                          <>
+                            <td className="py-3 px-4 text-right font-mono text-slate-700">
+                              <div>{rowNetConv.formatted}</div>
+                              {rowNetConv.isConverted && (
+                                <div className="text-[9px] text-slate-400">Native: {rowNetConv.nativeFormatted}</div>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                              <div>{rowSellConv.formatted}</div>
+                              {rowSellConv.isConverted && (
+                                <div className="text-[9px] text-slate-400 font-normal">Native: {rowSellConv.nativeFormatted}</div>
+                              )}
+                            </td>
+                          </>
+                        );
+                      })()}
                       <td className="py-3 px-4 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
                           isPub ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'

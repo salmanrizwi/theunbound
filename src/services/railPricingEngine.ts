@@ -48,7 +48,7 @@ export class RailPricingEngine {
       targetCurrency = 'JPY'
     } = params;
 
-    // 1. Resolve Stations strictly from authoritative database
+    // 1. Validate & Resolve Stations strictly from authoritative database
     const db = AppDatabase.getInstance();
     const storedStations = db.getRailStations();
     const resolveStation = (id: string): RailStation | undefined => {
@@ -76,7 +76,10 @@ export class RailPricingEngine {
     const destinationStation = resolveStation(destinationStationId);
     const normalizedTarget = currencyConversionService.normalizeCurrency(targetCurrency, 'JPY');
 
-    if (!originStation || !destinationStation || originStation.active === false || destinationStation.active === false) {
+    if (!originStation || !destinationStation) {
+      const missingParts: string[] = [];
+      if (!originStation) missingParts.push(`origin station "${originStationId || 'unset'}"`);
+      if (!destinationStation) missingParts.push(`destination station "${destinationStationId || 'unset'}"`);
       return this.buildUnavailablePriceResult({
         originStation,
         destinationStation,
@@ -87,19 +90,16 @@ export class RailPricingEngine {
         childrenCount,
         seatPreference,
         targetCurrency: normalizedTarget,
-        reason: 'Price unavailable — Admin configuration required'
+        diagnosticCode: 'STATION_NOT_FOUND',
+        reason: `Station not found in Japan Rail Inventory: ${missingParts.join(' and ')}.`
       });
     }
 
-    // 2. Resolve route strictly from authoritative database
-    const storedRoutes = db.getRailRoutes();
-    const route = storedRoutes.find(r => 
-      ((r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId) ||
-       (r.originStationId === destinationStation.stationId && r.destinationStationId === originStation.stationId)) &&
-      r.active !== false
-    );
-
-    if (!route || route.active === false) {
+    if (originStation.active === false || destinationStation.active === false) {
+      const inactiveNames = [
+        originStation.active === false ? `${originStation.stationName} (${originStation.stationCode})` : null,
+        destinationStation.active === false ? `${destinationStation.stationName} (${destinationStation.stationCode})` : null
+      ].filter(Boolean);
       return this.buildUnavailablePriceResult({
         originStation,
         destinationStation,
@@ -110,12 +110,125 @@ export class RailPricingEngine {
         childrenCount,
         seatPreference,
         targetCurrency: normalizedTarget,
-        reason: 'Price unavailable — Admin configuration required'
+        diagnosticCode: 'STATION_INACTIVE',
+        reason: `Station inactive in Japan Rail Inventory: ${inactiveNames.join(', ')}. Activate the station in Admin CMS.`
+      });
+    }
+
+    if (originStation.stationId === destinationStation.stationId) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency: normalizedTarget,
+        diagnosticCode: 'SAME_STATION',
+        reason: `Origin and destination stations cannot be identical (${originStation.stationName}). Select two distinct stations.`
+      });
+    }
+
+    // 2. Resolve route directionally from authoritative database
+    // Priority: exact (origin -> dest) first; if exact exists and is explicitly deactivated, respect deactivation.
+    // Otherwise fall back to active reverse corridor (dest -> origin) for symmetric rail corridors.
+    const storedRoutes = db.getRailRoutes();
+    const storedRates = db.getRailRates();
+
+    const exactRoute = storedRoutes.find(
+      r => r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId
+    );
+    const reverseActiveRoute = storedRoutes.find(
+      r =>
+        r.originStationId === destinationStation.stationId &&
+        r.destinationStationId === originStation.stationId &&
+        r.active !== false
+    );
+
+    if (exactRoute && exactRoute.active === false) {
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        route: exactRoute,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency: normalizedTarget,
+        diagnosticCode: 'INACTIVE_ROUTE',
+        reason: `Route ${originStation.stationName} → ${destinationStation.stationName} (${exactRoute.routeId}) is currently inactive. Activate it in Admin CMS → Japan Rail Inventory → Routes.`
+      });
+    }
+
+    const route = exactRoute || reverseActiveRoute;
+    const routeMatchType: 'EXACT_DIRECTION' | 'SYMMETRIC_CORRIDOR' | undefined = exactRoute
+      ? 'EXACT_DIRECTION'
+      : reverseActiveRoute
+        ? 'SYMMETRIC_CORRIDOR'
+        : undefined;
+
+    if (!route || route.active === false) {
+      const existingPairRatesCount = storedRates.filter(
+        r =>
+          r.active !== false &&
+          ((r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId) ||
+           (r.originStationId === destinationStation.stationId && r.destinationStationId === originStation.stationId))
+      ).length;
+      const missingRouteMsg =
+        existingPairRatesCount > 0
+          ? `No active rail route configured for ${originStation.stationName} → ${destinationStation.stationName} (${existingPairRatesCount} fare record${existingPairRatesCount === 1 ? '' : 's'} exist without a route). Create this route in Admin CMS → Japan Rail Inventory → Routes.`
+          : `No active rail route configured for ${originStation.stationName} → ${destinationStation.stationName}. Configure the route and fares in Admin CMS → Japan Rail Inventory.`;
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency: normalizedTarget,
+        diagnosticCode: 'MISSING_ROUTE',
+        reason: missingRouteMsg
+      });
+    }
+
+    // 2b. Validate applicable service group against route configuration
+    const matchesServiceGroup = (rateGroup: string, requestedGroup: string) =>
+      rateGroup === requestedGroup ||
+      (requestedGroup.startsWith('HIKARI_KODAMA_SAKURA') && rateGroup?.startsWith('HIKARI_KODAMA_SAKURA'));
+
+    if (
+      Array.isArray(route.availableServiceGroups) &&
+      route.availableServiceGroups.length > 0 &&
+      !route.availableServiceGroups.some(g => matchesServiceGroup(g, serviceGroup))
+    ) {
+      const supportedLabels = route.availableServiceGroups
+        .map(g => (g === 'NOZOMI_MIZUHO' ? 'Nozomi / Mizuho (Express)' : 'Hikari / Kodama / Sakura'))
+        .join(', ');
+      return this.buildUnavailablePriceResult({
+        originStation,
+        destinationStation,
+        route,
+        routeMatchType,
+        serviceGroup,
+        travelDate,
+        departureTime,
+        adultsCount,
+        childrenCount,
+        seatPreference,
+        targetCurrency: normalizedTarget,
+        diagnosticCode: 'SERVICE_NOT_SUPPORTED',
+        reason: `${serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi / Mizuho' : 'Hikari / Kodama / Sakura'} service is not enabled on route ${originStation.stationName} → ${destinationStation.stationName}. Configured service(s): ${supportedLabels}.`
       });
     }
 
     // 3. Resolve Product & Commercial Master Product
-    const directProduct = db.getProductById(productId) || (INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS.find(p => p.id === productId || p.sku === productId) as any);
+    const directProduct = db.getProductById(productId) || (INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS.find(p => p.id === productId || String(p.productCode) === String(productId) || String((p as any).sku || '') === String(productId)) as any);
     const isGreenCar = productId === 'RAIL-JP-GREEN-RESERVED' || (directProduct?.name || '').toLowerCase().includes('green');
     const canonicalProductId = isGreenCar ? 'RAIL-JP-GREEN-RESERVED' : 'RAIL-JP-ORD-RESERVED';
     const product = directProduct || db.getProductById(canonicalProductId) || (INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS.find(p => p.id === canonicalProductId) as any);
@@ -133,6 +246,7 @@ export class RailPricingEngine {
         originStation,
         destinationStation,
         route,
+        routeMatchType,
         serviceGroup,
         travelDate,
         departureTime,
@@ -140,7 +254,8 @@ export class RailPricingEngine {
         childrenCount,
         seatPreference,
         targetCurrency: normalizedTarget,
-        reason: 'Price unavailable — Admin configuration required'
+        diagnosticCode: 'PRODUCT_INACTIVE',
+        reason: `Rail product "${product?.name || productId}" is inactive or archived. Activate it in Admin CMS.`
       });
     }
 
@@ -150,40 +265,65 @@ export class RailPricingEngine {
     const { seasonType, seasonLabel, seasonPeriod, adultAdjustmentJPY, childAdjustmentJPY, pricingMultiplier } = seasonMatch;
 
     // 5. Lookup exact rate records (Adult & Child) strictly from canonical Admin-managed pricing
-    const storedRates = db.getRailRates();
-    const matchesServiceGroup = (rateGroup: string, requestedGroup: string) =>
-      rateGroup === requestedGroup ||
-      (requestedGroup.startsWith('HIKARI_KODAMA_SAKURA') && rateGroup?.startsWith('HIKARI_KODAMA_SAKURA'));
-
-    const findLiveRate = (paxType: 'ADULT' | 'CHILD') => {
+    // Priority:
+    //   1) Exact direction (origin -> destination) BEFORE symmetric reverse direction
+    //   2) Active + verified positive nettPrice
+    //   3) Matching routeId
+    //   4) Most recently updatedAt
+    const findLiveRate = (paxType: 'ADULT' | 'CHILD'): { rate?: RailRate; matchType?: 'EXACT_DIRECTION' | 'SYMMETRIC_CORRIDOR' } => {
       const candidates = storedRates.filter(r =>
         ((r.originStationId === originStation.stationId && r.destinationStationId === destinationStation.stationId) ||
          (r.originStationId === destinationStation.stationId && r.destinationStationId === originStation.stationId)) &&
         (r.productId === productId || r.productId === canonicalProductId) &&
         matchesServiceGroup(r.serviceGroup, serviceGroup) &&
-        (r.passengerType?.toUpperCase() === paxType || (paxType === 'ADULT' && r.passengerType?.toUpperCase() === 'ADT'))
+        (r.passengerType?.toUpperCase() === paxType ||
+          (paxType === 'ADULT' && r.passengerType?.toUpperCase() === 'ADT') ||
+          (paxType === 'CHILD' && r.passengerType?.toUpperCase() === 'CNB'))
       );
 
-      if (candidates.length === 0) return undefined;
+      if (candidates.length === 0) return {};
 
-      // Prefer most recently updated / added rate, and exact origin->destination direction on tie
+      const isUsable = (r: RailRate) => {
+        const nett = resolveRailRateNettPrice(r);
+        return r.active !== false && !r.needsAdminReview && nett !== null && nett > 0 ? 1 : 0;
+      };
+
       const sorted = [...candidates].sort((a, b) => {
-        const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-        const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-        if (timeB !== timeA) return timeB - timeA;
         const exactA = a.originStationId === originStation.stationId && a.destinationStationId === destinationStation.stationId ? 1 : 0;
         const exactB = b.originStationId === originStation.stationId && b.destinationStationId === destinationStation.stationId ? 1 : 0;
-        return exactB - exactA;
+        if (exactB !== exactA) return exactB - exactA;
+
+        const usableA = isUsable(a);
+        const usableB = isUsable(b);
+        if (usableB !== usableA) return usableB - usableA;
+
+        const routeMatchA = a.routeId === route.routeId ? 1 : 0;
+        const routeMatchB = b.routeId === route.routeId ? 1 : 0;
+        if (routeMatchB !== routeMatchA) return routeMatchB - routeMatchA;
+
+        const timeA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const timeB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return timeB - timeA;
       });
 
-      return sorted[0];
+      const chosen = sorted[0];
+      const matchType: 'EXACT_DIRECTION' | 'SYMMETRIC_CORRIDOR' =
+        chosen.originStationId === originStation.stationId && chosen.destinationStationId === destinationStation.stationId
+          ? 'EXACT_DIRECTION'
+          : 'SYMMETRIC_CORRIDOR';
+      return { rate: chosen, matchType };
     };
 
-    const adultRate = adultsCount > 0 ? findLiveRate('ADULT') : undefined;
-    const childRate = childrenCount > 0 ? findLiveRate('CHILD') : undefined;
+    const adultLookup = adultsCount > 0 ? findLiveRate('ADULT') : {};
+    const childLookup = childrenCount > 0 ? findLiveRate('CHILD') : {};
+    const adultRate = adultLookup.rate;
+    const childRate = childLookup.rate;
+    const fareMatchType = adultLookup.matchType || childLookup.matchType;
 
     const adultNettJPY = adultRate ? resolveRailRateNettPrice(adultRate) : null;
     const childNettJPY = childRate ? resolveRailRateNettPrice(childRate) : null;
+    const carLabel = isGreenCar ? 'Green Car' : 'Ordinary Car';
+    const serviceLabel = serviceGroup === 'NOZOMI_MIZUHO' ? 'Nozomi / Mizuho' : 'Hikari / Kodama / Sakura';
 
     // Strict Rule: Never invent, estimate or substitute a price.
     // If a required price rate is missing, unpublished, flagged for Admin review, or zero, return authoritative unavailable state.
@@ -191,10 +331,16 @@ export class RailPricingEngine {
       adultsCount > 0 &&
       (!adultRate || adultRate.active === false || adultRate.needsAdminReview || adultNettJPY === null || adultNettJPY <= 0)
     ) {
+      const detail = !adultRate
+        ? `No active Adult fare configured for ${originStation.stationName} → ${destinationStation.stationName} (${carLabel}, ${serviceLabel}).`
+        : adultRate.active === false
+          ? `Adult fare (${adultRate.rateId}) for ${originStation.stationName} → ${destinationStation.stationName} is inactive.`
+          : `Adult fare (${adultRate.rateId}) requires a verified positive Nett Price (JPY) in Admin CMS.`;
       return this.buildUnavailablePriceResult({
         originStation,
         destinationStation,
         route,
+        routeMatchType,
         product,
         serviceGroup,
         travelDate,
@@ -203,7 +349,8 @@ export class RailPricingEngine {
         childrenCount,
         seatPreference,
         targetCurrency: normalizedTarget,
-        reason: 'Price unavailable — Admin configuration required'
+        diagnosticCode: 'MISSING_FARE',
+        reason: `${detail} Configure fare in Admin CMS → Japan Rail Inventory → Rate Explorer.`
       });
     }
 
@@ -211,10 +358,16 @@ export class RailPricingEngine {
       childrenCount > 0 &&
       (!childRate || childRate.active === false || childRate.needsAdminReview || childNettJPY === null || childNettJPY <= 0)
     ) {
+      const detail = !childRate
+        ? `No active Child fare configured for ${originStation.stationName} → ${destinationStation.stationName} (${carLabel}, ${serviceLabel}).`
+        : childRate.active === false
+          ? `Child fare (${childRate.rateId}) for ${originStation.stationName} → ${destinationStation.stationName} is inactive.`
+          : `Child fare (${childRate.rateId}) requires a verified positive Nett Price (JPY) in Admin CMS.`;
       return this.buildUnavailablePriceResult({
         originStation,
         destinationStation,
         route,
+        routeMatchType,
         product,
         serviceGroup,
         travelDate,
@@ -223,7 +376,8 @@ export class RailPricingEngine {
         childrenCount,
         seatPreference,
         targetCurrency: normalizedTarget,
-        reason: 'Price unavailable — Admin configuration required'
+        diagnosticCode: 'MISSING_FARE',
+        reason: `${detail} Configure fare in Admin CMS → Japan Rail Inventory → Rate Explorer.`
       });
     }
 
@@ -289,7 +443,7 @@ export class RailPricingEngine {
     const surchargeEval = evaluateApplicableSurcharges({
       surcharges: commercialPass?.surcharges || product?.surcharges,
       productId: commercialPass?.id || product?.id,
-      productName: (commercialPass as any)?.productName || (commercialPass as any)?.name || product?.name || `${originStation} → ${destinationStation}`,
+      productName: (commercialPass as any)?.productName || (commercialPass as any)?.name || product?.name || `${originStation.stationName} → ${destinationStation.stationName}`,
       category: 'Rail / Shinkansen',
       productType: 'Rail & Transportation',
       destinationId: (commercialPass as any)?.destinationId || 'dest-japan',
@@ -318,6 +472,7 @@ export class RailPricingEngine {
         originStation,
         destinationStation,
         route,
+        routeMatchType,
         product,
         serviceGroup,
         travelDate,
@@ -326,7 +481,8 @@ export class RailPricingEngine {
         childrenCount,
         seatPreference,
         targetCurrency: normalizedTarget,
-        reason: 'Price unavailable — Admin configuration required'
+        diagnosticCode: 'INVALID_PRICE',
+        reason: 'Calculated rail selling price is invalid. Check fare and markup settings in Admin CMS.'
       });
     }
 
@@ -364,6 +520,7 @@ export class RailPricingEngine {
           originStation,
           destinationStation,
           route,
+          routeMatchType,
           product,
           serviceGroup,
           travelDate,
@@ -372,6 +529,7 @@ export class RailPricingEngine {
           childrenCount,
           seatPreference,
           targetCurrency: normalizedTarget,
+          diagnosticCode: 'FX_UNAVAILABLE',
           reason
         });
       }
@@ -380,20 +538,35 @@ export class RailPricingEngine {
       finalSellingPriceTargetCurrency = conversionResult.convertedAmount;
     }
 
-    // 9. Duration Estimation
-    const durationMinutes = serviceGroup === 'NOZOMI_MIZUHO'
-      ? (route.travelDurationMinutes?.nozomiMizuho || 135)
-      : (route.travelDurationMinutes?.hikariKodamaSakura || 160);
+    // 9. Duration Resolution — use only configured route durations; never fabricate arbitrary minutes
+    const configuredDuration =
+      serviceGroup === 'NOZOMI_MIZUHO'
+        ? (route.travelDurationMinutes?.nozomiMizuho ?? route.durationMinutes)
+        : (route.travelDurationMinutes?.hikariKodamaSakura ?? route.durationMinutes);
+    const durationMinutes =
+      typeof configuredDuration === 'number' && Number.isFinite(configuredDuration) && configuredDuration > 0
+        ? Math.round(configuredDuration)
+        : 0;
 
     const hours = Math.floor(durationMinutes / 60);
     const mins = durationMinutes % 60;
-    const formattedDuration = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+    const formattedDuration =
+      durationMinutes > 0
+        ? (hours > 0 ? `${hours}h ${mins}m` : `${mins}m`)
+        : 'Schedule TBC';
 
     const seasonAdjTotal = (adultSeasonAdj * adultsCount) + (childSeasonAdj * childrenCount);
 
     return {
       isPriceAvailable: true,
       priceUnavailableReason: undefined,
+      diagnosticCode: 'OK',
+      routeId: route.routeId,
+      routeCode: route.routeCode,
+      routeMatchType,
+      adultRateId: adultRate?.rateId,
+      childRateId: childRate?.rateId,
+      fareMatchType,
       route,
       originStation,
       destinationStation,
@@ -451,6 +624,7 @@ export class RailPricingEngine {
     originStation?: RailStation;
     destinationStation?: RailStation;
     route?: RailRoute;
+    routeMatchType?: 'EXACT_DIRECTION' | 'SYMMETRIC_CORRIDOR';
     product?: Product;
     serviceGroup?: RailServiceGroup;
     travelDate: string;
@@ -459,6 +633,7 @@ export class RailPricingEngine {
     childrenCount: number;
     seatPreference?: any;
     targetCurrency?: CurrencyCode;
+    diagnosticCode?: RailPricingResult['diagnosticCode'];
     reason: string;
   }): RailPricingResult {
     const isGreenCar = params.product?.id === 'RAIL-JP-GREEN-RESERVED';
@@ -522,9 +697,20 @@ export class RailPricingEngine {
       sellingPriceStartingFrom: 0
     } as Product;
 
+    const configuredDur = params.serviceGroup === 'NOZOMI_MIZUHO'
+      ? (params.route?.travelDurationMinutes?.nozomiMizuho ?? params.route?.durationMinutes)
+      : (params.route?.travelDurationMinutes?.hikariKodamaSakura ?? params.route?.durationMinutes);
+    const safeDur = typeof configuredDur === 'number' && Number.isFinite(configuredDur) && configuredDur > 0
+      ? Math.round(configuredDur)
+      : 0;
+
     return {
       isPriceAvailable: false,
       priceUnavailableReason: params.reason || 'Price unavailable — Admin configuration required',
+      diagnosticCode: params.diagnosticCode,
+      routeId: params.route?.routeId,
+      routeCode: params.route?.routeCode,
+      routeMatchType: params.routeMatchType,
       route,
       originStation,
       destinationStation,
@@ -563,15 +749,11 @@ export class RailPricingEngine {
         total: totalPax
       },
       seatPreference: params.seatPreference,
-      estimatedDurationMinutes: params.serviceGroup === 'NOZOMI_MIZUHO'
-        ? (route?.travelDurationMinutes?.nozomiMizuho || 135)
-        : (route?.travelDurationMinutes?.hikariKodamaSakura || 160),
+      estimatedDurationMinutes: safeDur,
       formattedDuration: (() => {
-        const dur = params.serviceGroup === 'NOZOMI_MIZUHO'
-          ? (route?.travelDurationMinutes?.nozomiMizuho || 135)
-          : (route?.travelDurationMinutes?.hikariKodamaSakura || 160);
-        const h = Math.floor(dur / 60);
-        const m = dur % 60;
+        if (safeDur <= 0) return 'Schedule TBC';
+        const h = Math.floor(safeDur / 60);
+        const m = safeDur % 60;
         return h > 0 ? `${h}h ${m < 10 ? `0${m}` : m}m` : `${m}m`;
       })()
     };
@@ -592,6 +774,10 @@ export class RailPricingEngine {
       carType: pricing.carType,
       seatType: pricing.seatType,
       serviceGroup: pricing.serviceGroup,
+      routeId: pricing.routeId || pricing.route?.routeId,
+      routeCode: pricing.routeCode || pricing.route?.routeCode,
+      adultRateId: pricing.adultRateId,
+      childRateId: pricing.childRateId,
       originStationId: pricing.originStation.stationId,
       originStationName: pricing.originStation.stationName,
       originStationCode: pricing.originStation.stationCode,

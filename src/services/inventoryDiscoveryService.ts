@@ -10,6 +10,7 @@ import {
 
 export interface B2BProductSearchParams {
   destinationId?: string;
+  regionId?: string;
   hubId?: string;
   date?: string;
   category?: string;
@@ -27,6 +28,7 @@ export interface B2BProductSearchResult {
   hasMore: boolean;
   filtersApplied: {
     destinationId?: string;
+    regionId?: string;
     hubId?: string;
     date?: string;
     category?: string;
@@ -101,13 +103,42 @@ export class InventoryDiscoveryService {
       : db.getProducts();
 
     const deletedSet = db.getDeletedEntityIds();
-    const visIndex = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
+    const allHubs = db.getCityHubs();
+    const allRegions = db.getRegions();
+    const visIndex = buildDestinationVisibilityIndex(db.getDestinations(), allHubs, deletedSet);
 
-    const canonicalProducts = (rawProducts || []).filter(
-      p => Boolean(p && typeof p === 'object' && p.id && isProductActiveForB2B(p, visIndex, deletedSet))
-    );
+    const hubRegionLookup = new Map<string, string>();
+    allHubs.forEach(h => {
+      if (h && h.id && h.regionId) {
+        hubRegionLookup.set(h.id.toLowerCase(), h.regionId.toLowerCase());
+        if (h.name) hubRegionLookup.set(h.name.toLowerCase(), h.regionId.toLowerCase());
+      }
+    });
+    const regionLookup = new Map<string, { id: string; name: string; slug: string }>();
+    allRegions.forEach(r => {
+      if (r && r.id) {
+        const entry = {
+          id: r.id.toLowerCase(),
+          name: (r.name || '').toLowerCase(),
+          slug: (r.slug || '').toLowerCase()
+        };
+        regionLookup.set(entry.id, entry);
+        if (entry.name) regionLookup.set(entry.name, entry);
+        if (entry.slug) regionLookup.set(entry.slug, entry);
+      }
+    });
+
+    const seenIds = new Set<string>();
+    const canonicalProducts = (rawProducts || []).filter(p => {
+      if (!p || typeof p !== 'object' || !p.id) return false;
+      if (seenIds.has(p.id)) return false;
+      if (!isProductActiveForB2B(p, visIndex, deletedSet)) return false;
+      seenIds.add(p.id);
+      return true;
+    });
 
     const destFilter = (params.destinationId || '').trim();
+    const regionFilter = (params.regionId || '').trim();
     const hubFilter = (params.hubId || '').trim();
     const dateFilter = (params.date || '').trim();
     const categoryFilter = (params.category || '').trim();
@@ -119,34 +150,61 @@ export class InventoryDiscoveryService {
     const paginated = paginateAfterEligibility(
       canonicalProducts,
       product => {
-        // 1. Destination filter (matches destinationId, destination, or destinationSlug)
+        // 1. Destination filter (matches destinationId, destinationIds, destination, or destinationSlug)
         if (destFilter && destFilter !== 'ALL') {
           const pDestId = (product.destinationId || '').toLowerCase();
-          const pDest = (product.destination || '').toLowerCase();
+          const pDest = (product.destination || product.destinationName || '').toLowerCase();
           const pDestSlug = ((product as any).destinationSlug || '').toLowerCase();
           const target = destFilter.toLowerCase();
 
           const matchesDest =
             pDestId === target ||
+            (Array.isArray(product.destinationIds) && product.destinationIds.some(did => (did || '').toLowerCase() === target)) ||
             pDest === target ||
             pDestSlug === target;
 
           if (!matchesDest) return false;
         }
 
-        // 2. Hub filter (matches hubId, cityHubId, fromHubId, toHubId, or hubName)
+        // 1b. Region filter (matches regionId, regionIds, regionName, regionNames, or any hub's parent region)
+        if (regionFilter && regionFilter !== 'ALL') {
+          const target = regionFilter.toLowerCase();
+          const targetMeta = regionLookup.get(target);
+          const targetIds = new Set<string>([
+            target,
+            ...(targetMeta ? [targetMeta.id, targetMeta.name, targetMeta.slug].filter(Boolean) : [])
+          ]);
+
+          const pRegId = (product.regionId || '').toLowerCase();
+          const pRegName = (product.regionName || '').toLowerCase();
+          const matchesDirectRegion =
+            targetIds.has(pRegId) ||
+            targetIds.has(pRegName) ||
+            (Array.isArray(product.regionIds) && product.regionIds.some(rid => targetIds.has((rid || '').toLowerCase()))) ||
+            (Array.isArray(product.regionNames) && product.regionNames.some(rn => targetIds.has((rn || '').toLowerCase())));
+
+          const matchesHubParentRegion =
+            (product.hubId && targetIds.has(hubRegionLookup.get(product.hubId.toLowerCase()) || '')) ||
+            (Array.isArray(product.hubIds) && product.hubIds.some(hid => targetIds.has(hubRegionLookup.get((hid || '').toLowerCase()) || '')));
+
+          if (!matchesDirectRegion && !matchesHubParentRegion) return false;
+        }
+
+        // 2. Hub filter (matches hubId, hubIds, hubNames, city, cityHubId, fromHubId, toHubId, or hubName)
         if (hubFilter && hubFilter !== 'ALL') {
           const pHubId = (product.hubId || (product as any).cityHubId || '').toLowerCase();
           const pFromHub = (product.fromHubId || '').toLowerCase();
           const pToHub = (product.toHubId || '').toLowerCase();
-          const pHubName = ((product as any).hubName || (product as any).cityHubName || '').toLowerCase();
+          const pHubName = ((product as any).hubName || (product as any).cityHubName || product.city || '').toLowerCase();
           const target = hubFilter.toLowerCase();
 
           const matchesHub =
             pHubId === target ||
             pFromHub === target ||
             pToHub === target ||
-            pHubName === target;
+            pHubName === target ||
+            (Array.isArray(product.hubIds) && product.hubIds.some(hid => (hid || '').toLowerCase() === target)) ||
+            (Array.isArray(product.hubNames) && product.hubNames.some(hn => (hn || '').toLowerCase() === target));
 
           if (!matchesHub) return false;
         }
@@ -155,7 +213,11 @@ export class InventoryDiscoveryService {
         if (categoryFilter && categoryFilter !== 'ALL') {
           const pCat = (product.category || '').toLowerCase();
           const target = categoryFilter.toLowerCase();
-          if (pCat !== target) return false;
+          if (target === 'rail') {
+            if (pCat !== 'rail' && pCat !== 'rail / shinkansen') return false;
+          } else if (pCat !== target) {
+            return false;
+          }
         }
 
         // 4. Date validity check
@@ -167,12 +229,15 @@ export class InventoryDiscoveryService {
         // 5. Text search query
         if (query) {
           const titleMatch = (product.title || product.name || '').toLowerCase().includes(query);
-          const descMatch = (product.description || '').toLowerCase().includes(query);
+          const descMatch = (product.description || product.shortDescription || '').toLowerCase().includes(query);
           const codeMatch = (product.sku || (product as any).productCode || (product as any).code || '').toLowerCase().includes(query);
-          const destMatch = (product.destination || '').toLowerCase().includes(query);
-          const hubMatch = ((product as any).hubName || (product as any).cityHubName || '').toLowerCase().includes(query);
+          const destMatch = (product.destination || product.destinationName || '').toLowerCase().includes(query);
+          const regMatch = (product.regionName || '').toLowerCase().includes(query) ||
+            (Array.isArray(product.regionNames) && product.regionNames.some(rn => (rn || '').toLowerCase().includes(query)));
+          const hubMatch = ((product as any).hubName || (product as any).cityHubName || product.city || '').toLowerCase().includes(query) ||
+            (Array.isArray(product.hubNames) && product.hubNames.some(hn => (hn || '').toLowerCase().includes(query)));
 
-          if (!titleMatch && !descMatch && !codeMatch && !destMatch && !hubMatch) {
+          if (!titleMatch && !descMatch && !codeMatch && !destMatch && !regMatch && !hubMatch) {
             return false;
           }
         }
@@ -192,6 +257,7 @@ export class InventoryDiscoveryService {
       hasMore: paginated.hasMore,
       filtersApplied: {
         destinationId: destFilter || undefined,
+        regionId: regionFilter || undefined,
         hubId: hubFilter || undefined,
         date: dateFilter || undefined,
         category: categoryFilter || undefined,

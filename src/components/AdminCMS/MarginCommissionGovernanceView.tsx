@@ -28,6 +28,7 @@ import {
 } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { PRODUCT_CMS_CATEGORIES } from '../../services/configuratorRegistry';
 import { formatCurrency } from '../../services/pricingEngine';
 import {
@@ -56,6 +57,7 @@ export const MarginCommissionGovernanceView: React.FC<MarginCommissionGovernance
 }) => {
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const rbac = useMemo(() => canUserManageMargins(user), [user]);
 
   // Discovery & Filter State
@@ -854,10 +856,22 @@ export const MarginCommissionGovernanceView: React.FC<MarginCommissionGovernance
                       <div className="font-semibold text-slate-900 truncate" title={p.name}>
                         {p.name}
                       </div>
-                      <div className="text-[11px] text-slate-400 font-mono tabular-nums mt-0.5">
-                        Net: {formatCurrency(row.baseNetCost, row.currency as CurrencyCode)} • Sell:{' '}
-                        {formatCurrency(row.currentSellingPrice, row.currency as CurrencyCode)}
-                      </div>
+                      {(() => {
+                        const netConv = convertForDisplay(row.baseNetCost || 0, row.currency || 'USD');
+                        const sellConv = convertForDisplay(row.currentSellingPrice || 0, row.currency || 'USD');
+                        return (
+                          <>
+                            <div className="text-[11px] text-slate-600 font-mono tabular-nums mt-0.5">
+                              Net: {netConv.formatted} • Sell: {sellConv.formatted}
+                            </div>
+                            {(netConv.isConverted || sellConv.isConverted) && (
+                              <div className="text-[10px] text-slate-400 font-mono tabular-nums">
+                                Native ({row.currency}): {formatCurrency(row.baseNetCost, row.currency as CurrencyCode)} / {formatCurrency(row.currentSellingPrice, row.currency as CurrencyCode)}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td className="py-3 px-3">
                       <div className="font-mono text-[11px] font-semibold text-slate-800">{p.sku}</div>
@@ -876,9 +890,19 @@ export const MarginCommissionGovernanceView: React.FC<MarginCommissionGovernance
                     <td className="py-3 px-3 text-right font-mono tabular-nums font-bold text-slate-900 whitespace-nowrap">
                       {row.effectiveMarginValue === null ? (
                         <span className="text-amber-700 font-sans font-semibold text-[11px]">Unset</span>
-                      ) : row.effectiveMarginType === 'FIXED' ? (
-                        formatCurrency(row.effectiveMarginValue, row.currency as CurrencyCode)
-                      ) : (
+                      ) : row.effectiveMarginType === 'FIXED' ? (() => {
+                        const mConv = convertForDisplay(row.effectiveMarginValue || 0, row.currency || 'USD');
+                        return (
+                          <div>
+                            <div>{mConv.formatted}</div>
+                            {mConv.isConverted && (
+                              <div className="text-[9px] font-normal text-slate-400">
+                                Native: {mConv.nativeFormatted}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })() : (
                         `${row.effectiveMarginValue}%`
                       )}
                     </td>

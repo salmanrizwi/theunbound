@@ -49,6 +49,77 @@ const STORAGE_KEY_PAIRS = 'theunbound_currency_pairs_v3';
 const STORAGE_KEY_SETTINGS = 'theunbound_currency_settings_v3';
 const STORAGE_KEY_AUDIT = 'theunbound_currency_audit_logs_v3';
 
+const SUPPORTED_CURRENCY_CODES = new Set<CurrencyCode>(
+  SUPPORTED_CURRENCIES.map(c => c.code)
+);
+
+const CURRENCY_SYMBOL_ALIASES: Record<string, CurrencyCode> = {
+  '¥': 'JPY',
+  '￥': 'JPY',
+  'JP¥': 'JPY',
+  '₹': 'INR',
+  'RS': 'INR',
+  'RS.': 'INR',
+  '$': 'USD',
+  'US$': 'USD',
+  '€': 'EUR',
+  '£': 'GBP',
+  'AED': 'AED',
+  'DHS': 'AED',
+  '฿': 'THB',
+  'A$': 'AUD',
+  'AU$': 'AUD',
+  'CA$': 'CAD',
+  'C$': 'CAD',
+  'S$': 'SGD',
+  'SG$': 'SGD',
+  'CHF': 'CHF'
+};
+
+const CURRENCY_NAME_ALIASES: Record<string, CurrencyCode> = {
+  'JAPANESE YEN': 'JPY',
+  'YEN': 'JPY',
+  'INDIAN RUPEE': 'INR',
+  'RUPEE': 'INR',
+  'US DOLLAR': 'USD',
+  'UNITED STATES DOLLAR': 'USD',
+  'EURO': 'EUR',
+  'BRITISH POUND': 'GBP',
+  'POUND STERLING': 'GBP',
+  'AUSTRALIAN DOLLAR': 'AUD',
+  'CANADIAN DOLLAR': 'CAD',
+  'SINGAPORE DOLLAR': 'SGD',
+  'SWISS FRANC': 'CHF',
+  'THAI BAHT': 'THB',
+  'UAE DIRHAM': 'AED'
+};
+
+const FORMAT_SYMBOL_MAP: Record<string, string> = {
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  JPY: '¥',
+  AED: 'AED ',
+  THB: '฿',
+  AUD: 'A$',
+  CAD: 'CA$',
+  SGD: 'S$',
+  INR: '₹',
+  CHF: 'CHF '
+};
+
+const NUMBER_FORMAT_0 = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0
+});
+
+const NUMBER_FORMAT_2 = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+const CURRENCY_CODE_WORD_REGEX = /\b(USD|EUR|GBP|JPY|AED|THB|AUD|CAD|SGD|INR|CHF)\b/;
+
 export class CurrencyEngine {
   private static instance: CurrencyEngine;
   private usdRates: Record<CurrencyCode, number> = { ...BASELINE_USD_RATES };
@@ -387,72 +458,44 @@ export class CurrencyEngine {
     if (raw === undefined || raw === null) {
       return { code: null, rawCode: '', isSupported: false };
     }
-    if (typeof raw === 'object' && raw !== null) {
+    if (typeof raw === 'string') {
+      if (SUPPORTED_CURRENCY_CODES.has(raw as CurrencyCode)) {
+        return { code: raw as CurrencyCode, rawCode: raw, isSupported: true };
+      }
+    } else if (typeof raw === 'object') {
       raw = raw.code || raw.currency || raw.value || raw.targetCurrency || raw.nativeCurrency || '';
     }
-    const clean = String(raw).trim();
+    const clean = typeof raw === 'string' ? raw.trim() : String(raw).trim();
     if (!clean) {
       return { code: null, rawCode: '', isSupported: false };
     }
+
+    if (SUPPORTED_CURRENCY_CODES.has(clean as CurrencyCode)) {
+      return { code: clean as CurrencyCode, rawCode: clean, isSupported: true };
+    }
+
+    const symDirect = CURRENCY_SYMBOL_ALIASES[clean];
+    if (symDirect) {
+      return { code: symDirect, rawCode: symDirect, isSupported: true };
+    }
+
     const upper = clean.toUpperCase();
-
-    const symbols: Record<string, CurrencyCode> = {
-      '¥': 'JPY',
-      '￥': 'JPY',
-      'JP¥': 'JPY',
-      '₹': 'INR',
-      'RS': 'INR',
-      'RS.': 'INR',
-      '$': 'USD',
-      'US$': 'USD',
-      '€': 'EUR',
-      '£': 'GBP',
-      'AED': 'AED',
-      'DHS': 'AED',
-      '฿': 'THB',
-      'A$': 'AUD',
-      'AU$': 'AUD',
-      'CA$': 'CAD',
-      'C$': 'CAD',
-      'S$': 'SGD',
-      'SG$': 'SGD',
-      'CHF': 'CHF'
-    };
-    if (symbols[clean]) {
-      return { code: symbols[clean], rawCode: symbols[clean], isSupported: true };
-    }
-    if (symbols[upper]) {
-      return { code: symbols[upper], rawCode: symbols[upper], isSupported: true };
+    if (SUPPORTED_CURRENCY_CODES.has(upper as CurrencyCode)) {
+      return { code: upper as CurrencyCode, rawCode: upper, isSupported: true };
     }
 
-    const names: Record<string, CurrencyCode> = {
-      'JAPANESE YEN': 'JPY',
-      'YEN': 'JPY',
-      'INDIAN RUPEE': 'INR',
-      'RUPEE': 'INR',
-      'US DOLLAR': 'USD',
-      'UNITED STATES DOLLAR': 'USD',
-      'EURO': 'EUR',
-      'BRITISH POUND': 'GBP',
-      'POUND STERLING': 'GBP',
-      'AUSTRALIAN DOLLAR': 'AUD',
-      'CANADIAN DOLLAR': 'CAD',
-      'SINGAPORE DOLLAR': 'SGD',
-      'SWISS FRANC': 'CHF',
-      'THAI BAHT': 'THB',
-      'UAE DIRHAM': 'AED'
-    };
-    if (names[upper]) {
-      return { code: names[upper], rawCode: names[upper], isSupported: true };
+    const symUpper = CURRENCY_SYMBOL_ALIASES[upper];
+    if (symUpper) {
+      return { code: symUpper, rawCode: symUpper, isSupported: true };
     }
 
-    const matched = SUPPORTED_CURRENCIES.find(c => c.code === upper);
-    if (matched) {
-      return { code: matched.code, rawCode: matched.code, isSupported: true };
+    const nameMatch = CURRENCY_NAME_ALIASES[upper];
+    if (nameMatch) {
+      return { code: nameMatch, rawCode: nameMatch, isSupported: true };
     }
 
     // Extract 3-letter ISO code from formatted strings such as "JPY (¥)" or "INR ₹"
-    const codeMatch = upper.match(/\b(USD|EUR|GBP|JPY|AED|THB|AUD|CAD|SGD|INR|CHF)\b/);
+    const codeMatch = upper.match(CURRENCY_CODE_WORD_REGEX);
     if (codeMatch && codeMatch[1]) {
       const matchedCode = codeMatch[1] as CurrencyCode;
       return { code: matchedCode, rawCode: matchedCode, isSupported: true };
@@ -845,30 +888,15 @@ export class CurrencyEngine {
    */
   public format(amount?: number | null, currency: CurrencyCode | string = 'USD', options?: { showCode?: boolean }): string {
     const safeAmount = (typeof amount === 'number' && !isNaN(amount)) ? amount : (Number(amount) || 0);
-    const resolved = this.resolveIsoCurrencyCode(currency);
-    const safeCurrency = resolved.code || ((typeof currency === 'string' ? currency.trim() : 'USD') || 'USD').toUpperCase();
-    const decimals = (safeCurrency === 'JPY' || safeCurrency === 'THB') ? 0 : 2;
-    const roundedAmount = decimals === 0 ? Math.round(safeAmount) : Math.round((safeAmount + Number.EPSILON) * 100) / 100;
+    const safeCurrency =
+      typeof currency === 'string' && SUPPORTED_CURRENCY_CODES.has(currency as CurrencyCode)
+        ? currency
+        : this.resolveIsoCurrencyCode(currency).code || ((typeof currency === 'string' ? currency.trim() : 'USD') || 'USD').toUpperCase();
+    const isZeroDecimal = safeCurrency === 'JPY' || safeCurrency === 'THB';
+    const roundedAmount = isZeroDecimal ? Math.round(safeAmount) : Math.round((safeAmount + Number.EPSILON) * 100) / 100;
 
-    const symbolMap: Record<string, string> = {
-      USD: '$',
-      EUR: '€',
-      GBP: '£',
-      JPY: '¥',
-      AED: 'AED ',
-      THB: '฿',
-      AUD: 'A$',
-      CAD: 'CA$',
-      SGD: 'S$',
-      INR: '₹',
-      CHF: 'CHF '
-    };
-
-    const symbol = symbolMap[safeCurrency] || `${safeCurrency} `;
-    const formattedNum = roundedAmount.toLocaleString('en-US', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals
-    });
+    const symbol = FORMAT_SYMBOL_MAP[safeCurrency] || `${safeCurrency} `;
+    const formattedNum = isZeroDecimal ? NUMBER_FORMAT_0.format(roundedAmount) : NUMBER_FORMAT_2.format(roundedAmount);
 
     if (options?.showCode) {
       return `${symbol}${formattedNum} ${safeCurrency}`;

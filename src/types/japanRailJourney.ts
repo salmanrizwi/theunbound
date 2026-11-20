@@ -116,6 +116,11 @@ export interface JapanRailJourney {
 export interface JapanRailSegmentSnapshot {
   segmentId: string;
   sequence: number;
+  routeId?: string;
+  routeCode?: string;
+  adultRateId?: string;
+  childRateId?: string;
+  distanceKm?: number;
   originStationId: string;
   originStationName: string;
   originStationCode: string;
@@ -198,6 +203,11 @@ export interface JapanRailProductJourneyRule {
 export interface ShinkansenJourneyPayloadSegment {
   segmentId: string;
   sequence: number;
+  routeId?: string;
+  routeCode?: string;
+  adultRateId?: string;
+  childRateId?: string;
+  distanceKm?: number;
   origin: {
     id: string;
     name: string;

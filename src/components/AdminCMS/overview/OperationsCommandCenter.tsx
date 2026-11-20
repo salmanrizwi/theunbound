@@ -24,6 +24,8 @@ import {
   SystemHealthReport 
 } from '../../../services/dashboardMetricsService';
 import { CurrencyEngine } from '../../../services/currencyEngine';
+import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
+import { toast } from '../../../services/toastService';
 
 import { OverviewHeader } from './OverviewHeader';
 import { KeyBusinessMetricsGrid } from './KeyBusinessMetricsGrid';
@@ -51,12 +53,11 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
   const fx = CurrencyEngine.getInstance();
   const metricsService = DashboardMetricsService.getInstance();
 
-  // State
+  const { displayCurrency, fxVersion, canEditDisplayCurrency, setGlobalDisplayCurrency } = useDisplayCurrency();
   const [dbTick, setDbTick] = useState(0);
   const [selectedDateRange, setSelectedDateRange] = useState<DateRangeOption>('THIS_MONTH');
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
-  const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>(() => (fx.getSettings().baseCurrency || 'USD') as CurrencyCode);
   const [granularity, setGranularity] = useState<PerformanceGranularity>('DAILY');
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
@@ -133,9 +134,9 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
       suppliers,
       currentUser,
       comparison,
-      baseCurrency: selectedCurrency
+      baseCurrency: displayCurrency
     });
-  }, [metricsService, bookings, leads, quotes, users, suppliers, currentUser, comparison, selectedCurrency]);
+  }, [metricsService, bookings, leads, quotes, users, suppliers, currentUser, comparison, displayCurrency, fxVersion]);
 
   // 2. Business Performance & Sales Funnel
   const businessPerformance: BusinessPerformanceData = useMemo(() => {
@@ -146,10 +147,10 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
       products,
       comparison,
       granularity,
-      baseCurrency: selectedCurrency,
+      baseCurrency: displayCurrency,
       isAuthorizedForFinance
     });
-  }, [metricsService, bookings, leads, quotes, products, comparison, granularity, selectedCurrency, isAuthorizedForFinance]);
+  }, [metricsService, bookings, leads, quotes, products, comparison, granularity, displayCurrency, fxVersion, isAuthorizedForFinance]);
 
   // 3. Needs Attention Items
   const needsAttentionItems: NeedsAttentionItem[] = useMemo(() => {
@@ -171,9 +172,17 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
     });
   }, [metricsService, bookings, suppliers]);
 
-  const handleCurrencyChange = (curr: CurrencyCode) => {
-    setSelectedCurrency(curr);
-    fx.updateSettings({ baseCurrency: curr }, currentUser);
+  const handleCurrencyChange = async (curr: CurrencyCode) => {
+    if (!canEditDisplayCurrency) {
+      toast.error('Only authorised Administrators can change the Global Display Currency.');
+      return;
+    }
+    const res = await setGlobalDisplayCurrency(curr, currentUser);
+    if (res.success && !res.unchanged) {
+      toast.success(`Display currency updated to ${curr}`);
+    } else if (!res.success && res.error) {
+      toast.error(res.error);
+    }
   };
 
   return (
@@ -187,7 +196,7 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
         customEndDate={customEndDate}
         onChangeCustomStart={setCustomStartDate}
         onChangeCustomEnd={setCustomEndDate}
-        selectedCurrency={selectedCurrency}
+        selectedCurrency={displayCurrency}
         onSelectCurrency={handleCurrencyChange}
         lastUpdated={lastUpdated}
         onRefresh={handleRefresh}
@@ -212,7 +221,7 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
       <BusinessPerformanceSection
         performance={businessPerformance}
         onSelectGranularity={setGranularity}
-        baseCurrency={selectedCurrency}
+        baseCurrency={displayCurrency}
         isAuthorizedForFinance={isAuthorizedForFinance}
         onNavigate={onNavigate}
       />
@@ -220,7 +229,7 @@ export const OperationsCommandCenter: React.FC<OperationsCommandCenterProps> = (
       {/* 5. Authoritative Financial Snapshot (Gross Selling Values, Received, Outstanding, Payables) */}
       <FinancialSnapshotSection
         bookings={bookings}
-        currency={selectedCurrency}
+        currency={displayCurrency}
         currentUser={currentUser}
         onNavigate={onNavigate}
       />

@@ -23,13 +23,16 @@ export type PaginationBlockType =
   | 'VISA_SECTION_HEADER'
   | 'VISA_SERVICE_CARD'
   | 'VISA_SERVICE_CONTINUATION'
+  | 'ITINERARY_OVERVIEW_BLOCK'
   | 'DAY_HEADER'
   | 'DAY_CONTINUATION_HEADER'
   | 'DAY_OVERVIEW_BLOCK'
+  | 'DAY_OVERVIEW_FRAGMENT'
   | 'DAY_SERVICE_CARD'
   | 'DAY_SERVICE_CONTINUATION'
   | 'DAY_LEISURE_CARD'
   | 'DAY_NOTES_BLOCK'
+  | 'DAY_NOTES_FRAGMENT'
   | 'ADDITIONAL_SERVICES'
   | 'OPERATIONAL_STANDARDS'
   | 'TARIFF_CONTAINER'
@@ -57,10 +60,16 @@ export interface PaginationBlock {
   overviewSegments?: string[];
   overviewIsContinued?: boolean;
   includeSecondaryOnRemainder?: boolean;
+  inclusionsSlice?: string[];
+  exclusionsSlice?: string[];
+  includeSpecialInstructions?: boolean;
+  specialInstructionsSlice?: string;
   isSplitPart?: 'FIRST' | 'MIDDLE' | 'REMAINING';
   splitPartIndex?: number;
   splitPartTotal?: number;
   splitParts?: SplitBlockParts;
+  splitRef?: string;
+  breakDecision?: string;
   dayMeta?: {
     dayNumber: number;
     hubName: string;
@@ -69,6 +78,37 @@ export interface PaginationBlock {
     dayOfWeek: string;
     customTheme?: string;
   };
+}
+
+export interface BlockLayoutDiagnostic {
+  id: string;
+  type: PaginationBlockType;
+  height: number;
+  startY: number;
+  endY: number;
+  dayNumber?: number;
+  splitRole?: string;
+  splitRef?: string;
+  breakDecision: string;
+}
+
+export interface PageLayoutDiagnostics {
+  pageNumber: number;
+  pageHeight: number;
+  topMargin: number;
+  bottomMargin: number;
+  headerHeight: number;
+  headerGap: number;
+  bodyStartY: number;
+  bodyEndY: number;
+  footerStartY: number;
+  footerHeight: number;
+  footerGap: number;
+  availableContentHeight: number;
+  actualBodyHeight: number;
+  overflowPx: number;
+  rebalanceActions: string[];
+  blocks: BlockLayoutDiagnostic[];
 }
 
 export interface RenderedPage {
@@ -80,6 +120,7 @@ export interface RenderedPage {
   usedContentHeight: number;
   availableContentHeight: number;
   bounds: PageBounds;
+  diagnostics?: PageLayoutDiagnostics;
 }
 
 export interface DayCompletenessReport {
@@ -109,10 +150,12 @@ export interface PdfLayoutBoundsValidation {
     pageNumber: number;
     usedContentHeight: number;
     availableContentHeight: number;
+    overflowPx: number;
     headerHeight: number;
     footerHeight: number;
     blockCount: number;
   }>;
+  diagnostics?: PageLayoutDiagnostics[];
 }
 
 // Minimum height required to start a new Day section (Day Header + initial associated content)
@@ -149,15 +192,96 @@ export function escapePdfText(val: string): string {
     .replace(/"/g, '&quot;');
 }
 
+const HTML_NAMED_ENTITY_MAP: Record<string, string> = {
+  nbsp: ' ',
+  ensp: ' ',
+  emsp: ' ',
+  thinsp: ' ',
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  ndash: '–',
+  mdash: '—',
+  lsquo: '‘',
+  rsquo: '’',
+  sbquo: '‚',
+  ldquo: '“',
+  rdquo: '”',
+  bdquo: '„',
+  hellip: '…',
+  bull: '•',
+  middot: '·',
+  copy: '©',
+  reg: '®',
+  trade: '™',
+  euro: '€',
+  pound: '£',
+  yen: '¥',
+  cent: '¢',
+  deg: '°',
+  times: '×',
+  divide: '÷',
+  plusmn: '±',
+  rarr: '→',
+  larr: '←',
+  uarr: '↑',
+  darr: '↓',
+  harr: '↔',
+  eacute: 'é',
+  egrave: 'è',
+  ecirc: 'ê',
+  agrave: 'à',
+  aacute: 'á',
+  uuml: 'ü',
+  ouml: 'ö',
+  auml: 'ä',
+  ccedil: 'ç',
+  ntilde: 'ñ',
+  szlig: 'ß',
+  frac12: '½',
+  frac14: '¼',
+  frac34: '¾'
+};
+
+export function decodeHtmlEntities(input?: string): string {
+  return String(input || '').replace(/&(#x?[0-9a-f]+|[a-z0-9]+);/gi, (full, entity: string) => {
+    const lower = entity.toLowerCase();
+    if (lower.startsWith('#x')) {
+      const cp = parseInt(lower.slice(2), 16);
+      if (Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff) {
+        try {
+          return String.fromCodePoint(cp);
+        } catch {
+          return full;
+        }
+      }
+      return full;
+    }
+    if (lower.startsWith('#')) {
+      const cp = parseInt(lower.slice(1), 10);
+      if (Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff) {
+        try {
+          return String.fromCodePoint(cp);
+        } catch {
+          return full;
+        }
+      }
+      return full;
+    }
+    return HTML_NAMED_ENTITY_MAP[lower] ?? full;
+  });
+}
+
 export function stripHtmlTagsAndEntities(htmlOrText?: string): string {
-  return String(htmlOrText || '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
+  const withoutTags = String(htmlOrText || '')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<!DOCTYPE[^>]*>/gi, ' ')
+    .replace(/<\/?[a-zA-Z][^>]*>/g, ' ');
+  return decodeHtmlEntities(withoutTags)
+    .replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, ' ')
+    .replace(/[\u200b\u200c\u200d\ufeff]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -328,8 +452,8 @@ export function measureHeaderAndFooterHeights(model: QuotePresentationModel): {
       container.innerHTML = sampleFooterHtml;
       const measuredFooter = Math.ceil(container.getBoundingClientRect().height);
       return {
-        headerHeightContinuation: Math.max(30, measuredHeader),
-        footerHeight: Math.max(36, measuredFooter)
+        headerHeightContinuation: Math.max(30, measuredHeader + 2),
+        footerHeight: Math.max(36, measuredFooter + 2)
       };
     } finally {
       container.parentNode?.removeChild(container);
@@ -414,37 +538,269 @@ export function splitTextNaturally(text: string, targetFirstPartChars: number = 
   return [first, second];
 }
 
+const VOID_HTML_TAGS = new Set(['br', 'hr', 'img', 'input', 'meta', 'link', 'wbr']);
+const INLINE_REOPEN_TAGS = new Set(['strong', 'b', 'em', 'i', 'u', 's', 'span', 'a', 'small', 'code', 'font', 'mark', 'sub', 'sup']);
+
 /**
- * Split overview content into natural paragraph/line segments without discarding any text or breaking HTML tags.
+ * Constrain unconstrained <img> tags inside itinerary/terms HTML to printable A4 body bounds
+ * so tall or wide images scale proportionally without overflowing body height or width.
+ */
+function normalizeInlineImagesHtml(html: string): string {
+  return String(html || '').replace(/<img\b([^>]*)>/gi, (_full, attrs: string) => {
+    const cleanAttrs = attrs
+      .replace(/\s+(?:width|height)\s*=\s*(['"]?)[^'"\s>]*\1/gi, '');
+    if (/style\s*=/i.test(cleanAttrs)) {
+      return `<img${cleanAttrs.replace(/style\s*=\s*(['"])([\s\S]*?)\1/i, (_s, q: string, styleVal: string) => {
+        let patched = styleVal.trim();
+        if (!/max-width\s*:/i.test(patched)) patched = `max-width: 100%; ${patched}`;
+        if (!/max-height\s*:/i.test(patched)) patched = `max-height: 620px; ${patched}`;
+        if (!/width\s*:/i.test(patched)) patched = `width: auto; ${patched}`;
+        if (!/height\s*:/i.test(patched)) patched = `height: auto; ${patched}`;
+        if (!/object-fit\s*:/i.test(patched)) patched = `object-fit: contain; ${patched}`;
+        return `style=${q}${patched}${q}`;
+      })}>`;
+    }
+    return `<img${cleanAttrs} style="max-width: 100%; max-height: 620px; width: auto; height: auto; object-fit: contain; display: block; margin: 4px 0;">`;
+  });
+}
+
+/**
+ * Splits a single HTML paragraph/block containing inline formatting tags (<strong>, <b>, <em>, <span>, <a>, etc.)
+ * into balanced HTML chunks near natural line/sentence/word boundaries without cutting text or leaving unclosed tags.
+ */
+function splitHtmlWithInlineTagsAtBoundary(
+  rawHtml: string,
+  targetPlainChars: number = 280,
+  maxLineBreaks: number = 7
+): string[] {
+  const input = String(rawHtml || '').trim();
+  const initialBrCount = (input.match(/<br\s*\/?>/gi) || []).length;
+  if (!input || (stripHtmlTagsAndEntities(input).length <= targetPlainChars && initialBrCount < maxLineBreaks)) {
+    return input ? [input] : [];
+  }
+
+  // Tokenize into HTML tags and plain text segments
+  const tokens: Array<{ type: 'tag'; raw: string; tagName: string; isClose: boolean; isSelfClose: boolean } | { type: 'text'; raw: string }> = [];
+  const tagRe = /<[^>]+>/g;
+  let lastIdx = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(input)) !== null) {
+    if (m.index > lastIdx) {
+      tokens.push({ type: 'text', raw: input.slice(lastIdx, m.index) });
+    }
+    const rawTag = m[0];
+    const nameMatch = rawTag.match(/^<\s*(\/?)([a-zA-Z0-9]+)/);
+    const isClose = Boolean(nameMatch && nameMatch[1] === '/');
+    const tagName = (nameMatch?.[2] || '').toLowerCase();
+    const isSelfClose = /\/\s*>$/.test(rawTag) || VOID_HTML_TAGS.has(tagName);
+    tokens.push({ type: 'tag', raw: rawTag, tagName, isClose, isSelfClose });
+    lastIdx = tagRe.lastIndex;
+  }
+  if (lastIdx < input.length) {
+    tokens.push({ type: 'text', raw: input.slice(lastIdx) });
+  }
+
+  const chunks: string[] = [];
+  let buf = '';
+  let plainLen = 0;
+  let brLinesInBuf = 0;
+  const openStack: Array<{ tagName: string; openRaw: string }> = [];
+
+  const flushChunk = () => {
+    if (plainLen === 0 && !/<img\b/i.test(buf)) {
+      brLinesInBuf = 0;
+      return;
+    }
+    let out = buf;
+    for (let i = openStack.length - 1; i >= 0; i--) {
+      out += `</${openStack[i].tagName}>`;
+    }
+    const cleaned = out.replace(/(?:<br\s*\/?>\s*)+$/gi, '').trim();
+    if (hasMeaningfulHtmlContent(cleaned) || /<img\b/i.test(cleaned)) {
+      chunks.push(cleaned);
+    }
+    buf = openStack.map(t => t.openRaw).join('');
+    plainLen = 0;
+    brLinesInBuf = 0;
+  };
+
+  for (const tok of tokens) {
+    if (tok.type === 'tag') {
+      if (tok.tagName === 'br') {
+        brLinesInBuf++;
+        if (brLinesInBuf >= maxLineBreaks || plainLen >= Math.floor(targetPlainChars * 0.55)) {
+          flushChunk();
+          continue;
+        }
+      }
+      buf += tok.raw;
+      if (!tok.isSelfClose && INLINE_REOPEN_TAGS.has(tok.tagName)) {
+        if (!tok.isClose) {
+          openStack.push({ tagName: tok.tagName, openRaw: tok.raw });
+        } else {
+          for (let k = openStack.length - 1; k >= 0; k--) {
+            if (openStack[k].tagName === tok.tagName) {
+              openStack.splice(k, 1);
+              break;
+            }
+          }
+        }
+      }
+      continue;
+    }
+
+    let remText = tok.raw;
+    let wordGuard = 0;
+    while (remText.length > 0 && wordGuard++ < 400) {
+      const remainingBudget = targetPlainChars - plainLen;
+      if (remText.length <= remainingBudget) {
+        buf += remText;
+        plainLen += remText.length;
+        remText = '';
+        break;
+      }
+
+      const searchLimit = Math.max(20, Math.min(remText.length, remainingBudget + 40));
+      const minCut = Math.max(10, Math.floor(remainingBudget * 0.55));
+      const windowStr = remText.slice(0, searchLimit);
+
+      let splitAt = -1;
+      const periodCut = windowStr.lastIndexOf('. ');
+      if (periodCut >= minCut) {
+        splitAt = periodCut + 2;
+      } else {
+        const spaceCut = windowStr.lastIndexOf(' ');
+        if (spaceCut >= minCut) {
+          splitAt = spaceCut + 1;
+        } else if (plainLen >= Math.floor(targetPlainChars * 0.5)) {
+          flushChunk();
+          continue;
+        } else {
+          const fallbackSpace = remText.indexOf(' ', Math.max(1, remainingBudget));
+          splitAt = fallbackSpace !== -1 ? fallbackSpace + 1 : remText.length;
+        }
+      }
+
+      const part = remText.slice(0, splitAt);
+      buf += part;
+      plainLen += part.length;
+      remText = remText.slice(splitAt);
+      flushChunk();
+    }
+    if (remText.length > 0) {
+      buf += remText;
+      plainLen += remText.length;
+      remText = '';
+    }
+  }
+
+  flushChunk();
+  return chunks.length > 0 ? chunks : [input];
+}
+
+/**
+ * Split overview content into natural paragraph/line/table/list segments without discarding any text, images, or HTML structure.
  */
 function extractOverviewSegments(rawOverview: string): string[] {
-  const raw = (rawOverview || '').trim();
-  if (!raw || !hasMeaningfulHtmlContent(raw)) return [];
+  const raw = normalizeInlineImagesHtml((rawOverview || '').trim());
+  if (!raw || (!hasMeaningfulHtmlContent(raw) && !/<img\b/i.test(raw))) return [];
+
+  const splitPlainChunkList = (inputSegs: string[]): string[] => {
+    const out: string[] = [];
+    for (const seg of inputSegs) {
+      const plainLen = stripHtmlTagsAndEntities(seg).length;
+      const brCount = (seg.match(/<\s*br\s*\/?>/gi) || []).length;
+      if (/<(?:ul|ol|table)\b/i.test(seg)) {
+        out.push(seg);
+        continue;
+      }
+      if (/^<blockquote\b/i.test(seg)) {
+        if (plainLen <= 280 && brCount <= 6) {
+          out.push(seg);
+        } else {
+          const innerBq = seg.replace(/^\s*<blockquote\b[^>]*>/i, '').replace(/<\/blockquote>\s*$/i, '').trim();
+          const bqParts = splitHtmlWithInlineTagsAtBoundary(innerBq, 240, 6);
+          for (const bp of bqParts) {
+            out.push(`<blockquote style="margin: 4px 0; padding-left: 10px; border-left: 2px solid #cbd5e1;">${bp}</blockquote>`);
+          }
+        }
+        continue;
+      }
+      if (/^<pre\b/i.test(seg)) {
+        const innerPre = seg.replace(/^\s*<pre\b[^>]*>/i, '').replace(/<\/pre>\s*$/i, '');
+        const preLines = innerPre.split(/\r?\n|<(?:br\s*\/?)>/gi);
+        if (preLines.length <= 6 && plainLen <= 320) {
+          out.push(seg);
+        } else {
+          for (let li = 0; li < preLines.length; li += 5) {
+            const slice = preLines.slice(li, li + 5).join('\n');
+            if (slice.trim()) {
+              out.push(`<pre style="margin: 4px 0; white-space: pre-wrap; font-size: 9.5px;">${slice}</pre>`);
+            }
+          }
+        }
+        continue;
+      }
+      if (plainLen <= 280 && brCount <= 6) {
+        out.push(seg);
+        continue;
+      }
+
+      const brParts = seg.split(/<\s*br\s*\/?>/gi).map(p => p.trim()).filter(p => hasMeaningfulHtmlContent(p) || /<img\b/i.test(p));
+      if (brParts.length > 1 && !/^<(?:p|div)\b/i.test(seg)) {
+        for (const bp of brParts) {
+          if (stripHtmlTagsAndEntities(bp).length > 280) {
+            out.push(...splitHtmlWithInlineTagsAtBoundary(bp, 240, 5));
+          } else {
+            out.push(`<div style="margin-bottom: 4px;">${bp}</div>`);
+          }
+        }
+        continue;
+      }
+
+      const innerOnly = seg.replace(/^\s*<(?:p|div)\b[^>]*>/i, '').replace(/<\/(?:p|div)>\s*$/i, '').trim();
+      const splitParts = splitHtmlWithInlineTagsAtBoundary(innerOnly, 240, 6);
+      if (splitParts.length > 1) {
+        out.push(...splitParts.map(p => `<p style="margin: 0 0 4px 0;">${p}</p>`));
+      } else {
+        out.push(seg);
+      }
+    }
+    return out;
+  };
 
   const isHtml = /<[a-z][\s\S]*>/i.test(raw);
   if (isHtml) {
-    // Extract top-level paragraph/list/div/heading/break-delimited pieces
-    const normalized = raw
-      .replace(/<\s*br\s*\/?>\s*<\s*br\s*\/?>/gi, '</p><p>')
-      .replace(/(<\/(?:p|div|h[1-6]|ul|ol|blockquote|table)>)/gi, '$1\n__SEG__');
-    const rawSegs = normalized
-      .split('\n__SEG__')
-      .map(s => s.trim())
-      .filter(s => hasMeaningfulHtmlContent(s));
-
-    if (rawSegs.length > 1) {
-      return rawSegs;
+    const topFragments = extractTopLevelHtmlFragments(raw);
+    const expanded: string[] = [];
+    for (const frag of topFragments) {
+      const trimmed = frag.trim();
+      if (!hasMeaningfulHtmlContent(trimmed) && !/<img\b/i.test(trimmed)) continue;
+      if (/^<(?:ul|ol)\b/i.test(trimmed)) {
+        const liItems = trimmed.match(/<li\b[\s\S]*?<\/li>/gi) || [];
+        const avgLiLen = liItems.length > 0 ? stripHtmlTagsAndEntities(trimmed).length / liItems.length : 0;
+        const perChunk = avgLiLen > 160 ? 1 : 2;
+        expanded.push(...splitHtmlListIntoChunks(trimmed, perChunk, 220).map(c => c.html));
+      } else if (/^<table\b/i.test(trimmed)) {
+        expanded.push(...splitHtmlTableIntoRowChunks(trimmed, 3, 220).map(c => c.html));
+      } else {
+        expanded.push(trimmed);
+      }
     }
 
-    // Fallback: split on <br> if it's a single large block with <br> breaks
+    const splitExpanded = splitPlainChunkList(expanded);
+    if (splitExpanded.length > 0) {
+      return splitExpanded;
+    }
+
     const brParts = raw
       .split(/<\s*br\s*\/?>/gi)
       .map(s => s.trim())
-      .filter(s => hasMeaningfulHtmlContent(s));
+      .filter(s => hasMeaningfulHtmlContent(s) || /<img\b/i.test(s));
     if (brParts.length > 1) {
-      return brParts;
+      return splitPlainChunkList(brParts);
     }
-    return [raw];
+    return splitPlainChunkList([raw]);
   }
 
   // Plain text with line breaks
@@ -468,24 +824,24 @@ function extractOverviewSegments(rawOverview: string): string[] {
       flush();
       continue;
     }
-    if (buffer.length >= 2 || trimmed.length > 180) {
+    if (buffer.length >= 2 || trimmed.length > 160) {
       flush();
     }
     buffer.push(escapePdfText(trimmed));
   }
   flush();
 
-  // Further split very long single plain segments cleanly at sentence boundaries
   const finalSegments: string[] = [];
   for (const seg of segments) {
     const plainLen = stripHtmlTagsAndEntities(seg).length;
-    if (plainLen <= 360 || /<(?:ul|ol|table|p)\b/i.test(seg)) {
+    if (plainLen <= 300 || /<(?:ul|ol|table|p)\b/i.test(seg)) {
       finalSegments.push(seg);
     } else {
       let rem = seg;
-      while (stripHtmlTagsAndEntities(rem).length > 360) {
-        const [first, rest] = splitTextNaturally(rem, 300);
-        if (!first || !rest) break;
+      let segSplitGuard = 0;
+      while (stripHtmlTagsAndEntities(rem).length > 300 && segSplitGuard++ < 80) {
+        const [first, rest] = splitTextNaturally(rem, 240);
+        if (!first || !rest || rest.length >= rem.length) break;
         finalSegments.push(first);
         rem = rest;
       }
@@ -497,17 +853,69 @@ function extractOverviewSegments(rawOverview: string): string[] {
 }
 
 /**
+ * Splits a single still-oversized segment even more finely (1 table row, 1 list item/sub-chunk, 3 line breaks, ~130 chars)
+ * when an adaptive page split cannot fit the normal segment onto remaining space.
+ */
+function finerSplitSingleSegment(seg: string): string[] {
+  const trimmed = String(seg || '').trim();
+  if (!trimmed) return [];
+
+  if (/^<table\b/i.test(trimmed)) {
+    const chunks = splitHtmlTableIntoRowChunks(trimmed, 1, 130).map(c => c.html);
+    if (chunks.length > 1) return chunks;
+  }
+  if (/^<(?:ul|ol)\b/i.test(trimmed)) {
+    const chunks = splitHtmlListIntoChunks(trimmed, 1, 130).map(c => c.html);
+    if (chunks.length > 1) return chunks;
+  }
+
+  const innerStripped = trimmed
+    .replace(/^\s*<(?:p|div|blockquote)\b[^>]*>/i, '')
+    .replace(/<\/(?:p|div|blockquote)>\s*$/i, '')
+    .trim();
+
+  const parts = splitHtmlWithInlineTagsAtBoundary(innerStripped, 140, 3);
+  if (parts.length > 1) {
+    if (/^<blockquote\b/i.test(trimmed)) {
+      return parts.map(p => `<blockquote style="margin: 4px 0; padding-left: 10px; border-left: 2px solid #cbd5e1;">${p}</blockquote>`);
+    }
+    return parts.map(p => `<p style="margin: 0 0 4px 0;">${p}</p>`);
+  }
+
+  const plain = stripHtmlTagsAndEntities(trimmed);
+  if (plain.length > 160 && !/<[a-z][\s\S]*>/i.test(trimmed)) {
+    const [a, b] = splitTextNaturally(plain, 120);
+    if (a && b) return [escapePdfText(a), escapePdfText(b)];
+  }
+  return [trimmed];
+}
+
+/**
  * Format overview HTML safely so plain newlines render with line breaks instead of collapsing.
  */
 function formatOverviewSegmentsHtml(segments: string[]): string {
   return segments
     .map(seg => {
-      if (/^\s*<(?:p|div|ul|ol|h[1-6]|table|blockquote)\b/i.test(seg)) {
+      if (/^\s*<(?:p|div|ul|ol|h[1-6]|table|blockquote|pre)\b/i.test(seg)) {
         return seg;
       }
       return `<div style="margin-bottom: 4px;">${seg}</div>`;
     })
     .join('');
+}
+
+/**
+ * Shared conservative HTML height estimator for non-DOM environments (Node / SSR).
+ */
+function estimateRichHtmlBlockHeight(html: string, extraPadding: number = 10): number {
+  const plainLen = stripHtmlTagsAndEntities(html).length;
+  const tableRows = (html.match(/<tr\b/gi) || []).length;
+  const listItems = (html.match(/<li\b/gi) || []).length;
+  const brCount = (html.match(/<br\s*\/?>/gi) || []).length;
+  const pCount = (html.match(/<(?:p|div|blockquote)\b/gi) || []).length;
+  const imgCount = (html.match(/<img\b/gi) || []).length;
+  const lines = Math.max(1 + brCount, Math.ceil(plainLen / 76) + brCount + Math.floor(pCount * 0.4));
+  return Math.max(22, extraPadding + lines * 15.5 + tableRows * 24 + listItems * 4 + imgCount * 220);
 }
 
 /**
@@ -518,30 +926,26 @@ export function estimateServiceCardHeight(s: ServicePresentationItem): number {
   if (s.configurationSummary && !s.isRail) height += 20;
   if (s.meetingPoint || s.pickupPoint || s.dropoffPoint) height += 28;
   if (s.isRail && s.railDetails) height += 66;
-  if (s.overview && hasMeaningfulHtmlContent(s.overview)) {
+  if (s.overview && (hasMeaningfulHtmlContent(s.overview) || /<img\b/i.test(s.overview))) {
     const segments = extractOverviewSegments(s.overview);
     let overviewH = 22;
     for (const seg of segments) {
-      const plainLen = stripHtmlTagsAndEntities(seg).length;
-      const brCount = (seg.match(/<br\s*\/?>/gi) || []).length;
-      const lines = Math.max(1 + brCount, Math.ceil(plainLen / 78) + brCount);
-      overviewH += lines * 15.5 + 4;
+      overviewH += estimateRichHtmlBlockHeight(seg, 4);
     }
     height += overviewH;
   }
   if (s.inclusions && s.inclusions.length > 0) {
     const totalChars = s.inclusions.reduce((sum, x) => sum + x.length + 6, 0);
-    const incRows = Math.max(1, Math.ceil(totalChars / 82));
+    const incRows = Math.max(1, Math.ceil(totalChars / 78));
     height += 22 + incRows * 24;
   }
   if (s.exclusions && s.exclusions.length > 0) {
     const totalChars = s.exclusions.reduce((sum, x) => sum + x.length + 6, 0);
-    const excRows = Math.max(1, Math.ceil(totalChars / 82));
+    const excRows = Math.max(1, Math.ceil(totalChars / 78));
     height += 22 + excRows * 24;
   }
   if (s.specialInstructions) {
-    const instLines = Math.max(1, Math.ceil(stripHtmlTagsAndEntities(s.specialInstructions).length / 76));
-    height += 24 + instLines * 16;
+    height += estimateRichHtmlBlockHeight(s.specialInstructions, 22);
   }
   return Math.max(height, 125);
 }
@@ -613,7 +1017,31 @@ export function createContinueDayHeaderBlock(
   };
 }
 
-function renderServiceSecondaryHtml(s: ServicePresentationItem): {
+function splitPlainOrHtmlInstructions(rawInst: string, maxChars: number = 240): string[] {
+  const input = String(rawInst || '').trim();
+  if (!input) return [];
+  if (stripHtmlTagsAndEntities(input).length <= maxChars && (input.match(/<br\s*\/?>/gi) || []).length <= 4) {
+    return [input];
+  }
+  const segs = extractOverviewSegments(input);
+  if (segs.length > 1) return segs;
+  const fine = finerSplitSingleSegment(segs[0] || input);
+  return fine.length > 1 ? fine : [input];
+}
+
+function renderServiceSecondaryHtml(
+  s: ServicePresentationItem,
+  secondaryOpts?: {
+    inclusions?: string[];
+    exclusions?: string[];
+    includeSpecialInstructions?: boolean;
+    specialInstructionsSlice?: string;
+    inclusionsContinued?: boolean;
+    exclusionsContinued?: boolean;
+    specialInstructionsContinued?: boolean;
+    isVisaCard?: boolean;
+  }
+): {
   operationalPointsHtml: string;
   railBoxHtml: string;
   inclusionsHtml: string;
@@ -640,27 +1068,38 @@ function renderServiceSecondaryHtml(s: ServicePresentationItem): {
     </div>
   ` : '';
 
-  const inclusionsHtml = s.inclusions.length > 0 ? `
+  const activeInclusions = secondaryOpts?.inclusions ?? s.inclusions;
+  const activeExclusions = secondaryOpts?.exclusions ?? s.exclusions;
+  const activeSpecialText = secondaryOpts?.specialInstructionsSlice ?? s.specialInstructions;
+  const showSpecial = (secondaryOpts?.includeSpecialInstructions ?? Boolean(activeSpecialText)) && Boolean(activeSpecialText);
+
+  const inclusionsHtml = activeInclusions.length > 0 ? `
     <div style="margin-top: 5px;">
-      <span style="font-size: 9px; font-weight: 700; color: #059669; text-transform: uppercase; display: block; margin-bottom: 2px;">Inclusions</span>
+      <span style="font-size: 9px; font-weight: 700; color: #059669; text-transform: uppercase; display: block; margin-bottom: 2px;">${secondaryOpts?.inclusionsContinued ? 'Inclusions (Continued)' : 'Inclusions'}</span>
       <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-        ${s.inclusions.map(inc => `<span style="font-size: 9px; background: #ffffff; color: #064e3b; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">✓ ${inc}</span>`).join('')}
+        ${activeInclusions.map(inc => `<span style="font-size: 9px; background: #ffffff; color: #064e3b; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">✓ ${inc}</span>`).join('')}
       </div>
     </div>
   ` : '';
 
-  const exclusionsHtml = s.exclusions.length > 0 ? `
+  const exclusionsHtml = activeExclusions.length > 0 ? `
     <div style="margin-top: 5px;">
-      <span style="font-size: 9px; font-weight: 700; color: #e11d48; text-transform: uppercase; display: block; margin-bottom: 2px;">Exclusions</span>
+      <span style="font-size: 9px; font-weight: 700; color: #e11d48; text-transform: uppercase; display: block; margin-bottom: 2px;">${secondaryOpts?.exclusionsContinued ? 'Exclusions (Continued)' : 'Exclusions'}</span>
       <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-        ${s.exclusions.map(exc => `<span style="font-size: 9px; background: #ffffff; color: #881337; padding: 2px 6px; border-radius: 4px; border: 1px solid #fecdd3;">✕ ${exc}</span>`).join('')}
+        ${activeExclusions.map(exc => `<span style="font-size: 9px; background: #ffffff; color: #881337; padding: 2px 6px; border-radius: 4px; border: 1px solid #fecdd3;">✕ ${exc}</span>`).join('')}
       </div>
     </div>
   ` : '';
 
-  const specialInstructionsHtml = s.specialInstructions ? `
-    <div style="font-size: 10px; color: #334155; background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #e2e8f0; margin-top: 5px;">
-      <strong>Special Instructions: </strong>${s.specialInstructions}
+  const instLabel = secondaryOpts?.isVisaCard
+    ? (secondaryOpts?.specialInstructionsContinued ? 'Special Notes (Continued): ' : 'Special Notes: ')
+    : (secondaryOpts?.specialInstructionsContinued ? 'Special Instructions (Continued): ' : 'Special Instructions: ');
+  const instBorder = secondaryOpts?.isVisaCard ? '#a7f3d0' : '#e2e8f0';
+  const instColor = secondaryOpts?.isVisaCard ? '#065f46' : '#334155';
+
+  const specialInstructionsHtml = (showSpecial && activeSpecialText) ? `
+    <div style="font-size: 10px; color: ${instColor}; background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid ${instBorder}; margin-top: 5px; word-break: break-word;">
+      <strong data-pdf-synthetic-label="true">${instLabel}</strong>${normalizeInlineImagesHtml(activeSpecialText)}
     </div>
   ` : '';
 
@@ -669,20 +1108,51 @@ function renderServiceSecondaryHtml(s: ServicePresentationItem): {
 
 function renderServiceChunkHtml(
   s: ServicePresentationItem,
-  day: DayPresentationData,
+  day: DayPresentationData | undefined,
   segments: string[],
   options: {
     mode: 'FULL' | 'FIRST' | 'MIDDLE' | 'REMAINING';
     overviewContinuedHeader: boolean;
     includeDetailsFooter: boolean;
+    inclusionsSlice?: string[];
+    exclusionsSlice?: string[];
+    includeSpecialInstructions?: boolean;
+    specialInstructionsSlice?: string;
+    inclusionsContinued?: boolean;
+    exclusionsContinued?: boolean;
+    specialInstructionsContinued?: boolean;
+    isVisaCard?: boolean;
   }
 ): string {
+  const isVisa = Boolean(options.isVisaCard);
+  const secondaryConfig = options.includeDetailsFooter
+    ? {
+        inclusions: options.inclusionsSlice ?? s.inclusions,
+        exclusions: options.exclusionsSlice ?? s.exclusions,
+        includeSpecialInstructions: options.includeSpecialInstructions ?? Boolean(s.specialInstructions),
+        specialInstructionsSlice: options.specialInstructionsSlice,
+        inclusionsContinued: options.inclusionsContinued,
+        exclusionsContinued: options.exclusionsContinued,
+        specialInstructionsContinued: options.specialInstructionsContinued,
+        isVisaCard: isVisa
+      }
+    : {
+        inclusions: options.inclusionsSlice ?? [],
+        exclusions: options.exclusionsSlice ?? [],
+        includeSpecialInstructions: options.includeSpecialInstructions ?? false,
+        specialInstructionsSlice: options.specialInstructionsSlice,
+        inclusionsContinued: options.inclusionsContinued,
+        exclusionsContinued: options.exclusionsContinued,
+        specialInstructionsContinued: options.specialInstructionsContinued,
+        isVisaCard: isVisa
+      };
+
   const { operationalPointsHtml, railBoxHtml, inclusionsHtml, exclusionsHtml, specialInstructionsHtml } =
-    renderServiceSecondaryHtml(s);
+    renderServiceSecondaryHtml(s, secondaryConfig);
 
   const overviewBlockHtml = segments.length > 0 ? `
     <div style="margin-top: 5px;">
-      <span style="font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase; display: block; margin-bottom: 2px;">
+      <span data-pdf-synthetic-label="true" style="font-size: 9px; font-weight: 700; color: ${isVisa ? '#64748b' : '#94a3b8'}; text-transform: uppercase; display: block; margin-bottom: 2px;">
         ${options.overviewContinuedHeader ? 'Overview (Continued)' : 'Overview'}
       </span>
       <div style="font-size: 10.5px; color: #334155; line-height: 1.42; word-break: break-word;">${formatOverviewSegmentsHtml(segments)}</div>
@@ -690,27 +1160,33 @@ function renderServiceChunkHtml(
   ` : '';
 
   const splitAttr = options.mode === 'FULL' ? '' : ` data-split-part="${options.mode.toLowerCase()}"`;
+  const dayAttr = day ? ` data-day-id="${day.dayId}"` : '';
+  const cardBg = isVisa ? '#ecfdf5' : `${s.badgeBg}18`;
+  const cardBorder = isVisa ? '#a7f3d0' : s.badgeBg;
+  const badgeBg = isVisa ? '#a7f3d0' : s.badgeBg;
+  const badgeText = isVisa ? '#064e3b' : s.badgeText;
+  const catLabel = isVisa ? 'VISA & ANCILLARY' : s.categoryLabel;
 
   if (options.mode === 'FULL' || options.mode === 'FIRST') {
     return `
-      <div data-day-id="${day.dayId}" data-service-id="${s.id}"${splitAttr} style="padding: 12px 14px; border-radius: 12px; background: ${s.badgeBg}18; border: 1px solid ${s.badgeBg}; display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; box-sizing: border-box;">
+      <div${dayAttr} data-service-id="${s.id}"${splitAttr} style="padding: 12px 14px; border-radius: 12px; background: ${cardBg}; border: 1px solid ${cardBorder}; display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; box-sizing: border-box;">
         <div style="flex: 1; min-width: 0;">
           <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap;">
-            <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: ${s.badgeBg}; color: ${s.badgeText};">
-              ${escapePdfText(s.categoryLabel)}
+            <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeText};">
+              ${escapePdfText(catLabel)}
             </span>
             ${s.duration ? `<span style="font-size: 10px; color: #475569;">⏱️ ${escapePdfText(s.duration)}</span>` : ''}
-            ${s.serviceTime ? `<span style="font-size: 10px; font-family: monospace; font-weight: 600; color: #334155; background: #ffffff; padding: 1px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">${escapePdfText(s.serviceTime)}</span>` : ''}
+            ${!isVisa && s.serviceTime ? `<span style="font-size: 10px; font-family: monospace; font-weight: 600; color: #334155; background: #ffffff; padding: 1px 6px; border-radius: 4px; border: 1px solid #e2e8f0;">${escapePdfText(s.serviceTime)}</span>` : ''}
           </div>
-          <h4 style="font-size: 12.5px; font-weight: 800; color: #0f172a; margin: 0 0 4px 0;">${s.listingName}</h4>
-          ${s.configurationSummary && !s.isRail ? `<p style="font-size: 10.5px; color: #475569; margin: 0 0 5px 0; font-weight: 500;">${escapePdfText(s.configurationSummary)}</p>` : ''}
+          <h4 style="font-size: 12.5px; font-weight: ${isVisa ? '700' : '800'}; color: #0f172a; margin: 0 0 4px 0;">${s.listingName}</h4>
+          ${s.configurationSummary && !s.isRail ? `<p style="font-size: ${isVisa ? '11px' : '10.5px'}; color: ${isVisa ? '#047857' : '#475569'}; margin: 0 0 5px 0; font-weight: ${isVisa ? '600' : '500'};">${escapePdfText(s.configurationSummary)}</p>` : ''}
           ${operationalPointsHtml}
           ${railBoxHtml}
           ${overviewBlockHtml}
-          ${options.includeDetailsFooter ? `${inclusionsHtml}${exclusionsHtml}${specialInstructionsHtml}` : ''}
+          ${inclusionsHtml}${exclusionsHtml}${specialInstructionsHtml}
         </div>
         <div style="text-align: right; min-width: 90px; flex-shrink: 0;">
-          <span style="display: inline-block; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Confirmed</span>
+          <span style="display: inline-block; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: ${isVisa ? '#065f46' : '#047857'}; background: ${isVisa ? '#d1fae5' : '#ecfdf5'}; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">${isVisa ? 'Included' : 'Confirmed'}</span>
           <div style="font-size: 9.5px; color: #64748b; margin-top: 4px;">${escapePdfText(s.paxText)}</div>
         </div>
       </div>
@@ -718,18 +1194,18 @@ function renderServiceChunkHtml(
   }
 
   return `
-    <div data-day-id="${day.dayId}" data-service-id="${s.id}"${splitAttr} style="padding: 12px 14px; border-radius: 12px; background: ${s.badgeBg}18; border: 1px solid ${s.badgeBg}; margin-bottom: 10px; box-sizing: border-box;">
-      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px dashed ${s.badgeBg};">
+    <div${dayAttr} data-service-id="${s.id}"${splitAttr} style="padding: 12px 14px; border-radius: 12px; background: ${cardBg}; border: 1px solid ${cardBorder}; margin-bottom: 10px; box-sizing: border-box;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px dashed ${cardBorder};">
         <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
-          <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: ${s.badgeBg}; color: ${s.badgeText}; flex-shrink: 0;">
-            ${escapePdfText(s.categoryLabel)}
+          <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: ${badgeBg}; color: ${badgeText}; flex-shrink: 0;">
+            ${escapePdfText(catLabel)}
           </span>
           <h4 style="font-size: 12px; font-weight: 800; color: #0f172a; margin: 0;">${s.listingName} — continued</h4>
         </div>
-        <span style="font-size: 9px; font-family: monospace; color: #64748b; font-weight: 600; flex-shrink: 0;">Activity Details Continued</span>
+        <span style="font-size: 9px; font-family: monospace; color: #64748b; font-weight: 600; flex-shrink: 0;">${isVisa ? 'Visa Details Continued' : 'Activity Details Continued'}</span>
       </div>
       ${overviewBlockHtml}
-      ${options.includeDetailsFooter ? `${inclusionsHtml}${exclusionsHtml}${specialInstructionsHtml}` : ''}
+      ${inclusionsHtml}${exclusionsHtml}${specialInstructionsHtml}
     </div>
   `;
 }
@@ -763,7 +1239,13 @@ function estimatePartialServiceHeight(
   s: ServicePresentationItem,
   segments: string[],
   isFirstHeader: boolean,
-  includeDetailsFooter: boolean
+  includeDetailsFooter: boolean,
+  secondarySlices?: {
+    inclusions?: string[];
+    exclusions?: string[];
+    includeSpecialInstructions?: boolean;
+    specialInstructionsSlice?: string;
+  }
 ): number {
   let height = isFirstHeader ? 86 : 56;
   if (isFirstHeader) {
@@ -774,128 +1256,297 @@ function estimatePartialServiceHeight(
   if (segments.length > 0) {
     height += 20;
     for (const seg of segments) {
-      const plainLen = stripHtmlTagsAndEntities(seg).length;
-      const brCount = (seg.match(/<br\s*\/?>/gi) || []).length;
-      const lines = Math.max(1 + brCount, Math.ceil(plainLen / 78) + brCount);
-      height += lines * 15.5 + 4;
+      height += estimateRichHtmlBlockHeight(seg, 4);
     }
   }
-  if (includeDetailsFooter) {
-    if (s.inclusions.length > 0) {
-      const totalChars = s.inclusions.reduce((sum, x) => sum + x.length + 6, 0);
-      height += 22 + Math.max(1, Math.ceil(totalChars / 82)) * 24;
-    }
-    if (s.exclusions.length > 0) {
-      const totalChars = s.exclusions.reduce((sum, x) => sum + x.length + 6, 0);
-      height += 22 + Math.max(1, Math.ceil(totalChars / 82)) * 24;
-    }
-    if (s.specialInstructions) {
-      const instLines = Math.max(1, Math.ceil(stripHtmlTagsAndEntities(s.specialInstructions).length / 76));
-      height += 24 + instLines * 16;
-    }
+  const incList = secondarySlices?.inclusions ?? (includeDetailsFooter ? s.inclusions : []);
+  const excList = secondarySlices?.exclusions ?? (includeDetailsFooter ? s.exclusions : []);
+  const specText = secondarySlices?.specialInstructionsSlice ?? s.specialInstructions;
+  const hasSpec = secondarySlices?.includeSpecialInstructions ?? (includeDetailsFooter && Boolean(specText));
+
+  if (incList.length > 0) {
+    const totalChars = incList.reduce((sum, x) => sum + x.length + 6, 0);
+    height += 22 + Math.max(1, Math.ceil(totalChars / 78)) * 24;
+  }
+  if (excList.length > 0) {
+    const totalChars = excList.reduce((sum, x) => sum + x.length + 6, 0);
+    height += 22 + Math.max(1, Math.ceil(totalChars / 78)) * 24;
+  }
+  if (hasSpec && specText) {
+    height += estimateRichHtmlBlockHeight(specText, 22);
   }
   return Math.max(height, isFirstHeader ? MIN_ACTIVITY_START_HEIGHT : 75);
 }
 
 /**
- * Dynamically split an oversized Service Block (or its remainder) to fit inside `targetMaxHeightPx`.
+ * Dynamically split an oversized Service Block (Day service or Visa service, or any continuation remainder)
+ * to fit inside `targetMaxHeightPx`. Supports recursive sub-segment splitting AND splitting of long
+ * inclusions, exclusions, and multi-paragraph specialInstructions.
  * Returns `null` if even the smallest meaningful first slice exceeds `targetMaxHeightPx`.
  */
+let pdfSplitInstanceCounter = 0;
+
 function splitServiceBlockToFitHeight(
   block: PaginationBlock,
-  day: DayPresentationData,
+  day: DayPresentationData | undefined,
   targetMaxHeightPx: number
 ): { fitBlock: PaginationBlock; remainderBlock: PaginationBlock } | null {
   const s = block.serviceData;
   if (!s) return null;
 
+  const isVisa = block.type === 'VISA_SERVICE_CARD' || block.type === 'VISA_SERVICE_CONTINUATION';
   const isFirstHeader = block.isSplitPart !== 'MIDDLE' && block.isSplitPart !== 'REMAINING';
-  const segments = block.overviewSegments ?? extractOverviewSegments(s.overview);
+  let segments = [...(block.overviewSegments ?? extractOverviewSegments(s.overview))];
   const hasSecondaryDetails = s.inclusions.length > 0 || s.exclusions.length > 0 || Boolean(s.specialInstructions);
+  const ownsSecondaryDetails =
+    block.isSplitPart === undefined || block.isSplitPart === 'REMAINING'
+      ? hasSecondaryDetails
+      : Boolean(block.includeSecondaryOnRemainder);
+  const remainderSplitRole: 'MIDDLE' | 'REMAINING' =
+    block.isSplitPart === 'FIRST' || block.isSplitPart === 'MIDDLE' ? 'MIDDLE' : 'REMAINING';
 
-  // Try progressively fewer overview segments until the card chunk fits inside targetMaxHeightPx
-  let bestCut = -1;
+  const blockInclusions = ownsSecondaryDetails ? (block.inclusionsSlice ?? s.inclusions) : [];
+  const blockExclusions = ownsSecondaryDetails ? (block.exclusionsSlice ?? s.exclusions) : [];
+  const blockSpecialText = ownsSecondaryDetails
+    ? (block.specialInstructionsSlice ?? (block.includeSpecialInstructions === false ? '' : (s.specialInstructions || '')))
+    : '';
+  const blockHasSpecial = Boolean(blockSpecialText);
+  const hasRemainingSecondary =
+    blockInclusions.length > 0 || blockExclusions.length > 0 || blockHasSpecial;
 
-  for (let cut = segments.length; cut >= 0; cut--) {
-    // Must leave something for the remainder chunk!
-    if (cut === segments.length && !hasSecondaryDetails) continue;
-    // If there are no secondary details, require at least 1 segment in first slice
-    if (cut === 0 && !isFirstHeader) continue;
-    if (cut === 0 && isFirstHeader && !s.isRail && !(s.meetingPoint || s.pickupPoint || s.dropoffPoint)) {
-      continue;
+  const findBestOverviewCut = (segList: string[]): number => {
+    for (let cut = segList.length; cut >= 0; cut--) {
+      if (cut === segList.length && !hasRemainingSecondary) continue;
+      if (cut === 0 && !isFirstHeader) continue;
+      if (cut === 0 && isFirstHeader && segList.length === 0 && !hasRemainingSecondary) continue;
+
+      const firstSegments = segList.slice(0, cut);
+      const candidateHtml = renderServiceChunkHtml(s, day, firstSegments, {
+        mode: isFirstHeader ? 'FIRST' : 'MIDDLE',
+        overviewContinuedHeader: !isFirstHeader && Boolean(block.overviewIsContinued),
+        includeDetailsFooter: false,
+        isVisaCard: isVisa
+      });
+      const estH = estimatePartialServiceHeight(s, firstSegments, isFirstHeader, false);
+      const realH = measureSingleBlockHtmlHeight(candidateHtml, estH);
+
+      if (realH <= targetMaxHeightPx) {
+        return cut;
+      }
     }
+    return -1;
+  };
 
-    const firstSegments = segments.slice(0, cut);
-    const candidateHtml = renderServiceChunkHtml(s, day, firstSegments, {
-      mode: isFirstHeader ? 'FIRST' : 'MIDDLE',
-      overviewContinuedHeader: !isFirstHeader && Boolean(block.overviewIsContinued),
-      includeDetailsFooter: false
-    });
-    const estH = estimatePartialServiceHeight(s, firstSegments, isFirstHeader, false);
-    const realH = measureSingleBlockHtmlHeight(candidateHtml, estH);
+  // 1. Try splitting across overview segments
+  let bestCut = findBestOverviewCut(segments);
 
-    if (realH <= targetMaxHeightPx) {
-      bestCut = cut;
-      break;
+  // 1B. If segments[0] was still too large (or cut=0 on first card left no text), finely split segments[0]!
+  if ((bestCut === -1 || (bestCut === 0 && isFirstHeader)) && segments.length > 0) {
+    const fineFirst = finerSplitSingleSegment(segments[0]);
+    if (fineFirst.length > 1) {
+      const expandedSegs = [...fineFirst, ...segments.slice(1)];
+      const refinedCut = findBestOverviewCut(expandedSegs);
+      if (refinedCut >= 1 || (bestCut === -1 && refinedCut >= 0)) {
+        segments = expandedSegs;
+        bestCut = refinedCut;
+      }
     }
   }
 
-  if (bestCut === -1) {
+  let fitSegments: string[] = [];
+  let remSegments: string[] = [];
+  let fitInclusions: string[] = [];
+  let remInclusions: string[] = blockInclusions;
+  let fitExclusions: string[] = [];
+  let remExclusions: string[] = blockExclusions;
+  let fitSpecialSlice: string | undefined;
+  let remSpecialSlice: string | undefined = blockSpecialText || undefined;
+  let fitSpecial = false;
+  let remSpecial = blockHasSpecial;
+  let fitHeight = 0;
+
+  if (bestCut !== -1 && (bestCut > 0 || !hasRemainingSecondary || segments.length > 0)) {
+    fitSegments = segments.slice(0, bestCut);
+    remSegments = segments.slice(bestCut);
+  } else if (hasRemainingSecondary) {
+    // 2. Try fitting partial secondary details (when overview is empty or already consumed)
+    const instChunks = blockHasSpecial ? splitPlainOrHtmlInstructions(blockSpecialText, 200) : [];
+    const totalSecUnits = blockInclusions.length + blockExclusions.length + instChunks.length;
+    const baseSegs = segments.length === 0 ? [] : [];
+    let foundSecSplit = false;
+
+    const maxTake = isFirstHeader && segments.length === 0 ? totalSecUnits : Math.max(1, totalSecUnits - 1);
+    for (let take = maxTake; take >= 1; take--) {
+      if (take >= totalSecUnits && segments.length === 0) continue;
+      const incTake = Math.min(take, blockInclusions.length);
+      const remAfterInc = take - incTake;
+      const excTake = Math.min(remAfterInc, blockExclusions.length);
+      const instTakeCount = Math.min(remAfterInc - excTake, instChunks.length);
+
+      const candInc = blockInclusions.slice(0, incTake);
+      const candExc = blockExclusions.slice(0, excTake);
+      const candSpecSlice = instTakeCount > 0 ? instChunks.slice(0, instTakeCount).join('<br/>') : undefined;
+      const specTake = Boolean(candSpecSlice);
+
+      const candHtml = renderServiceChunkHtml(s, day, baseSegs, {
+        mode: isFirstHeader ? 'FIRST' : 'MIDDLE',
+        overviewContinuedHeader: !isFirstHeader && Boolean(block.overviewIsContinued),
+        includeDetailsFooter: false,
+        inclusionsSlice: candInc,
+        exclusionsSlice: candExc,
+        includeSpecialInstructions: specTake,
+        specialInstructionsSlice: candSpecSlice,
+        isVisaCard: isVisa
+      });
+      const estH = estimatePartialServiceHeight(s, baseSegs, isFirstHeader, false, {
+        inclusions: candInc,
+        exclusions: candExc,
+        includeSpecialInstructions: specTake,
+        specialInstructionsSlice: candSpecSlice
+      });
+      const realH = measureSingleBlockHtmlHeight(candHtml, estH);
+      if (realH <= targetMaxHeightPx) {
+        fitSegments = baseSegs;
+        remSegments = segments;
+        fitInclusions = candInc;
+        remInclusions = blockInclusions.slice(incTake);
+        fitExclusions = candExc;
+        remExclusions = blockExclusions.slice(excTake);
+        fitSpecial = specTake;
+        fitSpecialSlice = candSpecSlice;
+        const remInstChunks = instChunks.slice(instTakeCount);
+        remSpecialSlice = remInstChunks.length > 0 ? remInstChunks.join('<br/>') : undefined;
+        remSpecial = Boolean(remSpecialSlice);
+        fitHeight = realH;
+        foundSecSplit = true;
+        break;
+      }
+    }
+    if (!foundSecSplit) {
+      // Fallback: if segments === 0 and cut=0 (isFirstHeader) couldn't even fit 1 secondary unit, allow header-only slice if it fits
+      if (isFirstHeader) {
+        const bareHtml = renderServiceChunkHtml(s, day, [], {
+          mode: 'FIRST',
+          overviewContinuedHeader: false,
+          includeDetailsFooter: false,
+          isVisaCard: isVisa
+        });
+        const bareH = measureSingleBlockHtmlHeight(bareHtml, estimatePartialServiceHeight(s, [], true, false));
+        if (bareH <= targetMaxHeightPx) {
+          fitSegments = [];
+          remSegments = segments;
+          fitHeight = bareH;
+          foundSecSplit = true;
+        }
+      }
+      if (!foundSecSplit) return null;
+    }
+  } else {
     return null;
   }
-
-  const fitSegments = segments.slice(0, bestCut);
-  const remSegments = segments.slice(bestCut);
 
   const fitHtml = renderServiceChunkHtml(s, day, fitSegments, {
     mode: isFirstHeader ? 'FIRST' : 'MIDDLE',
     overviewContinuedHeader: !isFirstHeader && Boolean(block.overviewIsContinued),
-    includeDetailsFooter: false
+    includeDetailsFooter: false,
+    inclusionsSlice: fitInclusions,
+    exclusionsSlice: fitExclusions,
+    includeSpecialInstructions: fitSpecial,
+    specialInstructionsSlice: fitSpecialSlice,
+    isVisaCard: isVisa
   });
-  const fitHeight = measureSingleBlockHtmlHeight(
-    fitHtml,
-    estimatePartialServiceHeight(s, fitSegments, isFirstHeader, false)
-  );
+  if (fitHeight <= 0) {
+    fitHeight = measureSingleBlockHtmlHeight(
+      fitHtml,
+      estimatePartialServiceHeight(s, fitSegments, isFirstHeader, false, {
+        inclusions: fitInclusions,
+        exclusions: fitExclusions,
+        includeSpecialInstructions: fitSpecial,
+        specialInstructionsSlice: fitSpecialSlice
+      })
+    );
+  }
 
   const remHasOverviewBefore = fitSegments.length > 0 || Boolean(block.overviewIsContinued);
+  const remHasSecondary = remInclusions.length > 0 || remExclusions.length > 0 || remSpecial;
   const remHtml = renderServiceChunkHtml(s, day, remSegments, {
-    mode: 'REMAINING',
+    mode: remainderSplitRole,
     overviewContinuedHeader: remHasOverviewBefore && remSegments.length > 0,
-    includeDetailsFooter: hasSecondaryDetails
+    includeDetailsFooter: remHasSecondary,
+    inclusionsSlice: remInclusions,
+    exclusionsSlice: remExclusions,
+    includeSpecialInstructions: remSpecial,
+    specialInstructionsSlice: remSpecialSlice,
+    inclusionsContinued: fitInclusions.length > 0 && remInclusions.length > 0,
+    exclusionsContinued: fitExclusions.length > 0 && remExclusions.length > 0,
+    specialInstructionsContinued: fitSpecial && remSpecial,
+    isVisaCard: isVisa
   });
   const remHeight = measureSingleBlockHtmlHeight(
     remHtml,
-    estimatePartialServiceHeight(s, remSegments, false, hasSecondaryDetails)
+    estimatePartialServiceHeight(s, remSegments, false, remHasSecondary, {
+      inclusions: remInclusions,
+      exclusions: remExclusions,
+      includeSpecialInstructions: remSpecial,
+      specialInstructionsSlice: remSpecialSlice
+    })
   );
 
   const sIdx = block.serviceIndex ?? 0;
+  const splitSeq = ++pdfSplitInstanceCounter;
+  const remSecCount = remInclusions.length + remExclusions.length + (remSpecial ? 1 : 0);
+  const splitRef = `split-svc-${day?.dayNumber ?? 'visa'}-${sIdx}-${splitSeq}`;
 
   const fitBlock: PaginationBlock = {
     ...block,
-    id: `${block.id}-fit`,
-    type: isFirstHeader ? 'DAY_SERVICE_CARD' : 'DAY_SERVICE_CONTINUATION',
+    id: `${block.id}-fit-${splitSeq}`,
+    type: isVisa
+      ? (isFirstHeader ? 'VISA_SERVICE_CARD' : 'VISA_SERVICE_CONTINUATION')
+      : (isFirstHeader ? 'DAY_SERVICE_CARD' : 'DAY_SERVICE_CONTINUATION'),
     html: fitHtml,
     estimatedHeight: fitHeight,
-    splittable: false,
+    splittable:
+      fitSegments.length > 1 ||
+      (fitSegments.length === 1 && stripHtmlTagsAndEntities(fitSegments[0]).length > 160) ||
+      (fitInclusions.length + fitExclusions.length > 1) ||
+      Boolean(fitSpecialSlice && stripHtmlTagsAndEntities(fitSpecialSlice).length > 180),
     minMeaningfulHeight: fitHeight,
     serviceData: s,
     overviewSegments: fitSegments,
-    isSplitPart: isFirstHeader ? 'FIRST' : 'MIDDLE'
+    inclusionsSlice: fitInclusions,
+    exclusionsSlice: fitExclusions,
+    includeSpecialInstructions: fitSpecial,
+    specialInstructionsSlice: fitSpecialSlice,
+    includeSecondaryOnRemainder: false,
+    isSplitPart: isFirstHeader ? 'FIRST' : 'MIDDLE',
+    splitRef,
+    breakDecision: `SPLIT_FIT_${isFirstHeader ? 'FIRST' : 'MIDDLE'}`
   };
 
+  const remPrefix = isVisa ? `block-visa-service-${sIdx}` : `block-day-${day?.dayNumber ?? 0}-service-${sIdx}`;
   const remainderBlock: PaginationBlock = {
     ...block,
-    id: `block-day-${day.dayNumber}-service-${sIdx}-rem-${fitSegments.length}`,
-    type: 'DAY_SERVICE_CONTINUATION',
+    id: `${remPrefix}-rem-${splitSeq}-${fitSegments.length}`,
+    type: isVisa ? 'VISA_SERVICE_CONTINUATION' : 'DAY_SERVICE_CONTINUATION',
     html: remHtml,
     estimatedHeight: remHeight,
-    splittable: remSegments.length > 1,
+    splittable:
+      remSegments.length > 1 ||
+      (remSegments.length === 1 && (remHasSecondary || stripHtmlTagsAndEntities(remSegments[0]).length > 160)) ||
+      remSecCount > 1 ||
+      Boolean(remSpecialSlice && stripHtmlTagsAndEntities(remSpecialSlice).length > 200),
     minMeaningfulHeight: 90,
     serviceData: s,
     overviewSegments: remSegments,
     overviewIsContinued: remHasOverviewBefore,
-    includeSecondaryOnRemainder: hasSecondaryDetails,
-    isSplitPart: 'REMAINING'
+    inclusionsSlice: remInclusions,
+    exclusionsSlice: remExclusions,
+    includeSpecialInstructions: remSpecial,
+    specialInstructionsSlice: remSpecialSlice,
+    includeSecondaryOnRemainder: remHasSecondary,
+    isSplitPart: remainderSplitRole,
+    splitRef,
+    breakDecision: `SPLIT_REM_${remainderSplitRole}`
   };
 
   return { fitBlock, remainderBlock };
@@ -919,7 +1570,10 @@ function buildDayServiceCardBlock(
 
   const hasSecondaryDetails = s.inclusions.length > 0 || s.exclusions.length > 0 || Boolean(s.specialInstructions);
   const hasRailAndOverview = Boolean(s.isRail && s.railDetails && overviewSegments.length > 0);
-  const hasLongOverview = overviewSegments.length > 1 || stripHtmlTagsAndEntities(s.overview).length > 160;
+  const hasLongOverview =
+    overviewSegments.length > 1 ||
+    stripHtmlTagsAndEntities(s.overview).length > 160 ||
+    (s.specialInstructions ? stripHtmlTagsAndEntities(s.specialInstructions).length > 220 : false);
   const canSplit = hasSecondaryDetails || hasRailAndOverview || hasLongOverview;
 
   let splitParts: SplitBlockParts | undefined;
@@ -944,7 +1598,6 @@ function buildDayServiceCardBlock(
     const firstEst = estimatePartialServiceHeight(s, firstSegs, true, false);
     const remEst = estimatePartialServiceHeight(s, remSegs, false, hasSecondaryDetails);
 
-    // Minimum meaningful start = header + up to 1 segment
     const minSegs = overviewSegments.slice(0, 1);
     minMeaningfulHeight = Math.max(
       MIN_ACTIVITY_START_HEIGHT,
@@ -972,7 +1625,7 @@ function buildDayServiceCardBlock(
         type: 'DAY_SERVICE_CONTINUATION',
         html: remainingPartHtml,
         estimatedHeight: remEst,
-        splittable: remSegs.length > 1,
+        splittable: remSegs.length > 1 || (remSegs.length === 1 && hasSecondaryDetails) || (s.specialInstructions ? stripHtmlTagsAndEntities(s.specialInstructions).length > 220 : false),
         minMeaningfulHeight: remEst,
         dayId: day.dayId,
         dayNumber: day.dayNumber,
@@ -1001,6 +1654,39 @@ function buildDayServiceCardBlock(
     serviceData: s,
     overviewSegments,
     splitParts
+  };
+}
+
+/**
+ * Build a Visa / Ancillary Service Card block supporting clean multi-page splitting.
+ */
+function buildVisaServiceCardBlock(v: ServicePresentationItem, idx: number): PaginationBlock {
+  const overviewSegments = extractOverviewSegments(v.overview);
+  const fullHtml = renderServiceChunkHtml(v, undefined, overviewSegments, {
+    mode: 'FULL',
+    overviewContinuedHeader: false,
+    includeDetailsFooter: true,
+    isVisaCard: true
+  });
+  const fullHeight = estimateServiceCardHeight(v);
+  const hasSecondaryDetails = v.inclusions.length > 0 || v.exclusions.length > 0 || Boolean(v.specialInstructions);
+  const canSplit =
+    hasSecondaryDetails ||
+    overviewSegments.length > 1 ||
+    stripHtmlTagsAndEntities(v.overview).length > 160 ||
+    (v.specialInstructions ? stripHtmlTagsAndEntities(v.specialInstructions).length > 220 : false);
+
+  return {
+    id: `block-visa-service-${idx}`,
+    type: 'VISA_SERVICE_CARD',
+    html: fullHtml,
+    estimatedHeight: fullHeight,
+    splittable: canSplit,
+    minMeaningfulHeight: canSplit ? Math.min(fullHeight, MIN_ACTIVITY_START_HEIGHT) : fullHeight,
+    serviceId: v.id,
+    serviceIndex: idx,
+    serviceData: v,
+    overviewSegments
   };
 }
 
@@ -1037,8 +1723,9 @@ function estimateHtmlUnitHeight(html: string): number {
   const tableRows = (html.match(/<tr\b/gi) || []).length;
   const listItems = (html.match(/<li\b/gi) || []).length;
   const brCount = (html.match(/<br\s*\/?>/gi) || []).length;
-  const lines = Math.max(1 + brCount, Math.ceil(plainLen / 95) + brCount);
-  return Math.max(18, 6 + lines * 14 + tableRows * 24 + listItems * 4);
+  const imgCount = (html.match(/<img\b/gi) || []).length;
+  const lines = Math.max(1 + brCount, Math.ceil(plainLen / 82) + brCount);
+  return Math.max(18, 8 + lines * 14.5 + tableRows * 24 + listItems * 4 + imgCount * 220);
 }
 
 interface TermFragment {
@@ -1049,20 +1736,15 @@ interface TermFragment {
 
 /**
  * Splits an HTML table at row (`<tr>`) boundaries, repeating its header rows (`<thead>` or leading `<th>` rows)
- * on every chunk so long tables span pages cleanly without breaking inside any row.
+ * on every chunk so long or tall-cell tables span pages cleanly without overflowing body height.
  */
-function splitHtmlTableIntoRowChunks(tableHtml: string, rowsPerChunk: number = 6): TermFragment[] {
+function splitHtmlTableIntoRowChunks(
+  tableHtml: string,
+  rowsPerChunk: number = 6,
+  maxChunkHeightPx: number = 320
+): TermFragment[] {
   const allRows = tableHtml.match(/<tr\b[\s\S]*?<\/tr>/gi) || [];
-  if (allRows.length <= rowsPerChunk + 1) {
-    const styled = normalizePdfTermsStyles(tableHtml);
-    return [{
-      html: styled,
-      keepWithNext: false,
-      estimatedHeight: estimateHtmlTableHeight(styled, allRows.length)
-    }];
-  }
 
-  // Separate header row(s)
   let headerRows: string[] = [];
   let bodyRows: string[] = [];
   const theadMatch = tableHtml.match(/<thead\b[^>]*>([\s\S]*?)<\/thead>/i);
@@ -1080,47 +1762,94 @@ function splitHtmlTableIntoRowChunks(tableHtml: string, rowsPerChunk: number = 6
     });
   }
 
-  if (bodyRows.length <= rowsPerChunk) {
+  if (bodyRows.length <= 1) {
     const styled = normalizePdfTermsStyles(tableHtml);
     return [{
       html: styled,
       keepWithNext: false,
-      estimatedHeight: estimateHtmlTableHeight(styled, allRows.length)
+      estimatedHeight: estimateHtmlTableHeight(styled, Math.max(1, allRows.length))
     }];
   }
 
-  const chunks: TermFragment[] = [];
   const theadHtml = headerRows.length > 0 ? `<thead>${headerRows.join('')}</thead>` : '';
+  const headerH = headerRows.length > 0 ? estimateHtmlTableHeight(`<table>${theadHtml}</table>`, headerRows.length) : 16;
 
-  for (let i = 0; i < bodyRows.length; i += rowsPerChunk) {
-    const slice = bodyRows.slice(i, i + rowsPerChunk);
+  const chunks: TermFragment[] = [];
+  let batch: string[] = [];
+  let batchH = headerH;
+
+  const flushBatch = () => {
+    if (batch.length === 0) return;
     const chunkTable = normalizePdfTermsStyles(
-      `<table>${theadHtml}<tbody>${slice.join('')}</tbody></table>`
+      `<table>${theadHtml}<tbody>${batch.join('')}</tbody></table>`
     );
     chunks.push({
       html: chunkTable,
       keepWithNext: false,
-      estimatedHeight: estimateHtmlTableHeight(chunkTable, headerRows.length + slice.length)
+      estimatedHeight: estimateHtmlTableHeight(chunkTable, headerRows.length + batch.length)
     });
+    batch = [];
+    batchH = headerH;
+  };
+
+  for (const row of bodyRows) {
+    const rowPlain = stripHtmlTagsAndEntities(row).length;
+    const rowBr = (row.match(/<br\s*\/?>/gi) || []).length;
+    const rowEst = Math.max(26, 12 + Math.max(1 + rowBr, Math.ceil(rowPlain / 60) + rowBr) * 14);
+    if (batch.length > 0 && (batch.length >= rowsPerChunk || batchH + rowEst > maxChunkHeightPx)) {
+      flushBatch();
+    }
+    batch.push(row);
+    batchH += rowEst;
   }
+  flushBatch();
+
   return chunks;
 }
 
 function estimateHtmlTableHeight(styledTableHtml: string, rowCount: number): number {
   const plainLen = stripHtmlTagsAndEntities(styledTableHtml).length;
+  const brCount = (styledTableHtml.match(/<br\s*\/?>/gi) || []).length;
   const avgCharsPerRow = rowCount > 0 ? plainLen / rowCount : plainLen;
-  const extraLinesPerRow = Math.max(0, Math.ceil(avgCharsPerRow / 65) - 1);
-  return Math.max(46, 16 + rowCount * (24 + extraLinesPerRow * 12));
+  const extraLinesPerRow = Math.max(0, Math.ceil(avgCharsPerRow / 60) - 1);
+  return Math.max(46, 18 + rowCount * (24 + extraLinesPerRow * 13) + brCount * 14);
 }
 
 /**
- * Splits a long <ul> or <ol> list into smaller <li> chunks preserving indentation and numbering.
+ * Splits a long <ul> or <ol> list into height-bounded <li> chunks (even splitting an oversized single <li> if needed)
+ * preserving indentation and numbering.
  */
-function splitHtmlListIntoChunks(listHtml: string, itemsPerChunk: number = 5): TermFragment[] {
+function splitHtmlListIntoChunks(
+  listHtml: string,
+  itemsPerChunk: number = 5,
+  maxChunkHeightPx: number = 280
+): TermFragment[] {
   const isOrdered = /^\s*<ol\b/i.test(listHtml);
   const tag = isOrdered ? 'ol' : 'ul';
-  const items = listHtml.match(/<li\b[\s\S]*?<\/li>/gi) || [];
-  if (items.length <= itemsPerChunk) {
+  const rawItems = listHtml.match(/<li\b[\s\S]*?<\/li>/gi) || [];
+
+  // Normalize / sub-split any monstrous individual <li> (>340 chars or >8 <br> breaks)
+  const items: Array<{ html: string; ordStep: number }> = [];
+  rawItems.forEach((liHtml) => {
+    const liPlain = stripHtmlTagsAndEntities(liHtml).length;
+    const liBr = (liHtml.match(/<br\s*\/?>/gi) || []).length;
+    if (liPlain <= 340 && liBr <= 8) {
+      items.push({ html: liHtml, ordStep: 1 });
+      return;
+    }
+    const inner = liHtml.replace(/^\s*<li\b[^>]*>/i, '').replace(/<\/li>\s*$/i, '').trim();
+    const parts = splitHtmlWithInlineTagsAtBoundary(inner, 280, 7);
+    if (parts.length <= 1) {
+      items.push({ html: liHtml, ordStep: 1 });
+    } else {
+      parts.forEach((p, idx) => {
+        const contStyle = idx > 0 ? ' style="list-style-type: none;"' : '';
+        items.push({ html: `<li${contStyle}>${p}</li>`, ordStep: idx === 0 ? 1 : 0 });
+      });
+    }
+  });
+
+  if (items.length <= 1) {
     const styled = normalizePdfTermsStyles(listHtml);
     return [{
       html: styled,
@@ -1130,21 +1859,41 @@ function splitHtmlListIntoChunks(listHtml: string, itemsPerChunk: number = 5): T
   }
 
   const chunks: TermFragment[] = [];
-  for (let i = 0; i < items.length; i += itemsPerChunk) {
-    const slice = items.slice(i, i + itemsPerChunk);
-    const startAttr = isOrdered ? ` start="${i + 1}"` : '';
-    const chunkList = normalizePdfTermsStyles(`<${tag}${startAttr}>${slice.join('')}</${tag}>`);
+  let batch: Array<{ html: string; ordStep: number }> = [];
+  let batchH = 12;
+  let runningOrderNum = 1;
+
+  const flushBatch = () => {
+    if (batch.length === 0) return;
+    const isContNoMarker = batch.length === 1 && batch[0].ordStep === 0;
+    const startAttr = isOrdered && !isContNoMarker ? ` start="${runningOrderNum}"` : '';
+    const extraUlStyle = isContNoMarker ? ' style="list-style-type: none;"' : '';
+    const chunkList = normalizePdfTermsStyles(`<${tag}${startAttr}${extraUlStyle}>${batch.map(b => b.html).join('')}</${tag}>`);
     chunks.push({
       html: chunkList,
       keepWithNext: false,
       estimatedHeight: estimateHtmlUnitHeight(chunkList)
     });
+    runningOrderNum += batch.reduce((sum, b) => sum + b.ordStep, 0);
+    batch = [];
+    batchH = 12;
+  };
+
+  for (const item of items) {
+    const itemEst = estimateHtmlUnitHeight(item.html);
+    if (batch.length > 0 && (batch.length >= itemsPerChunk || batchH + itemEst > maxChunkHeightPx)) {
+      flushBatch();
+    }
+    batch.push(item);
+    batchH += itemEst;
   }
+  flushBatch();
+
   return chunks;
 }
 
 /**
- * Extracts granular block elements from arbitrary HTML (supporting nested wrappers and <br>-delimited subheadings).
+ * Extracts granular block elements from arbitrary HTML (supporting nested wrappers, images, and <br>-delimited subheadings).
  */
 function extractTopLevelHtmlFragments(rawHtml: string): string[] {
   const input = String(rawHtml || '').trim();
@@ -1177,9 +1926,9 @@ function extractTopLevelHtmlFragments(rawHtml: string): string[] {
         const tag = el.tagName.toLowerCase();
         if (tag === 'br') return;
 
-        if (tag === 'div' || tag === 'section' || tag === 'article') {
+        if (tag === 'div' || tag === 'section' || tag === 'article' || tag === 'figure') {
           const hasBlockChildren = Array.from(el.children).some(c =>
-            ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote', 'section'].includes(
+            ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote', 'section', 'article', 'pre', 'img'].includes(
               c.tagName.toLowerCase()
             )
           );
@@ -1188,7 +1937,7 @@ function extractTopLevelHtmlFragments(rawHtml: string): string[] {
             return;
           }
         }
-        if (hasMeaningfulHtmlContent(el.outerHTML)) {
+        if (hasMeaningfulHtmlContent(el.outerHTML) || /<img\b/i.test(el.outerHTML)) {
           fragments.push(el.outerHTML);
         }
       });
@@ -1199,15 +1948,17 @@ function extractTopLevelHtmlFragments(rawHtml: string): string[] {
   }
 
   // Deterministic Node/SSR HTML block token extractor (balanced tag scanning)
-  const blockTags = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote', 'section', 'article', 'hr']);
+  const blockTags = new Set(['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'table', 'blockquote', 'section', 'article', 'pre', 'figure', 'hr']);
   const fragments: string[] = [];
 
   const scanTopBlocks = (htmlStr: string): string[] => {
     const out: string[] = [];
     let cursor = 0;
     const len = htmlStr.length;
+    let scanGuard = 0;
+    const maxScanIters = Math.max(500, len + 10);
 
-    while (cursor < len) {
+    while (cursor < len && scanGuard++ < maxScanIters) {
       const nextTagIdx = htmlStr.indexOf('<', cursor);
       if (nextTagIdx === -1) {
         const tailText = htmlStr.slice(cursor).trim();
@@ -1231,18 +1982,23 @@ function extractTopLevelHtmlFragments(rawHtml: string): string[] {
 
       const isClosing = tagMatch[1] === '/';
       const tagName = tagMatch[2].toLowerCase();
-      const isSelfClosing = /\/\s*>$/.test(openTagRaw) || tagName === 'br' || tagName === 'hr';
+      const isSelfClosing = /\/\s*>$/.test(openTagRaw) || VOID_HTML_TAGS.has(tagName);
+
+      if (tagName === 'img') {
+        out.push(openTagRaw);
+        cursor = tagEndIdx + 1;
+        continue;
+      }
 
       if (isClosing || isSelfClosing || !blockTags.has(tagName)) {
-        // Consume non-block inline chunk until next top-level block tag if needed
         if (!isClosing && !isSelfClosing && !blockTags.has(tagName)) {
           const closeMatchIdx = findMatchingCloseTag(htmlStr, tagName, tagEndIdx + 1);
           const inlineEnd = closeMatchIdx !== -1 ? closeMatchIdx : tagEndIdx + 1;
           const inlineChunk = htmlStr.slice(nextTagIdx, inlineEnd).trim();
-          if (hasMeaningfulHtmlContent(inlineChunk)) {
+          if (hasMeaningfulHtmlContent(inlineChunk) || /<img\b/i.test(inlineChunk)) {
             out.push(`<p style="margin: 0 0 4px 0;">${inlineChunk}</p>`);
           }
-          cursor = inlineEnd;
+          cursor = Math.max(cursor + 1, inlineEnd);
           continue;
         }
         cursor = tagEndIdx + 1;
@@ -1253,19 +2009,19 @@ function extractTopLevelHtmlFragments(rawHtml: string): string[] {
       const endPos = closeIdx !== -1 ? closeIdx : len;
       const fullElement = htmlStr.slice(nextTagIdx, endPos);
 
-      if ((tagName === 'div' || tagName === 'section' || tagName === 'article')) {
+      if (tagName === 'div' || tagName === 'section' || tagName === 'article' || tagName === 'figure') {
         const inner = fullElement.replace(/^<[^>]+>/, '').replace(/<\/[^>]+>\s*$/, '');
-        if (/<\s*(?:p|div|h[1-6]|ul|ol|table|blockquote|section)\b/i.test(inner)) {
+        if (/<\s*(?:p|div|h[1-6]|ul|ol|table|blockquote|section|article|pre|img)\b/i.test(inner) && inner.length < htmlStr.length) {
           out.push(...scanTopBlocks(inner));
-          cursor = endPos;
+          cursor = Math.max(cursor + 1, endPos);
           continue;
         }
       }
 
-      if (hasMeaningfulHtmlContent(fullElement)) {
+      if (hasMeaningfulHtmlContent(fullElement) || /<img\b/i.test(fullElement)) {
         out.push(fullElement);
       }
-      cursor = endPos;
+      cursor = Math.max(cursor + 1, endPos);
     }
 
     return out;
@@ -1281,7 +2037,8 @@ function findMatchingCloseTag(html: string, tagName: string, searchFrom: number)
   regex.lastIndex = searchFrom;
   let depth = 1;
   let match: RegExpExecArray | null;
-  while ((match = regex.exec(html)) !== null) {
+  let guard = 0;
+  while ((match = regex.exec(html)) !== null && guard++ < 5000) {
     const raw = match[0];
     if (match[1] === '/') {
       depth--;
@@ -1296,28 +2053,28 @@ function findMatchingCloseTag(html: string, tagName: string, searchFrom: number)
 }
 
 /**
- * Decomposes a Commercial Quotation Terms HTML section into page-breakable sub-blocks:
+ * Decomposes a Commercial Quotation Terms / Rich HTML section into page-breakable sub-blocks:
  * - Preserves numbered headings (keepWithNext: true) attached to their following paragraph/list/table.
  * - Splits tables cleanly at <tr> boundaries with repeated <thead>.
- * - Splits long lists between <li> items and long paragraphs at sentence boundaries.
+ * - Splits long lists between <li> items (or oversized single <li>) and long paragraphs at line/sentence boundaries.
  */
 function decomposeRichTermsHtmlIntoBlocks(rawHtml: string): TermFragment[] {
-  const topBlocks = extractTopLevelHtmlFragments(rawHtml);
+  const topBlocks = extractTopLevelHtmlFragments(normalizeInlineImagesHtml(rawHtml));
   const results: TermFragment[] = [];
 
   for (const frag of topBlocks) {
     const trimmed = frag.trim();
-    if (!hasMeaningfulHtmlContent(trimmed)) continue;
+    if (!hasMeaningfulHtmlContent(trimmed) && !/<img\b/i.test(trimmed)) continue;
 
     // 1. Table block (never split inside a row; repeat header if multi-page)
     if (/^<table\b/i.test(trimmed)) {
-      results.push(...splitHtmlTableIntoRowChunks(trimmed, 5));
+      results.push(...splitHtmlTableIntoRowChunks(trimmed, 4, 240));
       continue;
     }
 
     // 2. List block (<ul> / <ol>)
     if (/^<(?:ul|ol)\b/i.test(trimmed)) {
-      results.push(...splitHtmlListIntoChunks(trimmed, 5));
+      results.push(...splitHtmlListIntoChunks(trimmed, 3, 240));
       continue;
     }
 
@@ -1335,16 +2092,17 @@ function decomposeRichTermsHtmlIntoBlocks(rawHtml: string): TermFragment[] {
       continue;
     }
 
-    // 4. Paragraph or single div: check if <br> breaks separate numbered sub-headings inside the same block!
-    const innerContent = trimmed.replace(/^<(?:p|div)\b[^>]*>/i, '').replace(/<\/(?:p|div)>\s*$/i, '');
+    // 4. Paragraph or single div/blockquote: split on <br> or line/sentence budget so no chunk exceeds ~240px
+    const isBlockquote = /^<blockquote\b/i.test(trimmed);
+    const innerContent = trimmed.replace(/^<(?:p|div|blockquote)\b[^>]*>/i, '').replace(/<\/(?:p|div|blockquote)>\s*$/i, '');
     const brSegments = /<br\s*\/?>/i.test(innerContent)
-      ? innerContent.split(/<br\s*\/?>/gi).map(s => s.trim()).filter(s => hasMeaningfulHtmlContent(s))
+      ? innerContent.split(/<br\s*\/?>/gi).map(s => s.trim()).filter(s => hasMeaningfulHtmlContent(s) || /<img\b/i.test(s))
       : [innerContent];
 
     for (const seg of brSegments) {
       const plain = stripHtmlTagsAndEntities(seg);
       const hadStrong = /^\s*<(?:strong|b)\b[\s\S]*<\/(?:strong|b)>\s*$/i.test(seg);
-      const isHeading = isLikelyTermHeadingText(plain, false, hadStrong);
+      const isHeading = !isBlockquote && isLikelyTermHeadingText(plain, false, hadStrong);
 
       if (isHeading) {
         const headingHtml = `<div style="font-weight: 800; color: #0f172a; font-size: 10px; margin: 5px 0 2px 0; line-height: 1.38; page-break-after: avoid; break-after: avoid;">${normalizePdfTermsStyles(seg)}</div>`;
@@ -1353,22 +2111,12 @@ function decomposeRichTermsHtmlIntoBlocks(rawHtml: string): TermFragment[] {
           keepWithNext: true,
           estimatedHeight: estimateHtmlUnitHeight(headingHtml)
         });
-      } else if (plain.length > 520 && !/<(?:a|table|ul|ol)\b/i.test(seg)) {
-        // Long plain paragraph -> split into readable chunks cleanly at sentence boundary
-        let remText = seg;
-        while (stripHtmlTagsAndEntities(remText).length > 520) {
-          const [p1, p2] = splitTextNaturally(remText, 380);
-          if (!p1 || !p2) break;
-          const pHtml = `<p style="margin: 0 0 4px 0; color: #475569; line-height: 1.45;">${normalizePdfTermsStyles(p1)}</p>`;
-          results.push({
-            html: pHtml,
-            keepWithNext: false,
-            estimatedHeight: estimateHtmlUnitHeight(pHtml)
-          });
-          remText = p2;
-        }
-        if (remText) {
-          const pHtml = `<p style="margin: 0 0 4px 0; color: #475569; line-height: 1.45;">${normalizePdfTermsStyles(remText)}</p>`;
+      } else if (plain.length > 340 && !/<(?:table|ul|ol)\b/i.test(seg)) {
+        const inlineParts = splitHtmlWithInlineTagsAtBoundary(seg, 300, 7);
+        for (const part of inlineParts) {
+          const pHtml = isBlockquote
+            ? `<blockquote style="margin: 0 0 4px 0; padding-left: 10px; border-left: 2px solid #cbd5e1; color: #475569; line-height: 1.45;">${normalizePdfTermsStyles(part)}</blockquote>`
+            : `<p style="margin: 0 0 4px 0; color: #475569; line-height: 1.45; word-break: break-word;">${normalizePdfTermsStyles(part)}</p>`;
           results.push({
             html: pHtml,
             keepWithNext: false,
@@ -1376,7 +2124,9 @@ function decomposeRichTermsHtmlIntoBlocks(rawHtml: string): TermFragment[] {
           });
         }
       } else {
-        const pHtml = `<div style="margin: 0 0 4px 0; color: #475569; line-height: 1.45; word-break: break-word;">${normalizePdfTermsStyles(seg)}</div>`;
+        const pHtml = isBlockquote
+          ? `<blockquote style="margin: 0 0 4px 0; padding-left: 10px; border-left: 2px solid #cbd5e1; color: #475569; line-height: 1.45;">${normalizePdfTermsStyles(seg)}</blockquote>`
+          : `<div style="margin: 0 0 4px 0; color: #475569; line-height: 1.45; word-break: break-word;">${normalizePdfTermsStyles(seg)}</div>`;
         results.push({
           html: pHtml,
           keepWithNext: false,
@@ -1533,84 +2283,69 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     });
 
     model.visaServices.forEach((v, idx) => {
-      const vHeight = estimateServiceCardHeight(v);
-      blocks.push({
-        id: `block-visa-service-${idx}`,
-        type: 'VISA_SERVICE_CARD',
-        html: `
-          <div style="padding: 14px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; display: flex; justify-content: space-between; gap: 14px; margin-bottom: 10px;">
-            <div style="flex: 1;">
-              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
-                <span style="font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: #a7f3d0; color: #064e3b;">VISA & ANCILLARY</span>
-                ${v.duration ? `<span style="font-size: 10px; color: #475569;">⏱️ ${escapePdfText(v.duration)}</span>` : ''}
-              </div>
-              <h4 style="font-size: 12.5px; font-weight: 700; color: #0f172a; margin: 0 0 4px 0;">${v.listingName}</h4>
-              ${v.configurationSummary ? `<p style="font-size: 11px; color: #047857; margin: 0 0 5px 0; font-weight: 600;">${escapePdfText(v.configurationSummary)}</p>` : ''}
-              ${v.overview && hasMeaningfulHtmlContent(v.overview) ? `
-                <div style="margin-top: 5px;">
-                  <span style="font-size: 9px; font-weight: 700; color: #64748b; text-transform: uppercase; display: block; margin-bottom: 2px;">Overview</span>
-                  <div style="font-size: 10.5px; color: #334155; line-height: 1.4;">${v.overview}</div>
-                </div>
-              ` : ''}
-              ${v.inclusions.length > 0 ? `
-                <div style="margin-top: 5px;">
-                  <span style="font-size: 9px; font-weight: 700; color: #059669; text-transform: uppercase; display: block; margin-bottom: 2px;">Inclusions</span>
-                  <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                    ${v.inclusions.map(inc => `<span style="font-size: 9px; background: #ffffff; color: #064e3b; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">✓ ${inc}</span>`).join('')}
-                  </div>
-                </div>
-              ` : ''}
-              ${v.exclusions.length > 0 ? `
-                <div style="margin-top: 5px;">
-                  <span style="font-size: 9px; font-weight: 700; color: #e11d48; text-transform: uppercase; display: block; margin-bottom: 2px;">Exclusions</span>
-                  <div style="display: flex; flex-wrap: wrap; gap: 4px;">
-                    ${v.exclusions.map(exc => `<span style="font-size: 9px; background: #ffffff; color: #881337; padding: 2px 6px; border-radius: 4px; border: 1px solid #fecdd3;">✕ ${exc}</span>`).join('')}
-                  </div>
-                </div>
-              ` : ''}
-              ${v.specialInstructions ? `
-                <div style="font-size: 10px; color: #065f46; background: #ffffff; padding: 6px 8px; border-radius: 6px; border: 1px solid #a7f3d0; margin-top: 5px;">
-                  <strong>Special Notes: </strong>${v.specialInstructions}
-                </div>
-              ` : ''}
-            </div>
-            <div style="text-align: right; min-width: 90px;">
-              <span style="display: inline-block; font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Included</span>
-              <div style="font-size: 9.5px; color: #64748b; margin-top: 4px;">${escapePdfText(v.paxText)}</div>
-            </div>
-          </div>
-        `,
-        estimatedHeight: vHeight,
-        splittable: false,
-        minMeaningfulHeight: vHeight,
-        serviceId: v.id,
-        serviceIndex: idx
-      });
+      blocks.push(buildVisaServiceCardBlock(v, idx));
     });
   }
 
-  // 2.5 JOURNEY NARRATIVE & OVERVIEW BLOCK (Only when meaningful content exists)
-  if (model.itineraryOverview && hasMeaningfulHtmlContent(model.itineraryOverview)) {
-    const rawLen = stripHtmlTagsAndEntities(model.itineraryOverview).length;
-    const estLines = Math.max(2, Math.ceil(rawLen / 76));
-    const estHeight = 56 + estLines * 16;
-    blocks.push({
-      id: 'block-itinerary-overview',
-      type: 'ITINERARY_OVERVIEW_BLOCK' as any,
-      html: `
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #00C6A6; border-radius: 12px; padding: 12px 16px; margin-top: 10px; margin-bottom: 10px;">
-          <div style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #008972; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
-            <span>✨ Journey Narrative &amp; Overview</span>
+  // 2.5 JOURNEY NARRATIVE & OVERVIEW BLOCK (Decomposed when long/rich so it never overflows a page)
+  if (model.itineraryOverview && (hasMeaningfulHtmlContent(model.itineraryOverview) || /<img\b/i.test(model.itineraryOverview))) {
+    const normalizedItinOv = normalizeInlineImagesHtml(model.itineraryOverview);
+    const estCompactH = estimateRichHtmlBlockHeight(normalizedItinOv, 48);
+    if (estCompactH <= 260 && !/<(?:table|ul|ol|img)\b/i.test(normalizedItinOv)) {
+      const compactItinOvHtml = /<[a-z][\s\S]*>/i.test(normalizedItinOv)
+        ? normalizedItinOv
+        : escapePdfText(normalizedItinOv).replace(/\r?\n/g, '<br/>');
+      blocks.push({
+        id: 'block-itinerary-overview',
+        type: 'ITINERARY_OVERVIEW_BLOCK',
+        html: `
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #00C6A6; border-radius: 12px; padding: 12px 16px; margin-top: 10px; margin-bottom: 10px;">
+            <div data-pdf-synthetic-label="true" style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #008972; margin-bottom: 4px; display: flex; align-items: center; gap: 4px;">
+              <span>✨ Journey Narrative &amp; Overview</span>
+            </div>
+            <div class="theunbound-rich-text" style="font-size: 11px; color: #334155; line-height: 1.5; word-break: break-word;">
+              ${compactItinOvHtml}
+            </div>
           </div>
-          <div class="theunbound-rich-text" style="font-size: 11px; color: #334155; line-height: 1.5;">
-            ${model.itineraryOverview}
+        `,
+        estimatedHeight: estCompactH,
+        splittable: false,
+        minMeaningfulHeight: estCompactH
+      });
+    } else {
+      const fragments = decomposeRichTermsHtmlIntoBlocks(normalizedItinOv);
+      blocks.push({
+        id: 'block-itinerary-overview-header',
+        type: 'ITINERARY_OVERVIEW_BLOCK',
+        html: `
+          <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #00C6A6; border-radius: 10px 10px 0 0; padding: 10px 16px 6px 16px; margin-top: 10px;">
+            <div style="font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #008972; display: flex; align-items: center; gap: 4px;">
+              <span>✨ Journey Narrative &amp; Overview</span>
+            </div>
           </div>
-        </div>
-      `,
-      estimatedHeight: estHeight,
-      splittable: false,
-      minMeaningfulHeight: estHeight
-    });
+        `,
+        estimatedHeight: 34,
+        splittable: false,
+        minMeaningfulHeight: 34,
+        keepWithNext: fragments.length > 0
+      });
+      fragments.forEach((frag, fIdx) => {
+        const isLast = fIdx === fragments.length - 1;
+        blocks.push({
+          id: `block-itinerary-overview-frag-${fIdx}`,
+          type: 'ITINERARY_OVERVIEW_BLOCK',
+          html: `
+            <div style="background: #f8fafc; border-left: 4px solid #00C6A6; border-right: 1px solid #e2e8f0; ${isLast ? 'border-bottom: 1px solid #e2e8f0; border-radius: 0 0 10px 10px; margin-bottom: 10px; padding-bottom: 10px;' : ''} padding: 4px 16px; font-size: 10.5px; color: #334155; line-height: 1.48; word-break: break-word;">
+              ${frag.html}
+            </div>
+          `,
+          estimatedHeight: frag.estimatedHeight + 8,
+          splittable: false,
+          minMeaningfulHeight: frag.estimatedHeight + 8,
+          keepWithNext: frag.keepWithNext
+        });
+      });
+    }
   }
 
   // 3. DAY-BY-DAY ITINERARY BLOCKS
@@ -1644,6 +2379,15 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
       </div>
     `;
 
+    const dayMeta = {
+      dayNumber: day.dayNumber,
+      hubName: day.hubName,
+      prevHubName: day.prevHubName,
+      formattedDate: day.formattedDate,
+      dayOfWeek: day.dayOfWeek,
+      customTheme: day.customTheme
+    };
+
     blocks.push({
       id: `block-day-${day.dayNumber}-header`,
       type: 'DAY_HEADER',
@@ -1654,35 +2398,59 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
       keepWithNext: true,
       dayId,
       dayNumber: day.dayNumber,
-      dayMeta: {
-        dayNumber: day.dayNumber,
-        hubName: day.hubName,
-        prevHubName: day.prevHubName,
-        formattedDate: day.formattedDate,
-        dayOfWeek: day.dayOfWeek,
-        customTheme: day.customTheme
-      }
+      dayMeta
     });
 
-    if (day.dayOverview && hasMeaningfulHtmlContent(day.dayOverview)) {
-      const ovLines = Math.max(1, Math.ceil(stripHtmlTagsAndEntities(day.dayOverview).length / 78));
-      const ovHeight = 40 + ovLines * 17;
-      blocks.push({
-        id: `block-day-${day.dayNumber}-overview`,
-        type: 'DAY_OVERVIEW_BLOCK',
-        html: `
-          <div data-day-id="${dayId}" style="padding: 10px 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 10px; font-size: 10.5px; color: #334155; line-height: 1.45;">
-            <span style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #0d9488; display: block; margin-bottom: 2px;">Day ${day.dayNumber} Overview</span>
-            <div class="theunbound-rich-text">${day.dayOverview}</div>
-          </div>
-        `,
-        estimatedHeight: ovHeight,
-        splittable: false,
-        minMeaningfulHeight: ovHeight,
-        keepWithNext: day.services.length > 0,
-        dayId,
-        dayNumber: day.dayNumber
-      });
+    if (day.dayOverview && (hasMeaningfulHtmlContent(day.dayOverview) || /<img\b/i.test(day.dayOverview))) {
+      const normalizedDayOv = normalizeInlineImagesHtml(day.dayOverview);
+      const ovEst = estimateRichHtmlBlockHeight(normalizedDayOv, 38);
+      const ovSegs = extractOverviewSegments(day.dayOverview);
+      if (ovSegs.length <= 1 && ovEst <= 240 && !/<(?:table|ul|ol|img)\b/i.test(normalizedDayOv)) {
+        const compactDayOvHtml = /<[a-z][\s\S]*>/i.test(normalizedDayOv)
+          ? normalizedDayOv
+          : (ovSegs.length === 1 ? formatOverviewSegmentsHtml(ovSegs) : escapePdfText(normalizedDayOv).replace(/\r?\n/g, '<br/>'));
+        blocks.push({
+          id: `block-day-${day.dayNumber}-overview`,
+          type: 'DAY_OVERVIEW_BLOCK',
+          html: `
+            <div data-day-id="${dayId}" style="padding: 10px 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 10px; font-size: 10.5px; color: #334155; line-height: 1.45; word-break: break-word;">
+              <span data-pdf-synthetic-label="true" style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #0d9488; display: block; margin-bottom: 2px;">Day ${day.dayNumber} Overview</span>
+              <div class="theunbound-rich-text">${compactDayOvHtml}</div>
+            </div>
+          `,
+          estimatedHeight: ovEst,
+          splittable: false,
+          minMeaningfulHeight: ovEst,
+          keepWithNext: day.services.length > 0,
+          dayId,
+          dayNumber: day.dayNumber,
+          dayMeta
+        });
+      } else {
+        const fragList = ovSegs.length > 0 ? ovSegs : [normalizedDayOv];
+        fragList.forEach((seg, fIdx) => {
+          const isFirst = fIdx === 0;
+          const isLast = fIdx === fragList.length - 1;
+          const fragEst = estimateRichHtmlBlockHeight(seg, isFirst ? 34 : 26);
+          blocks.push({
+            id: `block-day-${day.dayNumber}-overview-frag-${fIdx}`,
+            type: 'DAY_OVERVIEW_FRAGMENT',
+            html: `
+              <div data-day-id="${dayId}" style="padding: ${isFirst ? '10px 14px 6px 14px' : '6px 14px'}; border-radius: ${isFirst && isLast ? '10px' : isFirst ? '10px 10px 0 0' : isLast ? '0 0 10px 10px' : '0'}; background: #f8fafc; border: 1px solid #e2e8f0; ${!isFirst ? 'border-top: none;' : ''} ${isLast ? 'margin-bottom: 10px; padding-bottom: 10px;' : 'margin-bottom: 0;'} font-size: 10.5px; color: #334155; line-height: 1.45; word-break: break-word;">
+                <span data-pdf-synthetic-label="true" style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #0d9488; display: block; margin-bottom: 2px;">Day ${day.dayNumber} Overview${isFirst ? '' : ' (Continued)'}</span>
+                <div class="theunbound-rich-text">${formatOverviewSegmentsHtml([seg])}</div>
+              </div>
+            `,
+            estimatedHeight: fragEst,
+            splittable: false,
+            minMeaningfulHeight: fragEst,
+            keepWithNext: false,
+            dayId,
+            dayNumber: day.dayNumber,
+            dayMeta
+          });
+        });
+      }
     }
 
     if (day.services.length === 0) {
@@ -1702,7 +2470,8 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
         splittable: false,
         minMeaningfulHeight: 82,
         dayId,
-        dayNumber: day.dayNumber
+        dayNumber: day.dayNumber,
+        dayMeta
       });
     } else {
       day.services.forEach((s, sIdx) => {
@@ -1710,54 +2479,123 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
       });
     }
 
-    if (day.dayNotes && hasMeaningfulHtmlContent(day.dayNotes)) {
-      const noteLines = Math.max(1, Math.ceil(stripHtmlTagsAndEntities(day.dayNotes).length / 78));
-      const noteHeight = 40 + noteLines * 17;
-      blocks.push({
-        id: `block-day-${day.dayNumber}-notes`,
-        type: 'DAY_NOTES_BLOCK',
-        html: `
-          <div data-day-id="${dayId}" style="padding: 10px 14px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; margin-bottom: 10px; font-size: 10px; color: #78350f; line-height: 1.4;">
-            <strong>Day ${day.dayNumber} Operational Notes: </strong>${day.dayNotes}
-          </div>
-        `,
-        estimatedHeight: noteHeight,
-        splittable: false,
-        minMeaningfulHeight: noteHeight,
-        dayId,
-        dayNumber: day.dayNumber
-      });
+    if (day.dayNotes && (hasMeaningfulHtmlContent(day.dayNotes) || /<img\b/i.test(day.dayNotes))) {
+      const normalizedNotes = normalizeInlineImagesHtml(day.dayNotes);
+      const noteEst = estimateRichHtmlBlockHeight(normalizedNotes, 38);
+      const noteSegs = extractOverviewSegments(day.dayNotes);
+      if (noteSegs.length <= 1 && noteEst <= 240 && !/<(?:table|ul|ol|img)\b/i.test(normalizedNotes)) {
+        const compactNotesHtml = /<[a-z][\s\S]*>/i.test(normalizedNotes)
+          ? normalizedNotes
+          : (noteSegs.length === 1 ? formatOverviewSegmentsHtml(noteSegs) : escapePdfText(normalizedNotes).replace(/\r?\n/g, '<br/>'));
+        blocks.push({
+          id: `block-day-${day.dayNumber}-notes`,
+          type: 'DAY_NOTES_BLOCK',
+          html: `
+            <div data-day-id="${dayId}" style="padding: 10px 14px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; margin-bottom: 10px; font-size: 10px; color: #78350f; line-height: 1.4; word-break: break-word;">
+              <strong data-pdf-synthetic-label="true">Day ${day.dayNumber} Operational Notes: </strong>${compactNotesHtml}
+            </div>
+          `,
+          estimatedHeight: noteEst,
+          splittable: false,
+          minMeaningfulHeight: noteEst,
+          dayId,
+          dayNumber: day.dayNumber,
+          dayMeta
+        });
+      } else {
+        const fragList = noteSegs.length > 0 ? noteSegs : [normalizedNotes];
+        fragList.forEach((seg, fIdx) => {
+          const isFirst = fIdx === 0;
+          const isLast = fIdx === fragList.length - 1;
+          const fragEst = estimateRichHtmlBlockHeight(seg, 32);
+          blocks.push({
+            id: `block-day-${day.dayNumber}-notes-frag-${fIdx}`,
+            type: 'DAY_NOTES_FRAGMENT',
+            html: `
+              <div data-day-id="${dayId}" style="padding: 8px 14px; border-radius: ${isFirst && isLast ? '10px' : isFirst ? '10px 10px 0 0' : isLast ? '0 0 10px 10px' : '0'}; background: #fffbeb; border: 1px solid #fde68a; ${!isFirst ? 'border-top: none;' : ''} ${isLast ? 'margin-bottom: 10px;' : 'margin-bottom: 0;'} font-size: 10px; color: #78350f; line-height: 1.4; word-break: break-word;">
+                <strong data-pdf-synthetic-label="true">Day ${day.dayNumber} Operational Notes${isFirst ? '' : ' (Continued)'}: </strong>${formatOverviewSegmentsHtml([seg])}
+              </div>
+            `,
+            estimatedHeight: fragEst,
+            splittable: false,
+            minMeaningfulHeight: fragEst,
+            dayId,
+            dayNumber: day.dayNumber,
+            dayMeta
+          });
+        });
+      }
     }
   });
 
-  // 4. ADDITIONAL SERVICES
+  // 4. ADDITIONAL SERVICES (Chunked across rows when large so it never overflows)
   if (model.additionalServices && model.additionalServices.length > 0) {
-    const addHeight = 95 + Math.ceil(model.additionalServices.length / 2) * 32;
-    blocks.push({
-      id: 'block-additional-services',
-      type: 'ADDITIONAL_SERVICES',
-      html: `
-        <div style="margin-top: 12px; margin-bottom: 12px;">
-          <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px; font-size: 11.5px; font-weight: 800; color: #0f172a; text-transform: uppercase;">
+    if (model.additionalServices.length <= 6) {
+      const addHeight = 95 + Math.ceil(model.additionalServices.length / 2) * 32;
+      blocks.push({
+        id: 'block-additional-services',
+        type: 'ADDITIONAL_SERVICES',
+        html: `
+          <div style="margin-top: 12px; margin-bottom: 12px;">
+            <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px; font-size: 11.5px; font-weight: 800; color: #0f172a; text-transform: uppercase;">
+              ✨ Additional Package Privileges & Services
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+              ${model.additionalServices.map(a => `
+                <div style="padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #f8fafc; display: flex; justify-content: space-between; font-size: 10.5px;">
+                  <div>
+                    <div style="font-weight: 700; color: #0f172a;">${escapePdfText(a.name)}</div>
+                    <div style="font-size: 9.5px; color: #64748b;">${escapePdfText(a.summary)}</div>
+                  </div>
+                  <span style="font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Included</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `,
+        estimatedHeight: addHeight,
+        splittable: false,
+        minMeaningfulHeight: addHeight
+      });
+    } else {
+      blocks.push({
+        id: 'block-additional-services-header',
+        type: 'ADDITIONAL_SERVICES',
+        html: `
+          <div style="margin-top: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 8px; font-size: 11.5px; font-weight: 800; color: #0f172a; text-transform: uppercase;">
             ✨ Additional Package Privileges & Services
           </div>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-            ${model.additionalServices.map(a => `
-              <div style="padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #f8fafc; display: flex; justify-content: space-between; font-size: 10.5px;">
-                <div>
-                  <div style="font-weight: 700; color: #0f172a;">${escapePdfText(a.name)}</div>
-                  <div style="font-size: 9.5px; color: #64748b;">${escapePdfText(a.summary)}</div>
+        `,
+        estimatedHeight: 36,
+        splittable: false,
+        minMeaningfulHeight: 36,
+        keepWithNext: true
+      });
+      for (let idx = 0; idx < model.additionalServices.length; idx += 6) {
+        const chunk = model.additionalServices.slice(idx, idx + 6);
+        const chunkH = 24 + Math.ceil(chunk.length / 2) * 34;
+        blocks.push({
+          id: `block-additional-services-chunk-${idx}`,
+          type: 'ADDITIONAL_SERVICES',
+          html: `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px;">
+              ${chunk.map(a => `
+                <div style="padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #f8fafc; display: flex; justify-content: space-between; font-size: 10.5px;">
+                  <div>
+                    <div style="font-weight: 700; color: #0f172a;">${escapePdfText(a.name)}</div>
+                    <div style="font-size: 9.5px; color: #64748b;">${escapePdfText(a.summary)}</div>
+                  </div>
+                  <span style="font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Included</span>
                 </div>
-                <span style="font-size: 8.5px; font-weight: 700; text-transform: uppercase; color: #065f46; background: #d1fae5; padding: 2px 6px; border-radius: 4px; border: 1px solid #a7f3d0;">Included</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `,
-      estimatedHeight: addHeight,
-      splittable: false,
-      minMeaningfulHeight: addHeight
-    });
+              `).join('')}
+            </div>
+          `,
+          estimatedHeight: chunkH,
+          splittable: false,
+          minMeaningfulHeight: chunkH
+        });
+      }
+    }
   }
 
   // 5. OPERATIONAL STANDARDS (4 CARDS)
@@ -1820,83 +2658,194 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
     minMeaningfulHeight: model.hasHotelAccommodation ? 175 : 150
   });
 
-  // 6B. PACKAGE INCLUSIONS, EXCLUSIONS & POLICY NOTES
+  // 6B. PACKAGE INCLUSIONS, EXCLUSIONS & POLICY NOTES (Granular & Page-Break Safe, zero arbitrary height cap)
   if (
     model.inclusions.length > 0 ||
     model.exclusions.length > 0 ||
     model.importantInformation ||
     model.cancellationPolicy
   ) {
-    const lineCount =
-      model.inclusions.length +
-      model.exclusions.length +
-      (model.importantInformation ? 3 : 0) +
-      (model.cancellationPolicy ? 3 : 0);
-    const pkgNotesHeight = Math.min(480, 72 + lineCount * 16);
-    blocks.push({
-      id: 'block-package-inclusions-notes',
-      type: 'POLICIES_CONTAINER',
-      html: `
-        <div style="margin-top: 8px; margin-bottom: 10px; font-size: 10px; display: flex; flex-direction: column; gap: 8px;">
-          ${model.inclusions.length > 0 || model.exclusions.length > 0 ? `
-            <div style="display: grid; grid-template-columns: ${model.inclusions.length > 0 && model.exclusions.length > 0 ? '1fr 1fr' : '1fr'}; gap: 10px;">
-              ${model.inclusions.length > 0 ? `
-                <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 10px 12px;">
-                  <div style="font-weight: 900; color: #064e3b; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">✓ Package Inclusions</div>
-                  <ul style="margin: 0; padding-left: 16px; color: #065f46; line-height: 1.4;">
-                    ${model.inclusions.map((inc) => `<li style="margin-bottom: 2px;">${escapePdfText(inc)}</li>`).join('')}
-                  </ul>
-                </div>
-              ` : ''}
-              ${model.exclusions.length > 0 ? `
-                <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px; padding: 10px 12px;">
-                  <div style="font-weight: 900; color: #881337; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">✕ Package Exclusions</div>
-                  <ul style="margin: 0; padding-left: 16px; color: #9f1239; line-height: 1.4;">
-                    ${model.exclusions.map((exc) => `<li style="margin-bottom: 2px;">${escapePdfText(exc)}</li>`).join('')}
-                  </ul>
-                </div>
-              ` : ''}
+    const isCompactIncExc =
+      model.inclusions.length <= 8 &&
+      model.exclusions.length <= 8 &&
+      (model.inclusions.length + model.exclusions.length) > 0;
+
+    if (isCompactIncExc) {
+      const maxColItems = Math.max(model.inclusions.length, model.exclusions.length);
+      const gridEstH = 60 + maxColItems * 22;
+      blocks.push({
+        id: 'block-package-inclusions-notes',
+        type: 'POLICIES_CONTAINER',
+        html: `
+          <div style="margin-top: 8px; margin-bottom: 8px; font-size: 10px; display: grid; grid-template-columns: ${model.inclusions.length > 0 && model.exclusions.length > 0 ? '1fr 1fr' : '1fr'}; gap: 10px;">
+            ${model.inclusions.length > 0 ? `
+              <div style="background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 10px 12px;">
+                <div style="font-weight: 900; color: #064e3b; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">✓ Package Inclusions</div>
+                <ul style="margin: 0; padding-left: 16px; color: #065f46; line-height: 1.4;">
+                  ${model.inclusions.map((inc) => `<li style="margin-bottom: 2px;">${escapePdfText(inc)}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            ${model.exclusions.length > 0 ? `
+              <div style="background: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px; padding: 10px 12px;">
+                <div style="font-weight: 900; color: #881337; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">✕ Package Exclusions</div>
+                <ul style="margin: 0; padding-left: 16px; color: #9f1239; line-height: 1.4;">
+                  ${model.exclusions.map((exc) => `<li style="margin-bottom: 2px;">${escapePdfText(exc)}</li>`).join('')}
+                </ul>
+              </div>
+            ` : ''}
+          </div>
+        `,
+        estimatedHeight: gridEstH,
+        splittable: false,
+        minMeaningfulHeight: gridEstH
+      });
+    } else {
+      for (let i = 0; i < model.inclusions.length; i += 8) {
+        const chunk = model.inclusions.slice(i, i + 8);
+        const h = 52 + chunk.reduce((acc, s) => acc + Math.max(1, Math.ceil(s.length / 82)) * 18, 0);
+        blocks.push({
+          id: `block-package-inclusions-${i}`,
+          type: 'POLICIES_CONTAINER',
+          html: `
+            <div style="margin-top: 6px; margin-bottom: 8px; font-size: 10px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 12px; padding: 10px 12px;">
+              <div style="font-weight: 900; color: #064e3b; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">✓ Package Inclusions${i > 0 ? ' (Continued)' : ''}</div>
+              <ul style="margin: 0; padding-left: 16px; color: #065f46; line-height: 1.4;">
+                ${chunk.map((inc) => `<li style="margin-bottom: 2px;">${escapePdfText(inc)}</li>`).join('')}
+              </ul>
             </div>
-          ` : ''}
-          ${model.importantInformation ? `
-            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px;">
-              <div style="font-weight: 900; color: #0f172a; text-transform: uppercase; font-size: 9.5px; margin-bottom: 3px;">Important Information</div>
-              <div style="color: #475569; line-height: 1.45;">${escapePdfText(model.importantInformation)}</div>
+          `,
+          estimatedHeight: h,
+          splittable: false,
+          minMeaningfulHeight: h
+        });
+      }
+      for (let i = 0; i < model.exclusions.length; i += 8) {
+        const chunk = model.exclusions.slice(i, i + 8);
+        const h = 52 + chunk.reduce((acc, s) => acc + Math.max(1, Math.ceil(s.length / 82)) * 18, 0);
+        blocks.push({
+          id: `block-package-exclusions-${i}`,
+          type: 'POLICIES_CONTAINER',
+          html: `
+            <div style="margin-top: 6px; margin-bottom: 8px; font-size: 10px; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 12px; padding: 10px 12px;">
+              <div style="font-weight: 900; color: #881337; text-transform: uppercase; font-size: 9.5px; margin-bottom: 4px;">✕ Package Exclusions${i > 0 ? ' (Continued)' : ''}</div>
+              <ul style="margin: 0; padding-left: 16px; color: #9f1239; line-height: 1.4;">
+                ${chunk.map((exc) => `<li style="margin-bottom: 2px;">${escapePdfText(exc)}</li>`).join('')}
+              </ul>
             </div>
-          ` : ''}
-          ${model.cancellationPolicy ? `
-            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px;">
-              <div style="font-weight: 900; color: #0f172a; text-transform: uppercase; font-size: 9.5px; margin-bottom: 3px;">Cancellation Policy</div>
-              <div style="color: #475569; line-height: 1.45;">${escapePdfText(model.cancellationPolicy)}</div>
+          `,
+          estimatedHeight: h,
+          splittable: false,
+          minMeaningfulHeight: h
+        });
+      }
+    }
+
+    const pushDecomposedPolicyCard = (idPrefix: string, title: string, rawText: string) => {
+      const trimmed = String(rawText || '').trim();
+      if (!trimmed) return;
+      const lines = Math.max(1, Math.ceil(trimmed.length / 82));
+      if (lines <= 12) {
+        const h = 44 + lines * 16;
+        blocks.push({
+          id: idPrefix,
+          type: 'POLICIES_CONTAINER',
+          html: `
+            <div style="margin-top: 4px; margin-bottom: 8px; font-size: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px 12px;">
+              <div style="font-weight: 900; color: #0f172a; text-transform: uppercase; font-size: 9.5px; margin-bottom: 3px;">${escapePdfText(title)}</div>
+              <div style="color: #475569; line-height: 1.45; white-space: pre-line;">${escapePdfText(trimmed)}</div>
             </div>
-          ` : ''}
-        </div>
-      `,
-      estimatedHeight: pkgNotesHeight,
-      splittable: false,
-      minMeaningfulHeight: pkgNotesHeight
-    });
+          `,
+          estimatedHeight: h,
+          splittable: false,
+          minMeaningfulHeight: h
+        });
+        return;
+      }
+      // Split oversized Important Information / Cancellation Policy cleanly into paragraphs/sentences
+      const parts = decomposeRichTermsHtmlIntoBlocks(escapePdfText(trimmed).replace(/\r?\n/g, '<br/>'));
+      blocks.push({
+        id: `${idPrefix}-header`,
+        type: 'POLICIES_CONTAINER',
+        html: `
+          <div style="margin-top: 6px; font-size: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-bottom: none; border-radius: 10px 10px 0 0; padding: 8px 12px 4px 12px;">
+            <div style="font-weight: 900; color: #0f172a; text-transform: uppercase; font-size: 9.5px;">${escapePdfText(title)}</div>
+          </div>
+        `,
+        estimatedHeight: 28,
+        splittable: false,
+        minMeaningfulHeight: 28,
+        keepWithNext: parts.length > 0
+      });
+      parts.forEach((frag, idx) => {
+        const isLast = idx === parts.length - 1;
+        blocks.push({
+          id: `${idPrefix}-frag-${idx}`,
+          type: 'POLICIES_CONTAINER',
+          html: `
+            <div style="font-size: 10px; background: #f8fafc; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0; ${isLast ? 'border-bottom: 1px solid #e2e8f0; border-radius: 0 0 10px 10px; margin-bottom: 8px; padding-bottom: 8px;' : ''} padding: 3px 12px; color: #475569; line-height: 1.45;">
+              ${frag.html}
+            </div>
+          `,
+          estimatedHeight: frag.estimatedHeight + 6,
+          splittable: false,
+          minMeaningfulHeight: frag.estimatedHeight + 6,
+          keepWithNext: frag.keepWithNext
+        });
+      });
+    };
+
+    if (model.importantInformation) {
+      pushDecomposedPolicyCard('block-important-information', 'Important Information', model.importantInformation);
+    }
+    if (model.cancellationPolicy) {
+      pushDecomposedPolicyCard('block-cancellation-policy', 'Cancellation Policy', model.cancellationPolicy);
+    }
   }
 
-  // 7. OPERATIONAL GUIDELINES & POLICIES
-  const policiesHeight = 90 + model.childAndAttractionPolicies.length * 18;
-  blocks.push({
-    id: 'block-policies',
-    type: 'POLICIES_CONTAINER',
-    html: `
-      <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; margin-top: 8px; margin-bottom: 12px; font-size: 10px;">
-        <div style="font-weight: 900; color: #78350f; text-transform: uppercase; font-size: 10px; margin-bottom: 5px;">
-          ℹ️ Operational Guidelines & Child / Attraction Policy
+  // 7. OPERATIONAL GUIDELINES & POLICIES (Chunked cleanly if list exceeds 8 items)
+  if (model.childAndAttractionPolicies.length <= 8) {
+    const policiesHeight = 76 + model.childAndAttractionPolicies.reduce((acc, p) => acc + Math.max(1, Math.ceil(p.length / 82)) * 18, 0);
+    blocks.push({
+      id: 'block-policies',
+      type: 'POLICIES_CONTAINER',
+      html: `
+        <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; margin-top: 8px; margin-bottom: 12px; font-size: 10px;">
+          <div style="font-weight: 900; color: #78350f; text-transform: uppercase; font-size: 10px; margin-bottom: 5px;">
+            ℹ️ Operational Guidelines & Child / Attraction Policy
+          </div>
+          <ul style="margin: 0; padding-left: 18px; color: #92400e; line-height: 1.45;">
+            ${model.childAndAttractionPolicies.map(p => `<li style="margin-bottom: 3px;">${escapePdfText(p)}</li>`).join('')}
+          </ul>
         </div>
-        <ul style="margin: 0; padding-left: 18px; color: #92400e; line-height: 1.45;">
-          ${model.childAndAttractionPolicies.map(p => `<li style="margin-bottom: 3px;">${escapePdfText(p)}</li>`).join('')}
-        </ul>
-      </div>
-    `,
-    estimatedHeight: policiesHeight,
-    splittable: false,
-    minMeaningfulHeight: policiesHeight
-  });
+      `,
+      estimatedHeight: policiesHeight,
+      splittable: false,
+      minMeaningfulHeight: policiesHeight
+    });
+  } else {
+    for (let i = 0; i < model.childAndAttractionPolicies.length; i += 6) {
+      const chunk = model.childAndAttractionPolicies.slice(i, i + 6);
+      const chunkH = 54 + chunk.reduce((acc, p) => acc + Math.max(1, Math.ceil(p.length / 82)) * 18, 0);
+      blocks.push({
+        id: i === 0 ? 'block-policies' : `block-policies-${i}`,
+        type: 'POLICIES_CONTAINER',
+        html: `
+          <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 10px 14px; margin-top: 6px; margin-bottom: 8px; font-size: 10px;">
+            <div style="font-weight: 900; color: #78350f; text-transform: uppercase; font-size: 10px; margin-bottom: 5px;">
+              ℹ️ Operational Guidelines & Child / Attraction Policy${i > 0 ? ' (Continued)' : ''}
+            </div>
+            <ul style="margin: 0; padding-left: 18px; color: #92400e; line-height: 1.45;">
+              ${chunk.map(p => `<li style="margin-bottom: 3px;">${escapePdfText(p)}</li>`).join('')}
+            </ul>
+          </div>
+        `,
+        estimatedHeight: chunkH,
+        splittable: false,
+        minMeaningfulHeight: chunkH
+      });
+    }
+  }
 
   // 8. COMMERCIAL QUOTATION TERMS (GRANULAR, PAGE-BREAK SAFE, ZERO FOOTER ADDRESSES IN BODY)
   const termsHeadingBannerHtml = `
@@ -2040,7 +2989,18 @@ export function measureBlockHeightsInDOM(blocks: PaginationBlock[]): void {
         const firstMeasured = measureSingleHtml(block.splitParts.firstPart.html);
         if (firstMeasured > 0) {
           block.splitParts.firstPart.estimatedHeight = Math.max(firstMeasured + 3, MIN_ACTIVITY_START_HEIGHT);
-          block.minMeaningfulHeight = Math.min(block.minMeaningfulHeight, block.splitParts.firstPart.estimatedHeight);
+          const firstSegCount = block.splitParts.firstPart.overviewSegments?.length ?? 0;
+          if (firstSegCount <= 1) {
+            block.minMeaningfulHeight = Math.min(
+              block.estimatedHeight,
+              block.splitParts.firstPart.estimatedHeight
+            );
+          } else {
+            block.minMeaningfulHeight = Math.max(
+              MIN_ACTIVITY_START_HEIGHT,
+              Math.min(block.estimatedHeight, Math.ceil(block.splitParts.firstPart.estimatedHeight * 0.72))
+            );
+          }
         }
 
         const remMeasured = measureSingleHtml(block.splitParts.remainingPart.html);
@@ -2088,12 +3048,60 @@ function measureBlocksCombinedHeightInDOM(blocks: PaginationBlock[]): number | n
 }
 
 /**
+ * Compare rendered HTML against raw HTML/text without false failures from injected
+ * "(Continued)" sub-labels or safe inline-image normalization styles, while enforcing
+ * zero dropped text or dropped images.
+ */
+function stripSyntheticPdfChromeLabels(html: string): string {
+  return String(html || '').replace(
+    /<([a-z0-9]+)\b[^>]*\bdata-pdf-synthetic-label\s*=\s*(['"])true\2[^>]*>[\s\S]*?<\/\1>/gi,
+    ' '
+  );
+}
+
+function containsAllNormalizedContent(renderedHtml: string, rawSource?: string): boolean {
+  if (!rawSource) return true;
+  if (renderedHtml.includes(rawSource)) return true;
+
+  // Verify every <img> src referenced in source still exists in renderedHtml (entity-normalized)
+  const decodedRendered = decodeHtmlEntities(renderedHtml);
+  const imgSrcRe = /<img\b[^>]*\bsrc\s*=\s*(['"])([^'"]+)\1/gi;
+  let imgMatch: RegExpExecArray | null;
+  while ((imgMatch = imgSrcRe.exec(rawSource)) !== null) {
+    const expectedSrc = decodeHtmlEntities(imgMatch[2]);
+    if (expectedSrc && !decodedRendered.includes(expectedSrc)) {
+      return false;
+    }
+  }
+
+  const sourceNorm = stripHtmlTagsAndEntities(rawSource).toLowerCase();
+  if (!sourceNorm) return true;
+
+  const renderedWithoutChrome = stripSyntheticPdfChromeLabels(renderedHtml);
+  const renderedNorm = stripHtmlTagsAndEntities(renderedWithoutChrome).toLowerCase();
+
+  if (renderedNorm.includes(sourceNorm)) return true;
+
+  // Allow fragment wrapper splits within long content while asserting exact token sequence in order
+  const sourceWords = sourceNorm.split(/\s+/).filter(Boolean);
+  if (sourceWords.length === 0) return true;
+  let cursor = 0;
+  for (const word of sourceWords) {
+    const idx = renderedNorm.indexOf(word, cursor);
+    if (idx === -1) return false;
+    cursor = idx + word.length;
+  }
+  return true;
+}
+
+/**
  * Validate strict physical layout invariants across all paginated pages (zero footer/header overlaps,
  * no orphaned headings, sequential page numbers, no footer address leakage in body).
  */
 export function validatePdfLayoutBounds(pages: RenderedPage[]): PdfLayoutBoundsValidation {
   const errors: string[] = [];
   const pageSummaries: PdfLayoutBoundsValidation['pageSummaries'] = [];
+  const diagnostics: PageLayoutDiagnostics[] = [];
 
   pages.forEach((page, idx) => {
     const expectedPageNum = idx + 1;
@@ -2106,9 +3114,13 @@ export function validatePdfLayoutBounds(pages: RenderedPage[]): PdfLayoutBoundsV
     if (page.blocks.length === 0) {
       errors.push(`Page ${page.pageNumber} is unexpectedly blank (0 blocks).`);
     }
+    const overflowPx = Math.max(0, page.usedContentHeight - page.availableContentHeight);
     if (page.usedContentHeight > page.availableContentHeight + 2) {
+      const topBlocksSummary = page.blocks
+        .map(b => `${b.id}(${b.type}:${b.estimatedHeight}px)`)
+        .join(', ');
       errors.push(
-        `Page ${page.pageNumber} body height (${page.usedContentHeight}px) exceeds availableContentHeight (${page.availableContentHeight}px) and would collide with footer.`
+        `Page ${page.pageNumber} body height (${page.usedContentHeight}px) exceeds availableContentHeight (${page.availableContentHeight}px) and would collide with footer. Blocks: [${topBlocksSummary}]`
       );
     }
     if (page.bounds.contentBottom > page.bounds.height - page.bounds.bottomMargin - page.bounds.footerHeight) {
@@ -2132,16 +3144,21 @@ export function validatePdfLayoutBounds(pages: RenderedPage[]): PdfLayoutBoundsV
       pageNumber: page.pageNumber,
       usedContentHeight: page.usedContentHeight,
       availableContentHeight: page.availableContentHeight,
+      overflowPx,
       headerHeight: page.bounds.headerHeight,
       footerHeight: page.bounds.footerHeight,
       blockCount: page.blocks.length
     });
+    if (page.diagnostics) {
+      diagnostics.push(page.diagnostics);
+    }
   });
 
   return {
     valid: errors.length === 0,
     errors,
-    pageSummaries
+    pageSummaries,
+    diagnostics
   };
 }
 
@@ -2228,6 +3245,38 @@ export function validatePaginatedQuoteCompleteness(
     }
   }
 
+  // 2.5 Validate Visa Services completeness if present
+  if (model.visaServices && model.visaServices.length > 0) {
+    const visaBlocks = allBlocksWithPage
+      .filter((e) => e.block.type === 'VISA_SERVICE_CARD' || e.block.type === 'VISA_SERVICE_CONTINUATION')
+      .map((e) => e.block);
+
+    model.visaServices.forEach((v, vIdx) => {
+      const blocksForVisa = visaBlocks.filter((b) => b.serviceIndex === vIdx);
+      if (blocksForVisa.length === 0) {
+        errors.push(`Visa service "${v.listingName}" is missing from rendered PDF.`);
+        return;
+      }
+      const visaHtml = blocksForVisa.map((b) => b.html).join('\n');
+      if (!containsAllNormalizedContent(visaHtml, v.listingName)) {
+        errors.push(`Visa service title "${v.listingName}" missing.`);
+      }
+      for (const inc of v.inclusions) {
+        if (!containsAllNormalizedContent(visaHtml, inc)) {
+          errors.push(`Visa service "${v.listingName}" missing inclusion "${inc}".`);
+        }
+      }
+      for (const exc of v.exclusions) {
+        if (!containsAllNormalizedContent(visaHtml, exc)) {
+          errors.push(`Visa service "${v.listingName}" missing exclusion "${exc}".`);
+        }
+      }
+      if (v.specialInstructions && !containsAllNormalizedContent(visaHtml, v.specialInstructions)) {
+        errors.push(`Visa service "${v.listingName}" missing special instructions.`);
+      }
+    });
+  }
+
   // 3. Per-Day Completeness & Continuation Audit
   for (const day of model.days) {
     const dayId = day.dayId || `day-${day.dayNumber}`;
@@ -2265,7 +3314,14 @@ export function validatePaginatedQuoteCompleteness(
       }
     }
 
-    const combinedDayHtml = dayBlocksWithPage.map((e) => e.block.html).join('\n');
+    const overviewBlocksHtml = dayBlocksWithPage
+      .filter((e) => e.block.type === 'DAY_OVERVIEW_BLOCK' || e.block.type === 'DAY_OVERVIEW_FRAGMENT')
+      .map((e) => e.block.html)
+      .join('\n');
+    const notesBlocksHtml = dayBlocksWithPage
+      .filter((e) => e.block.type === 'DAY_NOTES_BLOCK' || e.block.type === 'DAY_NOTES_FRAGMENT')
+      .map((e) => e.block.html)
+      .join('\n');
 
     let allInclusionsPresent = true;
     let allExclusionsPresent = true;
@@ -2273,12 +3329,20 @@ export function validatePaginatedQuoteCompleteness(
     let allNotesPresent = true;
     let orderMaintained = true;
 
-    if (day.dayOverview && hasMeaningfulHtmlContent(day.dayOverview) && !combinedDayHtml.includes(day.dayOverview)) {
+    if (
+      day.dayOverview &&
+      (hasMeaningfulHtmlContent(day.dayOverview) || /<img\b/i.test(day.dayOverview)) &&
+      (!overviewBlocksHtml || !containsAllNormalizedContent(overviewBlocksHtml, day.dayOverview))
+    ) {
       allOverviewsPresent = false;
       errors.push(`Day ${day.dayNumber} overview text is missing from rendered PDF.`);
     }
 
-    if (day.dayNotes && hasMeaningfulHtmlContent(day.dayNotes) && !combinedDayHtml.includes(day.dayNotes)) {
+    if (
+      day.dayNotes &&
+      (hasMeaningfulHtmlContent(day.dayNotes) || /<img\b/i.test(day.dayNotes)) &&
+      (!notesBlocksHtml || !containsAllNormalizedContent(notesBlocksHtml, day.dayNotes))
+    ) {
       allNotesPresent = false;
       errors.push(`Day ${day.dayNumber} operational notes are missing from rendered PDF.`);
     }
@@ -2342,25 +3406,25 @@ export function validatePaginatedQuoteCompleteness(
 
         const serviceHtml = blocksForService.map((b) => b.html).join('\n');
 
-        if (!serviceHtml.includes(s.listingName)) {
+        if (!containsAllNormalizedContent(serviceHtml, s.listingName)) {
           errors.push(`Day ${day.dayNumber} service title "${s.listingName}" missing.`);
         }
 
         for (const inc of s.inclusions) {
-          if (!serviceHtml.includes(inc)) {
+          if (!containsAllNormalizedContent(serviceHtml, inc)) {
             allInclusionsPresent = false;
             errors.push(`Day ${day.dayNumber} service "${s.listingName}" missing inclusion "${inc}".`);
           }
         }
 
         for (const exc of s.exclusions) {
-          if (!serviceHtml.includes(exc)) {
+          if (!containsAllNormalizedContent(serviceHtml, exc)) {
             allExclusionsPresent = false;
             errors.push(`Day ${day.dayNumber} service "${s.listingName}" missing exclusion "${exc}".`);
           }
         }
 
-        if (s.specialInstructions && !serviceHtml.includes(s.specialInstructions)) {
+        if (s.specialInstructions && !containsAllNormalizedContent(serviceHtml, s.specialInstructions)) {
           allNotesPresent = false;
           errors.push(
             `Day ${day.dayNumber} service "${s.listingName}" missing special instructions.`
@@ -2418,7 +3482,13 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
   // 2. Measure exact real DOM heights of every block when browser DOM is available
   measureBlockHeightsInDOM(blocks);
 
-  const rawPages: Array<{ pageNumber: number; blocks: PaginationBlock[]; usedHeight: number; bounds: PageBounds }> = [];
+  const rawPages: Array<{
+    pageNumber: number;
+    blocks: PaginationBlock[];
+    usedHeight: number;
+    bounds: PageBounds;
+    rebalanceActions: string[];
+  }> = [];
 
   let currentPageNum = 1;
   let currentBounds = getPageContentBounds(currentPageNum, boundsOverrides);
@@ -2432,13 +3502,26 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
     );
   };
 
+  const releaseTrailingOverviewAnchorIfBreaking = (): void => {
+    const tail = currentPageBlocks[currentPageBlocks.length - 1];
+    if (tail && tail.type === 'DAY_OVERVIEW_BLOCK') {
+      tail.type = 'DAY_OVERVIEW_FRAGMENT';
+      tail.keepWithNext = false;
+      if (!tail.breakDecision) {
+        tail.breakDecision = 'DAY_OVERVIEW_RENDERED_BEFORE_PAGE_BREAK';
+      }
+    }
+  };
+
   const createNextPage = (): void => {
     if (currentPageBlocks.length > 0) {
+      releaseTrailingOverviewAnchorIfBreaking();
       rawPages.push({
         pageNumber: currentPageNum,
         blocks: currentPageBlocks,
         usedHeight: currentUsedHeight,
-        bounds: currentBounds
+        bounds: currentBounds,
+        rebalanceActions: []
       });
       currentPageNum++;
       currentBounds = getPageContentBounds(currentPageNum, boundsOverrides);
@@ -2447,7 +3530,10 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
     }
   };
 
-  const appendBlock = (block: PaginationBlock): void => {
+  const appendBlock = (block: PaginationBlock, decision?: string): void => {
+    if (decision && !block.breakDecision) {
+      block.breakDecision = decision;
+    }
     currentPageBlocks.push(block);
     currentUsedHeight += block.estimatedHeight;
   };
@@ -2466,14 +3552,19 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
     return total;
   };
 
+  const dayContinuationSeqMap = new Map<number, number>();
+  const allocContinueDayHeaderBlock = (day: DayPresentationData): PaginationBlock => {
+    const nextSeq = (dayContinuationSeqMap.get(day.dayNumber) ?? 0) + 1;
+    dayContinuationSeqMap.set(day.dayNumber, nextSeq);
+    return createContinueDayHeaderBlock(day, nextSeq);
+  };
+
   // Dedicated DaySection renderer preserving Day Header + associated content grouping & strict bounds
   const renderDaySection = (
     day: DayPresentationData,
     dayHeaderBlock: PaginationBlock,
     dayContentBlocks: PaginationBlock[]
   ): void => {
-    let continuationSeq = 1;
-
     // 1. Check minimum start height before rendering Day Header so Day Header is NEVER orphaned
     const minimumDayStartHeight = computeMinimumDayStartHeight(
       dayHeaderBlock,
@@ -2486,107 +3577,147 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
     }
 
     // 2. Render Day Header on current page
-    appendBlock(dayHeaderBlock);
+    appendBlock(dayHeaderBlock, 'DAY_START');
 
-    let hasRenderedServiceOnCurrentPageForDay = false;
+    let hasRenderedContentOnCurrentPageForDay = false;
+
+    const moveCurrentPageDayGroupToNextPage = (): void => {
+      const startIdxOfDayOnPage = currentPageBlocks.findIndex(b => b.dayNumber === day.dayNumber);
+      if (startIdxOfDayOnPage > 0) {
+        const movedDayBlocks = currentPageBlocks.splice(startIdxOfDayOnPage);
+        const movedHeight = movedDayBlocks.reduce((s, b) => s + b.estimatedHeight, 0);
+        currentUsedHeight = Math.max(0, currentUsedHeight - movedHeight);
+        createNextPage();
+        movedDayBlocks.forEach(b => appendBlock(b, 'MOVED_DAY_GROUP'));
+      }
+    };
 
     // Queue allows multi-chunk remainders to be evaluated identically to upcoming blocks
     const queue: PaginationBlock[] = [...dayContentBlocks];
+    const MAX_QUEUE_ITERS = Math.max(800, dayContentBlocks.length * 60);
+    let queueIter = 0;
 
     while (queue.length > 0) {
+      if (++queueIter > MAX_QUEUE_ITERS) {
+        console.warn(`[PDF-PAGINATION] Queue iteration limit reached for Day ${day.dayNumber}; flushing remaining ${queue.length} blocks.`);
+        for (const leftover of queue) {
+          appendBlock(leftover, 'QUEUE_CAP_FLUSH');
+        }
+        break;
+      }
       const item = queue.shift()!;
       const rem = getSafeRemainingHeight();
 
-      // Day Overview stays attached under Day Header
+      // Compact single-block Day Overview stays attached under Day Header when another day precedes on this page
       if (item.type === 'DAY_OVERVIEW_BLOCK') {
-        appendBlock(item);
+        if (item.estimatedHeight > rem && currentPageBlocks.some(b => b.dayNumber !== day.dayNumber)) {
+          moveCurrentPageDayGroupToNextPage();
+        }
+        appendBlock(item, 'DAY_OVERVIEW_ATTACHED');
+        hasRenderedContentOnCurrentPageForDay = true;
         continue;
+      }
+
+      // Fragmented Day Overview / Day Notes flow strictly inside remaining height and break under CONTINUE DAY X
+      if (item.type === 'DAY_OVERVIEW_FRAGMENT' || item.type === 'DAY_NOTES_FRAGMENT' || item.type === 'DAY_NOTES_BLOCK') {
+        if (item.estimatedHeight <= rem) {
+          appendBlock(item, 'FIT_ON_PAGE');
+          hasRenderedContentOnCurrentPageForDay = true;
+          continue;
+        }
+        if (hasRenderedContentOnCurrentPageForDay) {
+          createNextPage();
+          appendBlock(allocContinueDayHeaderBlock(day), 'CONTINUE_DAY_FOR_FRAGMENT');
+          appendBlock(item, 'BREAK_TO_NEXT_PAGE');
+          hasRenderedContentOnCurrentPageForDay = true;
+          continue;
+        } else {
+          const startIdxOfDayOnPage = currentPageBlocks.findIndex(b => b.dayNumber === day.dayNumber);
+          if (startIdxOfDayOnPage > 0) {
+            moveCurrentPageDayGroupToNextPage();
+            queue.unshift(item);
+            continue;
+          }
+          appendBlock(item, 'FRESH_PAGE_OVERSIZED_DEFER_TO_REBALANCE');
+          hasRenderedContentOnCurrentPageForDay = true;
+          continue;
+        }
       }
 
       // Case A: Full item fits cleanly inside safe remaining height on current page
       if (item.estimatedHeight <= rem) {
-        appendBlock(item);
-        hasRenderedServiceOnCurrentPageForDay = true;
+        appendBlock(item, 'FIT_ON_PAGE');
+        hasRenderedContentOnCurrentPageForDay = true;
         continue;
       }
 
       // Case B: Item does not fit completely, and is splittable (Day Service Card or Continuation)
       if (item.splittable && item.serviceData) {
-        // Compute height-aware split fitting the exact remaining height on this page!
-        const adaptiveSplit = splitServiceBlockToFitHeight(item, day, rem);
+        const adaptiveSplit = rem >= 65 ? splitServiceBlockToFitHeight(item, day, rem) : null;
 
         if (adaptiveSplit) {
-          appendBlock(adaptiveSplit.fitBlock);
-          hasRenderedServiceOnCurrentPageForDay = true;
+          appendBlock(adaptiveSplit.fitBlock, 'ADAPTIVE_SERVICE_SPLIT_FIT');
 
           // Push remaining part to top of next page under CONTINUE DAY X
           createNextPage();
-          appendBlock(createContinueDayHeaderBlock(day, continuationSeq++));
-          hasRenderedServiceOnCurrentPageForDay = false;
+          appendBlock(allocContinueDayHeaderBlock(day), 'CONTINUE_DAY_AFTER_SPLIT');
+          hasRenderedContentOnCurrentPageForDay = false;
           queue.unshift(adaptiveSplit.remainderBlock);
           continue;
         }
 
         // Cannot fit even minimal slice in remaining space on current page
-        if (hasRenderedServiceOnCurrentPageForDay) {
+        if (hasRenderedContentOnCurrentPageForDay) {
           // Move entire item onto next page under CONTINUE DAY X
           createNextPage();
-          appendBlock(createContinueDayHeaderBlock(day, continuationSeq++));
-          hasRenderedServiceOnCurrentPageForDay = false;
+          appendBlock(allocContinueDayHeaderBlock(day), 'CONTINUE_DAY_MOVED_SERVICE');
+          hasRenderedContentOnCurrentPageForDay = false;
           queue.unshift(item);
           continue;
         } else {
-          // Day Header / Overview or CONTINUE DAY X is already at the top of this page with NO service yet!
-          // If on a non-empty page (e.g. previous day/block before this Day Header), push Day Header + item together to fresh page
+          // If another day/section precedes this Day's header on the current page, move the entire Day group cleanly to a fresh page
           const startIdxOfDayOnPage = currentPageBlocks.findIndex(b => b.dayNumber === day.dayNumber);
           if (startIdxOfDayOnPage > 0) {
-            const movedDayBlocks = currentPageBlocks.splice(startIdxOfDayOnPage);
-            const movedHeight = movedDayBlocks.reduce((s, b) => s + b.estimatedHeight, 0);
-            currentUsedHeight = Math.max(0, currentUsedHeight - movedHeight);
-            createNextPage();
-            movedDayBlocks.forEach(b => appendBlock(b));
+            moveCurrentPageDayGroupToNextPage();
             queue.unshift(item);
             continue;
           }
 
-          // Already on fresh page: force height-aware fit strictly within full available space below Day/Continue Header!
-          const fallbackFit = splitServiceBlockToFitHeight(item, day, Math.max(MIN_ACTIVITY_START_HEIGHT, rem));
-          if (fallbackFit) {
-            appendBlock(fallbackFit.fitBlock);
+          // Already on fresh page: try splitting strictly inside actual remaining height `rem`
+          const freshPageFit = rem >= 65 ? splitServiceBlockToFitHeight(item, day, rem) : null;
+          if (freshPageFit) {
+            appendBlock(freshPageFit.fitBlock, 'FRESH_PAGE_SERVICE_SPLIT_FIT');
             createNextPage();
-            appendBlock(createContinueDayHeaderBlock(day, continuationSeq++));
-            queue.unshift(fallbackFit.remainderBlock);
+            appendBlock(allocContinueDayHeaderBlock(day), 'CONTINUE_DAY_AFTER_SPLIT');
+            hasRenderedContentOnCurrentPageForDay = false;
+            queue.unshift(freshPageFit.remainderBlock);
             continue;
           }
 
           if (item.splitParts && item.splitParts.firstPart.estimatedHeight <= rem) {
-            appendBlock(item.splitParts.firstPart);
+            appendBlock(item.splitParts.firstPart, 'STATIC_SPLIT_FIRST');
             createNextPage();
-            appendBlock(createContinueDayHeaderBlock(day, continuationSeq++));
+            appendBlock(allocContinueDayHeaderBlock(day), 'CONTINUE_DAY_AFTER_SPLIT');
+            hasRenderedContentOnCurrentPageForDay = false;
             queue.unshift(item.splitParts.remainingPart);
             continue;
           }
         }
       }
 
-      // Case C: Unsplittable item does not fit in remaining space
-      if (hasRenderedServiceOnCurrentPageForDay) {
+      // Case C: Unsplittable item (or oversized single fragment) does not fit in remaining space
+      if (hasRenderedContentOnCurrentPageForDay) {
         createNextPage();
-        appendBlock(createContinueDayHeaderBlock(day, continuationSeq++));
-        hasRenderedServiceOnCurrentPageForDay = false;
-        appendBlock(item);
-        hasRenderedServiceOnCurrentPageForDay = true;
+        appendBlock(allocContinueDayHeaderBlock(day), 'CONTINUE_DAY_UNSPLITTABLE_MOVE');
+        appendBlock(item, 'MOVED_TO_CONTINUATION_PAGE');
+        hasRenderedContentOnCurrentPageForDay = true;
       } else {
         const startIdxOfDayOnPage = currentPageBlocks.findIndex(b => b.dayNumber === day.dayNumber);
         if (startIdxOfDayOnPage > 0) {
-          const movedDayBlocks = currentPageBlocks.splice(startIdxOfDayOnPage);
-          const movedHeight = movedDayBlocks.reduce((s, b) => s + b.estimatedHeight, 0);
-          currentUsedHeight = Math.max(0, currentUsedHeight - movedHeight);
-          createNextPage();
-          movedDayBlocks.forEach(b => appendBlock(b));
+          moveCurrentPageDayGroupToNextPage();
         }
-        appendBlock(item);
-        hasRenderedServiceOnCurrentPageForDay = true;
+        appendBlock(item, 'FRESH_PAGE_DEFER_TO_REBALANCE');
+        hasRenderedContentOnCurrentPageForDay = true;
       }
     }
   };
@@ -2628,20 +3759,77 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
       continue;
     }
 
+    const popTrailingKeepWithNextAnchors = (): PaginationBlock[] => {
+      const carried: PaginationBlock[] = [];
+      while (currentPageBlocks.length > 0 && currentPageBlocks[currentPageBlocks.length - 1].keepWithNext) {
+        const popped = currentPageBlocks.pop()!;
+        currentUsedHeight = Math.max(0, currentUsedHeight - popped.estimatedHeight);
+        carried.unshift(popped);
+      }
+      return carried;
+    };
+
     // Keep-with-next headings (Commercial Terms Banner, Destination Terms Header, Section Titles, Visa Section Header)
     if (block.keepWithNext && currentPageBlocks.length > 0) {
       const chainHeight = computeKeepWithNextChainHeight(blocks, i);
       if (chainHeight > getSafeRemainingHeight()) {
+        const carried = popTrailingKeepWithNextAnchors();
         createNextPage();
+        carried.forEach(c => appendBlock(c, 'CARRIED_KEEP_WITH_NEXT'));
       }
-    } else if (
+      appendBlock(block, 'FLOW_ANCHOR');
+      i++;
+      continue;
+    }
+
+    // Splittable non-Day service cards (e.g. Visa & Ancillary services) split progressively across pages
+    if (block.splittable && block.serviceData) {
+      let pendingService: PaginationBlock | null = block;
+      let svcGuard = 0;
+      while (pendingService && svcGuard++ < 40) {
+        const rem = getSafeRemainingHeight();
+        if (pendingService.estimatedHeight <= rem) {
+          appendBlock(pendingService, 'FIT_ON_PAGE');
+          pendingService = null;
+          break;
+        }
+        const fitSplit = rem >= 75 ? splitServiceBlockToFitHeight(pendingService, undefined, rem) : null;
+        if (fitSplit) {
+          appendBlock(fitSplit.fitBlock, 'VISA_SPLIT_FIT');
+          createNextPage();
+          pendingService = fitSplit.remainderBlock;
+          continue;
+        }
+        if (currentPageBlocks.length > 0) {
+          const carried = popTrailingKeepWithNextAnchors();
+          if (currentPageBlocks.length > 0) {
+            createNextPage();
+            carried.forEach(c => appendBlock(c, 'CARRIED_KEEP_WITH_NEXT'));
+            continue;
+          } else {
+            // Current page had ONLY carried keepWithNext anchor(s); restore them and force split/defer to rebalance
+            carried.forEach(c => appendBlock(c, 'RESTORED_ANCHOR'));
+          }
+        }
+        appendBlock(pendingService, 'FRESH_PAGE_DEFER_TO_REBALANCE');
+        pendingService = null;
+      }
+      i++;
+      continue;
+    }
+
+    if (
       block.estimatedHeight > getSafeRemainingHeight() &&
       currentPageBlocks.length > 0
     ) {
-      createNextPage();
+      const carried = popTrailingKeepWithNextAnchors();
+      if (currentPageBlocks.length > 0) {
+        createNextPage();
+      }
+      carried.forEach(c => appendBlock(c, 'CARRIED_KEEP_WITH_NEXT'));
     }
 
-    appendBlock(block);
+    appendBlock(block, 'FLOW');
     i++;
   }
 
@@ -2651,85 +3839,428 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
       pageNumber: currentPageNum,
       blocks: currentPageBlocks,
       usedHeight: currentUsedHeight,
-      bounds: currentBounds
+      bounds: currentBounds,
+      rebalanceActions: []
     });
   }
 
-  // Real DOM overflow self-check & rebalance pass (catches any sub-pixel/margin-collapse discrepancy in browser)
-  if (typeof document !== 'undefined' && document.body) {
-    let pIdx = 0;
-    while (pIdx < rawPages.length) {
-      const rp = rawPages[pIdx];
-      const maxAllowed = rp.bounds.availableContentHeight;
-      const realH = measureBlocksCombinedHeightInDOM(rp.blocks);
-      if (realH !== null) {
-        rp.usedHeight = realH;
+  // Helper: safely push overflowed blocks onto rawPages[pIdx + 1] (or new page) while strictly
+  // preserving Day header keep-together semantics and ensuring DAY_CONTINUATION_HEADER always sits at index 0.
+  const pushOverflowBlocksToNextPage = (fromPageIdx: number, overflowBlocks: PaginationBlock[]): void => {
+    if (overflowBlocks.length === 0) return;
+
+    const firstOverflow = overflowBlocks[0];
+    const hasNext = fromPageIdx + 1 < rawPages.length;
+
+    let blocksToPrepend: PaginationBlock[] = overflowBlocks;
+
+    if (firstOverflow.type === 'DAY_HEADER' && firstOverflow.dayNumber !== undefined) {
+      const dayNum = firstOverflow.dayNumber;
+      if (hasNext) {
+        const nextBlocks = rawPages[fromPageIdx + 1].blocks;
+        // Remove any redundant leading CONTINUE DAY X for the same day since DAY_HEADER now starts nextPage
+        if (nextBlocks[0]?.type === 'DAY_CONTINUATION_HEADER' && nextBlocks[0]?.dayNumber === dayNum) {
+          nextBlocks.shift();
+        }
+      }
+      blocksToPrepend = overflowBlocks;
+    } else if (firstOverflow.type === 'DAY_CONTINUATION_HEADER' && firstOverflow.dayNumber !== undefined) {
+      const dayNum = firstOverflow.dayNumber;
+      if (hasNext) {
+        const nextBlocks = rawPages[fromPageIdx + 1].blocks;
+        // Prevent duplicate consecutive continuation headers on nextPage
+        if (nextBlocks[0]?.type === 'DAY_CONTINUATION_HEADER' && nextBlocks[0]?.dayNumber === dayNum) {
+          nextBlocks.shift();
+        }
+      }
+      blocksToPrepend = overflowBlocks;
+    } else if (firstOverflow.dayNumber !== undefined) {
+      const dayNum = firstOverflow.dayNumber;
+      const nextPageFirst = hasNext ? rawPages[fromPageIdx + 1].blocks[0] : undefined;
+
+      if (nextPageFirst?.type === 'DAY_CONTINUATION_HEADER' && nextPageFirst?.dayNumber === dayNum) {
+        // Insert right AFTER existing DAY_CONTINUATION_HEADER at index 0 so index 0 invariant stays intact
+        rawPages[fromPageIdx + 1].blocks.splice(1, 0, ...overflowBlocks);
+        const nextH = measureBlocksCombinedHeightInDOM(rawPages[fromPageIdx + 1].blocks);
+        if (nextH !== null) rawPages[fromPageIdx + 1].usedHeight = nextH;
+        return;
       }
 
-      if (realH !== null && realH > maxAllowed && rp.blocks.length > 1) {
-        // Move trailing block(s) while also avoiding leaving an orphaned keepWithNext / DAY_HEADER / CONTINUE_DAY at page end
-        let popCount = 1;
-        while (rp.blocks.length - popCount > 1) {
-          const newLast = rp.blocks[rp.blocks.length - 1 - popCount];
-          if (
-            newLast.keepWithNext ||
-            newLast.type === 'DAY_HEADER' ||
-            newLast.type === 'DAY_CONTINUATION_HEADER' ||
-            newLast.type === 'DAY_OVERVIEW_BLOCK' ||
-            newLast.type === 'VISA_SECTION_HEADER'
-          ) {
-            popCount++;
+      const dayData = model.days.find(d => d.dayNumber === dayNum) || {
+        dayId: firstOverflow.dayId || `day-${dayNum}`,
+        dayNumber: dayNum,
+        dateString: '',
+        dayOfWeek: firstOverflow.dayMeta?.dayOfWeek || '',
+        formattedDate: firstOverflow.dayMeta?.formattedDate || '',
+        hubName: firstOverflow.dayMeta?.hubName || '',
+        isTransitionDay: false,
+        services: []
+      };
+      blocksToPrepend = [allocContinueDayHeaderBlock(dayData), ...overflowBlocks];
+    }
+
+    if (hasNext) {
+      rawPages[fromPageIdx + 1].blocks.unshift(...blocksToPrepend);
+      const nextH = measureBlocksCombinedHeightInDOM(rawPages[fromPageIdx + 1].blocks);
+      if (nextH !== null) rawPages[fromPageIdx + 1].usedHeight = nextH;
+    } else {
+      const nextBounds = getPageContentBounds(rawPages.length + 1, boundsOverrides);
+      rawPages.push({
+        pageNumber: rawPages.length + 1,
+        blocks: blocksToPrepend,
+        usedHeight: measureBlocksCombinedHeightInDOM(blocksToPrepend) ?? blocksToPrepend.reduce((s, b) => s + b.estimatedHeight, 0),
+        bounds: nextBounds,
+        rebalanceActions: ['CREATED_BY_OVERFLOW']
+      });
+    }
+  };
+
+  // Universal Page-Bounds Rebalance & Overflow Enforcement Pass (Browser DOM + Node Fallback)
+  {
+    const hasDom = typeof document !== 'undefined' && Boolean(document.body);
+    const measurePageHeight = (pageBlocks: PaginationBlock[]): number => {
+      if (hasDom) {
+        const measured = measureBlocksCombinedHeightInDOM(pageBlocks);
+        if (measured !== null) return measured;
+      }
+      return pageBlocks.reduce((s, b) => s + b.estimatedHeight, 0);
+    };
+
+    const isHeaderAnchor = (b: PaginationBlock): boolean =>
+      Boolean(
+        b.keepWithNext ||
+        b.type === 'DAY_HEADER' ||
+        b.type === 'DAY_CONTINUATION_HEADER' ||
+        b.type === 'DAY_OVERVIEW_BLOCK' ||
+        b.type === 'VISA_SECTION_HEADER'
+      );
+
+    // Helper: extracts granular fragments from any generic or day-card HTML container as a fallback split
+    const buildGenericSplitFragments = (block: PaginationBlock): {
+      prefixWrap: string;
+      suffixWrap: string;
+      frags: TermFragment[];
+      splitType: PaginationBlockType;
+    } => {
+      // Unwrap outer card border when splitting Day Overview / Day Notes / Itinerary Overview
+      if (
+        block.type === 'DAY_OVERVIEW_BLOCK' ||
+        block.type === 'DAY_OVERVIEW_FRAGMENT' ||
+        block.type === 'DAY_NOTES_BLOCK' ||
+        block.type === 'DAY_NOTES_FRAGMENT' ||
+        block.type === 'ITINERARY_OVERVIEW_BLOCK'
+      ) {
+        const richMatch = block.html.match(/<div class="theunbound-rich-text"[^>]*>([\s\S]*)<\/div>\s*<\/div>\s*$/i);
+        const rawWithoutChrome = stripSyntheticPdfChromeLabels(block.html);
+        const innerRaw = richMatch
+          ? richMatch[1]
+          : rawWithoutChrome.replace(/^\s*<div\b[^>]*>/i, '').replace(/<\/div>\s*$/i, '').trim();
+        let frags = decomposeRichTermsHtmlIntoBlocks(innerRaw);
+        if (frags.length <= 1) {
+          const segs = extractOverviewSegments(innerRaw);
+          if (segs.length > 1) {
+            frags = segs.map(s => ({
+              html: formatOverviewSegmentsHtml([s]),
+              keepWithNext: false,
+              estimatedHeight: estimateRichHtmlBlockHeight(s, 8)
+            }));
           } else {
-            break;
+            const fine = finerSplitSingleSegment(segs[0] || innerRaw);
+            if (fine.length > 1) {
+              frags = fine.map(s => ({
+                html: formatOverviewSegmentsHtml([s]),
+                keepWithNext: false,
+                estimatedHeight: estimateRichHtmlBlockHeight(s, 8)
+              }));
+            }
           }
         }
-        const overflowBlocks = rp.blocks.splice(rp.blocks.length - popCount);
-        const recalculatedH = measureBlocksCombinedHeightInDOM(rp.blocks);
-        if (recalculatedH !== null) {
-          rp.usedHeight = recalculatedH;
+        const dayIdAttr = block.dayId ? ` data-day-id="${block.dayId}"` : '';
+        const dayLabel = block.dayNumber !== undefined ? `Day ${block.dayNumber} Overview (Continued)` : 'Journey Overview';
+        const isNote = block.type === 'DAY_NOTES_BLOCK' || block.type === 'DAY_NOTES_FRAGMENT';
+        return {
+          prefixWrap: isNote
+            ? `<div${dayIdAttr} style="padding: 8px 14px; border-radius: 10px; background: #fffbeb; border: 1px solid #fde68a; margin-bottom: 8px; font-size: 10px; color: #78350f; line-height: 1.4; word-break: break-word;"><strong data-pdf-synthetic-label="true">Day ${block.dayNumber ?? ''} Operational Notes (Continued): </strong><div class="theunbound-rich-text">`
+            : `<div${dayIdAttr} style="padding: 8px 14px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; margin-bottom: 8px; font-size: 10.5px; color: #334155; line-height: 1.45; word-break: break-word;"><span data-pdf-synthetic-label="true" style="font-size: 9px; font-weight: 800; text-transform: uppercase; color: #0d9488; display: block; margin-bottom: 2px;">${dayLabel}</span><div class="theunbound-rich-text">`,
+          suffixWrap: '</div></div>',
+          frags,
+          splitType:
+            block.type === 'DAY_OVERVIEW_BLOCK' || block.type === 'DAY_OVERVIEW_FRAGMENT'
+              ? 'DAY_OVERVIEW_FRAGMENT'
+              : (block.type === 'DAY_NOTES_BLOCK' || block.type === 'DAY_NOTES_FRAGMENT'
+                ? 'DAY_NOTES_FRAGMENT'
+                : block.type)
+        };
+      }
+
+      let frags = decomposeRichTermsHtmlIntoBlocks(block.html);
+      if (frags.length <= 1) {
+        const fine = finerSplitSingleSegment(block.html);
+        if (fine.length > 1) {
+          frags = fine.map(s => ({
+            html: s,
+            keepWithNext: false,
+            estimatedHeight: estimateHtmlUnitHeight(s)
+          }));
+        }
+      }
+      return {
+        prefixWrap: '<div style="word-break: break-word;">',
+        suffixWrap: '</div>',
+        frags,
+        splitType: block.type
+      };
+    };
+
+    let pIdx = 0;
+    let rebalanceIter = 0;
+    const MAX_REBALANCE_ITERS = Math.max(1200, rawPages.length * 40);
+
+    while (pIdx < rawPages.length) {
+      if (++rebalanceIter > MAX_REBALANCE_ITERS) {
+        console.warn('[PDF-PAGINATION] Page overflow rebalance iteration cap reached; finalizing current page layout.');
+        break;
+      }
+      const rp = rawPages[pIdx];
+      const maxAllowed = rp.bounds.availableContentHeight;
+      const realH = measurePageHeight(rp.blocks);
+      rp.usedHeight = realH;
+
+      if (realH > maxAllowed && rp.blocks.length >= 1) {
+        if (rp.blocks.length > 1) {
+          // Compute trailing popCount including any preceding header anchors all the way back to index 0
+          // so a DAY_HEADER / DAY_CONTINUATION_HEADER / keepWithNext block is NEVER left orphaned on rp.
+          let popCount = 1;
+          while (rp.blocks.length - popCount >= 1) {
+            const newLast = rp.blocks[rp.blocks.length - 1 - popCount];
+            if (!newLast || isHeaderAnchor(newLast)) {
+              popCount++;
+            } else {
+              break;
+            }
+          }
+
+          if (popCount < rp.blocks.length) {
+            const overflowBlocks = rp.blocks.splice(rp.blocks.length - popCount);
+            rp.usedHeight = measurePageHeight(rp.blocks);
+            rp.rebalanceActions.push(`POP_${popCount}_BLOCKS_FROM_${Math.round(realH)}PX`);
+            pushOverflowBlocksToNextPage(pIdx, overflowBlocks);
+            continue;
+          }
+
+          // If popCount hit index 0 solely because an intermediate DAY_OVERVIEW_BLOCK carried keepWithNext=true,
+          // convert that DAY_OVERVIEW_BLOCK into a valid DAY_OVERVIEW_FRAGMENT so trailing blocks can pop cleanly!
+          const overviewAnchorIdx = rp.blocks.findIndex(
+            (b, bIdx) => bIdx > 0 && bIdx < rp.blocks.length - 1 && b.type === 'DAY_OVERVIEW_BLOCK'
+          );
+          if (overviewAnchorIdx !== -1) {
+            const ovBlock = rp.blocks[overviewAnchorIdx];
+            ovBlock.type = 'DAY_OVERVIEW_FRAGMENT';
+            ovBlock.keepWithNext = false;
+            ovBlock.breakDecision = 'CONVERTED_OVERVIEW_TO_FRAGMENT_FOR_SPLIT';
+            rp.rebalanceActions.push(`RELEASE_DAY_OVERVIEW_ANCHOR_${ovBlock.id}`);
+            continue;
+          }
         }
 
-        // If a Day content block overflowed onto the next page, ensure next page begins with CONTINUE DAY X if needed
-        const firstOverflow = overflowBlocks[0];
-        let prependBlocks: PaginationBlock[] = overflowBlocks;
+        // Either rp has ONLY 1 block, or ONLY [headerAnchor(s)..., lastBlock].
+        // Split lastBlock in-place so headerAnchor(s) stay attached to a valid fitting slice!
+        const lastBlock = rp.blocks[rp.blocks.length - 1];
+        if (lastBlock && lastBlock.serviceData) {
+          const leadingBlocks = rp.blocks.slice(0, -1);
+          const leadingH = leadingBlocks.length > 0 ? measurePageHeight(leadingBlocks) : 0;
+          let targetSliceH = Math.max(60, maxAllowed - leadingH - 6);
+          const dayData = lastBlock.dayNumber !== undefined
+            ? (model.days.find(d => d.dayNumber === lastBlock.dayNumber) || {
+                dayId: lastBlock.dayId || `day-${lastBlock.dayNumber}`,
+                dayNumber: lastBlock.dayNumber,
+                dateString: '',
+                dayOfWeek: lastBlock.dayMeta?.dayOfWeek || '',
+                formattedDate: lastBlock.dayMeta?.formattedDate || '',
+                hubName: lastBlock.dayMeta?.hubName || '',
+                isTransitionDay: false,
+                prevHubName: lastBlock.dayMeta?.prevHubName,
+                customTheme: lastBlock.dayMeta?.customTheme,
+                services: []
+              })
+            : undefined;
+
+          let splitApplied = false;
+          for (let attempt = 0; attempt < 8 && targetSliceH >= 55; attempt++) {
+            const inPlaceSplit = splitServiceBlockToFitHeight(lastBlock, dayData, targetSliceH);
+            if (!inPlaceSplit) break;
+            const candidatePageBlocks = [...leadingBlocks, inPlaceSplit.fitBlock];
+            const candidateH = measurePageHeight(candidatePageBlocks);
+            if (candidateH <= maxAllowed) {
+              rp.blocks[rp.blocks.length - 1] = inPlaceSplit.fitBlock;
+              rp.usedHeight = candidateH;
+              rp.rebalanceActions.push(`SPLIT_SERVICE_IN_PLACE_ATTEMPT_${attempt + 1}`);
+              pushOverflowBlocksToNextPage(pIdx, [inPlaceSplit.remainderBlock]);
+              splitApplied = true;
+              break;
+            }
+            const combinedDelta = Math.max(18, candidateH - maxAllowed + 8);
+            const nextTarget = Math.min(targetSliceH - 18, inPlaceSplit.fitBlock.estimatedHeight - combinedDelta);
+            if (nextTarget >= targetSliceH) break;
+            targetSliceH = nextTarget;
+          }
+          if (splitApplied) {
+            continue;
+          }
+        }
+
+        // Generic HTML-fragment fallback split for ANY oversized block (Overview, Notes, Terms, Policies, Tables, Lists, Images)
         if (
-          firstOverflow.dayNumber !== undefined &&
-          firstOverflow.type !== 'DAY_HEADER' &&
-          firstOverflow.type !== 'DAY_CONTINUATION_HEADER'
+          lastBlock &&
+          !lastBlock.keepWithNext &&
+          lastBlock.type !== 'DAY_HEADER' &&
+          lastBlock.type !== 'DAY_CONTINUATION_HEADER' &&
+          lastBlock.type !== 'VISA_SECTION_HEADER'
         ) {
-          const dayData = model.days.find(d => d.dayNumber === firstOverflow.dayNumber);
-          if (dayData) {
-            prependBlocks = [createContinueDayHeaderBlock(dayData, 900 + pIdx), ...overflowBlocks];
+          const leadingBlocks = rp.blocks.slice(0, -1);
+          const leadingH = leadingBlocks.length > 0 ? measurePageHeight(leadingBlocks) : 0;
+          const remainingBudget = maxAllowed - leadingH - 6;
+          const { prefixWrap, suffixWrap, frags, splitType } = buildGenericSplitFragments(lastBlock);
+
+          if (frags.length > 1 && remainingBudget >= 55) {
+            let takeCount = 0;
+            let bestCandidate: PaginationBlock | null = null;
+            for (let k = frags.length - 1; k >= 1; k--) {
+              const firstHtml = `${prefixWrap}${frags.slice(0, k).map(f => f.html).join('')}${suffixWrap}`;
+              const candBlock: PaginationBlock = {
+                ...lastBlock,
+                type: splitType,
+                id: `${lastBlock.id}-part1-${++pdfSplitInstanceCounter}`,
+                html: firstHtml,
+                estimatedHeight: measureSingleBlockHtmlHeight(firstHtml, frags.slice(0, k).reduce((s, f) => s + f.estimatedHeight, 0) + 16),
+                splittable: false,
+                minMeaningfulHeight: 55,
+                breakDecision: 'REBALANCE_FRAGMENT_SPLIT_PART1'
+              };
+              const candH = measurePageHeight([...leadingBlocks, candBlock]);
+              if (candH <= maxAllowed) {
+                takeCount = k;
+                bestCandidate = candBlock;
+                break;
+              }
+            }
+            if (bestCandidate && takeCount >= 1 && takeCount < frags.length) {
+              const remHtml = `${prefixWrap}${frags.slice(takeCount).map(f => f.html).join('')}${suffixWrap}`;
+              const remBlock: PaginationBlock = {
+                ...lastBlock,
+                type: splitType,
+                id: `${lastBlock.id}-part2-${++pdfSplitInstanceCounter}`,
+                html: remHtml,
+                estimatedHeight: measureSingleBlockHtmlHeight(remHtml, frags.slice(takeCount).reduce((s, f) => s + f.estimatedHeight, 0) + 16),
+                splittable: frags.length - takeCount > 1,
+                minMeaningfulHeight: 55,
+                breakDecision: 'REBALANCE_FRAGMENT_SPLIT_PART2'
+              };
+              rp.blocks[rp.blocks.length - 1] = bestCandidate;
+              rp.usedHeight = measurePageHeight(rp.blocks);
+              rp.rebalanceActions.push(`GENERIC_SPLIT_${takeCount}_OF_${frags.length}`);
+              pushOverflowBlocksToNextPage(pIdx, [remBlock]);
+              continue;
+            }
+          }
+
+          // Defensive image-height clamp if an embedded image inside a single unsplittable block still bursts bounds
+          if (/<img\b/i.test(lastBlock.html) && !lastBlock.id.includes('-imgclamped') && remainingBudget >= 140) {
+            const safeImgH = Math.max(120, Math.floor(remainingBudget - 95));
+            const clampedHtml = lastBlock.html.replace(
+              /max-height:\s*\d+px;?/gi,
+              `max-height: ${safeImgH}px;`
+            );
+            if (clampedHtml !== lastBlock.html) {
+              lastBlock.id = `${lastBlock.id}-imgclamped`;
+              lastBlock.html = clampedHtml;
+              lastBlock.estimatedHeight = measureSingleBlockHtmlHeight(clampedHtml, Math.min(lastBlock.estimatedHeight, remainingBudget));
+              rp.rebalanceActions.push(`CLAMP_IMAGE_HEIGHT_${safeImgH}PX`);
+              continue;
+            }
           }
         }
-
-        if (pIdx + 1 < rawPages.length) {
-          rawPages[pIdx + 1].blocks.unshift(...prependBlocks);
-          const nextH = measureBlocksCombinedHeightInDOM(rawPages[pIdx + 1].blocks);
-          if (nextH !== null) rawPages[pIdx + 1].usedHeight = nextH;
-        } else {
-          const nextBounds = getPageContentBounds(rawPages.length + 1, boundsOverrides);
-          rawPages.push({
-            pageNumber: rawPages.length + 1,
-            blocks: prependBlocks,
-            usedHeight: measureBlocksCombinedHeightInDOM(prependBlocks) ?? prependBlocks.reduce((s, b) => s + b.estimatedHeight, 0),
-            bounds: nextBounds
-          });
-        }
-        // Re-check same page in case another block still needs to shift
-        continue;
       }
       pIdx++;
     }
   }
 
-  // Renumber sequentially in case rebalancing inserted pages
+  // Normalize pages after rebalancing (strip empty pages, continuation-only shells, or duplicate continuation headers)
+  for (let idx = rawPages.length - 1; idx >= 0; idx--) {
+    const pageBlocks = rawPages[idx].blocks;
+    if (pageBlocks.length === 0) {
+      rawPages.splice(idx, 1);
+      continue;
+    }
+    // Remove accidental duplicate consecutive DAY_CONTINUATION_HEADERs for the same day
+    for (let bi = pageBlocks.length - 1; bi >= 1; bi--) {
+      if (
+        pageBlocks[bi].type === 'DAY_CONTINUATION_HEADER' &&
+        pageBlocks[bi - 1].type === 'DAY_CONTINUATION_HEADER' &&
+        pageBlocks[bi].dayNumber === pageBlocks[bi - 1].dayNumber
+      ) {
+        pageBlocks.splice(bi, 1);
+      }
+    }
+    // Strip orphaned standalone DAY_CONTINUATION_HEADER page with no following day content
+    if (
+      pageBlocks.length === 1 &&
+      pageBlocks[0].type === 'DAY_CONTINUATION_HEADER'
+    ) {
+      rawPages.splice(idx, 1);
+    }
+  }
+
+  // Renumber sequentially and compute final authoritative body heights + full block-level diagnostics
   const totalPages = rawPages.length;
   const renderedPages: RenderedPage[] = rawPages.map((rp, idx) => {
     const pageNumber = idx + 1;
     const bounds = getPageContentBounds(pageNumber, boundsOverrides);
     const headerHtml = buildPageHeaderHtml(model, pageNumber);
     const footerHtml = buildPageFooterHtml(model, pageNumber, totalPages);
+    const hasDom = typeof document !== 'undefined' && Boolean(document.body);
+    const finalUsedHeight =
+      (hasDom ? measureBlocksCombinedHeightInDOM(rp.blocks) : null) ??
+      rp.blocks.reduce((s, b) => s + b.estimatedHeight, 0);
+
+    let cursorY = bounds.contentTop;
+    const blockDiagnostics: BlockLayoutDiagnostic[] = rp.blocks.map((b, bIdx) => {
+      const h = (hasDom ? measureBlocksCombinedHeightInDOM([b]) : null) ?? b.estimatedHeight;
+      const startY = cursorY;
+      const endY = startY + h;
+      cursorY = endY;
+      return {
+        id: b.id,
+        type: b.type,
+        height: h,
+        startY,
+        endY,
+        dayNumber: b.dayNumber,
+        splitRole: b.isSplitPart,
+        splitRef: b.splitRef,
+        breakDecision: b.breakDecision || (bIdx === 0 && pageNumber > 1 ? 'PAGE_START' : 'FLOW')
+      };
+    });
+
+    const footerStartY = bounds.height - bounds.bottomMargin - bounds.footerHeight;
+    const diagnostics: PageLayoutDiagnostics = {
+      pageNumber,
+      pageHeight: bounds.height,
+      topMargin: bounds.topMargin,
+      bottomMargin: bounds.bottomMargin,
+      headerHeight: bounds.headerHeight,
+      headerGap: bounds.headerGap,
+      bodyStartY: bounds.contentTop,
+      bodyEndY: bounds.contentTop + finalUsedHeight,
+      footerStartY,
+      footerHeight: bounds.footerHeight,
+      footerGap: bounds.footerGap,
+      availableContentHeight: bounds.availableContentHeight,
+      actualBodyHeight: finalUsedHeight,
+      overflowPx: Math.max(0, finalUsedHeight - bounds.availableContentHeight),
+      rebalanceActions: rp.rebalanceActions,
+      blocks: blockDiagnostics
+    };
 
     return {
       pageNumber,
@@ -2737,15 +4268,20 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
       headerHtml,
       footerHtml,
       blocks: rp.blocks,
-      usedContentHeight: rp.usedHeight,
+      usedContentHeight: finalUsedHeight,
       availableContentHeight: bounds.availableContentHeight,
-      bounds
+      bounds,
+      diagnostics
     };
   });
 
   // Execute fail-safe Day & Content Completeness Validation
   const completenessValidation = validatePaginatedQuoteCompleteness(model, renderedPages);
   if (!completenessValidation.valid) {
+    console.error(
+      '[PDF-PAGINATION-DIAGNOSTICS] Completeness validation failed:',
+      completenessValidation.errors
+    );
     throw new Error(
       `PDF Pagination Completeness Validation Failed: ${completenessValidation.errors.join(' | ')}`
     );
@@ -2753,6 +4289,12 @@ export function paginateQuotePresentationModel(model: QuotePresentationModel): R
 
   const layoutValidation = validatePdfLayoutBounds(renderedPages);
   if (!layoutValidation.valid) {
+    console.error(
+      '[PDF-PAGINATION-DIAGNOSTICS] Layout bounds validation failed:',
+      renderedPages
+        .filter(p => (p.diagnostics?.overflowPx ?? 0) > 0)
+        .map(p => p.diagnostics)
+    );
     throw new Error(
       `PDF Layout Bounds Validation Failed: ${layoutValidation.errors.join(' | ')}`
     );

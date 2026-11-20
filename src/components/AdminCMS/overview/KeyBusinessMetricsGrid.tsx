@@ -262,8 +262,10 @@ export const KeyBusinessMetricsGrid: React.FC<KeyBusinessMetricsGridProps> = ({
             {metrics.bookingValue.isAuthorized ? (
               <>
                 <div className="mt-3 flex items-baseline space-x-2.5">
-                  <span className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-                    {fx.format(metrics.bookingValue.currentTotal, metrics.bookingValue.currency)}
+                  <span className={`text-2xl sm:text-3xl font-black tracking-tight ${metrics.bookingValue.hasUnavailableRates && (metrics.bookingValue.convertedCount ?? 0) === 0 ? 'text-amber-700' : 'text-slate-900'}`}>
+                    {metrics.bookingValue.hasUnavailableRates && (metrics.bookingValue.convertedCount ?? 0) === 0
+                      ? 'FX Unavailable'
+                      : fx.format(metrics.bookingValue.currentTotal, metrics.bookingValue.currency)}
                   </span>
                   <span className={`inline-flex items-center text-xs font-extrabold px-2 py-0.5 rounded-full ${
                     metrics.bookingValue.percentChange >= 0 
@@ -275,7 +277,9 @@ export const KeyBusinessMetricsGrid: React.FC<KeyBusinessMetricsGridProps> = ({
                   </span>
                 </div>
                 <div className="text-[11px] text-slate-400 mt-1">
-                  Customer Selling Value · No internal costs shown
+                  {metrics.bookingValue.hasUnavailableRates
+                    ? <span className="text-amber-700 font-semibold">Partial FX: {metrics.bookingValue.unavailableCount} rate(s) unavailable</span>
+                    : 'Customer Selling Value · No internal costs shown'}
                 </div>
               </>
             ) : (
@@ -373,7 +377,12 @@ export const KeyBusinessMetricsGrid: React.FC<KeyBusinessMetricsGridProps> = ({
 
             <div className="text-[11px] text-slate-400 mt-1">
               {metrics.pendingPayments.isAuthorized ? (
-                <span>Outstanding: {fx.format(metrics.pendingPayments.totalOutstandingAmount, metrics.pendingPayments.currency)}</span>
+                metrics.pendingPayments.hasUnavailableRates && (metrics.pendingPayments.convertedCount ?? 0) === 0
+                  ? <span className="text-amber-700 font-semibold">Outstanding: FX Unavailable</span>
+                  : <span>
+                      Outstanding: {fx.format(metrics.pendingPayments.totalOutstandingAmount, metrics.pendingPayments.currency)}
+                      {metrics.pendingPayments.hasUnavailableRates && <span className="text-amber-700 ml-1">({metrics.pendingPayments.unavailableCount} N/A)</span>}
+                    </span>
               ) : (
                 <span>Bookings with unpaid installments</span>
               )}

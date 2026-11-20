@@ -517,11 +517,17 @@ export class MasterDataService {
     const deletedSet = db.getDeletedEntityIds();
     const index = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
     const products = db.getProducts();
+    const seenIds = new Set<string>();
     return products.filter(p => {
-      if (!p || (p as any).status === 'DELETED') return false;
+      if (!p || !p.id || (p as any).status === 'DELETED') return false;
+      if (seenIds.has(p.id)) return false;
       if (onlyActive && !isProductActiveForB2B(p, index, deletedSet)) return false;
       const pDest = this.getDestinationById(p.destinationId, true);
-      return pDest?.id === dest.id;
+      const matchesPrimary = pDest?.id === dest.id;
+      const matchesMultiDest = Array.isArray(p.destinationIds) && p.destinationIds.some(did => this.getDestinationById(did, true)?.id === dest.id);
+      if (!matchesPrimary && !matchesMultiDest) return false;
+      seenIds.add(p.id);
+      return true;
     });
   }
 
@@ -537,25 +543,34 @@ export class MasterDataService {
     const deletedSet = db.getDeletedEntityIds();
     const index = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
     const products = db.getProducts();
+    const seenIds = new Set<string>();
     return products.filter(p => {
-      if (!p || (p as any).status === 'DELETED') return false;
+      if (!p || !p.id || (p as any).status === 'DELETED') return false;
+      if (seenIds.has(p.id)) return false;
       if (onlyActive && !isProductActiveForB2B(p, index, deletedSet)) return false;
       const pDest = this.getDestinationById(p.destinationId, true);
-      if (pDest?.id !== reg.destinationId) return false;
-      if (p.regionId === reg.id) return true;
-      if (Array.isArray((p as any).regionIds) && (p as any).regionIds.includes(reg.id)) return true;
-      // Check validated multi-hub references
-      if (Array.isArray(p.hubIds) && p.hubIds.length > 0) {
-        return p.hubIds.some(hid => {
+      const matchesDest = pDest?.id === reg.destinationId ||
+        (Array.isArray(p.destinationIds) && p.destinationIds.some(did => this.getDestinationById(did, true)?.id === reg.destinationId));
+      if (!matchesDest) return false;
+
+      let matchesRegion = false;
+      if (p.regionId && (p.regionId === reg.id || this.getDestinationRegionById(p.regionId, true)?.id === reg.id)) {
+        matchesRegion = true;
+      } else if (Array.isArray(p.regionIds) && p.regionIds.some(rid => rid === reg.id || this.getDestinationRegionById(rid, true)?.id === reg.id)) {
+        matchesRegion = true;
+      } else if (Array.isArray(p.hubIds) && p.hubIds.length > 0) {
+        matchesRegion = p.hubIds.some(hid => {
           const resolvedHub = this.getHubById(hid, true);
           return resolvedHub ? validHubIdsInRegion.has(resolvedHub.id) : false;
         });
-      }
-      if (p.hubId) {
+      } else if (p.hubId) {
         const resolvedHub = this.getHubById(p.hubId, true);
-        return resolvedHub ? validHubIdsInRegion.has(resolvedHub.id) : false;
+        matchesRegion = resolvedHub ? validHubIdsInRegion.has(resolvedHub.id) : false;
       }
-      return false;
+
+      if (!matchesRegion) return false;
+      seenIds.add(p.id);
+      return true;
     });
   }
 
@@ -570,19 +585,28 @@ export class MasterDataService {
     const deletedSet = db.getDeletedEntityIds();
     const index = buildDestinationVisibilityIndex(db.getDestinations(), db.getCityHubs(), deletedSet);
     const products = db.getProducts();
+    const seenIds = new Set<string>();
     return products.filter(p => {
-      if (!p || (p as any).status === 'DELETED') return false;
+      if (!p || !p.id || (p as any).status === 'DELETED') return false;
+      if (seenIds.has(p.id)) return false;
       if (onlyActive && !isProductActiveForB2B(p, index, deletedSet)) return false;
       const pDest = this.getDestinationById(p.destinationId, true);
-      if (pDest?.id !== hub.destinationId) return false;
+      const matchesDest = pDest?.id === hub.destinationId ||
+        (Array.isArray(p.destinationIds) && p.destinationIds.some(did => this.getDestinationById(did, true)?.id === hub.destinationId));
+      if (!matchesDest) return false;
+
+      let matchesHub = false;
       if (p.hubId) {
         const resolvedPrimary = this.getHubById(p.hubId, true);
-        if (resolvedPrimary?.id === hub.id) return true;
+        if (resolvedPrimary?.id === hub.id) matchesHub = true;
       }
-      if (Array.isArray(p.hubIds) && p.hubIds.length > 0) {
-        return p.hubIds.some(hid => this.getHubById(hid, true)?.id === hub.id);
+      if (!matchesHub && Array.isArray(p.hubIds) && p.hubIds.length > 0) {
+        matchesHub = p.hubIds.some(hid => this.getHubById(hid, true)?.id === hub.id);
       }
-      return false;
+
+      if (!matchesHub) return false;
+      seenIds.add(p.id);
+      return true;
     });
   }
 
@@ -670,14 +694,15 @@ export class MasterDataService {
    *
    * Verifies:
    * 1. Destination exists in destinations.
-   * 2. Region exists in regions and belongs to Destination (region.destinationId === destination.id).
-   * 3. Hub (and any hubIds) exists in city_hubs and belongs to Destination and Region.
+   * 2. Region (and any explicit regionIds for multi-region Rail products) exists in regions and belongs to Destination.
+   * 3. Hub (and any hubIds) exists in city_hubs and belongs to Destination and selected Region(s).
    */
   public validateHierarchy(
     regionId?: string,
     destinationId?: string,
     hubId?: string,
-    hubIds?: string[]
+    hubIds?: string[],
+    regionIds?: string[]
   ): HierarchyValidationResult {
     if (!destinationId || !destinationId.trim()) {
       return {
@@ -737,7 +762,74 @@ export class MasterDataService {
 
     const primaryHub = resolvedHubs[0];
 
-    // Resolve Region: check DestinationRegion first
+    // Multi-region validation path (used when explicit regionIds are provided, e.g. Rail products)
+    const explicitRegionIds = Array.isArray(regionIds)
+      ? Array.from(new Set(regionIds.map(r => (r || '').trim()).filter(Boolean)))
+      : [];
+
+    if (explicitRegionIds.length > 0) {
+      const allRequestedRegions = Array.from(
+        new Set([
+          ...(regionId && regionId.trim() ? [regionId.trim()] : []),
+          ...explicitRegionIds
+        ])
+      );
+      const resolvedRegions: DestinationRegionItem[] = [];
+      const seenRegionIds = new Set<string>();
+
+      for (const rawRegId of allRequestedRegions) {
+        const resolvedReg = this.getDestinationRegionById(rawRegId, true);
+        if (!resolvedReg) {
+          return {
+            valid: false,
+            code: 'INVALID_REGION',
+            error: `Invalid Region ID "${rawRegId}". No Region exists with this identifier.`,
+            destination
+          };
+        }
+        if (resolvedReg.destinationId !== destination.id) {
+          return {
+            valid: false,
+            code: 'DESTINATION_REGION_MISMATCH',
+            error: `Hierarchy Mismatch: Region "${resolvedReg.name}" (${resolvedReg.id}) belongs to Destination "${resolvedReg.destinationId}", not selected Destination "${destination.name}" (${destination.id}).`,
+            destination,
+            destinationRegion: resolvedReg
+          };
+        }
+        if (!seenRegionIds.has(resolvedReg.id)) {
+          seenRegionIds.add(resolvedReg.id);
+          resolvedRegions.push(resolvedReg);
+        }
+      }
+
+      // Every selected hub's parent region must be included in the product's selected regions
+      for (const h of resolvedHubs) {
+        if (h.regionId && !seenRegionIds.has(h.regionId)) {
+          return {
+            valid: false,
+            code: 'HUB_REGION_MISMATCH',
+            error: `Hierarchy Mismatch: City Hub "${h.name}" (${h.id}) belongs to Region "${h.regionId}", which is not included in the selected Regions.`,
+            destination,
+            destinationRegion: resolvedRegions[0],
+            hub: h
+          };
+        }
+      }
+
+      const primaryDestRegion =
+        (primaryHub.regionId ? resolvedRegions.find(r => r.id === primaryHub.regionId) : undefined) ||
+        resolvedRegions[0];
+
+      return {
+        valid: true,
+        destination,
+        destinationRegion: primaryDestRegion,
+        region: this.getRegionById(primaryDestRegion.id),
+        hub: primaryHub
+      };
+    }
+
+    // Legacy single-region validation path
     let destRegion = regionId ? this.getDestinationRegionById(regionId, true) : undefined;
 
     // If caller passed a Macro Region (e.g. REG-001) or omitted regionId, only allow if regionId was not an invalid unknown ID
@@ -832,6 +924,8 @@ export class MasterDataService {
     const issues: string[] = [];
     const destId = (product.destinationId || '').trim();
     const regId = (product.regionId || '').trim();
+    const extraRegIds = Array.isArray(product.regionIds) ? product.regionIds.map(r => (r || '').trim()).filter(Boolean) : [];
+    const allRegIds = Array.from(new Set([...(regId ? [regId] : []), ...extraRegIds]));
     const hubId = (product.hubId || '').trim();
     const hubIds = Array.isArray(product.hubIds) && product.hubIds.length > 0
       ? product.hubIds
@@ -851,13 +945,27 @@ export class MasterDataService {
       isLegacyMappingApplicable = true;
     }
 
-    if (!regId) {
+    const resolvedRegIds = new Set<string>();
+    if (allRegIds.length === 0) {
       issues.push('Missing regionId');
-    } else if (!resolvedReg) {
-      issues.push(`Nonexistent regionId: "${regId}"`);
-    } else if (resolvedDest && resolvedReg.destinationId !== resolvedDest.id) {
-      issues.push(`Region "${resolvedReg.name}" (${resolvedReg.id}) belongs to destination "${resolvedReg.destinationId}", not "${resolvedDest.id}"`);
+    } else {
+      for (const candidateRegId of allRegIds) {
+        const resolvedCandidate = this.getDestinationRegionById(candidateRegId, true);
+        if (!resolvedCandidate) {
+          issues.push(`Nonexistent regionId: "${candidateRegId}"`);
+        } else {
+          resolvedRegIds.add(resolvedCandidate.id);
+          if (resolvedDest && resolvedCandidate.destinationId !== resolvedDest.id) {
+            issues.push(`Region "${resolvedCandidate.name}" (${resolvedCandidate.id}) belongs to destination "${resolvedCandidate.destinationId}", not "${resolvedDest.id}"`);
+          }
+        }
+      }
     }
+
+    const isMultiRegionProduct =
+      product.category === 'Rail' ||
+      product.category === 'Rail / Shinkansen' ||
+      extraRegIds.length > 1;
 
     if (hubIds.length === 0) {
       issues.push('Missing hubId / hubIds');
@@ -873,7 +981,9 @@ export class MasterDataService {
           if (resolvedDest && resolvedH.destinationId !== resolvedDest.id) {
             issues.push(`Hub "${resolvedH.name}" (${resolvedH.id}) belongs to destination "${resolvedH.destinationId}", not "${resolvedDest.id}"`);
           }
-          if (hubIds.length === 1 && resolvedReg && resolvedH.regionId !== resolvedReg.id) {
+          if (isMultiRegionProduct && resolvedRegIds.size > 0 && resolvedH.regionId && !resolvedRegIds.has(resolvedH.regionId)) {
+            issues.push(`Hub "${resolvedH.name}" (${resolvedH.id}) belongs to region "${resolvedH.regionId}", which is not in product regionIds`);
+          } else if (!isMultiRegionProduct && hubIds.length === 1 && resolvedReg && resolvedH.regionId !== resolvedReg.id) {
             issues.push(`Hub "${resolvedH.name}" (${resolvedH.id}) belongs to region "${resolvedH.regionId}", not "${resolvedReg.id}"`);
           }
         }
@@ -884,7 +994,7 @@ export class MasterDataService {
       valid: issues.length === 0,
       issues,
       isLegacyMappingApplicable,
-      canonicalRegionId: resolvedReg?.id || resolvedPrimaryHub?.regionId,
+      canonicalRegionId: resolvedReg?.id || Array.from(resolvedRegIds)[0] || resolvedPrimaryHub?.regionId,
       canonicalDestinationId: resolvedDest?.id,
       canonicalHubId: resolvedPrimaryHub?.id
     };

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AppDatabase } from '../../services/db';
 import { TravelLead, LeadStatus, LeadPriority, LeadSource, LeadStageConfig } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { 
   Users, 
   Plus, 
@@ -56,6 +57,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   onOpenQuote
 }) => {
   const { user } = useAuth();
+  const { displayCurrency, convertForDisplay, aggregateForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
 
   const [leads, setLeads] = useState<TravelLead[]>(db.getLeadsAuthorized(user));
@@ -194,7 +196,11 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     !Boolean(l.responsibleAgentId || l.assignedAgentId)
   ).length;
 
-  const totalPipelineValue = leads.reduce((acc, l) => acc + Number(l.estimatedBudget || l.bookingValue || 0), 0);
+  const leadPipelineAgg = aggregateForDisplay(leads, l => ({
+    amount: Number(l.estimatedBudget || l.bookingValue || 0),
+    currency: l.currency || 'USD'
+  }));
+  const totalPipelineValue = leadPipelineAgg.totalConverted;
 
   // Filtering (memoized)
   const filteredLeads = useMemo(() => {
@@ -511,7 +517,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
           <div>
             <div className="text-2xl sm:text-3xl font-black text-slate-950">{totalLeads}</div>
             <p className="text-[11px] font-mono font-semibold text-[#008f77] mt-0.5">
-              ${(totalPipelineValue / 1000).toFixed(0)}k Pipeline
+              {leadPipelineAgg.formattedTotal} Pipeline ({displayCurrency})
             </p>
           </div>
         </div>
@@ -1016,9 +1022,24 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                         {/* Deal Value */}
                         <td className="py-4 px-4">
                           <div className="space-y-1">
-                            <span className="font-mono text-sm font-black text-slate-950 block">
-                              {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
-                            </span>
+                            {(() => {
+                              const leadConv = convertForDisplay(
+                                Number(lead.estimatedBudget || lead.bookingValue || 0),
+                                lead.currency || 'USD'
+                              );
+                              return (
+                                <>
+                                  <span className="font-mono text-sm font-black text-slate-950 block">
+                                    {leadConv.formatted}
+                                  </span>
+                                  {leadConv.isConverted && (
+                                    <span className="text-[10px] font-mono text-slate-400 block">
+                                      Native: {leadConv.nativeFormatted}
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
                             {lead.quoteNumber && (
                               <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 font-bold px-2 py-0.5 rounded block w-fit">
                                 Quote #{lead.quoteNumber}
@@ -1306,9 +1327,24 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                         </div>
                         <div className="flex justify-between items-center pt-1 border-t border-slate-200/60">
                           <span className="text-slate-400 font-medium">Deal Pipeline:</span>
-                          <span className="font-mono text-sm font-black text-[#008f77]">
-                            {lead.currency || 'USD'} {(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
-                          </span>
+                          {(() => {
+                            const cardConv = convertForDisplay(
+                              Number(lead.estimatedBudget || lead.bookingValue || 0),
+                              lead.currency || 'USD'
+                            );
+                            return (
+                              <div className="text-right">
+                                <span className="font-mono text-sm font-black text-[#008f77] block">
+                                  {cardConv.formatted}
+                                </span>
+                                {cardConv.isConverted && (
+                                  <span className="text-[9px] font-mono text-slate-400 block">
+                                    Native: {cardConv.nativeFormatted}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
 

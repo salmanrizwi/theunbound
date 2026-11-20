@@ -390,9 +390,9 @@ async function main() {
   assert(!nonDomPdfResult.success && pdfOnErrorCalled, 'downloadQuotationPDF returns explicit failure and fires onError cleanly in non-DOM environment', failures);
 
   // =========================================================================
-  // TEST C: Email Dispatch, Live Proxy Idempotency & Validation Guard
+  // TEST C: Email Dispatch, Configuration Guard, Status Check & PDF Parity
   // =========================================================================
-  console.log('\n=== TEST C: Email Quotation Generation, Idempotent Live Route & Recipient Validation ===');
+  console.log('\n=== TEST C: Email Quotation Generation, Config Guard, Status Verification & PDF Parity ===');
   const emailService = EmailNotificationService.getInstance();
   const placeholderReject = await emailService.sendViaGmailApi(
     'client@example.com',
@@ -400,6 +400,23 @@ async function main() {
     '<p>Test</p>'
   );
   assert(!placeholderReject.success && placeholderReject.providerStatus === 'INVALID_RECIPIENT', 'Placeholder recipient @example.com is blocked cleanly before dispatch', failures);
+
+  const invalidFmtReject = await emailService.sendViaGmailApi(
+    'not-an-email',
+    'Japan Itinerary',
+    '<p>Test</p>'
+  );
+  assert(!invalidFmtReject.success && invalidFmtReject.providerStatus === 'INVALID_RECIPIENT', 'Malformed recipient email is rejected with validation error', failures);
+
+  const canonicalEmail = emailService.buildCanonicalQuotationEmail(draftV2);
+  assert(
+    canonicalEmail.model.finalCustomerSellingPriceNumeric === pdfModel.finalCustomerSellingPriceNumeric &&
+      canonicalEmail.model.finalCustomerSellingPriceFormatted === pdfModel.finalCustomerSellingPriceFormatted &&
+      canonicalEmail.model.version === pdfModel.version &&
+      canonicalEmail.htmlBody.includes(pdfModel.finalCustomerSellingPriceFormatted),
+    `Canonical Email & PDF share exact snapshot version (v${pdfModel.version}) and total (${pdfModel.finalCustomerSellingPriceFormatted})`,
+    failures
+  );
 
   const app = express();
   app.use(express.json({ limit: '5mb' }));
@@ -410,6 +427,29 @@ async function main() {
   const port = (server.address() as any).port;
   try {
     const builtEmail = emailService.generateQuotationProposalEmail(draftV2);
+
+    // 1. Missing email configuration (no server OAuth env vars and no Authorization token)
+    const hasServerOAuth = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
+    if (!hasServerOAuth) {
+      const unconfiguredRes = await fetch(`http://localhost:${port}/api/integrations/gmail/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: draftV2.clientEmail,
+          subject: builtEmail.subject,
+          htmlBody: builtEmail.fullHtml,
+          meta: { quoteId: draftV2.id, idempotencyKey: `unconf-${Date.now()}`, eventType: 'QUOTE_EMAIL_SENT' }
+        })
+      });
+      const unconfiguredJson: any = await unconfiguredRes.json();
+      assert(
+        unconfiguredRes.status === 400 && !unconfiguredJson.success && unconfiguredJson.status === 'CONFIGURATION_ERROR',
+        'Missing email configuration returns explicit HTTP 400 CONFIGURATION_ERROR instead of fake success',
+        failures
+      );
+    }
+
+    // 2. Configured sandbox relay dispatch + acceptance vs recipient delivery distinction
     const idempKey = `email-test-${Date.now()}`;
     const res1 = await fetch(`http://localhost:${port}/api/integrations/gmail/send`, {
       method: 'POST',
@@ -422,8 +462,18 @@ async function main() {
       })
     });
     const json1: any = await res1.json();
-    assert(res1.ok && json1.success && json1.provider === 'TRANSACTIONAL_RELAY' && Boolean(json1.messageId), 'Express /api/integrations/gmail/send dispatches email cleanly with provider metadata', failures);
+    assert(
+      res1.ok &&
+        json1.success &&
+        json1.acceptedByProvider === true &&
+        json1.deliveryConfirmed === false &&
+        json1.provider === 'TRANSACTIONAL_RELAY' &&
+        Boolean(json1.messageId),
+      'Express /api/integrations/gmail/send returns acceptedByProvider=true, deliveryConfirmed=false with messageId',
+      failures
+    );
 
+    // 3. Double-click / idempotent retry
     const res2 = await fetch(`http://localhost:${port}/api/integrations/gmail/send`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer theunbound-transactional-relay' },
@@ -435,7 +485,24 @@ async function main() {
       })
     });
     const json2: any = await res2.json();
-    assert(res2.ok && json2.alreadySent === true && json2.messageId === json1.messageId, 'Email retry with identical idempotencyKey returns alreadySent without duplicate send', failures);
+    assert(res2.ok && json2.alreadySent === true && json2.messageId === json1.messageId, 'Email retry / double-click with identical idempotencyKey returns alreadySent without duplicate send', failures);
+
+    // 4. Timeout recovery status endpoint check
+    const statusResHit = await fetch(`http://localhost:${port}/api/integrations/gmail/status?idempotencyKey=${encodeURIComponent(idempKey)}`);
+    const statusJsonHit: any = await statusResHit.json();
+    assert(
+      statusResHit.ok && statusJsonHit.found === true && statusJsonHit.acceptedByProvider === true && statusJsonHit.messageId === json1.messageId,
+      'GET /api/integrations/gmail/status recovers accepted operation metadata for timed-out idempotencyKey',
+      failures
+    );
+
+    const statusResMiss = await fetch(`http://localhost:${port}/api/integrations/gmail/status?idempotencyKey=never-sent-${Date.now()}`);
+    const statusJsonMiss: any = await statusResMiss.json();
+    assert(
+      statusResMiss.ok && statusJsonMiss.found === false && statusJsonMiss.status === 'NOT_FOUND',
+      'GET /api/integrations/gmail/status returns NOT_FOUND when prior dispatch did not succeed',
+      failures
+    );
   } finally {
     server.close();
   }

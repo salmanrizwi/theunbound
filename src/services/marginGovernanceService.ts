@@ -444,12 +444,28 @@ export function queryLocalMarginGovernanceCatalog(
   const filtered = allRows.filter((row) => {
     const p = row.product;
     if (q) {
-      const hay = `${p.name || ''} ${p.id || ''} ${p.sku || ''} ${p.destinationName || ''} ${p.city || ''} ${p.supplierName || ''}`.toLowerCase();
+      const regionText = Array.isArray(p.regionNames) ? p.regionNames.join(' ') : (p.regionName || '');
+      const hubText = Array.isArray(p.hubNames) ? p.hubNames.join(' ') : (p.city || '');
+      const hay = `${p.name || ''} ${p.id || ''} ${p.sku || ''} ${p.destinationName || ''} ${regionText} ${hubText} ${p.city || ''} ${p.supplierName || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     if (filters.category && filters.category !== 'ALL' && p.category !== filters.category) return false;
-    if (filters.destinationId && filters.destinationId !== 'ALL' && p.destinationId !== filters.destinationId) return false;
-    if (filters.regionId && filters.regionId !== 'ALL' && p.regionId !== filters.regionId) return false;
+    if (
+      filters.destinationId &&
+      filters.destinationId !== 'ALL' &&
+      p.destinationId !== filters.destinationId &&
+      !(Array.isArray(p.destinationIds) && p.destinationIds.includes(filters.destinationId))
+    ) {
+      return false;
+    }
+    if (
+      filters.regionId &&
+      filters.regionId !== 'ALL' &&
+      p.regionId !== filters.regionId &&
+      !(Array.isArray(p.regionIds) && p.regionIds.includes(filters.regionId))
+    ) {
+      return false;
+    }
     if (
       filters.hubId &&
       filters.hubId !== 'ALL' &&

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense } from 'react';
 import { Product, Destination, Quotation, BlogArticle, User, ActionTarget, CalendarTask, TravelLead } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { countingEngine } from '../../services/countingEngine';
@@ -386,12 +386,17 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
 
   // Active users count (total count of active users using B2B + Buyer portal)
   const [dbTick, setDbTick] = useState(0);
+  const lastFocusRefreshRef = useRef<number>(0);
 
-  const counts = countingEngine.getCountsBreakdown({ onlyPublished: false });
-  const pendingLeads = db.getLeads().filter(l => l.status === 'NEW').length;
-  const pendingBookings = db.getAllBookings().filter(b => b.status === 'PENDING_CONFIRMATION').length;
-  const pendingUsers = db.getUsers().filter(u => u.approvalStatus === 'PENDING').length;
-  const pendingTasks = db.getCalendarTasks().filter(t => t.status === 'PENDING').length;
+  const { counts, pendingLeads, pendingBookings, pendingUsers, pendingTasks } = useMemo(() => {
+    return {
+      counts: countingEngine.getCountsBreakdown({ onlyPublished: false }),
+      pendingLeads: db.getLeads().filter(l => l.status === 'NEW').length,
+      pendingBookings: db.getAllBookings().filter(b => b.status === 'PENDING_CONFIRMATION').length,
+      pendingUsers: db.getUsers().filter(u => u.approvalStatus === 'PENDING').length,
+      pendingTasks: db.getCalendarTasks().filter(t => t.status === 'PENDING').length
+    };
+  }, [db, dbTick]);
 
   const [activePortalStats, setActivePortalStats] = useState(() => {
     const users = db.getUsers();
@@ -425,16 +430,26 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
       setDbTick(t => t + 1);
     };
 
-    const unsub = db.subscribeToCollections(['system_users', 'companies'], () => {
+    const handleWindowFocus = () => {
+      const now = Date.now();
+      if (now - lastFocusRefreshRef.current < 15000) return;
+      lastFocusRefreshRef.current = now;
       updateStats();
-    });
+    };
+
+    const unsub = db.subscribeToCollections(
+      ['system_users', 'companies', 'leads', 'bookings', 'calendar_tasks', 'products', 'hotels', 'destinations', 'city_hubs', 'visas'],
+      () => {
+        updateStats();
+      }
+    );
 
     window.addEventListener('storage', updateStats);
-    window.addEventListener('focus', updateStats);
+    window.addEventListener('focus', handleWindowFocus);
     return () => {
       unsub();
       window.removeEventListener('storage', updateStats);
-      window.removeEventListener('focus', updateStats);
+      window.removeEventListener('focus', handleWindowFocus);
     };
   }, [db]);
 

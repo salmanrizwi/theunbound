@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { 
   Building2, 
   MapPin, 
@@ -53,9 +53,6 @@ import { sanitizeProductForAgent } from '../../utils/customerQuoteSanitizer';
 import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../../constants/commercialQuotationTerms';
 import { destinationTermsService, DestinationTermsReadinessResult } from '../../services/destinationTermsService';
 import { StepByStepQuotationWorkspace } from './StepByStepQuotationWorkspace';
-import { VisaServicesAndFacilitationSection } from './VisaServicesAndFacilitationSection';
-import { OptionComparisonMatrixModal } from './OptionComparisonMatrixModal';
-import { OptionDuplicateModal } from './OptionDuplicateModal';
 import { 
   Product, 
   Destination, 
@@ -78,7 +75,8 @@ import {
   QuoteBrandingMode,
   QuotationCommercialTermsSnapshot,
   QuotationTermsExceptionApproval,
-  QuotationOutputOptionKey
+  QuotationOutputOptionKey,
+  VisaProduct
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
@@ -87,11 +85,6 @@ import { performanceMonitor } from '../../services/performanceMonitor';
 import { backgroundJobService, BackgroundJobRecord } from '../../services/backgroundJobService';
 import { canonicalImageService } from '../../services/imageService';
 import { sanitizeImageUrl } from '../../utils/imageUtils';
-import { ProposalDocumentView } from '../ProposalDocumentView';
-import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
-import { RailJourneyModal } from '../RailJourneyModal';
-import { PricingCalculatorModal } from '../PricingCalculatorModal';
-import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { isRailProduct, isRailQuoteItem } from '../../services/rail/JapanRailJourneyDataService';
 import { 
   AUTHORITATIVE_PRODUCT_CATEGORIES, 
@@ -100,11 +93,6 @@ import {
   resolveProductCategoryEnum, 
   DISPLAY_TO_CATEGORY_ENUM 
 } from '../../services/configuratorRegistry';
-import { ManualHotelFormModal } from './ManualHotelFormModal';
-import { VisaProduct } from '../../types';
-import { AddVisaToQuoteModal, visaProductToProduct } from './AddVisaToQuoteModal';
-import { AddAddonModal } from './AddAddonModal';
-import { ShareWhatsAppModal } from './ShareWhatsAppModal';
 import { canUserShareQuoteWhatsApp, canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { 
   classifyPassengers, 
@@ -128,10 +116,10 @@ import { formatPlainTextQuotationToHtml } from '../../services/quoteEmailFormatt
 import { DestinationRelevanceService, matchesDestination } from '../../services/destinationRelevanceService';
 import { QuotationScope } from '../../types';
 import { buildAgencyBrandingSnapshotFromUser, validateWhiteLabelReadiness } from '../../services/quotePresentationModel';
-import { PackageDetailModal } from '../PackageDetailModal';
 import {
   buildMasterPackageFromQuoteWorkspace,
   saveAndVerifyMasterPackageFromQuote,
+  saveAndVerifyMasterPackageFromQuoteAsync,
   normalizeMasterPackageTripType,
   MasterPackageVerificationReport
 } from '../../services/packageToQuoteTransformer';
@@ -140,12 +128,52 @@ import {
   recordQuotationGenerationEvent,
   validateQuotationOutputConsistency
 } from '../../services/quotationSnapshotService';
-import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
 import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
 import {
   quotationOperationsService,
-  withBoundedTimeout
+  withBoundedTimeout,
+  BoundedOperationTimeoutError
 } from '../../services/quotationOperationsService';
+
+const OptionComparisonMatrixModal = lazy(() =>
+  import('./OptionComparisonMatrixModal').then(m => ({ default: m.OptionComparisonMatrixModal }))
+);
+const OptionDuplicateModal = lazy(() =>
+  import('./OptionDuplicateModal').then(m => ({ default: m.OptionDuplicateModal }))
+);
+const ProposalDocumentView = lazy(() =>
+  import('../ProposalDocumentView').then(m => ({ default: m.ProposalDocumentView }))
+);
+const B2BViewDetailsModal = lazy(() =>
+  import('../B2BViewDetailsModal').then(m => ({ default: m.B2BViewDetailsModal }))
+);
+const RailJourneyModal = lazy(() =>
+  import('../RailJourneyModal').then(m => ({ default: m.RailJourneyModal }))
+);
+const PricingCalculatorModal = lazy(() =>
+  import('../PricingCalculatorModal').then(m => ({ default: m.PricingCalculatorModal }))
+);
+const GlobalConfiguratorRouter = lazy(() =>
+  import('../Configurators/GlobalConfiguratorRouter').then(m => ({ default: m.GlobalConfiguratorRouter }))
+);
+const ManualHotelFormModal = lazy(() =>
+  import('./ManualHotelFormModal').then(m => ({ default: m.ManualHotelFormModal }))
+);
+const AddVisaToQuoteModal = lazy(() =>
+  import('./AddVisaToQuoteModal').then(m => ({ default: m.AddVisaToQuoteModal }))
+);
+const AddAddonModal = lazy(() =>
+  import('./AddAddonModal').then(m => ({ default: m.AddAddonModal }))
+);
+const ShareWhatsAppModal = lazy(() =>
+  import('./ShareWhatsAppModal').then(m => ({ default: m.ShareWhatsAppModal }))
+);
+const PackageDetailModal = lazy(() =>
+  import('../PackageDetailModal').then(m => ({ default: m.PackageDetailModal }))
+);
+const QuotationVersionHistoryModal = lazy(() =>
+  import('../Quotations/QuotationVersionHistoryModal').then(m => ({ default: m.QuotationVersionHistoryModal }))
+);
 
 // Helper to check if a product is tagged with or matches a specific city / hub
 export const isProductMatchingCity = (product: Product, targetCityName?: string, targetHubId?: string): boolean => {
@@ -265,7 +293,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     items, 
     setItems,
     addProductToQuote, 
-    removeProductFromQuote, 
+    removeProductFromQuote,
+    removeProductsByIds,
     updateItemPax, 
     updateItemTravelDate, 
     updateItemServiceTime, 
@@ -513,10 +542,24 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
 
   // In-Builder Toast Notification (Replaces Cart Drawer popping up)
   const [builderToast, setBuilderToast] = useState<{ message: string; type: 'SUCCESS' | 'INFO' | 'WARNING' } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const showBuilderToast = useCallback((message: string, type: 'SUCCESS' | 'INFO' | 'WARNING' = 'SUCCESS') => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+    }
     setBuilderToast({ message, type });
-    setTimeout(() => {
+    toastTimerRef.current = setTimeout(() => {
+      toastTimerRef.current = null;
       setBuilderToast(prev => (prev?.message === message ? null : prev));
     }, 3500);
   }, []);
@@ -631,8 +674,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     };
 
     const db = AppDatabase.getInstance();
-    const masterProducts = db.getProducts();
-    const masterHotels = db.getHotels();
+    let masterProductsCache: Product[] | null = null;
+    let masterHotelsCache: Hotel[] | null = null;
     const failedItems: Array<{ id: string; name: string; error?: string }> = [];
 
     const updatedItems = targetItems.map(item => {
@@ -647,7 +690,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           }
         : item.manualHotelDetails;
 
-      // 1. Retrieve current product Nett Prices and latest master records
+      // 1. Retrieve current product Nett Prices and latest master records (O(1) lookup first)
       let effectiveProduct: Product = item.product;
       if ((item.isManualHotel || (item.product as any)?.accommodationType === 'manual') && nextManualDetails) {
         effectiveProduct = manualHotelToProduct(nextManualDetails, currentDestination);
@@ -657,12 +700,16 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         item.product.productType === 'Hotel' ||
         item.product.productType === 'Hotel & Resort'
       ) {
-        const hotel = masterHotels.find(
-          h =>
-            (item.hotelId && h.id === item.hotelId) ||
-            (item.product.id && item.product.id.startsWith(`hotel-prod-${h.id}-`)) ||
-            (h.name || '').toLowerCase() === (item.product.name || '').toLowerCase()
-        );
+        let hotel = item.hotelId ? db.getHotelById(item.hotelId) : undefined;
+        if (!hotel) {
+          if (!masterHotelsCache) masterHotelsCache = db.getHotels();
+          hotel = masterHotelsCache.find(
+            h =>
+              (item.hotelId && h.id === item.hotelId) ||
+              (item.product.id && item.product.id.startsWith(`hotel-prod-${h.id}-`)) ||
+              (h.name || '').toLowerCase() === (item.product.name || '').toLowerCase()
+          );
+        }
         if (hotel) {
           const roomType =
             hotel.roomTypes?.find(
@@ -680,13 +727,21 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           }
         }
       } else {
-        const matched = masterProducts.find(p =>
-          p.id === item.product.id ||
-          p.product_id === item.product.id ||
-          (item.master_product_id && (p.id === item.master_product_id || p.product_id === item.master_product_id)) ||
-          (item.service_id && (p.id === item.service_id || p.product_id === item.service_id)) ||
-          (item.product.sku && p.sku === item.product.sku)
-        );
+        let matched =
+          db.getProductById(item.product.id) ||
+          (item.master_product_id ? db.getProductById(item.master_product_id) : undefined) ||
+          (item.service_id ? db.getProductById(item.service_id) : undefined) ||
+          (item.product.sku ? db.getProductById(item.product.sku) : undefined);
+        if (!matched) {
+          if (!masterProductsCache) masterProductsCache = db.getProducts();
+          matched = masterProductsCache.find(p =>
+            p.id === item.product.id ||
+            p.product_id === item.product.id ||
+            (item.master_product_id && (p.id === item.master_product_id || p.product_id === item.master_product_id)) ||
+            (item.service_id && (p.id === item.service_id || p.product_id === item.service_id)) ||
+            (item.product.sku && p.sku === item.product.sku)
+          );
+        }
         if (matched) {
           effectiveProduct = matched;
         }
@@ -930,13 +985,16 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   const prevStepIdRef = useRef<number>(activeStepId);
   const lastSavedHashRef = useRef<string>('');
   const isExplicitSavingRef = useRef<boolean>(false);
+  const isOutputBusyRef = useRef<boolean>(false);
   const hydratedSessionKeyRef = useRef<string>('');
   const pendingBaselineCommitRef = useRef<boolean>(false);
   const nextHubUidRef = useRef<number>(0);
   const isInternalHubMutationRef = useRef<boolean>(false);
   const loadedTermsTargetsRef = useRef<Set<string>>(new Set());
   const pendingSaveRequestIdRef = useRef<{ workingHash: string; requestId: string } | null>(null);
-  const emailIdempotencyKeyRef = useRef<{ signature: string; key: string } | null>(null);
+  const emailIdempotencyKeyRef = useRef<{ signature: string; key: string; needsStatusCheck?: boolean } | null>(null);
+  const isSendingEmailRef = useRef<boolean>(false);
+  const emailService = useMemo(() => EmailNotificationService.getInstance(), []);
 
   // Measure Quote Builder mount latency and subscribe to active background jobs (e.g. PDF exports)
   useEffect(() => {
@@ -1077,13 +1135,25 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         if (q.title) setQuoteTitle(q.title);
         if (q.sourcePackageId !== undefined) setSourcePackageId(q.sourcePackageId || null);
         if (q.sourcePackageName !== undefined) setSourcePackageName(q.sourcePackageName || '');
-        if (q.dayDescriptions) {
-          setDayDescriptions(q.dayDescriptions);
-          setContextDayDescriptions(q.dayDescriptions);
-        }
+        const mergedInitialDescriptions: Record<number, string> = {};
         if (q.dayOverviews) {
-          setDayOverviews(q.dayOverviews);
-          setContextDayOverviews(q.dayOverviews);
+          for (const [k, v] of Object.entries(q.dayOverviews)) {
+            if (typeof v === 'string' && v.trim()) mergedInitialDescriptions[Number(k)] = v;
+          }
+        }
+        if (q.dayDescriptions) {
+          for (const [k, v] of Object.entries(q.dayDescriptions)) {
+            if (typeof v === 'string' && v.trim()) mergedInitialDescriptions[Number(k)] = v;
+          }
+        }
+        if (Object.keys(mergedInitialDescriptions).length > 0 || q.dayDescriptions || q.dayOverviews) {
+          const finalDesc = Object.keys(mergedInitialDescriptions).length > 0
+            ? mergedInitialDescriptions
+            : (q.dayDescriptions || q.dayOverviews || {});
+          setDayDescriptions(finalDesc);
+          setContextDayDescriptions(finalDesc);
+          setDayOverviews(finalDesc);
+          setContextDayOverviews(finalDesc);
         }
         if (q.dayNotes) {
           setDayNotes(q.dayNotes);
@@ -1815,7 +1885,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         it.product.accommodationType === 'manual' ||
         (it.product as any).category === 'Hotels'
       );
-      hotelItemsToRemove.forEach(it => removeProductFromQuote(it.id));
+      removeProductsByIds(hotelItemsToRemove.map(it => it.id));
 
       // Preserve existing hotel / manual hotel configuration in savedAccommodationSnapshot and set every hub to NO_ACCOMMODATION
       const updated = routeHubs.map(h => {
@@ -2143,6 +2213,9 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   const [emailCopied, setEmailCopied] = useState(false);
   const [emailCopiedMode, setEmailCopiedMode] = useState<'RICH_HTML' | 'PLAIN_TEXT' | null>(null);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailDispatchStage, setEmailDispatchStage] = useState<
+    'IDLE' | 'PREPARING' | 'VALIDATING' | 'GENERATING' | 'SENDING' | 'CHECKING_STATUS' | 'ACCEPTED_BY_PROVIDER' | 'FAILED'
+  >('IDLE');
   const [emailSuccessMessage, setEmailSuccessMessage] = useState<string | null>(null);
   const [emailErrorMessage, setEmailErrorMessage] = useState<string | null>(null);
 
@@ -2159,10 +2232,15 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     user?.permissions?.canAddManualHotelRates !== false
   );
 
-  // Leads dropdown
+  // Leads dropdown (subscribed so Firestore-hydrated leads appear immediately without polling)
+  const [crmLeadsTick, setCrmLeadsTick] = useState(0);
+  useEffect(() => {
+    return db.subscribeToCollections(['leads'], () => setCrmLeadsTick(t => t + 1));
+  }, [db]);
+
   const crmLeads = useMemo(() => {
     return db.getLeads();
-  }, [db]);
+  }, [db, crmLeadsTick]);
 
   // Handle selecting an existing lead
   const handleSelectLead = (leadId: string) => {
@@ -2959,7 +3037,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     routeHubs
   ]);
 
-  const currentWorkingHash = buildSaveStateHash();
+  const currentWorkingHash = useMemo(() => buildSaveStateHash(), [buildSaveStateHash]);
 
   const previewUpdatedAtRef = useRef<{ hash: string; ts: string }>({
     hash: '',
@@ -3058,7 +3136,28 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       if (qToApply.items) setItems(qToApply.items);
       if (qToApply.routeHubs) handleUpdateRouteHubs(qToApply.routeHubs);
       if (qToApply.dayThemes) handleUpdateDayThemes(qToApply.dayThemes);
-      if (qToApply.dayDescriptions) handleUpdateDayDescriptions(qToApply.dayDescriptions);
+      if (qToApply.dayDescriptions || qToApply.dayOverviews) {
+        const mergedRestoredDesc: Record<number, string> = {};
+        if (qToApply.dayOverviews) {
+          for (const [k, v] of Object.entries(qToApply.dayOverviews)) {
+            if (typeof v === 'string' && v.trim()) mergedRestoredDesc[Number(k)] = v;
+          }
+        }
+        if (qToApply.dayDescriptions) {
+          for (const [k, v] of Object.entries(qToApply.dayDescriptions)) {
+            if (typeof v === 'string' && v.trim()) mergedRestoredDesc[Number(k)] = v;
+          }
+        }
+        handleUpdateDayDescriptions(
+          Object.keys(mergedRestoredDesc).length > 0
+            ? mergedRestoredDesc
+            : (qToApply.dayDescriptions || qToApply.dayOverviews || {})
+        );
+      }
+      if (qToApply.dayNotes) {
+        setDayNotes(qToApply.dayNotes);
+        setContextDayNotes(qToApply.dayNotes);
+      }
       if (qToApply.itineraryOverview !== undefined) handleUpdateItineraryOverview(qToApply.itineraryOverview || '');
       if (qToApply.agentMarginType) setAgentMarginType(qToApply.agentMarginType);
       const restoredAgentVal = Math.max(0, Number(qToApply.agentMarginValue ?? qToApply.overallMarkupPercent ?? 0) || 0);
@@ -3113,6 +3212,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           routeHubs: vSnap.routeHubs && vSnap.routeHubs.length > 0 ? vSnap.routeHubs : target.routeHubs,
           dayThemes: vSnap.dayThemes ?? target.dayThemes,
           dayDescriptions: vSnap.dayDescriptions ?? target.dayDescriptions,
+          dayOverviews: vSnap.dayOverviews ?? target.dayOverviews,
+          dayNotes: vSnap.dayNotes ?? target.dayNotes,
           itineraryOverview: vSnap.itineraryOverview ?? target.itineraryOverview,
           quotationScope: vSnap.quotationScope ?? target.quotationScope,
           brandingMode: vSnap.brandingMode ?? target.brandingMode,
@@ -3158,7 +3259,28 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     if (snapQuote.items) setItems(snapQuote.items);
     if (snapQuote.routeHubs) handleUpdateRouteHubs(snapQuote.routeHubs);
     if (snapQuote.dayThemes) handleUpdateDayThemes(snapQuote.dayThemes);
-    if (snapQuote.dayDescriptions) handleUpdateDayDescriptions(snapQuote.dayDescriptions);
+    if (snapQuote.dayDescriptions || snapQuote.dayOverviews) {
+      const mergedHistDesc: Record<number, string> = {};
+      if (snapQuote.dayOverviews) {
+        for (const [k, v] of Object.entries(snapQuote.dayOverviews)) {
+          if (typeof v === 'string' && v.trim()) mergedHistDesc[Number(k)] = v;
+        }
+      }
+      if (snapQuote.dayDescriptions) {
+        for (const [k, v] of Object.entries(snapQuote.dayDescriptions)) {
+          if (typeof v === 'string' && v.trim()) mergedHistDesc[Number(k)] = v;
+        }
+      }
+      handleUpdateDayDescriptions(
+        Object.keys(mergedHistDesc).length > 0
+          ? mergedHistDesc
+          : (snapQuote.dayDescriptions || snapQuote.dayOverviews || {})
+      );
+    }
+    if (snapQuote.dayNotes) {
+      setDayNotes(snapQuote.dayNotes);
+      setContextDayNotes(snapQuote.dayNotes);
+    }
     setAgentMarginType(snapQuote.agentMarginType || 'PERCENTAGE');
     const histAgentVal = Math.max(0, Number(snapQuote.agentMarginValue ?? snapQuote.overallMarkupPercent ?? 0) || 0);
     setAgentMarginValue(histAgentVal);
@@ -3223,8 +3345,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   const handleDeleteHubOccurrenceItems = useCallback((deletedHub: TripRouteHub, currentHubsSnapshot?: TripRouteHub[]) => {
     const hubsRef = currentHubsSnapshot || routeHubs;
     const toRemove = items.filter(it => doesHotelItemBelongToHubOccurrence(it, deletedHub, hubsRef));
-    toRemove.forEach(it => removeProductFromQuote(it.id));
-  }, [items, routeHubs, removeProductFromQuote]);
+    removeProductsByIds(toRemove.map(it => it.id));
+  }, [items, routeHubs, removeProductsByIds]);
 
   const handleRemoveHubFromRoute = (hubId: string) => {
     const targetHub = routeHubs.find(h => h.id === hubId || getHubOccurrenceId(h) === hubId);
@@ -3319,7 +3441,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
 
     // Strictly remove matching hotel items ONLY for this occurrence
     const matchingItems = items.filter(it => doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs));
-    matchingItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(matchingItems.map(it => it.id));
 
     handleUpdateRouteHubs(prev =>
       prev.map(h => (h.id === targetHub.id ? {
@@ -3372,7 +3494,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     const existingHotelItems = items.filter(it =>
       doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
-    existingHotelItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(existingHotelItems.map(it => it.id));
 
     // Validate occupancy for current passenger counts
     const occupancy = validateRoomOccupancy(selectedRoom, safeRooms, adultsCount, childrenCount, infantsCount);
@@ -3492,7 +3614,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     const existingHotelItems = items.filter(it =>
       doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
-    existingHotelItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(existingHotelItems.map(it => it.id));
 
     // 2. Convert manual details into a standardized Product object
     const hotelProduct = manualHotelToProduct(normalizedManualData, currentDestination);
@@ -3576,7 +3698,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     const matchingItems = items.filter(it =>
       doesHotelItemBelongToHubOccurrence(it, targetHub, routeHubs)
     );
-    matchingItems.forEach(it => removeProductFromQuote(it.id));
+    removeProductsByIds(matchingItems.map(it => it.id));
 
     handleUpdateRouteHubs(prev =>
       prev.map(h => (h.id === targetHub.id ? { 
@@ -3980,6 +4102,10 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     outputOption: QuotationOutputOptionKey,
     onResolved: (readyQuote: Quotation) => void | Promise<void>
   ): Promise<void> => {
+    if (isOutputBusyRef.current || isExplicitSavingRef.current) {
+      return;
+    }
+
     if (isReadOnlyHistoricalMode && authoritativeSavedQuote) {
       const activeSnap =
         authoritativeSavedQuote.brandingMode === brandingMode
@@ -3989,7 +4115,15 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               brandingMode,
               brandingSnapshot: buildAgencyBrandingSnapshotFromUser(user, authoritativeSavedQuote, brandingMode)
             };
-      await onResolved(activeSnap);
+      isOutputBusyRef.current = true;
+      setOutputBusyOption(outputOption);
+      setOutputSyncError(null);
+      try {
+        await onResolved(activeSnap);
+      } finally {
+        isOutputBusyRef.current = false;
+        setOutputBusyOption(null);
+      }
       return;
     }
 
@@ -4002,6 +4136,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       return;
     }
 
+    isOutputBusyRef.current = true;
     setOutputBusyOption(outputOption);
     setOutputSyncError(null);
     try {
@@ -4090,6 +4225,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       setOutputSyncError(msg);
       showBuilderToast(msg, 'WARNING');
     } finally {
+      isOutputBusyRef.current = false;
       setOutputBusyOption(null);
     }
   };
@@ -4226,7 +4362,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           clientSaveRequestId,
           restoredFromVersion
         }),
-        30000,
+        45000,
         'Save Quotation Draft'
       );
 
@@ -4433,14 +4569,28 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   };
 
   // Helper to sync canonical email preview when note, branding, or quote changes
-  const refreshCanonicalEmailContent = (quoteObj: Quotation, customNoteText: string, modeOverride?: QuoteBrandingMode) => {
+  const refreshCanonicalEmailContent = (
+    quoteObj: Quotation,
+    customNoteText: string,
+    modeOverride?: QuoteBrandingMode,
+    recipientOverride?: string
+  ) => {
+    const svc = emailService || EmailNotificationService.getInstance();
     const activeMode = modeOverride || quoteObj.brandingMode || brandingMode;
     const snap =
       quoteObj.brandingSnapshot?.mode === activeMode
         ? quoteObj.brandingSnapshot
         : buildAgencyBrandingSnapshotFromUser(user, quoteObj, activeMode);
-    const safeRecipient = (emailRecipient || clientEmail || (quoteObj.clientEmail && quoteObj.clientEmail !== 'client@example.com' ? quoteObj.clientEmail : '') || '').trim();
-    const canonical = emailService.buildCanonicalQuotationEmail(
+    const resolvedRecipientCandidate =
+      recipientOverride !== undefined
+        ? recipientOverride
+        : (emailRecipient || clientEmail || quoteObj.clientEmail || '');
+    const safeRecipient = (
+      resolvedRecipientCandidate && !/^client@example\.com$/i.test(resolvedRecipientCandidate.trim())
+        ? resolvedRecipientCandidate
+        : ''
+    ).trim();
+    const canonical = svc.buildCanonicalQuotationEmail(
       {
         ...quoteObj,
         brandingMode: activeMode,
@@ -4475,9 +4625,18 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     if (!validateFxBeforeFinalGeneration()) return;
     if (!validateTermsBeforeExportOrFinalise()) return;
     await runOutputWithAuthoritativeSnapshot('SEND_EMAIL', (synced) => {
+      const hasDehydratedItems =
+        Boolean((synced.items || []).some((it: any) => Boolean(it?.__dehydratedToVersionId))) ||
+        Boolean((synced.options || []).some((o: any) => Boolean((o as any)?.__dehydratedToVersionId)));
+      if (hasDehydratedItems) {
+        const errMsg = 'Cannot open Email Proposal: committed quotation snapshot is incomplete or not yet hydrated.';
+        setOutputSyncError(errMsg);
+        showBuilderToast(errMsg, 'WARNING');
+        return;
+      }
       setEmailModalQuote(synced);
       const rawCandidate = (clientEmail || synced.clientEmail || '').trim();
-      const defaultRecipient = /^client@example\.com$/i.test(rawCandidate) ? '' : rawCandidate;
+      const defaultRecipient = /^[^\s@]+@example\.com$/i.test(rawCandidate) ? '' : rawCandidate;
       setEmailRecipient(defaultRecipient);
       setEmailCustomNote('');
       emailIdempotencyKeyRef.current = null;
@@ -4487,12 +4646,15 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           clientEmail: defaultRecipient,
           clientName: clientName || synced.clientName || 'Valued Guest'
         },
-        ''
+        '',
+        synced.brandingMode,
+        defaultRecipient
       );
       setEmailSubject(canonical.subject);
       setEmailPreviewTab('HTML_PREVIEW');
       setPlainTextSubView('PREVIEW');
       setEmailCopied(false);
+      setEmailDispatchStage('IDLE');
       setEmailSuccessMessage(null);
       setEmailErrorMessage(null);
       setIsEmailModalOpen(true);
@@ -4572,99 +4734,34 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
 
   // Send Complete Email Proposal via EmailNotificationService (uses authoritative saved snapshot; never bumps version)
   const handleSendProposalEmail = async () => {
-    if (isSendingEmail) return;
-    if (!validateTermsBeforeExportOrFinalise()) return;
-    const cleanRecipient = emailRecipient.trim();
-    if (!cleanRecipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanRecipient)) {
-      setEmailErrorMessage('Please enter a valid recipient email address before dispatching.');
-      return;
-    }
+    if (isSendingEmailRef.current || isSendingEmail) return;
 
-    const synced = emailModalQuote || authoritativeSavedQuote;
-    if (!synced) {
-      showBuilderToast('Please save draft before sending quotation email.', 'WARNING');
-      return;
-    }
-
+    isSendingEmailRef.current = true;
     setIsSendingEmail(true);
+    setEmailDispatchStage('PREPARING');
     setEmailErrorMessage(null);
     setEmailSuccessMessage(null);
 
-    const activeMode = synced.brandingMode || brandingMode;
-    const finalSubjectPreview = emailSubject.trim() || synced.title || synced.quoteNumber || 'Quotation Proposal';
-    const idempotencySignature = `${synced.id}:v${synced.version || latestSavedVersion || 1}:${cleanRecipient.toLowerCase()}:${activeMode}:${finalSubjectPreview}`;
-    const idempotencyKey =
-      emailIdempotencyKeyRef.current?.signature === idempotencySignature
-        ? emailIdempotencyKeyRef.current.key
-        : `quote-email-${synced.id}-v${synced.version || latestSavedVersion || 1}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    emailIdempotencyKeyRef.current = { signature: idempotencySignature, key: idempotencyKey };
+    let activeEmailOpId: string | null = null;
+    const synced = emailModalQuote || authoritativeSavedQuote;
 
-    const emailOp = quotationOperationsService.startOperation({
-      operationType: 'EMAIL_SEND',
-      quoteId: synced.id,
-      versionId: `v${synced.version || latestSavedVersion || 1}`,
-      uid: user?.id,
-      idempotencyKey
-    });
+    const finalizeEmailAcceptance = async (acceptedResult: {
+      messageId?: string;
+      alreadySent?: boolean;
+      provider?: string;
+      providerStatus?: string;
+    }, cleanRecipient: string, activeMode: QuoteBrandingMode, opId: string) => {
+      if (!synced) return;
+      const frozenSnap = synced.commercialTermsSnapshot || termsResolution.readiness.snapshot;
+      const isHistoricalVersionView =
+        isReadOnlyHistoricalMode ||
+        (latestSavedVersion > 0 && Number(synced.version || 1) < Number(latestSavedVersion));
 
-    try {
-      const snap =
-        synced.brandingSnapshot?.mode === activeMode
-          ? synced.brandingSnapshot
-          : buildAgencyBrandingSnapshotFromUser(user, synced, activeMode);
-      const emailService = EmailNotificationService.getInstance();
-      const generatedEmail = emailService.generateQuotationProposalEmail(
-        {
-          ...synced,
-          brandingMode: activeMode,
-          brandingSnapshot: snap,
-          clientEmail: cleanRecipient,
-          clientName: clientName || synced.clientName || 'Valued Guest'
-        },
-        {
-          name: (snap as any).specialistName || user?.name || synced.agentName || 'Travel Specialist',
-          agencyName: snap.agencyName || user?.agencyName || synced.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'Luxury Partner Agency'),
-          email: snap.email || user?.email || synced.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
-          phone: snap.phone || user?.phone || synced.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
-          logoUrl: snap.logoUrl || user?.brandLogoUrl || synced.agentLogoUrl,
-          website: snap.website || (user as any)?.website,
-          address: snap.address || (user as any)?.businessAddress,
-          primaryColor: snap.primaryColor || (user as any)?.brandPrimaryColor,
-          accentColor: snap.accentColor || (user as any)?.brandAccentColor,
-          brandingMode: activeMode,
-          selectedOptionIndexOrId: synced.activeOptionId || `opt-${activeOptionTab}`,
-          customNote: emailCustomNote,
-          formattingMode: emailPreviewTab === 'HTML_PREVIEW' ? 'PROPOSAL_VIEW' : 'PLAIN_TEXT'
-        }
-      );
-
-      const finalSubject = emailSubject.trim() || generatedEmail.subject;
-      const finalHtmlBody = emailPreviewTab === 'HTML_PREVIEW'
-        ? (emailRichHtml && emailRichHtml.trim() ? emailRichHtml : generatedEmail.proposalViewHtml || generatedEmail.fullHtml)
-        : (emailSimpleHtml && emailSimpleHtml.trim() ? emailSimpleHtml : formatPlainTextQuotationToHtml(emailMessage));
-
-      const result = await withBoundedTimeout(
-        emailService.sendViaGmailApi(
-          cleanRecipient,
-          finalSubject,
-          finalHtmlBody,
-          {
-            quoteId: synced.id,
-            leadId: synced.leadId,
-            recipientType: 'BUYER',
-            eventType: 'QUOTE_EMAIL_SENT',
-            idempotencyKey,
-            sentBy: user?.id,
-            sentByName: user?.name || 'Agent'
-          },
-          emailMessage
-        ),
-        25000,
-        'Email Dispatch'
-      );
-
-      if (result.success) {
-        const frozenSnap = synced.commercialTermsSnapshot || termsResolution.readiness.snapshot;
+      let targetQuoteForRecord: Quotation;
+      if (isHistoricalVersionView) {
+        const currentMaster = db.getQuoteByIdAuthorized(synced.id, user) || synced;
+        targetQuoteForRecord = currentMaster;
+      } else {
         const updatedQuote: Quotation = {
           ...synced,
           clientEmail: cleanRecipient,
@@ -4694,17 +4791,21 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
             'Quotation Email Status Persistence'
           );
         } catch (persistErr: any) {
-          console.warn('Email sent but cloud status sync failed:', persistErr?.message);
+          console.warn('Email accepted by provider, but cloud quote status sync encountered delay:', persistErr?.message);
         }
+        targetQuoteForRecord = emailSaved;
+      }
 
-        const genRec = recordQuotationGenerationEvent(db, emailSaved, {
-          outputOption: 'SEND_EMAIL',
-          status: 'SUCCEEDED',
-          brandingMode: activeMode,
-          selectedOptionId: emailSaved.activeOptionId,
-          recipient: cleanRecipient,
-          user
-        });
+      const genRec = recordQuotationGenerationEvent(db, targetQuoteForRecord, {
+        outputOption: 'SEND_EMAIL',
+        status: 'SUCCEEDED',
+        brandingMode: activeMode,
+        selectedOptionId: synced.activeOptionId,
+        recipient: cleanRecipient,
+        user
+      });
+
+      if (!isHistoricalVersionView) {
         setAuthoritativeSavedQuote(genRec.updatedQuote);
         setLoadedIsLocked(true);
         if (frozenSnap && frozenSnap.entries?.length > 0) {
@@ -4714,20 +4815,213 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         if (cleanRecipient !== clientEmail) {
           setClientEmail(cleanRecipient);
         }
-        emailIdempotencyKeyRef.current = null;
+      }
+      emailIdempotencyKeyRef.current = null;
 
-        const channelLabel = result.providerStatus === 'EMAIL_ACCEPTED_RELAY' ? 'via Transactional Relay' : 'via Gmail API';
-        const msg = `Complete quotation proposal dispatched to ${cleanRecipient} ${channelLabel}${result.alreadySent ? ' (already delivered)' : ''}! (Ref: ${synced.quoteNumber} • ID: ${result.messageId || 'SENT'})`;
-        quotationOperationsService.markSucceeded(emailOp.operationId, {
-          versionId: `v${synced.version || latestSavedVersion || 1}`,
-          resultRef: `${result.providerStatus || 'EMAIL'}:${result.messageId || 'SENT'}`
-        });
-        setEmailSuccessMessage(msg);
-        showBuilderToast(`✓ Complete quotation emailed to ${cleanRecipient}`, 'SUCCESS');
-        setTimeout(() => {
-          setIsEmailModalOpen(false);
-          setEmailSuccessMessage(null);
-        }, 2200);
+      const isRelay = acceptedResult.provider === 'TRANSACTIONAL_RELAY' || acceptedResult.providerStatus === 'EMAIL_ACCEPTED_RELAY';
+      const channelLabel = isRelay
+        ? 'Transactional Relay (Sandbox)'
+        : 'Google Workspace Gmail API';
+      const msg = isRelay
+        ? `Quotation accepted by ${channelLabel} for ${cleanRecipient}${acceptedResult.alreadySent ? ' (already accepted earlier)' : ''}. Ref: ${synced.quoteNumber} • ID: ${acceptedResult.messageId || 'QUEUED'}. Note: Relay acceptance does not confirm final recipient inbox delivery without active Google Workspace OAuth.`
+        : `Quotation accepted by ${channelLabel} for dispatch to ${cleanRecipient}${acceptedResult.alreadySent ? ' (already accepted earlier)' : ''}. Ref: ${synced.quoteNumber} • Message ID: ${acceptedResult.messageId || 'ACCEPTED'}. (Provider acceptance confirmed; recipient inbox delivery depends on destination mail server.)`;
+
+      quotationOperationsService.updateOperation(opId, { status: 'ACCEPTED_BY_PROVIDER' });
+      quotationOperationsService.markSucceeded(opId, {
+        versionId: `v${synced.version || latestSavedVersion || 1}`,
+        resultRef: `${acceptedResult.provider || acceptedResult.providerStatus || 'EMAIL'}:${acceptedResult.messageId || 'ACCEPTED'}`
+      });
+      setEmailDispatchStage('ACCEPTED_BY_PROVIDER');
+      setEmailSuccessMessage(msg);
+      showBuilderToast(`✓ Quotation accepted by ${channelLabel} for ${cleanRecipient}`, 'SUCCESS');
+    };
+
+    try {
+      // 1. Snapshot Completeness Validation
+      const hasDehydratedItems =
+        Boolean((synced?.items || []).some((it: any) => Boolean(it?.__dehydratedToVersionId))) ||
+        Boolean((synced?.options || []).some((o: any) => Boolean((o as any)?.__dehydratedToVersionId)));
+      const hasContent =
+        Boolean(synced?.authoritativeSnapshot) ||
+        (synced?.items?.length || 0) > 0 ||
+        (synced?.routeHubs?.length || 0) > 0;
+      if (!synced || !synced.id || hasDehydratedItems || !hasContent) {
+        setEmailDispatchStage('FAILED');
+        setEmailErrorMessage(
+          !synced
+            ? 'Cannot dispatch email: no saved quotation snapshot is selected. Please save draft first.'
+            : 'Cannot dispatch email: committed quotation snapshot is incomplete or not fully hydrated.'
+        );
+        return;
+      }
+
+      // 2. Recipient, Subject & Commercial Terms Validation
+      setEmailDispatchStage('VALIDATING');
+      if (!validateTermsBeforeExportOrFinalise()) {
+        setEmailDispatchStage('FAILED');
+        setEmailErrorMessage('Email dispatch blocked: Destination Commercial Quotation Terms validation did not pass.');
+        return;
+      }
+      const cleanRecipient = emailRecipient.trim();
+      if (!cleanRecipient || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanRecipient)) {
+        setEmailDispatchStage('FAILED');
+        setEmailErrorMessage('Please enter a valid recipient email address before dispatching.');
+        return;
+      }
+      if (/^[^\s@]+@example\.com$/i.test(cleanRecipient)) {
+        setEmailDispatchStage('FAILED');
+        setEmailErrorMessage(`Recipient "${cleanRecipient}" uses a placeholder @example.com domain and cannot be dispatched.`);
+        return;
+      }
+
+      const activeMode = synced.brandingMode || brandingMode;
+      const finalSubjectPreview = emailSubject.trim() || synced.title || synced.quoteNumber || 'Quotation Proposal';
+      const idempotencySignature = `${synced.id}:v${synced.version || latestSavedVersion || 1}:${cleanRecipient.toLowerCase()}:${activeMode}:${finalSubjectPreview}`;
+      const priorAttempt =
+        emailIdempotencyKeyRef.current?.signature === idempotencySignature
+          ? emailIdempotencyKeyRef.current
+          : null;
+      const idempotencyKey = priorAttempt
+        ? priorAttempt.key
+        : `quote-email-${synced.id}-v${synced.version || latestSavedVersion || 1}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      emailIdempotencyKeyRef.current = {
+        signature: idempotencySignature,
+        key: idempotencyKey,
+        needsStatusCheck: priorAttempt?.needsStatusCheck
+      };
+
+      const emailOp = quotationOperationsService.startOperation({
+        operationType: 'EMAIL_SEND',
+        quoteId: synced.id,
+        versionId: `v${synced.version || latestSavedVersion || 1}`,
+        uid: user?.id,
+        idempotencyKey,
+        status: 'PREPARING'
+      });
+      activeEmailOpId = emailOp.operationId;
+      const svc = emailService || EmailNotificationService.getInstance();
+
+      // 3. If previous attempt with same idempotencyKey timed out, verify existing backend status BEFORE retrying
+      if (priorAttempt?.needsStatusCheck) {
+        setEmailDispatchStage('CHECKING_STATUS');
+        quotationOperationsService.updateOperation(emailOp.operationId, { status: 'CHECKING_STATUS' });
+        const statusCheck = await svc.checkEmailDispatchStatus(idempotencyKey);
+        if (statusCheck.found && statusCheck.acceptedByProvider) {
+          await finalizeEmailAcceptance(
+            {
+              messageId: statusCheck.messageId,
+              alreadySent: true,
+              provider: statusCheck.provider,
+              providerStatus: statusCheck.simulated ? 'EMAIL_ACCEPTED_RELAY' : 'EMAIL_SENT_GMAIL_API'
+            },
+            cleanRecipient,
+            activeMode,
+            emailOp.operationId
+          );
+          return;
+        }
+      }
+
+      // 4. Generate canonical email payload strictly from committed snapshot (zero price recalculation)
+      setEmailDispatchStage('GENERATING');
+      quotationOperationsService.updateOperation(emailOp.operationId, { status: 'GENERATING' });
+      const snap =
+        synced.brandingSnapshot?.mode === activeMode
+          ? synced.brandingSnapshot
+          : buildAgencyBrandingSnapshotFromUser(user, synced, activeMode);
+      const generatedEmail = svc.generateQuotationProposalEmail(
+        {
+          ...synced,
+          brandingMode: activeMode,
+          brandingSnapshot: snap,
+          clientEmail: cleanRecipient,
+          clientName: clientName || synced.clientName || 'Valued Guest'
+        },
+        {
+          name: (snap as any).specialistName || user?.name || synced.agentName || 'Travel Specialist',
+          agencyName: snap.agencyName || user?.agencyName || synced.agentAgency || (activeMode === 'WHITE_LABEL' ? 'Partner Travel Agency' : 'Luxury Partner Agency'),
+          email: snap.email || user?.email || synced.agentEmail || (activeMode === 'WHITE_LABEL' ? '' : 'sales@theunbound.in'),
+          phone: snap.phone || user?.phone || synced.agentPhone || (activeMode === 'WHITE_LABEL' ? '' : '+91-9811654959'),
+          logoUrl: snap.logoUrl || user?.brandLogoUrl || synced.agentLogoUrl,
+          website: snap.website || (user as any)?.website,
+          address: snap.address || (user as any)?.businessAddress,
+          primaryColor: snap.primaryColor || (user as any)?.brandPrimaryColor,
+          accentColor: snap.accentColor || (user as any)?.brandAccentColor,
+          brandingMode: activeMode,
+          selectedOptionIndexOrId: synced.activeOptionId || `opt-${activeOptionTab}`,
+          customNote: emailCustomNote,
+          formattingMode: emailPreviewTab === 'HTML_PREVIEW' ? 'PROPOSAL_VIEW' : 'PLAIN_TEXT'
+        }
+      );
+
+      const finalSubject = emailSubject.trim() || generatedEmail.subject;
+      const finalHtmlBody = emailPreviewTab === 'HTML_PREVIEW'
+        ? (emailRichHtml && emailRichHtml.trim() ? emailRichHtml : generatedEmail.proposalViewHtml || generatedEmail.fullHtml)
+        : (emailSimpleHtml && emailSimpleHtml.trim() ? emailSimpleHtml : generatedEmail.simpleSemanticHtml || generatedEmail.fullHtml);
+
+      if (!finalSubject.trim() || !finalHtmlBody || !finalHtmlBody.trim()) {
+        const emptyErr = 'Email generation produced empty subject or body from quotation snapshot.';
+        quotationOperationsService.markFailed(emailOp.operationId, new Error(emptyErr));
+        setEmailDispatchStage('FAILED');
+        setEmailErrorMessage(emptyErr);
+        return;
+      }
+
+      // 5. Dispatch via backend integration endpoint
+      setEmailDispatchStage('SENDING');
+      quotationOperationsService.updateOperation(emailOp.operationId, { status: 'SENDING' });
+      const result = await withBoundedTimeout(
+        svc.sendViaGmailApi(
+          cleanRecipient,
+          finalSubject,
+          finalHtmlBody,
+          {
+            quoteId: synced.id,
+            leadId: synced.leadId,
+            recipientType: 'BUYER',
+            eventType: 'QUOTE_EMAIL_SENT',
+            idempotencyKey,
+            sentBy: user?.id,
+            sentByName: user?.name || 'Agent'
+          },
+          emailMessage
+        ),
+        25000,
+        'Email Dispatch'
+      );
+
+      if (result.success) {
+        await finalizeEmailAcceptance(result, cleanRecipient, activeMode, emailOp.operationId);
+      } else if (result.providerStatus === 'TIMEOUT' || result.providerStatus === 'NETWORK_ERROR') {
+        if (emailIdempotencyKeyRef.current) {
+          emailIdempotencyKeyRef.current.needsStatusCheck = true;
+        }
+        setEmailDispatchStage('CHECKING_STATUS');
+        quotationOperationsService.updateOperation(emailOp.operationId, { status: 'CHECKING_STATUS' });
+        const statusCheck = await svc.checkEmailDispatchStatus(idempotencyKey);
+        if (statusCheck.found && statusCheck.acceptedByProvider) {
+          await finalizeEmailAcceptance(
+            {
+              messageId: statusCheck.messageId,
+              alreadySent: true,
+              provider: statusCheck.provider,
+              providerStatus: statusCheck.simulated ? 'EMAIL_ACCEPTED_RELAY' : 'EMAIL_SENT_GMAIL_API'
+            },
+            cleanRecipient,
+            activeMode,
+            emailOp.operationId
+          );
+          return;
+        }
+        const timeoutErr = result.error || 'Email gateway request timed out.';
+        quotationOperationsService.markFailed(
+          emailOp.operationId,
+          new BoundedOperationTimeoutError('Email Dispatch', 20000)
+        );
+        setEmailDispatchStage('FAILED');
+        setEmailErrorMessage(
+          `${timeoutErr} Status check confirmed no acceptance recorded yet for this attempt (Key: ${idempotencyKey}). Click Retry Send to safely check status and dispatch without duplicates.`
+        );
       } else {
         const failErr = result.error || 'Unable to dispatch email';
         quotationOperationsService.markFailed(emailOp.operationId, new Error(failErr));
@@ -4740,20 +5034,57 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           errorMessage: failErr,
           user
         });
-        setEmailErrorMessage(`Email delivery failed. Reason: ${failErr}. Retry using the button below, or copy the formatted proposal / open in your mail client.`);
+        setEmailDispatchStage('FAILED');
+        setEmailErrorMessage(
+          result.providerStatus === 'CONFIGURATION_ERROR' || result.providerStatus === 'AUTHENTICATION_REQUIRED'
+            ? `Email provider configuration required: ${failErr} You can link Google Workspace in Admin CMS → Integrations, or use "Copy Formatted Quotation" / "Open in Mail App" below.`
+            : `Email dispatch failed (${result.providerStatus || 'PROVIDER_ERROR'}): ${failErr}. Retry below, or copy the formatted proposal.`
+        );
       }
     } catch (err: any) {
+      const isTimeoutErr = err instanceof BoundedOperationTimeoutError || Boolean(err?.isTimeout);
+      if (isTimeoutErr && emailIdempotencyKeyRef.current) {
+        emailIdempotencyKeyRef.current.needsStatusCheck = true;
+        try {
+          setEmailDispatchStage('CHECKING_STATUS');
+          const svc = emailService || EmailNotificationService.getInstance();
+          const statusCheck = await svc.checkEmailDispatchStatus(emailIdempotencyKeyRef.current.key);
+          if (statusCheck.found && statusCheck.acceptedByProvider && activeEmailOpId && synced) {
+            await finalizeEmailAcceptance(
+              {
+                messageId: statusCheck.messageId,
+                alreadySent: true,
+                provider: statusCheck.provider,
+                providerStatus: statusCheck.simulated ? 'EMAIL_ACCEPTED_RELAY' : 'EMAIL_SENT_GMAIL_API'
+              },
+              emailRecipient.trim(),
+              synced.brandingMode || brandingMode,
+              activeEmailOpId
+            );
+            return;
+          }
+        } catch {
+          // Proceed to failure reporting below
+        }
+      }
+
       const errMsg = err?.message || 'Network error';
-      quotationOperationsService.markFailed(emailOp.operationId, err);
-      recordQuotationGenerationEvent(db, synced, {
-        outputOption: 'SEND_EMAIL',
-        status: 'FAILED',
-        recipient: cleanRecipient,
-        errorMessage: errMsg,
-        user
-      });
-      setEmailErrorMessage(`Email delivery failed. Reason: ${errMsg}. Please retry.`);
+      if (activeEmailOpId) {
+        quotationOperationsService.markFailed(activeEmailOpId, err);
+      }
+      if (synced) {
+        recordQuotationGenerationEvent(db, synced, {
+          outputOption: 'SEND_EMAIL',
+          status: 'FAILED',
+          recipient: emailRecipient.trim(),
+          errorMessage: errMsg,
+          user
+        });
+      }
+      setEmailDispatchStage('FAILED');
+      setEmailErrorMessage(`Email dispatch failed: ${errMsg}. You can safely retry without creating duplicate emails.`);
     } finally {
+      isSendingEmailRef.current = false;
       setIsSendingEmail(false);
     }
   };
@@ -4763,6 +5094,13 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     if (!validateFxBeforeFinalGeneration()) return;
     if (!validateTermsBeforeExportOrFinalise()) return;
     await runOutputWithAuthoritativeSnapshot('CONVERT_BOOKING', async (synced) => {
+      const convertOp = quotationOperationsService.startOperation({
+        operationType: 'CONVERT_BOOKING',
+        quoteId: synced.id,
+        versionId: `v${synced.version || latestSavedVersion || 1}`,
+        uid: user?.id,
+        idempotencyKey: `convert:${synced.id}:v${synced.version || latestSavedVersion || 1}`
+      });
       try {
         const frozenSnap = synced.commercialTermsSnapshot || termsResolution.readiness.snapshot;
         const finalisedQuote: Quotation = {
@@ -4782,39 +5120,61 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               }
             : undefined
         };
-        const persistedFinal = db.saveQuote(finalisedQuote, user, 'STATUS_CHANGED', 'Frozen Commercial Quotation Terms on booking conversion');
-        db.updateQuotationStatus(persistedFinal.id, 'APPROVED', user);
+
+        const persistedFinal = await withBoundedTimeout(
+          db.saveQuoteAsync(finalisedQuote, user, 'STATUS_CHANGED', 'Frozen Commercial Quotation Terms on booking conversion'),
+          15000,
+          'Persist Finalised Quotation Terms'
+        );
+
+        const booking = await withBoundedTimeout(
+          db.convertQuotationToBookingAsync(persistedFinal, user),
+          20000,
+          'Convert Quotation to Confirmed Booking'
+        );
+        if (!booking) {
+          throw new Error('Unable to generate confirmed booking record from this quotation snapshot.');
+        }
+
         if (frozenSnap && frozenSnap.entries?.length > 0) {
           setLoadedFinalisedSnapshot(frozenSnap);
         }
-        setLoadedQuoteStatus('APPROVED');
+        setLoadedQuoteStatus('BOOKED');
         setLoadedIsLocked(true);
-        const booking = db.convertQuotationToBooking(persistedFinal, user);
-        const rec = recordQuotationGenerationEvent(db, { ...persistedFinal, status: 'BOOKED' }, {
+
+        const latestPersistedQuote = db.getQuoteByIdAuthorized(persistedFinal.id, user) || { ...persistedFinal, status: 'BOOKED' as const };
+        const rec = recordQuotationGenerationEvent(db, { ...latestPersistedQuote, status: 'BOOKED' }, {
           outputOption: 'CONVERT_BOOKING',
           status: 'SUCCEEDED',
           brandingMode: persistedFinal.brandingMode,
           selectedOptionId: persistedFinal.activeOptionId,
-          targetEntityId: booking?.id,
-          targetReference: booking?.bookingReference || booking?.id,
+          targetEntityId: booking.id,
+          targetReference: booking.bookingReference || booking.id,
           user
         });
         setAuthoritativeSavedQuote(rec.updatedQuote);
+        quotationOperationsService.markSucceeded(convertOp.operationId, {
+          versionId: `v${synced.version || latestSavedVersion || 1}`,
+          resultRef: booking.bookingReference || booking.id
+        });
         if (onConvertToBooking) {
           onConvertToBooking(rec.updatedQuote);
         } else if (onBookQuotation) {
           onBookQuotation(rec.updatedQuote);
         }
-        showBuilderToast(`Quotation converted to Booking (${booking?.bookingReference || booking?.id || 'Confirmed'})!`, 'SUCCESS');
+        showBuilderToast(`Quotation converted to Booking (${booking.bookingReference || booking.id})!`, 'SUCCESS');
       } catch (err: any) {
         console.error('Booking conversion error:', err);
+        const errMsg = err?.message || 'Booking conversion encountered an issue.';
+        quotationOperationsService.markFailed(convertOp.operationId, err);
+        setOutputSyncError(errMsg);
         recordQuotationGenerationEvent(db, synced, {
           outputOption: 'CONVERT_BOOKING',
           status: 'FAILED',
-          errorMessage: err?.message || 'Booking conversion encountered an issue.',
+          errorMessage: errMsg,
           user
         });
-        showBuilderToast(err?.message || 'Booking conversion encountered an issue.', 'WARNING');
+        showBuilderToast(errMsg, 'WARNING');
       }
     });
   };
@@ -4947,85 +5307,118 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     setSavePackageError(null);
 
     await runOutputWithAuthoritativeSnapshot('SAVE_MASTER_PACKAGE', async (synced) => {
-      const result = saveAndVerifyMasterPackageFromQuote({
-        title: packageFormData.title.trim(),
-        tagline: packageFormData.tagline.trim(),
-        description: packageFormData.description.trim(),
-        tripType: packageFormData.tripType,
-        status: packageFormData.status,
-        featured: packageFormData.featured,
-        currentDestination,
-        quotationScope: synced.quotationScope || quotationScope,
-        routeHubs: synced.routeHubs || routeHubs,
-        items: synced.items || effectivePricedItems,
-        calendarDays,
-        daySlots,
-        dayThemes: synced.dayThemes || dayThemes,
-        dayDescriptions: synced.dayDescriptions || dayDescriptions,
-        dayOverviews: synced.dayOverviews || dayOverviews,
-        dayNotes: synced.dayNotes || dayNotes,
-        inclusions: synced.inclusions || contextInclusions,
-        exclusions: synced.exclusions || contextExclusions,
-        importantInformation: synced.importantInformation || contextImportantInformation,
-        cancellationPolicy: synced.cancellationPolicy || contextCancellationPolicy,
-        termsAndConditions: synced.commercialTermsSnapshot?.combinedPlainText || synced.termsAndConditions,
-        itineraryOverview: synced.itineraryOverview || itineraryOverview,
-        sourceQuoteId: synced.id,
-        sourceSnapshotVersion: synced.snapshotVersion || synced.version,
-        sourceSnapshotHash: synced.snapshotHash,
-        currency: synced.currency || currency,
-        adultsCount: synced.adultsCount || adultsCount,
-        childrenCount: synced.childrenCount ?? childrenCount,
-        infantsCount: synced.infantsCount ?? infantsCount,
-        existingPackageId: packageFormData.updateExisting ? linkedExistingMasterPackage?.id : null,
-        updateExisting: packageFormData.updateExisting,
-        user
+      const pkgOp = quotationOperationsService.startOperation({
+        operationType: 'SAVE_MASTER_PACKAGE',
+        quoteId: synced.id,
+        versionId: `v${synced.version || latestSavedVersion || 1}`,
+        uid: user?.id,
+        idempotencyKey: `pkg:${synced.id}:${packageFormData.title.trim().toLowerCase()}`
       });
 
-      if (!result.success || !result.pkg) {
-        recordQuotationGenerationEvent(db, synced, {
-          outputOption: 'SAVE_MASTER_PACKAGE',
-          status: 'FAILED',
-          errorMessage: result.error || 'Failed to generate and synchronize Ready-Made Package.',
-          user
-        });
-        setSavePackageError(result.error || 'Failed to generate and synchronize Ready-Made Package.');
-        return;
-      }
-
       try {
-        await db.savePackageAsync(result.pkg, user);
-      } catch (saveErr) {
-        console.warn('Async save warning:', saveErr);
-      }
+        const result = await withBoundedTimeout(
+          saveAndVerifyMasterPackageFromQuoteAsync({
+            title: packageFormData.title.trim(),
+            tagline: packageFormData.tagline.trim(),
+            description: packageFormData.description.trim(),
+            tripType: packageFormData.tripType,
+            status: packageFormData.status,
+            featured: packageFormData.featured,
+            currentDestination,
+            quotationScope: synced.quotationScope || quotationScope,
+            routeHubs: synced.routeHubs || routeHubs,
+            items: synced.items || effectivePricedItems,
+            calendarDays,
+            daySlots,
+            dayThemes: synced.dayThemes || dayThemes,
+            dayDescriptions: synced.dayDescriptions || dayDescriptions,
+            dayOverviews: synced.dayOverviews || dayOverviews,
+            dayNotes: synced.dayNotes || dayNotes,
+            inclusions: synced.inclusions || contextInclusions,
+            exclusions: synced.exclusions || contextExclusions,
+            importantInformation: synced.importantInformation || contextImportantInformation,
+            cancellationPolicy: synced.cancellationPolicy || contextCancellationPolicy,
+            termsAndConditions: synced.commercialTermsSnapshot?.combinedPlainText || synced.termsAndConditions,
+            itineraryOverview: synced.itineraryOverview || itineraryOverview,
+            sourceQuoteId: synced.id,
+            sourceSnapshotVersion: synced.snapshotVersion || synced.version,
+            sourceSnapshotHash: synced.snapshotHash,
+            currency: synced.currency || currency,
+            adultsCount: synced.adultsCount || adultsCount,
+            childrenCount: synced.childrenCount ?? childrenCount,
+            infantsCount: synced.infantsCount ?? infantsCount,
+            existingPackageId: packageFormData.updateExisting ? linkedExistingMasterPackage?.id : null,
+            updateExisting: packageFormData.updateExisting,
+            user
+          }),
+          25000,
+          'Save as Master Package'
+        );
 
-      setSourcePackageId(result.pkg.id);
-      setSourcePackageName(result.pkg.title);
-      setLastSavedMasterPackage(result.pkg);
-      setLastPackageVerificationReport(result.verificationReport || null);
-      setIsSavePackageModalOpen(false);
+        if (!result.success || !result.pkg) {
+          const failMsg = result.error || 'Failed to generate and synchronize Ready-Made Package.';
+          quotationOperationsService.markFailed(pkgOp.operationId, new Error(failMsg));
+          recordQuotationGenerationEvent(db, synced, {
+            outputOption: 'SAVE_MASTER_PACKAGE',
+            status: 'FAILED',
+            errorMessage: failMsg,
+            user
+          });
+          setSavePackageError(failMsg);
+          showBuilderToast(failMsg, 'WARNING');
+          return;
+        }
 
-      const linkedQuote = db.saveQuote(
-        {
+        setSourcePackageId(result.pkg.id);
+        setSourcePackageName(result.pkg.title);
+        setLastSavedMasterPackage(result.pkg);
+        setLastPackageVerificationReport(result.verificationReport || null);
+        setIsSavePackageModalOpen(false);
+
+        const quoteWithPkgLink: Quotation = {
           ...synced,
           sourcePackageId: result.pkg.id,
           sourcePackageName: result.pkg.title
-        },
-        user,
-        'SAVED',
-        'Linked source master package'
-      );
-      const rec = recordQuotationGenerationEvent(db, linkedQuote, {
-        outputOption: 'SAVE_MASTER_PACKAGE',
-        status: 'SUCCEEDED',
-        targetEntityId: result.pkg.id,
-        targetReference: result.pkg.slug || result.pkg.id,
-        user
-      });
-      setAuthoritativeSavedQuote(rec.updatedQuote);
+        };
+        let linkedQuote = db.saveQuote(quoteWithPkgLink, user, 'SAVED', 'Linked source master package');
+        try {
+          linkedQuote = await withBoundedTimeout(
+            db.saveQuoteAsync(quoteWithPkgLink, user, 'SAVED', 'Linked source master package'),
+            12000,
+            'Link Source Master Package to Quote'
+          );
+        } catch (linkErr: any) {
+          console.warn('Master package persisted, but quote link sync to Firestore deferred:', linkErr?.message || linkErr);
+        }
 
-      const actionWord = result.verificationReport?.isUpdate ? 'updated and synchronized in' : 'published and synchronized to';
-      setPackageSavedNotice(`Master Package "${result.pkg.title}" (${result.pkg.id}) ${actionWord} Ready-Made Packages.`);
+        const rec = recordQuotationGenerationEvent(db, linkedQuote, {
+          outputOption: 'SAVE_MASTER_PACKAGE',
+          status: 'SUCCEEDED',
+          targetEntityId: result.pkg.id,
+          targetReference: result.pkg.slug || result.pkg.id,
+          user
+        });
+        setAuthoritativeSavedQuote(rec.updatedQuote);
+        quotationOperationsService.markSucceeded(pkgOp.operationId, {
+          versionId: `v${synced.version || latestSavedVersion || 1}`,
+          resultRef: result.pkg.id
+        });
+
+        const actionWord = result.verificationReport?.isUpdate ? 'updated and synchronized in' : 'published and synchronized to';
+        setPackageSavedNotice(`Master Package "${result.pkg.title}" (${result.pkg.id}) ${actionWord} Ready-Made Packages.`);
+        showBuilderToast(`✓ Master Package "${result.pkg.title}" synchronized`, 'SUCCESS');
+      } catch (err: any) {
+        const errMsg = err?.message || 'Unexpected error while saving Master Package.';
+        quotationOperationsService.markFailed(pkgOp.operationId, err);
+        recordQuotationGenerationEvent(db, synced, {
+          outputOption: 'SAVE_MASTER_PACKAGE',
+          status: 'FAILED',
+          errorMessage: errMsg,
+          user
+        });
+        setSavePackageError(errMsg);
+        showBuilderToast(errMsg, 'WARNING');
+      }
     });
   };
 
@@ -5319,6 +5712,83 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   const adminMissingTermsNotifiedBool = Boolean(
     adminMissingTermsNotifiedKey === termsTargetSignature && termsTargetSignature.length > 0
   );
+
+  // Reference-stable wrappers so React.memo on StepByStepQuotationWorkspace prevents unnecessary full-tree re-renders
+  const stepHandlersRef = useRef({
+    handleDestinationChange,
+    handleSelectLead,
+    handleChangeQuotationScope,
+    handleChangeStartDate,
+    handleChangeEndDate,
+    handleSetAdultsCount,
+    handleSetChildrenCount,
+    handleSetInfantsCount,
+    handleUpdateChildAge,
+    handleSwitchOptionTab,
+    handleAddSuggestedTransfer,
+    handleOpenAddManualHotel,
+    handleExplicitSaveDraft,
+    handlePreviewProposal,
+    handleDownloadPDF,
+    handleShareWhatsApp,
+    handleOpenEmailModal,
+    handleConvertBooking,
+    handleOpenSavePackageModal,
+    handleSelectHotelForHub,
+    handleRemoveHotelForHub,
+    handleOpenEditManualHotel,
+    handleRemoveManualHotel
+  });
+  stepHandlersRef.current = {
+    handleDestinationChange,
+    handleSelectLead,
+    handleChangeQuotationScope,
+    handleChangeStartDate,
+    handleChangeEndDate,
+    handleSetAdultsCount,
+    handleSetChildrenCount,
+    handleSetInfantsCount,
+    handleUpdateChildAge,
+    handleSwitchOptionTab,
+    handleAddSuggestedTransfer,
+    handleOpenAddManualHotel,
+    handleExplicitSaveDraft,
+    handlePreviewProposal,
+    handleDownloadPDF,
+    handleShareWhatsApp,
+    handleOpenEmailModal,
+    handleConvertBooking,
+    handleOpenSavePackageModal,
+    handleSelectHotelForHub,
+    handleRemoveHotelForHub,
+    handleOpenEditManualHotel,
+    handleRemoveManualHotel
+  };
+
+  const stableSelectDestination = useCallback((d: Destination) => stepHandlersRef.current.handleDestinationChange(d), []);
+  const stableSelectLead = useCallback((id: string) => stepHandlersRef.current.handleSelectLead(id), []);
+  const stableChangeQuotationScope = useCallback((s: QuotationScope) => stepHandlersRef.current.handleChangeQuotationScope(s), []);
+  const stableChangeStartDate = useCallback((d: string) => stepHandlersRef.current.handleChangeStartDate(d), []);
+  const stableChangeEndDate = useCallback((d: string) => stepHandlersRef.current.handleChangeEndDate(d), []);
+  const stableSetAdultsCount = useCallback((n: number) => stepHandlersRef.current.handleSetAdultsCount(n), []);
+  const stableSetChildrenCount = useCallback((n: number) => stepHandlersRef.current.handleSetChildrenCount(n), []);
+  const stableSetInfantsCount = useCallback((n: number) => stepHandlersRef.current.handleSetInfantsCount(n), []);
+  const stableUpdateChildAge = useCallback((idx: number, age: number) => stepHandlersRef.current.handleUpdateChildAge(idx, age), []);
+  const stableSwitchOptionTab = useCallback((opt: number) => stepHandlersRef.current.handleSwitchOptionTab(opt), []);
+  const stableAddSuggestedTransfer = useCallback((s: TransferSuggestion) => stepHandlersRef.current.handleAddSuggestedTransfer(s), []);
+  const stableOpenAddManualHotel = useCallback((hubId?: string) => stepHandlersRef.current.handleOpenAddManualHotel(hubId), []);
+  const stableExplicitSaveDraft = useCallback(() => stepHandlersRef.current.handleExplicitSaveDraft(), []);
+  const stablePreviewProposal = useCallback(() => stepHandlersRef.current.handlePreviewProposal(), []);
+  const stableDownloadPDF = useCallback(() => stepHandlersRef.current.handleDownloadPDF(), []);
+  const stableShareWhatsApp = useCallback(() => stepHandlersRef.current.handleShareWhatsApp(), []);
+  const stableOpenEmailModal = useCallback(() => stepHandlersRef.current.handleOpenEmailModal(), []);
+  const stableConvertBooking = useCallback(() => stepHandlersRef.current.handleConvertBooking(), []);
+  const stableOpenSavePackageModal = useCallback(() => stepHandlersRef.current.handleOpenSavePackageModal(), []);
+  const stableSelectHotelForHub = useCallback((hubIdOrOrder: string | number, hotel: Hotel | null, roomTypeId?: string, roomsCount?: number) =>
+    stepHandlersRef.current.handleSelectHotelForHub(hubIdOrOrder, hotel, roomTypeId, roomsCount), []);
+  const stableRemoveHotelForHub = useCallback((hubId: string) => stepHandlersRef.current.handleRemoveHotelForHub(hubId), []);
+  const stableOpenEditManualHotel = useCallback((hubId: string) => stepHandlersRef.current.handleOpenEditManualHotel(hubId), []);
+  const stableRemoveManualHotel = useCallback((hubId: string) => stepHandlersRef.current.handleRemoveManualHotel(hubId), []);
 
   return (
     <div 
@@ -5766,14 +6236,16 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
 
           {/* Render Full Proposal Document from Memoized Authoritative Snapshot */}
           {previewQuote && (
-            <ProposalDocumentView
-              quote={previewQuote}
-              agentUser={user}
-              selectedOptionIndexOrId={selectedOptionIdStr}
-              onDownloadPdf={handleDownloadPDF}
-              onShareWhatsApp={handleShareWhatsApp}
-              onSendEmail={handleOpenEmailModal}
-            />
+            <Suspense fallback={<div className="p-8 text-center text-xs text-slate-500 font-semibold">Loading proposal view...</div>}>
+              <ProposalDocumentView
+                quote={previewQuote}
+                agentUser={user}
+                selectedOptionIndexOrId={selectedOptionIdStr}
+                onDownloadPdf={handleDownloadPDF}
+                onShareWhatsApp={handleShareWhatsApp}
+                onSendEmail={handleOpenEmailModal}
+              />
+            </Suspense>
           )}
         </main>
       ) : (
@@ -5786,7 +6258,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               setActiveStepId={setActiveStepId}
               currentDestination={currentDestination}
               destinations={activeB2BDestinations}
-              onSelectDestination={handleDestinationChange}
+              onSelectDestination={stableSelectDestination}
               destinationHubs={destinationHubs}
               availableHotels={availableHotels}
               products={availableProducts}
@@ -5794,7 +6266,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               currency={currency}
               setCurrency={setCurrency}
               selectedLeadId={selectedLeadId}
-              onSelectLead={handleSelectLead}
+              onSelectLead={stableSelectLead}
               clientName={clientName}
               setClientName={setClientName}
               clientEmail={clientEmail}
@@ -5808,20 +6280,20 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               tripType={tripType}
               setTripType={setTripType}
               quotationScope={quotationScope}
-              setQuotationScope={handleChangeQuotationScope}
+              setQuotationScope={stableChangeQuotationScope}
               startDate={startDate}
-              setStartDate={handleChangeStartDate}
+              setStartDate={stableChangeStartDate}
               endDate={endDate}
-              setEndDate={handleChangeEndDate}
+              setEndDate={stableChangeEndDate}
               tripNights={tripNights}
               adultsCount={adultsCount}
-              setAdultsCount={handleSetAdultsCount}
+              setAdultsCount={stableSetAdultsCount}
               childrenCount={childrenCount}
-              onSetChildrenCount={handleSetChildrenCount}
+              onSetChildrenCount={stableSetChildrenCount}
               infantsCount={infantsCount}
-              setInfantsCount={handleSetInfantsCount}
+              setInfantsCount={stableSetInfantsCount}
               childAges={childAges}
-              onUpdateChildAge={handleUpdateChildAge}
+              onUpdateChildAge={stableUpdateChildAge}
               passengerClassification={passengerClassification}
               nationality={nationality}
               setNationality={setNationality}
@@ -5877,23 +6349,23 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               totalMarginAmount={totalMarginAmount}
               quotationOptions={computedQuotationOptions}
               activeOptionTab={activeOptionTab}
-              onSelectOptionTab={handleSwitchOptionTab}
+              onSelectOptionTab={stableSwitchOptionTab}
               transferSuggestions={transferSuggestions}
-              onAddSuggestedTransfer={handleAddSuggestedTransfer}
+              onAddSuggestedTransfer={stableAddSuggestedTransfer}
               feasibility={feasibility}
-              onOpenManualHotelModal={handleOpenAddManualHotel}
+              onOpenManualHotelModal={stableOpenAddManualHotel}
               onOpenVisaPickerModal={handleOpenVisaPickerModal}
               onOpenAddonModal={handleOpenAddonModal}
               onOpenQuickAddProductModal={handleOpenQuickAddModal}
               onOpenProductDetails={handleOpenProductDetails}
               onOpenCalculator={handleOpenCalculatorForStep}
-              onSaveDraft={handleExplicitSaveDraft}
-              onPreviewQuotation={handlePreviewProposal}
-              onDownloadPDF={handleDownloadPDF}
-              onShareWhatsApp={handleShareWhatsApp}
-              onOpenEmailModal={handleOpenEmailModal}
-              onConvertBooking={handleConvertBooking}
-              onOpenSavePackageModal={handleOpenSavePackageModal}
+              onSaveDraft={stableExplicitSaveDraft}
+              onPreviewQuotation={stablePreviewProposal}
+              onDownloadPDF={stableDownloadPDF}
+              onShareWhatsApp={stableShareWhatsApp}
+              onOpenEmailModal={stableOpenEmailModal}
+              onConvertBooking={stableConvertBooking}
+              onOpenSavePackageModal={stableOpenSavePackageModal}
               linkedMasterPackageId={linkedExistingMasterPackage?.id || null}
               linkedMasterPackageTitle={linkedExistingMasterPackage?.title || null}
               onViewSavedMasterPackage={handleViewSavedMasterPackageForStep}
@@ -5909,13 +6381,13 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               isReadOnlyHistoricalMode={isReadOnlyHistoricalMode}
               onOpenVersionHistory={handleOpenVersionHistoryForStep}
               precomputedQuoteBreakdown={liveQuoteBreakdown}
-              onRetryAutoSave={handleExplicitSaveDraft}
+              onRetryAutoSave={stableExplicitSaveDraft}
               quoteNumber={quoteNumber}
               quoteVersion={quoteVersion}
-              onSelectHotelForHub={handleSelectHotelForHub}
-              onRemoveHotelForHub={handleRemoveHotelForHub}
-              onOpenEditManualHotel={handleOpenEditManualHotel}
-              onRemoveManualHotel={handleRemoveManualHotel}
+              onSelectHotelForHub={stableSelectHotelForHub}
+              onRemoveHotelForHub={stableRemoveHotelForHub}
+              onOpenEditManualHotel={stableOpenEditManualHotel}
+              onRemoveManualHotel={stableRemoveManualHotel}
               onSyncHubStayToHotelItems={handleSyncHubStayToHotelItems}
               onDeleteHubOccurrenceItems={handleDeleteHubOccurrenceItems}
               onOpenEditItem={handleOpenEditItem}
@@ -6261,16 +6733,55 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
 
             {/* Modal Body */}
             <div className="p-6 space-y-4 overflow-y-auto grow">
-              {/* Feedback Notifications */}
+              {/* Dispatch Lifecycle & Feedback Notifications */}
+              {emailDispatchStage !== 'IDLE' && (
+                <div className={`px-3.5 py-2.5 rounded-2xl border text-[11px] font-bold flex items-center justify-between gap-2 ${
+                  emailDispatchStage === 'ACCEPTED_BY_PROVIDER'
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                    : emailDispatchStage === 'FAILED'
+                      ? 'bg-rose-50 border-rose-200 text-rose-900'
+                      : 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                }`}>
+                  <div className="flex items-center space-x-2">
+                    {emailDispatchStage !== 'ACCEPTED_BY_PROVIDER' && emailDispatchStage !== 'FAILED' && (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    )}
+                    {emailDispatchStage === 'ACCEPTED_BY_PROVIDER' && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    )}
+                    {emailDispatchStage === 'FAILED' && (
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    )}
+                    <span>
+                      Status:{' '}
+                      {emailDispatchStage === 'PREPARING' && 'Preparing committed snapshot...'}
+                      {emailDispatchStage === 'VALIDATING' && 'Validating recipient & terms...'}
+                      {emailDispatchStage === 'GENERATING' && 'Generating canonical proposal email...'}
+                      {emailDispatchStage === 'CHECKING_STATUS' && 'Checking existing gateway dispatch status before retry...'}
+                      {emailDispatchStage === 'SENDING' && 'Sending to configured email provider...'}
+                      {emailDispatchStage === 'ACCEPTED_BY_PROVIDER' && 'Accepted by email provider'}
+                      {emailDispatchStage === 'FAILED' && 'Dispatch failed — action required'}
+                    </span>
+                  </div>
+                </div>
+              )}
               {emailSuccessMessage && (
-                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 font-semibold flex items-center space-x-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-xs text-emerald-900 font-semibold flex items-start space-x-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                   <span>{emailSuccessMessage}</span>
                 </div>
               )}
               {emailErrorMessage && (
-                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 font-semibold">
-                  {emailErrorMessage}
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 font-semibold flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span>{emailErrorMessage}</span>
+                  <button
+                    type="button"
+                    disabled={isSendingEmail}
+                    onClick={handleSendProposalEmail}
+                    className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold shrink-0 cursor-pointer disabled:opacity-50"
+                  >
+                    Retry Send
+                  </button>
                 </div>
               )}
 
@@ -6438,7 +6949,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                       }`}
                     >
                       <span>Option 2: Complete Formatted Quotation</span>
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">Copy Rich Text</span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">Spreadsheet Table</span>
                     </button>
                   </div>
 
@@ -6480,14 +6991,14 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                       <div className="text-[11px] text-slate-500">
-                        <span>Semantic rich-text quotation ready to copy & paste into email composers (preserves bold headings, lists & structure).</span>
+                        <span>Excel-style formatted quotation tables ready to send or copy &amp; paste into Gmail, Outlook, or client documents.</span>
                       </div>
                       <div className="flex items-center space-x-2">
                         <button
                           type="button"
                           onClick={handleCopyFormattedQuotation}
                           className="px-3 py-1 rounded-lg cursor-pointer transition-all bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center space-x-1.5 shadow-2xs"
-                          title="Copy formatted quotation (rich text) to paste into any email composer"
+                          title="Copy formatted quotation (rich table HTML) to paste into any email composer"
                         >
                           {emailCopied ? (
                             <>
@@ -6511,7 +7022,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                                 : 'text-slate-600 hover:text-slate-900'
                             }`}
                           >
-                            Formatted Text Preview
+                            Spreadsheet Preview
                           </button>
                           <button
                             type="button"
@@ -6522,16 +7033,16 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                                 : 'text-slate-600 hover:text-slate-900'
                             }`}
                           >
-                            Edit Quotation Text
+                            Edit Plain Text
                           </button>
                         </div>
                       </div>
                     </div>
 
                     {plainTextSubView === 'PREVIEW' ? (
-                      <div className="border border-slate-200 rounded-2xl bg-slate-50 p-3 sm:p-4 max-h-[420px] overflow-y-auto">
+                      <div className="border border-slate-200 rounded-2xl bg-slate-100 p-2 sm:p-3 max-h-[440px] overflow-auto">
                         <div
-                          className="bg-white rounded-xl border border-slate-200 p-5 sm:p-6 shadow-xs mx-auto max-w-2xl text-left"
+                          className="bg-white rounded-xl border border-slate-200 p-3 sm:p-4 shadow-xs mx-auto w-full max-w-[820px] text-left overflow-x-auto"
                           dangerouslySetInnerHTML={{
                             __html: emailSimpleHtml || formatPlainTextQuotationToHtml(emailMessage)
                           }}
@@ -6583,7 +7094,13 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                   {isSendingEmail ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Sending Quotation...</span>
+                      <span>
+                        {emailDispatchStage === 'PREPARING' && 'Preparing...'}
+                        {emailDispatchStage === 'VALIDATING' && 'Validating...'}
+                        {emailDispatchStage === 'GENERATING' && 'Generating...'}
+                        {emailDispatchStage === 'CHECKING_STATUS' && 'Checking Status...'}
+                        {(emailDispatchStage === 'SENDING' || emailDispatchStage === 'IDLE') && 'Sending Quotation...'}
+                      </span>
                     </>
                   ) : (
                     <>
@@ -6591,7 +7108,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                       <span>
                         {emailPreviewTab === 'HTML_PREVIEW'
                           ? 'Send Proposal View Email'
-                          : 'Send Plain-Text Quotation Email'}
+                          : 'Send Complete Formatted Quotation'}
                       </span>
                     </>
                   )}
@@ -6606,56 +7123,58 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       {/* MODAL: SHARE ON WHATSAPP MODAL */}
       {/* ========================================================================= */}
       {isWhatsAppModalOpen && whatsAppModalQuote && (
-        <ShareWhatsAppModal
-          quote={whatsAppModalQuote}
-          user={user}
-          selectedOptionIndex={Math.max(0, activeOptionTab - 1)}
-          onClose={() => {
-            setIsWhatsAppModalOpen(false);
-            setWhatsAppModalQuote(null);
-          }}
-          onBrandingModeChange={(mode) => {
-            setBrandingMode(mode);
-            const targetQuote = whatsAppModalQuote || authoritativeSavedQuote;
-            if (targetQuote) {
-              const snap = buildAgencyBrandingSnapshotFromUser(user, targetQuote, mode);
-              const nextAuthSnap = buildAuthoritativeQuotationSnapshot(
-                { ...targetQuote, brandingMode: mode, brandingSnapshot: snap },
-                {
-                  existingSaved: targetQuote,
-                  versionNumber: targetQuote.version || latestSavedVersion || 1,
-                  selectedOptionIndexOrId: targetQuote.activeOptionId || `opt-${activeOptionTab}`,
+        <Suspense fallback={null}>
+          <ShareWhatsAppModal
+            quote={whatsAppModalQuote}
+            user={user}
+            selectedOptionIndex={Math.max(0, activeOptionTab - 1)}
+            onClose={() => {
+              setIsWhatsAppModalOpen(false);
+              setWhatsAppModalQuote(null);
+            }}
+            onBrandingModeChange={(mode) => {
+              setBrandingMode(mode);
+              const targetQuote = whatsAppModalQuote || authoritativeSavedQuote;
+              if (targetQuote) {
+                const snap = buildAgencyBrandingSnapshotFromUser(user, targetQuote, mode);
+                const nextAuthSnap = buildAuthoritativeQuotationSnapshot(
+                  { ...targetQuote, brandingMode: mode, brandingSnapshot: snap },
+                  {
+                    existingSaved: targetQuote,
+                    versionNumber: targetQuote.version || latestSavedVersion || 1,
+                    selectedOptionIndexOrId: targetQuote.activeOptionId || `opt-${activeOptionTab}`,
+                    brandingMode: mode,
+                    user,
+                    preserveExistingPricingIfLocked: true
+                  }
+                );
+                setWhatsAppModalQuote({
+                  ...targetQuote,
                   brandingMode: mode,
-                  user,
-                  preserveExistingPricingIfLocked: true
-                }
-              );
-              setWhatsAppModalQuote({
-                ...targetQuote,
-                brandingMode: mode,
-                brandingSnapshot: snap,
-                snapshotHash: nextAuthSnap.snapshotHash,
-                authoritativeSnapshot: nextAuthSnap
+                  brandingSnapshot: snap,
+                  snapshotHash: nextAuthSnap.snapshotHash,
+                  authoritativeSnapshot: nextAuthSnap
+                });
+              }
+            }}
+            onSuccess={(updatedQuote) => {
+              if (updatedQuote.clientPhone && setClientPhone) {
+                setClientPhone(updatedQuote.clientPhone);
+              }
+              const rec = recordQuotationGenerationEvent(db, updatedQuote, {
+                outputOption: 'SHARE_WHATSAPP',
+                status: 'SUCCEEDED',
+                brandingMode: updatedQuote.brandingMode || brandingMode,
+                selectedOptionId: updatedQuote.activeOptionId || `opt-${activeOptionTab}`,
+                recipient: updatedQuote.lastSharedRecipientPhone || updatedQuote.clientPhone,
+                user
               });
-            }
-          }}
-          onSuccess={(updatedQuote) => {
-            if (updatedQuote.clientPhone && setClientPhone) {
-              setClientPhone(updatedQuote.clientPhone);
-            }
-            const rec = recordQuotationGenerationEvent(db, updatedQuote, {
-              outputOption: 'SHARE_WHATSAPP',
-              status: 'SUCCEEDED',
-              brandingMode: updatedQuote.brandingMode || brandingMode,
-              selectedOptionId: updatedQuote.activeOptionId || `opt-${activeOptionTab}`,
-              recipient: updatedQuote.lastSharedRecipientPhone || updatedQuote.clientPhone,
-              user
-            });
-            setAuthoritativeSavedQuote(rec.updatedQuote);
-            setWhatsAppModalQuote(rec.updatedQuote);
-            setLoadedQuoteStatus(rec.updatedQuote.status);
-          }}
-        />
+              setAuthoritativeSavedQuote(rec.updatedQuote);
+              setWhatsAppModalQuote(rec.updatedQuote);
+              setLoadedQuoteStatus(rec.updatedQuote.status);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
@@ -6665,128 +7184,142 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         (inspectingProduct && isRailProduct(inspectingProduct)) ||
         editingRailItem
       ) && (
-        <RailJourneyModal
-          product={editingRailItem?.product || inspectingProduct!}
-          portalOrigin="B2B_QUOTE_BUILDER"
-          existingQuoteItemId={editingRailItem?.id}
-          existingJourneySnapshot={editingRailItem?.japanRailJourneySnapshot || (editingRailItem as any)?.metadata?.journeySnapshot || (editingRailItem as any)?.railJourneyDetails}
-          initialOriginStationId={editingRailItem?.railJourneyDetails?.originStationId || 'JP-ST-TOKYO'}
-          initialDestinationStationId={editingRailItem?.railJourneyDetails?.destinationStationId || 'JP-ST-KYOTO'}
-          onClose={() => {
-            setInspectingProduct(null);
-            setEditingRailItem(null);
-          }}
-          onAddToQuote={(item) => {
-            if (editingRailItem) {
-              removeProductFromQuote(editingRailItem.id);
-            }
-            setInspectingProduct(null);
-            setEditingRailItem(null);
-            showBuilderToast(editingRailItem ? `✓ Updated Shinkansen Journey in Quote` : `✓ Added Shinkansen Journey to Quote`, 'SUCCESS');
-          }}
-        />
+        <Suspense fallback={null}>
+          <RailJourneyModal
+            product={editingRailItem?.product || inspectingProduct!}
+            portalOrigin="B2B_QUOTE_BUILDER"
+            existingQuoteItemId={editingRailItem?.id}
+            existingJourneySnapshot={editingRailItem?.japanRailJourneySnapshot || (editingRailItem as any)?.metadata?.journeySnapshot || (editingRailItem as any)?.railJourneyDetails}
+            initialOriginStationId={editingRailItem?.railJourneyDetails?.originStationId || 'JP-ST-TOKYO'}
+            initialDestinationStationId={editingRailItem?.railJourneyDetails?.destinationStationId || 'JP-ST-KYOTO'}
+            onClose={() => {
+              setInspectingProduct(null);
+              setEditingRailItem(null);
+            }}
+            onAddToQuote={(item) => {
+              if (editingRailItem) {
+                removeProductFromQuote(editingRailItem.id);
+              }
+              setInspectingProduct(null);
+              setEditingRailItem(null);
+              showBuilderToast(editingRailItem ? `✓ Updated Shinkansen Journey in Quote` : `✓ Added Shinkansen Journey to Quote`, 'SUCCESS');
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL: AUTHORITATIVE DEDICATED CATEGORY CONFIGURATOR ROUTER */}
       {/* ========================================================================= */}
       {editingServiceItem && (
-        <GlobalConfiguratorRouter
-          isOpen={true}
-          itemOrProduct={editingServiceItem}
-          portalOrigin="B2B_QUOTE_BUILDER"
-          existingQuoteItemId={editingServiceItem.id}
-          initialTravelDate={editingServiceItem.travelDate}
-          initialAdults={editingServiceItem.pax?.adults || adultsCount}
-          initialChildren={editingServiceItem.pax?.children || childrenCount}
-          initialInfants={editingServiceItem.pax?.infants || infantsCount}
-          initialServiceTime={editingServiceItem.serviceTime}
-          initialNotes={editingServiceItem.notes}
-          onClose={() => setEditingServiceItem(null)}
-          onSuccess={() => {
-            setEditingServiceItem(null);
-            showBuilderToast('✓ Service configuration updated (unsaved until Save Draft)', 'SUCCESS');
-          }}
-        />
+        <Suspense fallback={null}>
+          <GlobalConfiguratorRouter
+            isOpen={true}
+            itemOrProduct={editingServiceItem}
+            portalOrigin="B2B_QUOTE_BUILDER"
+            existingQuoteItemId={editingServiceItem.id}
+            initialTravelDate={editingServiceItem.travelDate}
+            initialAdults={editingServiceItem.pax?.adults || adultsCount}
+            initialChildren={editingServiceItem.pax?.children || childrenCount}
+            initialInfants={editingServiceItem.pax?.infants || infantsCount}
+            initialServiceTime={editingServiceItem.serviceTime}
+            initialNotes={editingServiceItem.notes}
+            onClose={() => setEditingServiceItem(null)}
+            onSuccess={() => {
+              setEditingServiceItem(null);
+              showBuilderToast('✓ Service configuration updated (unsaved until Save Draft)', 'SUCCESS');
+            }}
+          />
+        </Suspense>
       )}
 
       {configuringQuickAddProduct && (
-        <GlobalConfiguratorRouter
-          isOpen={true}
-          itemOrProduct={configuringQuickAddProduct.product}
-          portalOrigin="B2B_QUOTE_BUILDER"
-          initialTravelDate={configuringQuickAddProduct.dateString}
-          initialAdults={adultsCount}
-          initialChildren={childrenCount}
-          initialInfants={infantsCount}
-          onClose={() => setConfiguringQuickAddProduct(null)}
-          onSuccess={(configuredItem) => {
-            const dayNum = configuringQuickAddProduct.dayNum;
-            const prodName = configuredItem?.name || configuringQuickAddProduct.product.name;
-            setConfiguringQuickAddProduct(null);
-            setQuickAddModalDay(null);
-            showBuilderToast(`✓ Added ${prodName} to Day ${dayNum} (click Save Draft to persist)`, 'SUCCESS');
-          }}
-        />
+        <Suspense fallback={null}>
+          <GlobalConfiguratorRouter
+            isOpen={true}
+            itemOrProduct={configuringQuickAddProduct.product}
+            portalOrigin="B2B_QUOTE_BUILDER"
+            initialTravelDate={configuringQuickAddProduct.dateString}
+            initialAdults={adultsCount}
+            initialChildren={childrenCount}
+            initialInfants={infantsCount}
+            onClose={() => setConfiguringQuickAddProduct(null)}
+            onSuccess={(configuredItem) => {
+              const dayNum = configuringQuickAddProduct.dayNum;
+              const prodName = configuredItem?.name || configuringQuickAddProduct.product.name;
+              setConfiguringQuickAddProduct(null);
+              setQuickAddModalDay(null);
+              showBuilderToast(`✓ Added ${prodName} to Day ${dayNum} (click Save Draft to persist)`, 'SUCCESS');
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL: PRODUCT DETAIL MODAL */}
       {/* ========================================================================= */}
       {inspectingProduct && !isRailProduct(inspectingProduct) && (
-        <B2BViewDetailsModal
-          product={inspectingProduct}
-          onClose={() => setInspectingProduct(null)}
-          onOpenCalculator={(prod) => {
-            setInspectingProduct(null);
-            setCalculatorProduct(prod);
-          }}
-          onBookProduct={(prod, initialDate, adults, children) => {
-            addProductToQuote(prod, {
-              adults: adults || adultsCount,
-              children: children || childrenCount,
-              infants: infantsCount,
-              travelDate: quickAddModalDay?.dateString || initialDate || startDate,
-              openDrawer: false
-            });
-            setInspectingProduct(null);
-            setQuickAddModalDay(null);
-          }}
-        />
+        <Suspense fallback={null}>
+          <B2BViewDetailsModal
+            product={inspectingProduct}
+            onClose={() => setInspectingProduct(null)}
+            onOpenCalculator={(prod) => {
+              setInspectingProduct(null);
+              setCalculatorProduct(prod);
+            }}
+            onBookProduct={(prod, initialDate, adults, children) => {
+              addProductToQuote(prod, {
+                adults: adults || adultsCount,
+                children: children || childrenCount,
+                infants: infantsCount,
+                travelDate: quickAddModalDay?.dateString || initialDate || startDate,
+                openDrawer: false
+              });
+              setInspectingProduct(null);
+              setQuickAddModalDay(null);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL: PRICING CALCULATOR MODAL */}
       {/* ========================================================================= */}
       {calculatorProduct && !isRailProduct(calculatorProduct) && (
-        <PricingCalculatorModal
-          product={calculatorProduct}
-          portalOrigin="B2B_QUOTE_BUILDER"
-          onClose={() => setCalculatorProduct(null)}
-          onAddedToQuote={() => {
-            setCalculatorProduct(null);
-            setQuickAddModalDay(null);
-          }}
-        />
+        <Suspense fallback={null}>
+          <PricingCalculatorModal
+            product={calculatorProduct}
+            portalOrigin="B2B_QUOTE_BUILDER"
+            onClose={() => setCalculatorProduct(null)}
+            onAddedToQuote={() => {
+              setCalculatorProduct(null);
+              setQuickAddModalDay(null);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL: MANUAL HOTEL / RATE ENTRY MODAL */}
       {/* ========================================================================= */}
-      <ManualHotelFormModal
-        isOpen={isManualHotelModalOpen}
-        onClose={() => setIsManualHotelModalOpen(false)}
-        onSave={handleSaveManualHotel}
-        initialData={manualHotelModalInitialData}
-        routeHubs={routeHubs}
-        defaultHubId={manualHotelModalHubId}
-        getHubDates={getHubDates}
-        quoteCurrency={currency}
-        agentMarkupPercent={agentMarkupPercent}
-        adultsCount={adultsCount}
-        childrenCount={childrenCount}
-        infantsCount={infantsCount}
-      />
+      {isManualHotelModalOpen && (
+        <Suspense fallback={null}>
+          <ManualHotelFormModal
+            isOpen={isManualHotelModalOpen}
+            onClose={() => setIsManualHotelModalOpen(false)}
+            onSave={handleSaveManualHotel}
+            initialData={manualHotelModalInitialData}
+            routeHubs={routeHubs}
+            defaultHubId={manualHotelModalHubId}
+            getHubDates={getHubDates}
+            quoteCurrency={currency}
+            agentMarkupPercent={agentMarkupPercent}
+            adultsCount={adultsCount}
+            childrenCount={childrenCount}
+            infantsCount={infantsCount}
+          />
+        </Suspense>
+      )}
 
       {/* ========================================================================= */}
       {/* MODAL: SAVE AS MASTER READY-MADE PACKAGE MODAL */}
@@ -7030,12 +7563,19 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                 <button
                   type="button"
                   onClick={handleConfirmSavePackage}
-                  disabled={!packageFormData.title.trim()}
-                  className="px-5 py-2 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-black transition-all cursor-pointer shadow-xs disabled:opacity-50"
+                  disabled={!packageFormData.title.trim() || outputBusyOption === 'SAVE_MASTER_PACKAGE' || isSavingExplicitly}
+                  className="px-5 py-2 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-black transition-all cursor-pointer shadow-xs disabled:opacity-50 inline-flex items-center space-x-1.5"
                 >
-                  {linkedExistingMasterPackage && packageFormData.updateExisting
-                    ? 'Update Master Package'
-                    : 'Save as Master Package'}
+                  {outputBusyOption === 'SAVE_MASTER_PACKAGE' && (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  )}
+                  <span>
+                    {outputBusyOption === 'SAVE_MASTER_PACKAGE'
+                      ? 'Saving Package...'
+                      : linkedExistingMasterPackage && packageFormData.updateExisting
+                        ? 'Update Master Package'
+                        : 'Save as Master Package'}
+                  </span>
                 </button>
               </div>
             </div>
@@ -7055,7 +7595,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                 <p className="text-xs font-black text-white">{packageSavedNotice}</p>
                 {lastPackageVerificationReport && (
                   <p className="text-[11px] text-slate-300 mt-0.5">
-                    Verified {lastPackageVerificationReport.itineraryDaysCount} itinerary days, {lastPackageVerificationReport.verifiedProductsCount} linked products • Nett {formatCurrency(lastPackageVerificationReport.netPriceTarget, lastPackageVerificationReport.currency)} / Selling {formatCurrency(lastPackageVerificationReport.sellingPriceTarget, lastPackageVerificationReport.currency)}
+                    Verified {lastPackageVerificationReport.itineraryDaysCount} itinerary days, {lastPackageVerificationReport.verifiedProductIds?.length ?? 0} linked products • Nett {formatCurrency(lastPackageVerificationReport.netPriceTarget, lastPackageVerificationReport.currency)} / Selling {formatCurrency(lastPackageVerificationReport.sellingPriceTarget, lastPackageVerificationReport.currency)}
                   </p>
                 )}
               </div>
@@ -7100,14 +7640,16 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
 
       {/* Ready-Made Package Detail Modal (View Generated Package Directly) */}
       {viewingSavedMasterPackage && (
-        <PackageDetailModal
-          pkg={viewingSavedMasterPackage}
-          onClose={() => setViewingSavedMasterPackage(null)}
-          onCustomizeInBuilder={(pkgToCustomize) => {
-            setViewingSavedMasterPackage(null);
-            showBuilderToast(`Package "${pkgToCustomize.title}" is already loaded in this workspace.`, 'INFO');
-          }}
-        />
+        <Suspense fallback={null}>
+          <PackageDetailModal
+            pkg={viewingSavedMasterPackage}
+            onClose={() => setViewingSavedMasterPackage(null)}
+            onCustomizeInBuilder={(pkgToCustomize) => {
+              setViewingSavedMasterPackage(null);
+              showBuilderToast(`Package "${pkgToCustomize.title}" is already loaded in this workspace.`, 'INFO');
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
@@ -7291,79 +7833,87 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       {/* MODAL: ADD VISA TO QUOTE DETAILED CONFIGURATION MODAL */}
       {/* ========================================================================= */}
       {selectedVisaForQuoteModal && (
-        <AddVisaToQuoteModal
-          visa={selectedVisaForQuoteModal}
-          isOpen={Boolean(selectedVisaForQuoteModal)}
-          portalOrigin="B2B_QUOTE_BUILDER"
-          onClose={() => setSelectedVisaForQuoteModal(null)}
-          initialTravelDate={startDate}
-          initialApplicants={adultsCount + childrenCount}
-          onSuccess={(visa, details) => {
-            setSelectedVisaForQuoteModal(null);
-            showBuilderToast(`✓ Visa facilitation added (${visa.name}) — click Save Draft to save version`, 'SUCCESS');
-          }}
-        />
+        <Suspense fallback={null}>
+          <AddVisaToQuoteModal
+            visa={selectedVisaForQuoteModal}
+            isOpen={Boolean(selectedVisaForQuoteModal)}
+            portalOrigin="B2B_QUOTE_BUILDER"
+            onClose={() => setSelectedVisaForQuoteModal(null)}
+            initialTravelDate={startDate}
+            initialApplicants={adultsCount + childrenCount}
+            onSuccess={(visa, details) => {
+              setSelectedVisaForQuoteModal(null);
+              showBuilderToast(`✓ Visa facilitation added (${visa.name}) — click Save Draft to save version`, 'SUCCESS');
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL: COMPREHENSIVE ADDONS (INSURANCE, ESIM, VIP SERVICES) */}
       {/* ========================================================================= */}
       {showAddonModal && (
-        <AddAddonModal
-          isOpen={showAddonModal}
-          category={addonModalCategory}
-          onClose={() => setShowAddonModal(false)}
-          onAddAddon={(prod) => {
-            handleAddProductToQuoteSilently(prod, {
-              adults: adultsCount,
-              children: childrenCount,
-              infants: infantsCount,
-              travelDate: startDate
-            });
-            setShowAddonModal(false);
-          }}
-          destinationName={currentDestination.name}
-          durationNights={tripNights}
-          adultsCount={adultsCount}
-          childrenCount={childrenCount}
-          currency={currency}
-        />
+        <Suspense fallback={null}>
+          <AddAddonModal
+            isOpen={showAddonModal}
+            category={addonModalCategory}
+            onClose={() => setShowAddonModal(false)}
+            onAddAddon={(prod) => {
+              handleAddProductToQuoteSilently(prod, {
+                adults: adultsCount,
+                children: childrenCount,
+                infants: infantsCount,
+                travelDate: startDate
+              });
+              setShowAddonModal(false);
+            }}
+            destinationName={currentDestination.name}
+            durationNights={tripNights}
+            adultsCount={adultsCount}
+            childrenCount={childrenCount}
+            currency={currency}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL: OPTION COMPARISON MATRIX (OPTION 1, OPTION 2, OPTION 3) */}
       {/* ========================================================================= */}
       {showComparisonMatrixModal && (
-        <OptionComparisonMatrixModal
-          isOpen={showComparisonMatrixModal}
-          onClose={() => setShowComparisonMatrixModal(false)}
-          options={computedQuotationOptions}
-          activeOptionNumber={activeOptionTab}
-          currency={currency}
-          onSelectOption={(optNum) => {
-            handleSwitchOptionTab(optNum);
-            setShowComparisonMatrixModal(false);
-          }}
-          onDuplicateOption={(fromNum, toNum) => {
-            handleDuplicateOption(fromNum, toNum);
-          }}
-        />
+        <Suspense fallback={null}>
+          <OptionComparisonMatrixModal
+            isOpen={showComparisonMatrixModal}
+            onClose={() => setShowComparisonMatrixModal(false)}
+            options={computedQuotationOptions}
+            activeOptionNumber={activeOptionTab}
+            currency={currency}
+            onSelectOption={(optNum) => {
+              handleSwitchOptionTab(optNum);
+              setShowComparisonMatrixModal(false);
+            }}
+            onDuplicateOption={(fromNum, toNum) => {
+              handleDuplicateOption(fromNum, toNum);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
       {/* MODAL: DUPLICATE OPTION MODAL */}
       {/* ========================================================================= */}
       {showDuplicateOptionModal && (
-        <OptionDuplicateModal
-          isOpen={showDuplicateOptionModal}
-          onClose={() => setShowDuplicateOptionModal(false)}
-          sourceOptionNumber={activeOptionTab}
-          options={computedQuotationOptions}
-          onConfirmDuplicate={(fromNum, toNum) => {
-            handleDuplicateOption(fromNum, toNum);
-            setShowDuplicateOptionModal(false);
-          }}
-        />
+        <Suspense fallback={null}>
+          <OptionDuplicateModal
+            isOpen={showDuplicateOptionModal}
+            onClose={() => setShowDuplicateOptionModal(false)}
+            sourceOptionNumber={activeOptionTab}
+            options={computedQuotationOptions}
+            onConfirmDuplicate={(fromNum, toNum) => {
+              handleDuplicateOption(fromNum, toNum);
+              setShowDuplicateOptionModal(false);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
@@ -7411,15 +7961,17 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       {/* MODAL: QUOTATION VERSION HISTORY & COMPARE */}
       {/* ========================================================================= */}
       {isVersionHistoryModalOpen && hasExplicitlySaved && (
-        <QuotationVersionHistoryModal
-          isOpen={isVersionHistoryModalOpen}
-          onClose={() => setIsVersionHistoryModalOpen(false)}
-          quoteId={activeQuoteId}
-          initialQuote={authoritativeSavedQuote}
-          currentUser={user}
-          onOpenVersion={(qId, ver, m) => handleSwitchBuilderVersion(qId, ver, m)}
-          onRestoreVersion={(qId, ver) => handleSwitchBuilderVersion(qId, ver, 'restore')}
-        />
+        <Suspense fallback={null}>
+          <QuotationVersionHistoryModal
+            isOpen={isVersionHistoryModalOpen}
+            onClose={() => setIsVersionHistoryModalOpen(false)}
+            quoteId={activeQuoteId}
+            initialQuote={authoritativeSavedQuote}
+            currentUser={user}
+            onOpenVersion={(qId, ver, m) => handleSwitchBuilderVersion(qId, ver, m)}
+            onRestoreVersion={(qId, ver) => handleSwitchBuilderVersion(qId, ver, 'restore')}
+          />
+        </Suspense>
       )}
 
       {/* ========================================================================= */}
@@ -7449,11 +8001,19 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                 type="button"
                 disabled={isSavingExplicitly}
                 onClick={async () => {
+                  if (isOutputBusyRef.current || isExplicitSavingRef.current) return;
                   const req = pendingOutputRequest;
                   setPendingOutputRequest(null);
                   const saved = await handleExplicitSaveDraft();
                   if (saved) {
-                    await req.onResolved(saved);
+                    isOutputBusyRef.current = true;
+                    setOutputBusyOption(req.option);
+                    try {
+                      await req.onResolved(saved);
+                    } finally {
+                      isOutputBusyRef.current = false;
+                      setOutputBusyOption(null);
+                    }
                   }
                 }}
                 className="w-full px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-[#00E5C0] text-xs font-black cursor-pointer disabled:opacity-50"
@@ -7464,8 +8024,10 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                 <button
                   type="button"
                   onClick={async () => {
+                    if (isOutputBusyRef.current || isExplicitSavingRef.current) return;
                     const req = pendingOutputRequest;
                     setPendingOutputRequest(null);
+                    isOutputBusyRef.current = true;
                     setOutputBusyOption(req.option);
                     setOutputSyncError(null);
                     try {
@@ -7524,6 +8086,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
                       setOutputSyncError(msg);
                       showBuilderToast(msg, 'WARNING');
                     } finally {
+                      isOutputBusyRef.current = false;
                       setOutputBusyOption(null);
                     }
                   }}

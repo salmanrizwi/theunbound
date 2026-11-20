@@ -61,22 +61,29 @@ export const BusinessPerformanceSection: React.FC<BusinessPerformanceSectionProp
           </p>
         </div>
 
-        {/* Granularity Toggle */}
-        <div className="flex items-center bg-slate-50 p-1 rounded-2xl border border-slate-200/80 self-start sm:self-auto">
-          {(['DAILY', 'WEEKLY', 'MONTHLY'] as PerformanceGranularity[]).map(g => (
-            <button
-              key={g}
-              id={`granularity-toggle-${g.toLowerCase()}`}
-              onClick={() => onSelectGranularity(g)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-                granularity === g
-                  ? 'bg-white text-slate-900 shadow-2xs font-extrabold'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              {g.charAt(0) + g.slice(1).toLowerCase()}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {performance.hasUnavailableRates && (
+            <span className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
+              {performance.unavailableCount} FX rate(s) unavailable
+            </span>
+          )}
+          {/* Granularity Toggle */}
+          <div className="flex items-center bg-slate-50 p-1 rounded-2xl border border-slate-200/80">
+            {(['DAILY', 'WEEKLY', 'MONTHLY'] as PerformanceGranularity[]).map(g => (
+              <button
+                key={g}
+                id={`granularity-toggle-${g.toLowerCase()}`}
+                onClick={() => onSelectGranularity(g)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  granularity === g
+                    ? 'bg-white text-slate-900 shadow-2xs font-extrabold'
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                {g.charAt(0) + g.slice(1).toLowerCase()}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

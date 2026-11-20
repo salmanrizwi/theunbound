@@ -1428,12 +1428,16 @@ export interface Product {
   product_id?: string;
   sku: string;
   destinationId: string;
+  destinationIds?: string[];
   destinationName: string;
   destination?: string;
   regionId?: string;
+  regionIds?: string[];
   regionName?: string;
+  regionNames?: string[];
   hubId?: string;
   hubIds?: string[];
+  hubNames?: string[];
   fromHubId?: string;
   toHubId?: string;
   fromHubName?: string;

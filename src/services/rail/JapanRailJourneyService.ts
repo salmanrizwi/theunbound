@@ -277,6 +277,22 @@ export class JapanRailJourneyService {
           merged.destination = japanRailJourneyDataService.getStationRef(updates.destination.stationId);
         }
 
+        // If stations changed and caller didn't explicitly pick a serviceGroup, align to route's supported service group
+        if ((updates.origin?.stationId || updates.destination?.stationId) && !updates.serviceGroup) {
+          const matchedRoute = japanRailJourneyDataService.getRoute(
+            merged.origin.stationId,
+            merged.destination.stationId
+          );
+          if (
+            matchedRoute &&
+            Array.isArray(matchedRoute.availableServiceGroups) &&
+            matchedRoute.availableServiceGroups.length > 0 &&
+            !matchedRoute.availableServiceGroups.includes(merged.serviceGroup)
+          ) {
+            merged.serviceGroup = matchedRoute.availableServiceGroups[0];
+          }
+        }
+
         return merged;
       }
       return seg;
@@ -408,23 +424,31 @@ export class JapanRailJourneyService {
    * Authoritative validation and price recalculation for the entire journey
    */
   public validateAndRecalculate(journey: JapanRailJourney, userRole?: UserRole): JapanRailJourney {
-    // 1. Validate Journey
-    const validation = japanRailJourneyValidationService.validateJourney(journey);
-
-    // 2. Recalculate each segment pricing and durations
-    const updatedSegments = journey.segments.map(seg => {
+    // 1. Recalculate each segment pricing and durations FIRST so validation inspects fresh pricing
+    const pricedSegments: JapanRailSegment[] = journey.segments.map(seg => {
       const segPricing = japanRailJourneyPricingService.priceSegment(seg, userRole, journey.currency);
-      const segValidation = japanRailJourneyValidationService.validateSegment(seg, journey.passengers, journey.segments);
-
       return {
         ...seg,
         pricing: segPricing,
         estimatedDurationMinutes: segPricing.estimatedDurationMinutes,
-        formattedDuration: segPricing.formattedDuration,
+        formattedDuration: segPricing.formattedDuration
+      };
+    });
+
+    // 2. Validate each freshly priced segment and full journey
+    const updatedSegments: JapanRailSegment[] = pricedSegments.map(seg => {
+      const segValidation = japanRailJourneyValidationService.validateSegment(seg, journey.passengers, pricedSegments);
+      return {
+        ...seg,
         validationErrors: segValidation.errors,
         validationWarnings: segValidation.warnings,
         isValid: segValidation.isValid
       };
+    });
+
+    const validation = japanRailJourneyValidationService.validateJourney({
+      ...journey,
+      segments: updatedSegments
     });
 
     // 3. Recalculate Aggregate Journey Pricing

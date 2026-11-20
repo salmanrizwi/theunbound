@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { AppDatabase } from '../../services/db';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { 
   User 
 } from '../../types';
@@ -124,6 +125,7 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const db = AppDatabase.getInstance();
+  const { displayCurrency, fxVersion, convertForDisplay } = useDisplayCurrency();
 
   // Reset state when opened or closed
   useEffect(() => {
@@ -197,10 +199,11 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
             matches(p.supplierName) ||
             matches(p.destinationName)
           ) {
+            const rateConv = convertForDisplay(p.adultNetPrice ?? 0, p.nativeCurrency || p.currency || 'USD');
             results.push({
               id: p.id || '',
               title: p.name || 'Unnamed Product',
-              subtitle: `${p.category || 'Product'} • ${p.city || ''}${p.country ? ', ' + p.country : ''} • Rate: ${p.currency || 'USD'} ${p.adultNetPrice ?? 0}`,
+              subtitle: `${p.category || 'Product'} • ${p.city || ''}${p.country ? ', ' + p.country : ''} • Rate: ${rateConv.formatted}${rateConv.isConverted ? ` (${rateConv.nativeFormatted})` : ''}`,
               entityType: 'PRODUCT',
               moduleSection: 'PRODUCT_MANAGEMENT',
               subTab: 'PRODUCTS',
@@ -223,10 +226,11 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
             matches(h.code) ||
             matches(h.propertyType)
           ) {
+            const hotelConv = convertForDisplay(h.startingNetPrice ?? 0, h.currency || 'USD');
             results.push({
               id: h.id || '',
               title: h.name || 'Unnamed Hotel',
-              subtitle: `${h.starRating ?? 5}★ ${String(h.propertyType || 'HOTEL').replace(/_/g, ' ')} • ${h.cityName || ''}${h.country ? ', ' + h.country : ''} • from ${h.currency || 'USD'} ${h.startingNetPrice ?? 0}/nt`,
+              subtitle: `${h.starRating ?? 5}★ ${String(h.propertyType || 'HOTEL').replace(/_/g, ' ')} • ${h.cityName || ''}${h.country ? ', ' + h.country : ''} • from ${hotelConv.formatted}/nt${hotelConv.isConverted ? ` (${hotelConv.nativeFormatted})` : ''}`,
               entityType: 'HOTEL',
               moduleSection: 'HOTEL_MANAGEMENT',
               subTab: 'HOTELS',
@@ -299,10 +303,11 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
             matches(l.destinationName) ||
             matches(l.phone)
           ) {
+            const leadConv = convertForDisplay(l.estimatedBudget ?? l.bookingValue ?? 0, l.currency || 'USD');
             results.push({
               id: l.id || '',
               title: `${l.contactName || 'Lead'} (${l.leadNumber || 'No Ref'})`,
-              subtitle: `${l.agencyName ? l.agencyName + ' • ' : ''}${l.destinationName || 'Destination'} • Budget: ${l.currency || 'USD'} ${l.estimatedBudget ?? 0}`,
+              subtitle: `${l.agencyName ? l.agencyName + ' • ' : ''}${l.destinationName || 'Destination'} • Budget: ${leadConv.formatted}${leadConv.isConverted ? ` (${leadConv.nativeFormatted})` : ''}`,
               entityType: 'LEAD',
               moduleSection: 'LEAD_MANAGEMENT',
               subTab: 'LEADS',
@@ -325,10 +330,14 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
             matches(q.destination) ||
             matches((q as any).customerEmail || (q as any).clientEmail)
           ) {
+            const qConv = convertForDisplay(
+              q.pricingSnapshot?.finalCustomerSellingPrice ?? q.finalCustomerSellingPrice ?? q.totalSellingPrice ?? 0,
+              q.currency || q.pricingSnapshot?.currency || 'USD'
+            );
             results.push({
               id: q.id || '',
               title: `${q.quoteNumber || 'Quote'} — ${q.clientName || 'Guest'}`,
-              subtitle: `${q.destination || 'Custom Itinerary'} • Agent: ${q.agentName || 'Direct'} • Total: ${q.currency || 'USD'} ${(q.totalSellingPrice ?? 0).toLocaleString()}`,
+              subtitle: `${q.destination || 'Custom Itinerary'} • Agent: ${q.agentName || 'Direct'} • Total: ${qConv.formatted}${qConv.isConverted ? ` (${qConv.nativeFormatted})` : ''}`,
               entityType: 'QUOTE',
               moduleSection: 'LEAD_MANAGEMENT',
               subTab: 'QUOTES',
@@ -354,10 +363,11 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
             matches((b as any).customerName) ||
             matches((b as any).customerEmail)
           ) {
+            const bConv = convertForDisplay(b.totalAmount ?? 0, b.currency || 'USD');
             results.push({
               id: b.id || '',
               title: `${b.bookingReference || 'Booking'} — ${cust.leadTravelerName || cust.name || 'Guest'}`,
-              subtitle: `${b.items?.length || 0} Services • Travel: ${b.travelStartDate || 'TBD'} • Total: ${b.currency || 'USD'} ${(b.totalAmount ?? 0).toLocaleString()}`,
+              subtitle: `${b.items?.length || 0} Services • Travel: ${b.travelStartDate || 'TBD'} • Total: ${bConv.formatted}${bConv.isConverted ? ` (${bConv.nativeFormatted})` : ''}`,
               entityType: 'BOOKING',
               moduleSection: 'BOOKING_MANAGEMENT',
               subTab: 'BOOKINGS',
@@ -448,7 +458,7 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
       setSearchError(err?.message || 'Failed to search records');
       return [];
     }
-  }, [debouncedQuery, selectedCategory, db, currentUser]);
+  }, [debouncedQuery, selectedCategory, db, currentUser, convertForDisplay, displayCurrency, fxVersion]);
 
   // Handle keyboard navigation (Escape, ArrowUp, ArrowDown, Enter)
   useEffect(() => {

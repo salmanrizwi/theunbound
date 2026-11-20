@@ -271,7 +271,12 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
   const name = product?.name || hotel?.name || packageItem?.title || 'Unknown Product';
   const category = product?.category || (hotel ? 'Hotel' : 'Package Circuit');
   const destination = product?.destinationName || hotel?.city || packageItem?.destinationName || 'Global';
-  const hub = product?.city || hotel?.country || '';
+  const regionLabel = product && Array.isArray(product.regionNames) && product.regionNames.length > 0
+    ? product.regionNames.join(', ')
+    : (product?.regionName || '');
+  const hub = product && Array.isArray(product.hubNames) && product.hubNames.length > 0
+    ? product.hubNames.join(', ')
+    : (product?.city || hotel?.country || '');
 
   const images = useMemo(() => {
     if (product) {
@@ -345,14 +350,20 @@ export const B2BViewDetailsModal: React.FC<B2BViewDetailsModalProps> = ({
             <h1 className="text-sm sm:text-lg font-black text-slate-900 truncate leading-tight">
               {name}
             </h1>
-            <div className="flex items-center gap-2 text-slate-500 text-[11px] sm:text-xs">
+            <div className="flex flex-wrap items-center gap-2 text-slate-500 text-[11px] sm:text-xs">
               <span className="font-bold text-[#008972] bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">{category}</span>
               <span>·</span>
               <span className="font-medium text-slate-600">{destination}</span>
+              {regionLabel && (
+                <>
+                  <span>·</span>
+                  <span className="text-slate-600 truncate max-w-[260px]" title={regionLabel}>{regionLabel}</span>
+                </>
+              )}
               {hub && (
                 <>
                   <span>·</span>
-                  <span className="text-slate-500">{hub}</span>
+                  <span className="text-slate-500 truncate max-w-[300px]" title={hub}>{hub}</span>
                 </>
               )}
             </div>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TravelLead, LeadStageConfig, CalendarTask } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { 
   ChevronRight, 
   Clock, 
@@ -37,6 +38,7 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
   onOpenActionCenter
 }) => {
   const { user } = useAuth();
+  const { convertForDisplay, aggregateForDisplay } = useDisplayCurrency();
   const [draggedLeadId, setDraggedLeadId] = useState<string | null>(null);
   const [dragOverStageId, setDragOverStageId] = useState<string | null>(null);
 
@@ -118,10 +120,10 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
       <div className="flex gap-5 min-w-max items-start">
         {activeStages.map(stage => {
           const stageLeads = getLeadsForStage(stage);
-          const stageValue = stageLeads.reduce(
-            (sum, l) => sum + Number(l.estimatedBudget || l.bookingValue || 0),
-            0
-          );
+          const stageAgg = aggregateForDisplay(stageLeads, l => ({
+            amount: Number(l.estimatedBudget || l.bookingValue || 0),
+            currency: l.currency || 'USD'
+          }));
           const isOver = dragOverStageId === stage.id;
 
           return (
@@ -157,7 +159,7 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                 <div className="flex items-center justify-between text-[11px] text-slate-500 font-medium pt-1 border-t border-slate-100">
                   <span>Win prob: <strong className="text-slate-800 font-bold">{stage.probability}%</strong></span>
                   <span className="font-mono font-black text-[#008f77] text-xs">
-                    ${stageValue.toLocaleString()}
+                    {stageAgg.formattedTotal}
                   </span>
                 </div>
 
@@ -275,9 +277,17 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                               <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
                               <span className="truncate">{lead.destinationName}</span>
                             </span>
-                            <span className="font-mono font-black text-[#008f77] text-xs">
-                              ${(Number(lead.estimatedBudget || lead.bookingValue || 0)).toLocaleString()}
-                            </span>
+                            {(() => {
+                              const kConv = convertForDisplay(
+                                Number(lead.estimatedBudget || lead.bookingValue || 0),
+                                lead.currency || 'USD'
+                              );
+                              return (
+                                <span className="font-mono font-black text-[#008f77] text-xs" title={kConv.isConverted ? `Native: ${kConv.nativeFormatted}` : undefined}>
+                                  {kConv.formatted}
+                                </span>
+                              );
+                            })()}
                           </div>
                           {lead.travelDates && (
                             <div className="flex items-center justify-between text-slate-400 text-[10px] pt-1 border-t border-slate-200/60">

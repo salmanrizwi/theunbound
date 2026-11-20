@@ -12,6 +12,7 @@ import {
 import { canUserAccessSystemAnalysis } from '../../services/permissionEngine';
 import { performanceMonitor } from '../../services/performanceMonitor';
 import { backgroundJobService } from '../../services/backgroundJobService';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { 
   Activity, 
   Users, 
@@ -68,6 +69,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
   onLoadQuote
 }) => {
   const db = AppDatabase.getInstance();
+  const { displayCurrency, fxVersion, convertForDisplay, formatDisplayCurrency, aggregateForDisplay } = useDisplayCurrency();
   const [dbTick, setDbTick] = useState(0);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -215,8 +217,16 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
       const whatsappShares = userQuotes.filter(q => Boolean(q.lastSharedViaWhatsAppAt)).length;
       const confirmedBookings = userBookings.filter(b => b.status === 'CONFIRMED' || b.status === 'COMPLETED').length;
 
-      const totalBookingSpend = userBookings.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
-      const totalQuoteValue = userQuotes.reduce((sum, q) => sum + (Number(q.totalSellingPrice) || 0), 0);
+      const bookingSpendAgg = aggregateForDisplay(userBookings, b => ({
+        amount: Number(b.totalAmount) || 0,
+        currency: b.currency || 'USD'
+      }));
+      const quoteValAgg = aggregateForDisplay(userQuotes, q => ({
+        amount: Number(q.pricingSnapshot?.finalCustomerSellingPrice ?? q.finalCustomerSellingPrice ?? q.totalSellingPrice ?? 0),
+        currency: q.currency || q.pricingSnapshot?.currency || 'USD'
+      }));
+      const totalBookingSpend = bookingSpendAgg.totalConverted;
+      const totalQuoteValue = quoteValAgg.totalConverted;
 
       const aiInteractions = userActivities.filter(a => 
         a.type === 'AI_PLANNER_USED' || 
@@ -265,7 +275,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
         activities: userActivities
       };
     });
-  }, [rawUsers, rawQuotes, rawBookings, rawActivities, rawLeads]);
+  }, [rawUsers, rawQuotes, rawBookings, rawActivities, rawLeads, aggregateForDisplay, displayCurrency, fxVersion]);
 
   // Overall Executive KPI Cards (All from Real Data)
   const executiveKPIs = useMemo(() => {
@@ -292,12 +302,19 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
     const totalBookingsCount = filteredBookings.length;
     const confirmedBookingsCount = filteredBookings.filter(b => b.status === 'CONFIRMED' || b.status === 'COMPLETED').length;
 
-    const grossBookingValue = filteredBookings.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
+    const grossBookingAgg = aggregateForDisplay(filteredBookings, b => ({
+      amount: Number(b.totalAmount) || 0,
+      currency: b.currency || 'USD'
+    }));
+    const grossBookingValue = grossBookingAgg.totalConverted;
 
-    const verifiedPaymentsSum = filteredBookings.reduce((sum, b) => {
-      const verifiedProofs = (b.paymentProofs || []).filter(p => p.verificationStatus === 'VERIFIED');
-      return sum + verifiedProofs.reduce((pSum, p) => pSum + (Number(p.amount) || 0), 0);
-    }, 0);
+    const allVerifiedProofs = filteredBookings.flatMap(b =>
+      (b.paymentProofs || [])
+        .filter(p => p.verificationStatus === 'VERIFIED')
+        .map(p => ({ amount: Number(p.amount) || 0, currency: p.currency || b.currency || 'USD' }))
+    );
+    const verifiedPaymentsAgg = aggregateForDisplay(allVerifiedProofs, p => p);
+    const verifiedPaymentsSum = verifiedPaymentsAgg.totalConverted;
 
     const totalAiInteractions = userMetricsList.reduce((sum, m) => sum + m.aiInteractions, 0);
 
@@ -748,11 +765,11 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
               <DollarSign className="w-3.5 h-3.5" />
             </div>
           </div>
-          <div className="text-xl font-black text-slate-900 truncate" title={`$${executiveKPIs.grossBookingValue.toLocaleString()}`}>
-            ${Math.round(executiveKPIs.grossBookingValue).toLocaleString()}
+          <div className="text-xl font-black text-slate-900 truncate" title={formatDisplayCurrency(executiveKPIs.grossBookingValue)}>
+            {formatDisplayCurrency(executiveKPIs.grossBookingValue)}
           </div>
           <div className="text-[10px] text-emerald-600 font-bold truncate">
-            ${Math.round(executiveKPIs.verifiedPaymentsSum).toLocaleString()} verified
+            {formatDisplayCurrency(executiveKPIs.verifiedPaymentsSum)} verified
           </div>
         </div>
 
@@ -956,9 +973,9 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                         {/* Spend Volume */}
                         <td className="py-3 px-3 text-right whitespace-nowrap font-mono font-bold text-slate-900">
                           {item.totalBookingSpend > 0 ? (
-                            <span>${Math.round(item.totalBookingSpend).toLocaleString()}</span>
+                            <span>{formatDisplayCurrency(item.totalBookingSpend)}</span>
                           ) : item.totalQuoteValue > 0 ? (
-                            <span className="text-slate-400" title="Quoted Value">(${Math.round(item.totalQuoteValue).toLocaleString()})</span>
+                            <span className="text-slate-400" title="Quoted Value">({formatDisplayCurrency(item.totalQuoteValue)})</span>
                           ) : (
                             <span className="text-slate-300">—</span>
                           )}
@@ -1095,7 +1112,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                     </div>
                     <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/80 text-center min-w-[100px]">
                       <div className="text-lg font-black text-slate-900">
-                        ${Math.round(selectedUserObject.totalBookingSpend).toLocaleString()}
+                        {formatDisplayCurrency(selectedUserObject.totalBookingSpend)}
                       </div>
                       <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Lifetime Spend</div>
                     </div>
@@ -1304,9 +1321,20 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                                 <td className="py-3 px-3 text-slate-500">
                                   {q.totalPax || 2} Pax • {q.travelStartDate || 'Flexible'}
                                 </td>
-                                <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                                  {q.currency || 'USD'} {Number(q.totalSellingPrice || 0).toLocaleString()}
-                                </td>
+                                {(() => {
+                                  const qConv = convertForDisplay(
+                                    Number(q.pricingSnapshot?.finalCustomerSellingPrice ?? q.finalCustomerSellingPrice ?? q.totalSellingPrice ?? 0),
+                                    q.currency || q.pricingSnapshot?.currency || 'USD'
+                                  );
+                                  return (
+                                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
+                                      <div>{qConv.formatted}</div>
+                                      {qConv.isConverted && (
+                                        <div className="text-[9px] text-slate-400 font-normal">Quote: {qConv.nativeFormatted}</div>
+                                      )}
+                                    </td>
+                                  );
+                                })()}
                                 <td className="py-3 px-3">
                                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700">
                                     {q.status}
@@ -1368,9 +1396,17 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                                 <td className="py-3 px-3 text-slate-600">
                                   {b.destinationName || b.destination}
                                 </td>
-                                <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                                  {b.currency || 'USD'} {Number(b.totalAmount || 0).toLocaleString()}
-                                </td>
+                                {(() => {
+                                  const bConv = convertForDisplay(Number(b.totalAmount || 0), b.currency || 'USD');
+                                  return (
+                                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
+                                      <div>{bConv.formatted}</div>
+                                      {bConv.isConverted && (
+                                        <div className="text-[9px] text-slate-400 font-normal">Booked: {bConv.nativeFormatted}</div>
+                                      )}
+                                    </td>
+                                  );
+                                })()}
                                 <td className="py-3 px-3">
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                     b.status === 'CONFIRMED'
@@ -1436,9 +1472,17 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                                       <td className="py-3 px-3 text-slate-700">
                                         {p.trancheLabel || 'Tranche'}
                                       </td>
-                                      <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                                        {p.currency || 'USD'} {Number(p.amount || 0).toLocaleString()}
-                                      </td>
+                                      {(() => {
+                                        const pConv = convertForDisplay(Number(p.amount || 0), p.currency || b.currency || 'USD');
+                                        return (
+                                          <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
+                                            <div>{pConv.formatted}</div>
+                                            {pConv.isConverted && (
+                                              <div className="text-[9px] text-slate-400 font-normal">Paid: {pConv.nativeFormatted}</div>
+                                            )}
+                                          </td>
+                                        );
+                                      })()}
                                       <td className="py-3 px-3">
                                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                           p.verificationStatus === 'VERIFIED'

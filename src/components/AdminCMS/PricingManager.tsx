@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Product, CurrencyCode, Destination, ProductCategory, SUPPORTED_CURRENCIES } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { formatCurrency, calculateSellingPrice, calculateUnifiedPrice } from '../../services/pricingEngine';
 import { MarginCommissionGovernanceView } from './MarginCommissionGovernanceView';
 import { 
@@ -31,6 +32,7 @@ interface PricingManagerProps {
 export const PricingManager: React.FC<PricingManagerProps> = ({ destinations, activeMode = 'PRICING' }) => {
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const [products, setProducts] = useState<Product[]>(() => db.getProducts());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
@@ -406,12 +408,24 @@ export const PricingManager: React.FC<PricingManagerProps> = ({ destinations, ac
                     </td>
 
                     <td className="py-3 px-4">
-                      <div className="font-bold font-mono text-[#008972] text-xs">
-                        {formatCurrency(product.sellingPriceStartingFrom, currentCurrency)}
-                      </div>
-                      <div className="text-[9px] text-slate-400">
-                        {currentCurrency} Final Calculated
-                      </div>
+                      {(() => {
+                        const sellConv = convertForDisplay(product.sellingPriceStartingFrom || 0, currentCurrency);
+                        return (
+                          <>
+                            <div className="font-bold font-mono text-[#008972] text-xs">
+                              {formatCurrency(product.sellingPriceStartingFrom, currentCurrency)}
+                            </div>
+                            <div className="text-[9px] text-slate-400">
+                              {currentCurrency} Final Calculated
+                            </div>
+                            {sellConv.isConverted && (
+                              <div className="text-[9px] font-mono font-semibold text-indigo-700 mt-0.5">
+                                Display: {sellConv.formatted}
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </td>
 
                     <td className="py-3 px-3">

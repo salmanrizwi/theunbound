@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { AppDatabase } from '../../services/db';
 import { Hotel, HotelRoomType, HotelRate, HotelDailyPriceOverride, Destination, MealPlanCode, DestinationRegionItem, CityHub, MasterRegion } from '../../types';
 import { useAuth } from '../../context/AuthContext';
+import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { ImageUploadOrUrlInput } from '../ImageUploadOrUrlInput';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
@@ -52,6 +53,7 @@ const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
   const { user } = useAuth();
+  const { convertForDisplay } = useDisplayCurrency();
   const db = AppDatabase.getInstance();
   const [hotels, setHotels] = useState<Hotel[]>(db.getHotels());
   const [masterRegions, setMasterRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
@@ -1111,12 +1113,24 @@ export const HotelManager: React.FC<HotelManagerProps> = ({ destinations }) => {
                           </span>
                         </div>
                         
-                        <div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-200">
-                          <span className="text-slate-500 font-medium">Per-Night Net Starting Rate:</span>
-                          <span className="font-extrabold text-[#008972] font-mono text-sm">
-                            {hotel.currency} {hotel.startingNetPrice} <span className="text-[10px] font-normal text-slate-500">/ night</span>
-                          </span>
-                        </div>
+                        {(() => {
+                          const rateConv = convertForDisplay(hotel.startingNetPrice || 0, hotel.currency || 'USD');
+                          return (
+                            <div className="pt-1.5 border-t border-slate-200 space-y-0.5">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-500 font-medium">Per-Night Net Starting Rate:</span>
+                                <span className={`font-extrabold font-mono text-sm ${rateConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-[#008972]'}`}>
+                                  {rateConv.formatted} <span className="text-[10px] font-normal text-slate-500">/ night</span>
+                                </span>
+                              </div>
+                              {rateConv.isConverted && (
+                                <div className="text-right text-[10px] font-mono text-slate-400">
+                                  Native: {rateConv.nativeFormatted} / night
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>

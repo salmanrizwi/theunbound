@@ -236,13 +236,22 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
       (h.stateProvince && h.stateProvince.toLowerCase().includes(q))
     );
 
-    const matchedProducts = activeProducts.filter(p => 
-      (p.name || '').toLowerCase().includes(q) ||
-      (p.city || '').toLowerCase().includes(q) ||
-      (p.country || '').toLowerCase().includes(q) ||
-      (p.category || '').toLowerCase().includes(q) ||
-      (p.sku && p.sku.toLowerCase().includes(q))
-    );
+    const seenMatchedProductIds = new Set<string>();
+    const matchedProducts = activeProducts.filter(p => {
+      if (!p || !p.id || seenMatchedProductIds.has(p.id)) return false;
+      const matches =
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.city || '').toLowerCase().includes(q) ||
+        (p.regionName && p.regionName.toLowerCase().includes(q)) ||
+        (Array.isArray(p.regionNames) && p.regionNames.some(rn => (rn || '').toLowerCase().includes(q))) ||
+        (Array.isArray(p.hubNames) && p.hubNames.some(hn => (hn || '').toLowerCase().includes(q))) ||
+        (p.country || '').toLowerCase().includes(q) ||
+        (p.category || '').toLowerCase().includes(q) ||
+        (p.sku && p.sku.toLowerCase().includes(q));
+      if (!matches) return false;
+      seenMatchedProductIds.add(p.id);
+      return true;
+    });
 
     const matchedHotels = activeHotels.filter(h => 
       (h.name || '').toLowerCase().includes(q) ||

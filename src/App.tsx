@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { DisplayCurrencyProvider } from './context/DisplayCurrencyContext';
 import { QuotationProvider, useQuotation } from './context/QuotationContext';
 import { RosterProvider } from './context/RosterContext';
 import { AppDatabase } from './services/db';
@@ -841,11 +842,13 @@ const MainAppContent: React.FC = () => {
 export default function App() {
   return (
     <AuthProvider>
-      <RosterProvider>
-        <QuotationProvider>
-          <MainAppContent />
-        </QuotationProvider>
-      </RosterProvider>
+      <DisplayCurrencyProvider>
+        <RosterProvider>
+          <QuotationProvider>
+            <MainAppContent />
+          </QuotationProvider>
+        </RosterProvider>
+      </DisplayCurrencyProvider>
     </AuthProvider>
   );
 }
