@@ -7889,6 +7889,8 @@ export interface B2BPackage {
   regionNames?: string[];
   destinationId: string;
   destinationName: string;
+  destinationIds?: string[];
+  destinationNames?: string[];
   hubIds?: string[];
   hubNames?: string[];
   durationDays: number;
@@ -7901,6 +7903,10 @@ export interface B2BPackage {
   description: string;
   detailedDescription?: string;
   isLandOnly?: boolean;
+  /** Authoritative package-level Licensed Guide boolean configuration (strictly true/false; missing never defaults to true) */
+  licensedGuideIncluded?: boolean;
+  /** Non-destructive audit state for legacy packages lacking explicit guide configuration */
+  licensedGuideAuditStatus?: 'EXPLICIT' | 'NEEDS_REVIEW';
   manualHotels?: ManualHotelDetails[];
   routeSummary: string[]; // e.g. ['Tokyo (3N)', 'Kyoto (2N)', 'Osaka (2N)']
   routeHubs?: TripRouteHub[];
@@ -7923,6 +7929,16 @@ export interface B2BPackage {
   inclusions: string[];
   exclusions: string[];
   termsAndConditions?: string;
+  /** Authoritative synchronized destination-level Commercial Quotation Terms snapshot */
+  destinationTermsSnapshot?: QuotationCommercialTermsSnapshot;
+  destinationTermsStatus?: QuotationTermsStatus;
+  destinationTermsConfigRefs?: Array<{
+    destinationId: string;
+    destinationName: string;
+    termsConfigId: string;
+    version: number;
+    capturedAt: string;
+  }>;
   cancellationPolicy?: string;
   importantInformation?: string;
   baseNetCostUSD: number;

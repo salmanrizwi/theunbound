@@ -58,6 +58,8 @@ import {
   Archive
 } from 'lucide-react';
 import { PackageDetailModal } from '../PackageDetailModal';
+import { resolvePackageLicensedGuideState } from '../../services/packageToQuoteTransformer';
+import { destinationTermsService } from '../../services/destinationTermsService';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { EntitySEO } from '../../types/seo';
 import { useAuth } from '../../context/AuthContext';
@@ -249,6 +251,10 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
       detailedDescription: '',
       routeSummary: [], // Explicitly empty array
       routeHubs: [], // Explicitly empty array
+      destinationIds: defaultDest.id ? [defaultDest.id] : [],
+      destinationNames: defaultDest.name ? [defaultDest.name] : [],
+      licensedGuideIncluded: false,
+      licensedGuideAuditStatus: 'EXPLICIT',
       hotelsSummary: [],
       productIds: [],
       productReferences: [],
@@ -258,10 +264,10 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
         title: i === 0 ? 'Arrival & Private Chauffeur Transfer' : i === 6 ? 'Departure Chauffeur & Farewell' : `Day ${i + 1} Sightseeing & Discovery`,
         hubId: undefined,
         hubName: undefined,
-        description: `Scheduled private excursions, cultural immersion, and leisure time in ${defaultDest.name}.`,
+        description: `Scheduled excursions, cultural immersion, and leisure time in ${defaultDest.name}.`,
         productIds: [],
         mealsIncluded: { breakfast: true, lunch: false, dinner: false },
-        guideIncluded: true,
+        guideIncluded: false,
         freeTime: false
       })),
       pricingConfiguration: {
@@ -292,13 +298,12 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
       },
       highlights: [
         'Dedicated 24/7 bilingual ground operations dispatch across all prefectures',
-        'Private Mercedes-Benz chauffeur transfers throughout itinerary',
-        'Accredited private licensed docents for all landmark touring'
+        'Private Mercedes-Benz chauffeur transfers throughout itinerary'
       ],
       inclusions: [
         '6 nights 5★ luxury accommodation with daily breakfast',
         'Private airport VIP meet & greet and chauffeur transfers',
-        'All listed private guided sightseeing tours with entrance fees included',
+        'All listed sightseeing excursions with entrance fees as configured',
         'High-speed express rail passes with reserved seating'
       ],
       exclusions: [
@@ -306,7 +311,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
         'Travel and medical insurance',
         'Personal incidental expenditures and gratuities'
       ],
-      termsAndConditions: 'Package prices are based on double occupancy. Subject to availability at time of confirmation.',
+      termsAndConditions: '',
       cancellationPolicy: 'Full refund up to 30 days prior to arrival. 50% cancellation fee between 15-29 days.',
       importantInformation: 'Passport must be valid for at least 6 months beyond the intended date of departure.',
       baseNetCostUSD: 2800,
@@ -674,36 +679,38 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
 
       {/* Cards View */}
       {viewMode === 'CARDS' && filteredPackages.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
           {filteredPackages.map(pkg => {
             const isPub = pkg.status === 'PUBLISHED' || pkg.isPublished;
-            const pricingMode = pkg.pricingConfiguration?.pricingMode || 'LIVE';
             const durationText = `${pkg.durationNights || (pkg.durationDays - 1)}N / ${pkg.durationDays}D`;
+            const guideState = resolvePackageLicensedGuideState(pkg);
+            const termsEval = destinationTermsService.evaluatePackageDestinationTerms(pkg);
+            const hasTermsMissing = termsEval.missingTargets.length > 0;
 
             return (
               <div 
                 key={pkg.id} 
-                className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
+                className="min-w-0 bg-white rounded-3xl border border-slate-200/90 shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
               >
                 {/* Card Top: Hero Image & Badges */}
-                <div>
-                  <div className="relative h-44 w-full overflow-hidden bg-slate-100">
+                <div className="min-w-0">
+                  <div className="relative min-h-[12rem] h-48 w-full rounded-t-3xl overflow-hidden bg-slate-100">
                     <img 
                       src={pkg.heroImage || 'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=800'} 
                       alt={pkg.title}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-black/30" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-black/35" />
 
                     {/* Top Badges */}
-                    <div className="absolute top-3 left-3 right-3 flex items-center justify-between">
-                      <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-extrabold uppercase tracking-wider flex items-center space-x-1">
-                        <MapPin className="w-3 h-3 text-[#00C6A6]" />
-                        <span>{pkg.destinationName}</span>
+                    <div className="absolute top-3 left-3 right-3 flex flex-wrap items-center justify-between gap-1.5">
+                      <span className="px-2.5 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-extrabold uppercase tracking-wider flex items-center space-x-1 max-w-[65%] truncate">
+                        <MapPin className="w-3 h-3 text-[#00C6A6] shrink-0" />
+                        <span className="truncate">{pkg.destinationName}</span>
                       </span>
 
-                      <div className="flex items-center space-x-1.5">
+                      <div className="flex items-center space-x-1.5 shrink-0">
                         <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider flex items-center space-x-1 ${
                           isPub 
                             ? 'bg-emerald-500 text-white' 
@@ -722,17 +729,50 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                       <span className="inline-block px-2 py-0.5 rounded-md bg-white/20 backdrop-blur-md text-[10px] font-bold uppercase tracking-wider mb-1">
                         {pkg.tripType || 'LUXURY'} • {durationText}
                       </span>
-                      <h3 className="text-base font-black leading-tight line-clamp-1 drop-shadow-sm">
+                      <h3 className="text-base font-black leading-snug line-clamp-2 break-words drop-shadow-sm">
                         {pkg.title}
                       </h3>
                     </div>
                   </div>
 
                   {/* Body Content */}
-                  <div className="p-4 space-y-3">
-                    <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                  <div className="p-4 space-y-3 min-w-0">
+                    <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed break-words">
                       {pkg.tagline || pkg.description}
                     </p>
+
+                    {/* Configuration & Sync Indicators */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {guideState.enabled ? (
+                        <span className="px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-bold">
+                          Licensed Guide: Included
+                        </span>
+                      ) : guideState.needsReview ? (
+                        <span
+                          className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold"
+                          title="Legacy package missing explicit Licensed Guide setting — edit and save to confirm"
+                        >
+                          Guide Config: Needs Review
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-bold">
+                          No Licensed Guide
+                        </span>
+                      )}
+
+                      {hasTermsMissing ? (
+                        <span
+                          className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold"
+                          title={`Missing destination-level terms for: ${termsEval.missingTargets.map((m) => m.targetName).join(', ')}`}
+                        >
+                          Destination Terms Missing
+                        </span>
+                      ) : termsEval.resolvedEntries.length > 0 ? (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                          Terms Synced ({termsEval.resolvedEntries.length})
+                        </span>
+                      ) : null}
+                    </div>
 
                     {/* Route Flow Chips */}
                     {pkg.routeSummary && pkg.routeSummary.length > 0 && (
@@ -762,8 +802,8 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                       const nettConv = convertForDisplay(dispNett, dispCurrency);
                       const sellingConv = convertForDisplay(dispSelling, dispCurrency);
                       return (
-                        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex items-center justify-between gap-2">
-                          <div>
+                        <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
                               Nett Price
                             </span>
@@ -777,7 +817,7 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                             )}
                           </div>
 
-                          <div className="text-right">
+                          <div className="text-right min-w-0">
                             <span className="text-[10px] font-bold text-[#008972] uppercase tracking-wider block">
                               Calculated Selling Price
                             </span>
@@ -796,51 +836,60 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                   </div>
                 </div>
 
-                {/* Card Action Footer */}
-                <div className="p-3.5 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-1.5">
-                  <div className="flex items-center space-x-1">
+                {/* Card Action Footer — Responsive Wrap-Safe Layout (No Button Clipping) */}
+                <div className="p-3.5 bg-slate-50 border-t border-slate-100 rounded-b-3xl flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex flex-wrap items-center gap-1">
                     <button
+                      type="button"
                       onClick={() => setPreviewPackage(pkg)}
-                      className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
+                      className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
                       title="Preview Itinerary & Customer View"
+                      aria-label="Preview Package"
                     >
                       <Eye className="w-3.5 h-3.5" />
                     </button>
 
                     <button
+                      type="button"
                       onClick={() => handleDuplicate(pkg)}
-                      className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
+                      className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-200 rounded-xl transition-all cursor-pointer"
                       title="Duplicate as Draft"
+                      aria-label="Duplicate Package"
                     >
                       <Copy className="w-3.5 h-3.5" />
                     </button>
 
                     <button
+                      type="button"
                       onClick={() => handleTogglePublish(pkg)}
-                      className={`p-2 rounded-xl transition-all cursor-pointer ${
+                      className={`p-2 min-h-[36px] min-w-[36px] flex items-center justify-center rounded-xl transition-all cursor-pointer ${
                         isPub 
                           ? 'text-emerald-700 hover:bg-emerald-100' 
                           : 'text-amber-700 hover:bg-amber-100'
                       }`}
                       title={isPub ? 'Unpublish from public catalog' : 'Publish live to public catalog'}
+                      aria-label={isPub ? 'Unpublish Package' : 'Publish Package'}
                     >
                       {isPub ? <Globe className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                     </button>
 
                     <button
+                      type="button"
                       onClick={() => setDeleteConfirmId(pkg.id)}
-                      className="p-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
+                      className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
                       title="Delete Package"
+                      aria-label="Delete Package"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
 
-                  <div className="flex items-center space-x-2">
+                  <div className="flex flex-wrap items-center gap-2 flex-1 sm:flex-initial justify-end min-w-0">
                     {onCustomizePackage && (
                       <button
+                        type="button"
                         onClick={() => onCustomizePackage(pkg)}
-                        className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-[11px] font-bold transition-all cursor-pointer"
+                        className="flex-1 sm:flex-none min-h-[36px] px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center justify-center"
                         title="Open in Quotation Builder"
                       >
                         Customize
@@ -848,10 +897,11 @@ export const PackageManager: React.FC<PackageManagerProps> = ({
                     )}
 
                     <button
+                      type="button"
                       onClick={() => handleEdit(pkg)}
-                      className="inline-flex items-center space-x-1 px-3.5 py-1.5 bg-slate-900 hover:bg-[#008972] text-white rounded-xl text-[11px] font-black transition-all cursor-pointer"
+                      className="flex-1 sm:flex-none min-h-[36px] inline-flex items-center justify-center space-x-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-[#008972] text-white rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap"
                     >
-                      <Edit3 className="w-3 h-3" />
+                      <Edit3 className="w-3.5 h-3.5 shrink-0" />
                       <span>Edit</span>
                     </button>
                   </div>

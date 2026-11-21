@@ -645,8 +645,8 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                       </p>
                     </div>
 
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <div>
+                    <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
                         <span className="text-[10px] text-slate-400 block leading-tight font-bold uppercase tracking-wider">Final Selling Price</span>
                         <div className="flex items-baseline space-x-1">
                           <span className="text-xs font-black text-slate-900 font-mono">
@@ -657,6 +657,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                       </div>
 
                       <button
+                        type="button"
                         onClick={() => {
                           if (onOpenPackageCustomizer) {
                             onOpenPackageCustomizer(pkg);
@@ -664,7 +665,7 @@ export const B2BDashboardView: React.FC<B2BDashboardViewProps> = ({
                             onNavigate('CREATE_QUOTE');
                           }
                         }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white text-xs font-bold transition-colors cursor-pointer"
+                        className="min-h-[36px] px-3.5 py-1.5 rounded-xl bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white text-xs font-bold transition-colors cursor-pointer whitespace-nowrap"
                       >
                         Customize
                       </button>

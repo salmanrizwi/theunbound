@@ -10,13 +10,16 @@ import {
   PackageProductRef,
   PackageStatus,
   Product,
+  QuotationCommercialTermsSnapshot,
   QuotationScope,
+  QuotationTermsStatus,
   QuoteItem,
   TripRouteHub,
   User,
   UserRole
 } from '../types';
 import { db } from './db';
+import { destinationTermsService } from './destinationTermsService';
 import {
   buildPackageCalculationDiagnostics,
   calculatePackagePrice,
@@ -34,15 +37,133 @@ import {
 } from '../utils/hotelHelpers';
 import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
 import { richTextToPlainText } from '../utils/richTextFormatter';
-import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../constants/commercialQuotationTerms';
+
+/**
+ * Strict boolean parser: returns true ONLY for literal boolean true,
+ * false ONLY for literal boolean false, and undefined for missing/non-boolean values.
+ * NEVER converts undefined, null, or strings like "false" into true.
+ */
+export function parseStrictBoolean(val: unknown): boolean | undefined {
+  if (val === true) return true;
+  if (val === false) return false;
+  return undefined;
+}
+
+export interface PackageLicensedGuideState {
+  enabled: boolean;
+  isConfigured: boolean;
+  needsReview: boolean;
+  hasConflict: boolean;
+  source: 'PACKAGE_FLAG' | 'DAY_FLAGS_LEGACY' | 'MISSING_CONFIG';
+}
+
+/**
+ * Single authoritative resolver for Pre-Curated Package Licensed Guide state.
+ * - Explicitly false at package level ALWAYS means disabled (never overridden by day defaults).
+ * - Missing/undefined config NEVER defaults to true; marks needsReview = true for Admin audit.
+ */
+export function resolvePackageLicensedGuideState(
+  pkg: Partial<B2BPackage> | null | undefined
+): PackageLicensedGuideState {
+  if (!pkg) {
+    return {
+      enabled: false,
+      isConfigured: false,
+      needsReview: true,
+      hasConflict: false,
+      source: 'MISSING_CONFIG'
+    };
+  }
+
+  const pkgFlag = parseStrictBoolean(pkg.licensedGuideIncluded);
+  const itinerary = Array.isArray(pkg.itinerary) ? pkg.itinerary : [];
+  const dayFlags = itinerary.map((d) => parseStrictBoolean(d?.guideIncluded));
+  const anyDayTrue = dayFlags.some((f) => f === true);
+  const anyDayExplicit = dayFlags.some((f) => f !== undefined);
+
+  if (pkgFlag === false) {
+    return {
+      enabled: false,
+      isConfigured: true,
+      needsReview: false,
+      hasConflict: anyDayTrue,
+      source: 'PACKAGE_FLAG'
+    };
+  }
+
+  if (pkgFlag === true) {
+    return {
+      enabled: true,
+      isConfigured: true,
+      needsReview: false,
+      hasConflict: false,
+      source: 'PACKAGE_FLAG'
+    };
+  }
+
+  // Legacy package without top-level `licensedGuideIncluded`: inspect day-level explicit booleans
+  if (anyDayExplicit) {
+    return {
+      enabled: anyDayTrue,
+      isConfigured: true,
+      needsReview: false,
+      hasConflict: false,
+      source: 'DAY_FLAGS_LEGACY'
+    };
+  }
+
+  // No explicit boolean anywhere: NEVER assume true; flag for Admin review
+  return {
+    enabled: false,
+    isConfigured: false,
+    needsReview: true,
+    hasConflict: false,
+    source: 'MISSING_CONFIG'
+  };
+}
+
+export function isPackageLicensedGuideEnabled(pkg: Partial<B2BPackage> | null | undefined): boolean {
+  return resolvePackageLicensedGuideState(pkg).enabled === true;
+}
+
+export function isDayLicensedGuideEnabled(
+  pkg: Partial<B2BPackage> | null | undefined,
+  day: Partial<PackageItineraryDay> | null | undefined
+): boolean {
+  if (!pkg || !day) return false;
+  const pkgFlag = parseStrictBoolean(pkg.licensedGuideIncluded);
+  if (pkgFlag === false) return false;
+  return parseStrictBoolean(day.guideIncluded) === true;
+}
+
+const AUTO_LICENSED_GUIDE_BOILERPLATE_PATTERNS = [
+  /accredited\s+private\s+licensed\s+docent/i,
+  /^licensed\s+guide(\s+included)?$/i,
+  /english[\s-]+speaking\s+licensed\s+(tour\s+)?guide\s+included/i,
+  /private\s+licensed\s+(tour\s+)?guide\s+included/i
+];
+
+export function sanitizePackageGuideTextList(
+  entries: string[] | undefined,
+  licensedGuideEnabled: boolean
+): string[] {
+  const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+  if (licensedGuideEnabled) return list;
+  return list.filter(
+    (entry) => !AUTO_LICENSED_GUIDE_BOILERPLATE_PATTERNS.some((rx) => rx.test(entry.trim()))
+  );
+}
 
 export interface TransformedPackageQuoteState {
   sourcePackageId: string;
   sourcePackageName: string;
   sourcePackageSlug: string;
   sourcePackageUpdatedAt: string;
+  licensedGuideIncluded: boolean;
   quoteTitle: string;
   destination: Destination;
+  destinationIds: string[];
+  destinationNames: string[];
   quotationScope: QuotationScope;
   tripType: string;
   travelStyle: string;
@@ -61,6 +182,9 @@ export interface TransformedPackageQuoteState {
   highlights: string[];
   importantInformation: string;
   termsAndConditions: string;
+  commercialTermsSnapshot?: QuotationCommercialTermsSnapshot;
+  termsStatus?: QuotationTermsStatus;
+  missingTermsDestinations?: string[];
   cancellationPolicy: string;
   agentNotes: string;
   currency: CurrencyCode;
@@ -129,7 +253,10 @@ export function normalizePackageRecord(raw: any): B2BPackage {
         productIds,
         transferId: day.transferId || undefined,
         railId: day.railId || undefined,
-        guideIncluded: Boolean(day.guideIncluded),
+        guideIncluded:
+          parseStrictBoolean(raw.licensedGuideIncluded) === false
+            ? false
+            : parseStrictBoolean(day.guideIncluded) === true,
         freeTime: Boolean(day.freeTime),
         notes: day.notes || day.operationalNotes || undefined
       };
@@ -983,14 +1110,25 @@ export function transformPackageToQuoteState(
     if (mealTags.length > 0) {
       noteParts.push(`Meals Included: ${mealTags.join(', ')}`);
     }
-    if (day.guideIncluded) {
+    if (isDayLicensedGuideEnabled(pkg, day)) {
       noteParts.push('Licensed Guide Included');
     }
     if (day.freeTime) {
       noteParts.push('Includes Leisure / Free Time');
     }
     if (day.operationalNotes || day.notes) {
-      noteParts.push(cleanPackageText(day.operationalNotes || day.notes));
+      const cleanedOpNote = cleanPackageText(day.operationalNotes || day.notes);
+      // If package-level Licensed Guide is disabled, strip stale auto-generated "Licensed Guide Included" token from notes
+      const sanitizedOpNote = isDayLicensedGuideEnabled(pkg, day)
+        ? cleanedOpNote
+        : cleanedOpNote
+            .split(/\s*•\s*/)
+            .filter((part) => !/^licensed\s+guide\s+included$/i.test(part.trim()))
+            .join(' • ')
+            .trim();
+      if (sanitizedOpNote) {
+        noteParts.push(sanitizedOpNote);
+      }
     }
     if (noteParts.length > 0) {
       dayNotes[dayNum] = noteParts.join(' • ');
@@ -1095,13 +1233,36 @@ export function transformPackageToQuoteState(
     buildPackageCalculationDiagnostics(pkg.id, pkg.title, quoteItems, targetCurrency, user);
   }
 
+  // 10. Resolve Authoritative Licensed Guide state & Destination-Level Commercial Quotation Terms
+  const guideState = resolvePackageLicensedGuideState(pkg);
+  const effectiveLicensedGuide = guideState.enabled === true;
+
+  const pkgTermsEval = destinationTermsService.evaluatePackageDestinationTerms(pkg, {
+    user,
+    quoteVersion: 1,
+    isFinalised: false
+  });
+  const effectiveTermsSnapshot =
+    pkgTermsEval.resolvedEntries.length > 0 || pkgTermsEval.termsStatus === 'TERMS_MISSING'
+      ? pkgTermsEval.snapshot
+      : pkg.destinationTermsSnapshot;
+  const effectiveTermsStatus =
+    pkgTermsEval.destinationTargets.length > 0
+      ? pkgTermsEval.termsStatus
+      : pkg.destinationTermsStatus;
+  const effectiveTermsPlainText =
+    effectiveTermsSnapshot?.combinedPlainText || '';
+
   return {
     sourcePackageId: pkg.id,
     sourcePackageName: pkg.title,
     sourcePackageSlug: pkg.slug,
     sourcePackageUpdatedAt: pkg.updatedAt,
+    licensedGuideIncluded: effectiveLicensedGuide,
     quoteTitle: pkg.title,
     destination: matchedDestination,
+    destinationIds: pkgTermsEval.destinationTargets.map((t) => t.targetId),
+    destinationNames: pkgTermsEval.destinationTargets.map((t) => t.targetName),
     quotationScope,
     tripType: pkg.tripType || 'CULTURAL',
     travelStyle: pkg.tripType ? `${pkg.tripType.charAt(0)}${pkg.tripType.slice(1).toLowerCase()} Curated` : 'Luxury Curated',
@@ -1115,11 +1276,14 @@ export function transformPackageToQuoteState(
     dayDescriptions,
     dayOverviews,
     dayNotes,
-    inclusions: [...(pkg.inclusions || [])],
+    inclusions: sanitizePackageGuideTextList(pkg.inclusions, effectiveLicensedGuide),
     exclusions: [...(pkg.exclusions || [])],
-    highlights: [...(pkg.highlights || [])],
+    highlights: sanitizePackageGuideTextList(pkg.highlights, effectiveLicensedGuide),
     importantInformation: cleanPackageText(pkg.importantInformation),
-    termsAndConditions: COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+    termsAndConditions: effectiveTermsPlainText,
+    commercialTermsSnapshot: effectiveTermsSnapshot,
+    termsStatus: effectiveTermsStatus,
+    missingTermsDestinations: pkgTermsEval.missingTargets.map((t) => t.targetName),
     cancellationPolicy: cleanPackageText(pkg.cancellationPolicy),
     agentNotes: summaryLines.join('\n\n'),
     currency: targetCurrency
@@ -1163,6 +1327,9 @@ export interface QuoteWorkspaceToPackageInput {
   importantInformation?: string;
   cancellationPolicy?: string;
   termsAndConditions?: string;
+  licensedGuideIncluded?: boolean;
+  destinationIds?: string[];
+  destinationNames?: string[];
   sourceQuoteId?: string;
   sourceSnapshotVersion?: number;
   sourceSnapshotHash?: string;
@@ -1807,12 +1974,17 @@ export function buildMasterPackageFromQuoteWorkspace(
         dayOpNotes.toLowerCase().includes('dinner')
     };
 
-    const hasGuide = dayMasterProducts.some(
-      p =>
-        (p.name || '').toLowerCase().includes('guide') ||
-        (p.name || '').toLowerCase().includes('private') ||
-        (p.inclusions || []).some(inc => inc.toLowerCase().includes('guide'))
-    );
+    const explicitInputGuideFlag = parseStrictBoolean(input.licensedGuideIncluded);
+    const existingPkgGuideFlag = parseStrictBoolean(existingPkg?.licensedGuideIncluded);
+    const dayExplicitlyNotesLicensedGuide = /licensed\s+guide\s+included/i.test(dayOpNotes);
+    const dayGuideIncluded =
+      explicitInputGuideFlag === false
+        ? false
+        : explicitInputGuideFlag === true
+          ? true
+          : existingPkgGuideFlag === false
+            ? false
+            : dayExplicitlyNotesLicensedGuide;
 
     itineraryDays.push({
       dayNumber: dayNum,
@@ -1832,7 +2004,7 @@ export function buildMasterPackageFromQuoteWorkspace(
       productIds: dayProductIds,
       transferId: dayTransferId,
       railId: dayRailId,
-      guideIncluded: hasGuide || true,
+      guideIncluded: dayGuideIncluded,
       freeTime: dayProductIds.length <= 1
     });
   }
@@ -1916,6 +2088,45 @@ export function buildMasterPackageFromQuoteWorkspace(
   const isFeatured = input.featured !== undefined ? Boolean(input.featured) : Boolean(existingPkg?.isFeatured ?? true);
   const timestamp = new Date().toISOString();
 
+  const resolvedPackageLicensedGuide =
+    parseStrictBoolean(input.licensedGuideIncluded) ??
+    parseStrictBoolean(existingPkg?.licensedGuideIncluded) ??
+    itineraryDays.some((d) => d.guideIncluded === true);
+
+  const normalizedItineraryWithGuide = itineraryDays.map((d) => ({
+    ...d,
+    guideIncluded: resolvedPackageLicensedGuide ? d.guideIncluded === true : false
+  }));
+
+  const resolvedDestIds = Array.from(
+    new Set([
+      ...(Array.isArray(input.destinationIds) ? input.destinationIds : []),
+      dest.id,
+      ...mappedRouteHubs.map((h) => h.destinationId).filter(Boolean)
+    ])
+  ).filter(Boolean) as string[];
+
+  const resolvedDestNames = Array.from(
+    new Set([
+      ...(Array.isArray(input.destinationNames) ? input.destinationNames : []),
+      dest.name,
+      ...mappedRouteHubs.map((h) => h.destinationName).filter(Boolean)
+    ])
+  ).filter(Boolean) as string[];
+
+  const pkgTermsSync = destinationTermsService.evaluatePackageDestinationTerms(
+    {
+      id: packageId,
+      destinationId: dest.id,
+      destinationName: dest.name,
+      destinationIds: resolvedDestIds,
+      destinationNames: resolvedDestNames,
+      routeHubs: mappedRouteHubs,
+      itinerary: normalizedItineraryWithGuide
+    },
+    { user: input.user }
+  );
+
   // 8. Construct Draft Package & Run Authoritative Centralized Pricing Engine
   const draftPkg: B2BPackage = {
     ...(existingPkg || {}),
@@ -1932,6 +2143,8 @@ export function buildMasterPackageFromQuoteWorkspace(
     regionIds: resolvedRegionIds.length > 0 ? resolvedRegionIds : (existingPkg?.regionIds || []),
     destinationId: dest.id,
     destinationName: dest.name,
+    destinationIds: resolvedDestIds,
+    destinationNames: resolvedDestNames,
     hubIds,
     hubNames,
     durationDays,
@@ -1940,18 +2153,23 @@ export function buildMasterPackageFromQuoteWorkspace(
     heroImage,
     galleryImages: galleryImages.length > 0 ? galleryImages : [heroImage],
     isLandOnly,
+    licensedGuideIncluded: resolvedPackageLicensedGuide,
+    licensedGuideAuditStatus: 'EXPLICIT',
     routeSummary,
     routeHubs: mappedRouteHubs,
     hotelsSummary,
     hotelReferences,
     manualHotels,
-    itinerary: itineraryDays,
+    itinerary: normalizedItineraryWithGuide,
     productIds: allProductIds,
     productReferences,
-    highlights: finalHighlights,
-    inclusions: finalInclusions,
+    highlights: sanitizePackageGuideTextList(finalHighlights, resolvedPackageLicensedGuide),
+    inclusions: sanitizePackageGuideTextList(finalInclusions, resolvedPackageLicensedGuide),
     exclusions: finalExclusions,
-    termsAndConditions: input.termsAndConditions || COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
+    termsAndConditions: pkgTermsSync.snapshot.combinedPlainText || '',
+    destinationTermsSnapshot: pkgTermsSync.snapshot,
+    destinationTermsStatus: pkgTermsSync.termsStatus,
+    destinationTermsConfigRefs: pkgTermsSync.configRefs,
     cancellationPolicy:
       input.cancellationPolicy ||
       existingPkg?.cancellationPolicy ||

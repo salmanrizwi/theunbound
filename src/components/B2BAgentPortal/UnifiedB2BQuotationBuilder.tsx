@@ -3772,18 +3772,34 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     (user.role === 'ADMIN' || (user as any).role === 'SUPER_ADMIN' || user.role === 'DMC_STAFF')
   );
 
+  const sourcePackageRecord = useMemo(() => {
+    if (!sourcePackageId) return null;
+    return db.getPackageById(sourcePackageId) || null;
+  }, [db, sourcePackageId]);
+
   const extractedTermsTargets = useMemo(() => {
-    return destinationTermsService.extractQuotationDestinationTargets({
+    const baseTargets = destinationTermsService.extractQuotationDestinationTargets({
       destinationId: currentDestination?.id,
       destinationName: currentDestination?.name,
       routeHubs,
       items
     });
-  }, [currentDestination?.id, currentDestination?.name, routeHubs, items]);
+    if (!sourcePackageId) return baseTargets;
+    const pkgDestTargets = sourcePackageRecord
+      ? destinationTermsService.extractPackageDestinationTargets(sourcePackageRecord)
+      : [];
+    const seen = new Set<string>();
+    const combined = [...pkgDestTargets, ...baseTargets].filter((t) => {
+      if (!t?.targetId || seen.has(t.targetId)) return false;
+      seen.add(t.targetId);
+      return true;
+    });
+    return combined;
+  }, [currentDestination?.id, currentDestination?.name, routeHubs, items, sourcePackageId, sourcePackageRecord]);
 
   const termsTargetSignature = useMemo(() => {
-    return extractedTermsTargets.map((t) => t.targetId).join('|');
-  }, [extractedTermsTargets]);
+    return `${sourcePackageId || 'custom'}::${extractedTermsTargets.map((t) => t.targetId).join('|')}`;
+  }, [extractedTermsTargets, sourcePackageId]);
 
   const isQuoteTermsFinalised = Boolean(
     loadedFinalisedSnapshot &&
@@ -3800,18 +3816,17 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   useEffect(() => {
     if (isQuoteTermsFinalised) return;
     let cancelled = false;
-    const targetIds = extractedTermsTargets.map((t) => t.targetId);
-    if (targetIds.length === 0) return;
+    if (extractedTermsTargets.length === 0) return;
 
-    const missingTargetIds = targetIds.filter(id => !loadedTermsTargetsRef.current.has(id));
-    if (missingTargetIds.length === 0) return;
+    const missingTargets = extractedTermsTargets.filter((t) => !loadedTermsTargetsRef.current.has(t.targetId));
+    if (missingTargets.length === 0) return;
 
     setTermsSyncLoading(true);
     destinationTermsService
-      .loadPublishedTermsForTargetsAsync(missingTargetIds)
+      .loadPublishedTermsForTargetsAsync(missingTargets)
       .then(() => {
         if (!cancelled) {
-          missingTargetIds.forEach(id => loadedTermsTargetsRef.current.add(id));
+          missingTargets.forEach((t) => loadedTermsTargetsRef.current.add(t.targetId));
           setTermsRefreshTick((n) => n + 1);
           setTermsSyncLoading(false);
         }
@@ -3823,7 +3838,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     return () => {
       cancelled = true;
     };
-  }, [termsTargetSignature, isQuoteTermsFinalised]);
+  }, [termsTargetSignature, isQuoteTermsFinalised, extractedTermsTargets]);
 
   // Listen for Admin CMS publication updates while a Draft quotation is open
   useEffect(() => {
@@ -3867,6 +3882,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       quoteVersion,
       destinationId: currentDestination?.id,
       destinationName: currentDestination?.name,
+      destinationIds: sourcePackageRecord?.destinationIds,
+      sourcePackageId,
       routeHubs,
       items,
       user,
@@ -3885,6 +3902,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     quoteVersion,
     currentDestination?.id,
     currentDestination?.name,
+    sourcePackageRecord?.destinationIds,
+    sourcePackageId,
     routeHubs,
     items,
     user,
@@ -3893,11 +3912,10 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   ]);
 
   const handleRefreshDraftTerms = useCallback(async () => {
-    const targetIds = extractedTermsTargets.map((t) => t.targetId);
-    if (targetIds.length === 0) return;
+    if (extractedTermsTargets.length === 0) return;
     setTermsSyncLoading(true);
     try {
-      await destinationTermsService.loadPublishedTermsForTargetsAsync(targetIds, true);
+      await destinationTermsService.loadPublishedTermsForTargetsAsync(extractedTermsTargets, true);
       setHasDraftTermsUpdateAvailable(false);
       setTermsRefreshTick((n) => n + 1);
       showBuilderToast('Destination Commercial Quotation Terms refreshed from latest published CMS configuration.', 'SUCCESS');

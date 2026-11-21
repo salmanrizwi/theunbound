@@ -12775,6 +12775,21 @@ export class AppDatabase {
     canonicalImageService.extractAllImagesFromRecord(pkg, 'PACKAGE', pkg.id);
     const pkgPrimaryDto = canonicalImageService.getCanonicalImageDto(pkg, 'PACKAGE');
 
+    const hasExplicitPkgGuide = typeof pkg.licensedGuideIncluded === 'boolean';
+    const normalizedItineraryForSave = Array.isArray(pkg.itinerary)
+      ? pkg.itinerary.map(day => ({
+          ...day,
+          guideIncluded:
+            pkg.licensedGuideIncluded === false
+              ? false
+              : day.guideIncluded === true
+                ? true
+                : day.guideIncluded === false
+                  ? false
+                  : false
+        }))
+      : pkg.itinerary;
+
     const updatedPkg: B2BPackage = { 
       ...pkg, 
       package_id: pkg.id,
@@ -12783,6 +12798,13 @@ export class AppDatabase {
       heroImage: pkg.heroImage || pkgPrimaryDto.url,
       primaryImageId: pkgPrimaryDto.imageId,
       primaryImage: pkgPrimaryDto as any,
+      ...(hasExplicitPkgGuide
+        ? {
+            licensedGuideIncluded: pkg.licensedGuideIncluded === true,
+            licensedGuideAuditStatus: 'EXPLICIT' as const
+          }
+        : {}),
+      itinerary: normalizedItineraryForSave,
       status,
       isPublished,
       updatedBy: user?.name || user?.email || 'Admin CMS',
@@ -12850,6 +12872,21 @@ export class AppDatabase {
     canonicalImageService.extractAllImagesFromRecord(pkg, 'PACKAGE', pkg.id);
     const pkgPrimaryDto = canonicalImageService.getCanonicalImageDto(pkg, 'PACKAGE');
 
+    const hasExplicitPkgGuide = typeof pkg.licensedGuideIncluded === 'boolean';
+    const normalizedItineraryForSave = Array.isArray(pkg.itinerary)
+      ? pkg.itinerary.map(day => ({
+          ...day,
+          guideIncluded:
+            pkg.licensedGuideIncluded === false
+              ? false
+              : day.guideIncluded === true
+                ? true
+                : day.guideIncluded === false
+                  ? false
+                  : false
+        }))
+      : pkg.itinerary;
+
     const updatedPkg: B2BPackage = {
       ...pkg,
       package_id: pkg.id,
@@ -12858,6 +12895,13 @@ export class AppDatabase {
       heroImage: pkg.heroImage || pkgPrimaryDto.url,
       primaryImageId: pkgPrimaryDto.imageId,
       primaryImage: pkgPrimaryDto as any,
+      ...(hasExplicitPkgGuide
+        ? {
+            licensedGuideIncluded: pkg.licensedGuideIncluded === true,
+            licensedGuideAuditStatus: 'EXPLICIT' as const
+          }
+        : {}),
+      itinerary: normalizedItineraryForSave,
       status,
       isPublished,
       updatedBy: user?.name || user?.email || 'Admin CMS',

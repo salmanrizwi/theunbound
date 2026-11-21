@@ -107,13 +107,13 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
             Ready-Made Packages in {destinationName || 'Destinations'}
           </h2>
           <p className="text-xs text-slate-500 max-w-2xl mt-1">
-            Pre-curated multi-city itineraries crafted with 5★ luxury accommodation, private chauffeur transfers, high-speed rail, and accredited local docents.
+            Pre-curated multi-city itineraries crafted with luxury accommodation, private chauffeur transfers, high-speed rail, and curated local experiences.
           </p>
         </div>
       </div>
 
       {/* Package Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {packages.map(pkg => {
           const durationText = `${pkg.durationNights || (pkg.durationDays - 1)}N / ${pkg.durationDays}D`;
           const pkgPriceResult = calculatePackagePrice({
@@ -126,12 +126,12 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
           return (
             <div
               key={pkg.id}
-              className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col justify-between group"
+              className="min-w-0 bg-white rounded-3xl border border-slate-200/90 shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col justify-between group"
             >
-              <div>
+              <div className="min-w-0">
                 {/* Hero Image Container */}
                 <div 
-                  className="relative h-40 sm:h-48 w-full overflow-hidden bg-slate-900 cursor-pointer"
+                  className="relative min-h-[11rem] h-44 sm:h-48 w-full rounded-t-3xl overflow-hidden bg-slate-900 cursor-pointer"
                   onClick={() => setSelectedPackage(pkg)}
                 >
                   <img
@@ -145,13 +145,13 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/20 to-black/20" />
 
                   {/* Top Badges */}
-                  <div className="absolute top-2.5 left-2.5 right-2.5 sm:top-3 sm:left-3 sm:right-3 flex items-center justify-between">
-                    <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider flex items-center space-x-1">
-                      <MapPin className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-[#00C6A6]" />
-                      <span>{pkg.destinationName}</span>
+                  <div className="absolute top-2.5 left-2.5 right-2.5 sm:top-3 sm:left-3 sm:right-3 flex flex-wrap items-center justify-between gap-1.5">
+                    <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider flex items-center space-x-1 max-w-[65%] truncate">
+                      <MapPin className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-[#00C6A6] shrink-0" />
+                      <span className="truncate">{pkg.destinationName}</span>
                     </span>
 
-                    <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-[#008972] text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider shadow-xs">
+                    <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-[#008972] text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider shadow-xs shrink-0">
                       {durationText}
                     </span>
                   </div>
@@ -161,15 +161,15 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
                     <span className="inline-block px-1.5 sm:px-2 py-0.5 rounded-md bg-white/20 backdrop-blur-md text-[8px] sm:text-[9px] font-bold uppercase tracking-wider mb-0.5 sm:mb-1">
                       {pkg.tripType || 'LUXURY'} CIRCUIT
                     </span>
-                    <h3 className="text-sm sm:text-base font-black leading-tight line-clamp-1 drop-shadow-xs">
+                    <h3 className="text-sm sm:text-base font-black leading-snug line-clamp-2 break-words drop-shadow-xs">
                       {pkg.title}
                     </h3>
                   </div>
                 </div>
 
                 {/* Card Body */}
-                <div className="p-3.5 sm:p-5 space-y-2.5 sm:space-y-3.5">
-                  <p className="text-[11px] sm:text-xs text-slate-600 line-clamp-2 leading-relaxed">
+                <div className="p-3.5 sm:p-5 space-y-2.5 sm:space-y-3.5 min-w-0">
+                  <p className="text-[11px] sm:text-xs text-slate-600 line-clamp-2 leading-relaxed break-words">
                     {pkg.tagline || pkg.description}
                   </p>
 
@@ -194,21 +194,21 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
 
                   {/* Value Props Strip */}
                   <div className="grid grid-cols-2 gap-1.5 sm:gap-2 pt-1 text-[10px] sm:text-[11px] text-slate-600 font-medium border-t border-slate-100">
-                    <div className="flex items-center space-x-1 sm:space-x-1.5">
-                      <Hotel className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#008972]" />
+                    <div className="flex items-center space-x-1 sm:space-x-1.5 min-w-0">
+                      <Hotel className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#008972] shrink-0" />
                       <span className="truncate">5★ Luxury Hotels</span>
                     </div>
-                    <div className="flex items-center space-x-1 sm:space-x-1.5">
-                      <Car className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#008972]" />
+                    <div className="flex items-center space-x-1 sm:space-x-1.5 min-w-0">
+                      <Car className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#008972] shrink-0" />
                       <span className="truncate">Private Chauffeur</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Card Footer */}
-              <div className="p-3 sm:p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
-                <div>
+              {/* Card Footer — Responsive Wrap-Safe Layout */}
+              <div className="p-3 sm:p-4 bg-slate-50 border-t border-slate-100 rounded-b-3xl flex flex-wrap items-center justify-between gap-2.5">
+                <div className="min-w-0">
                   <span className="text-[9px] sm:text-[10px] uppercase text-slate-400 font-bold block">
                     Final Price
                   </span>
@@ -217,17 +217,20 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
                   </span>
                 </div>
 
-                <div className="flex items-center space-x-1 sm:space-x-1.5">
+                <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto justify-end">
                   <button
+                    type="button"
                     onClick={() => setSelectedPackage(pkg)}
-                    className="p-1.5 sm:p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-200 active:bg-slate-300 rounded-xl transition-all cursor-pointer active:scale-95"
+                    className="p-2 min-h-[36px] min-w-[36px] flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-200 active:bg-slate-300 rounded-xl transition-all cursor-pointer active:scale-95"
                     title="View Full Itinerary & Details"
+                    aria-label="View Package Details"
                   >
                     <Eye className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   </button>
 
                   {isB2BAgent ? (
                     <button
+                      type="button"
                       onClick={() => {
                         if (onCustomizePackage) {
                           onCustomizePackage(pkg);
@@ -235,28 +238,30 @@ export const ReadyMadePackagesSection: React.FC<ReadyMadePackagesSectionProps> =
                           setSelectedPackage(pkg);
                         }
                       }}
-                      className="inline-flex items-center space-x-1 sm:space-x-1.5 px-3 sm:px-4 py-1.5 sm:py-2 bg-slate-900 hover:bg-[#008972] active:bg-[#00705d] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95"
+                      className="flex-1 sm:flex-none min-h-[36px] inline-flex items-center justify-center space-x-1.5 px-3.5 py-1.5 sm:py-2 bg-slate-900 hover:bg-[#008972] active:bg-[#00705d] text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs active:scale-95 whitespace-nowrap"
                     >
                       <span>Customize</span>
-                      <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                      <ArrowRight className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
                     </button>
                   ) : (
                     <>
                       <button
+                        type="button"
                         onClick={() => handleEnquire(pkg)}
-                        className="inline-flex items-center space-x-1 px-2.5 sm:px-3 py-1.5 sm:py-2 bg-slate-200/80 hover:bg-slate-300 active:bg-slate-400 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95"
+                        className="flex-1 sm:flex-none min-h-[36px] inline-flex items-center justify-center space-x-1 px-3 py-1.5 sm:py-2 bg-slate-200/80 hover:bg-slate-300 active:bg-slate-400 text-slate-800 rounded-xl text-xs font-bold transition-all cursor-pointer active:scale-95 whitespace-nowrap"
                         title="Enquire about this package"
                       >
-                        <MessageSquare className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#008972]" />
+                        <MessageSquare className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-[#008972] shrink-0" />
                         <span>Enquire</span>
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => handleBook(pkg)}
-                        className="inline-flex items-center space-x-1 sm:space-x-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 bg-[#008972] hover:bg-[#007360] active:bg-[#005f50] text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs active:scale-95"
+                        className="flex-1 sm:flex-none min-h-[36px] inline-flex items-center justify-center space-x-1.5 px-3.5 py-1.5 sm:py-2 bg-[#008972] hover:bg-[#007360] active:bg-[#005f50] text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs active:scale-95 whitespace-nowrap"
                         title="Instant Book this package"
                       >
-                        <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                        <Sparkles className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
                         <span>Book Now</span>
                       </button>
                     </>

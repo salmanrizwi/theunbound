@@ -60,6 +60,13 @@ import {
 } from 'lucide-react';
 import { EntitySEOSettingsTab } from './EntitySEOSettingsTab';
 import { EntitySEO } from '../../types/seo';
+import { destinationTermsService } from '../../services/destinationTermsService';
+import {
+  parseStrictBoolean,
+  resolvePackageLicensedGuideState,
+  sanitizePackageGuideTextList
+} from '../../services/packageToQuoteTransformer';
+import { RichTextRenderer } from '../common/RichTextRenderer';
 
 interface ReadyMadePackageBuilderProps {
   initialPackage: B2BPackage;
@@ -80,13 +87,27 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
   onSave,
   onClose
 }) => {
+  const initialGuideAudit = useMemo(
+    () => resolvePackageLicensedGuideState(initialPackage),
+    [initialPackage]
+  );
+
   // Main Package State
   const [pkg, setPkg] = useState<B2BPackage>(() => {
     // Deep clone to avoid mutating parent before save
     const cloned: B2BPackage = JSON.parse(JSON.stringify(initialPackage));
+    const guideState = resolvePackageLicensedGuideState(cloned);
+    const resolvedLicensedGuide = guideState.enabled === true;
+
     // Ensure nested structures are present
     cloned.hubIds = Array.isArray(cloned.hubIds) ? cloned.hubIds : [];
     cloned.hubNames = Array.isArray(cloned.hubNames) ? cloned.hubNames : [];
+    cloned.destinationIds = Array.isArray(cloned.destinationIds) && cloned.destinationIds.length > 0
+      ? cloned.destinationIds
+      : (cloned.destinationId ? [cloned.destinationId] : []);
+    cloned.destinationNames = Array.isArray(cloned.destinationNames) && cloned.destinationNames.length > 0
+      ? cloned.destinationNames
+      : (cloned.destinationName ? [cloned.destinationName] : []);
     cloned.highlights = cloned.highlights || [];
     cloned.inclusions = cloned.inclusions || [];
     cloned.exclusions = cloned.exclusions || [];
@@ -94,7 +115,12 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     cloned.routeSummary = cloned.routeSummary || [];
     cloned.hotelsSummary = cloned.hotelsSummary || [];
     cloned.productIds = cloned.productIds || [];
-    cloned.itinerary = cloned.itinerary || [];
+    cloned.licensedGuideIncluded = resolvedLicensedGuide;
+    cloned.licensedGuideAuditStatus = guideState.needsReview ? 'NEEDS_REVIEW' : 'EXPLICIT';
+    cloned.itinerary = (cloned.itinerary || []).map((day) => ({
+      ...day,
+      guideIncluded: resolvedLicensedGuide ? parseStrictBoolean(day.guideIncluded) === true : false
+    }));
     cloned.manualHotels = cloned.manualHotels || [];
     cloned.routeHubs = Array.isArray(cloned.routeHubs) ? cloned.routeHubs : [];
     cloned.isLandOnly = cloned.isLandOnly ?? false;
@@ -107,6 +133,74 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
     };
     return cloned;
   });
+
+  // Live Synchronised Destination-Level Commercial Quotation Terms
+  const [termsSyncLoading, setTermsSyncLoading] = useState(false);
+  const [termsSyncTick, setTermsSyncTick] = useState(0);
+
+  const packageDestinationTermsSignature = useMemo(() => {
+    const destIds = Array.isArray(pkg.destinationIds) ? pkg.destinationIds : [];
+    const hubDestIds = (pkg.routeHubs || []).map((h) => h.destinationId || h.hubId || '');
+    return `${pkg.destinationId || ''}|${destIds.join(',')}|${hubDestIds.join(',')}`;
+  }, [pkg.destinationId, pkg.destinationIds, pkg.routeHubs]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTermsSyncLoading(true);
+    destinationTermsService
+      .loadPackageDestinationTermsAsync(pkg, { forceRefresh: false })
+      .then(() => {
+        if (!cancelled) {
+          setTermsSyncTick((n) => n + 1);
+          setTermsSyncLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setTermsSyncLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [packageDestinationTermsSignature]);
+
+  useEffect(() => {
+    return destinationTermsService.subscribe(() => {
+      setTermsSyncTick((n) => n + 1);
+    });
+  }, []);
+
+  const livePackageTerms = useMemo(() => {
+    return destinationTermsService.evaluatePackageDestinationTerms(pkg);
+  }, [pkg.destinationId, pkg.destinationName, pkg.destinationIds, pkg.destinationNames, pkg.routeHubs, pkg.itinerary, termsSyncTick]);
+
+  const handleRefreshDestinationTerms = async () => {
+    setTermsSyncLoading(true);
+    try {
+      await destinationTermsService.loadPackageDestinationTermsAsync(pkg, { forceRefresh: true });
+      setTermsSyncTick((n) => n + 1);
+      showToast('Destination-level Commercial Quotation Terms refreshed.', 'success');
+    } finally {
+      setTermsSyncLoading(false);
+    }
+  };
+
+  // Authoritative package-level Licensed Guide toggle (strict boolean; unchecking clears all day flags)
+  const handleTogglePackageLicensedGuide = (enabled: boolean) => {
+    setPkg((prev) => {
+      const updatedItinerary = (prev.itinerary || []).map((day) => ({
+        ...day,
+        guideIncluded: enabled
+      }));
+      return {
+        ...prev,
+        licensedGuideIncluded: enabled,
+        licensedGuideAuditStatus: 'EXPLICIT',
+        itinerary: updatedItinerary,
+        highlights: sanitizePackageGuideTextList(prev.highlights, enabled),
+        inclusions: sanitizePackageGuideTextList(prev.inclusions, enabled)
+      };
+    });
+  };
 
   // Active Workspace Tab
   const [activeTab, setActiveTab] = useState<
@@ -530,15 +624,57 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
           ? pkg.routeSummary
           : cleanHubNames.map(name => `${name} (${Math.max(1, Math.floor(durationNights / Math.max(1, cleanHubNames.length)))}N)`));
 
+    const effectiveLicensedGuide = pkg.licensedGuideIncluded === true;
+    const normalizedItinerary = (pkg.itinerary || []).map((day) => ({
+      ...day,
+      guideIncluded: effectiveLicensedGuide ? parseStrictBoolean(day.guideIncluded) === true : false
+    }));
+
+    const syncedDestIds = Array.from(
+      new Set([
+        ...(pkg.destinationId ? [pkg.destinationId] : []),
+        ...(Array.isArray(pkg.destinationIds) ? pkg.destinationIds : []),
+        ...cleanRouteHubs.map((h) => h.destinationId).filter(Boolean)
+      ])
+    ).filter(Boolean) as string[];
+
+    const syncedDestNames = syncedDestIds.map((did) => {
+      const matched = destinations.find((d) => d.id === did);
+      if (matched?.name) return matched.name;
+      if (did === pkg.destinationId && pkg.destinationName) return pkg.destinationName;
+      const idx = (pkg.destinationIds || []).indexOf(did);
+      if (idx >= 0 && pkg.destinationNames?.[idx]) return pkg.destinationNames[idx];
+      return did;
+    });
+
+    const syncedTermsEval = destinationTermsService.evaluatePackageDestinationTerms({
+      ...pkg,
+      destinationIds: syncedDestIds,
+      destinationNames: syncedDestNames,
+      routeHubs: cleanRouteHubs,
+      itinerary: normalizedItinerary
+    });
+
     const finalPkg: B2BPackage = {
       ...pkg,
       name: pkg.title.trim(),
       title: pkg.title.trim(),
+      destinationIds: syncedDestIds,
+      destinationNames: syncedDestNames,
       hubIds: cleanHubIds,
       hubNames: cleanHubNames,
       routeHubs: cleanRouteHubs,
       routeSummary: computedRouteSummary,
       productIds: Array.from(allItineraryProductIds),
+      licensedGuideIncluded: effectiveLicensedGuide,
+      licensedGuideAuditStatus: 'EXPLICIT',
+      itinerary: normalizedItinerary,
+      highlights: sanitizePackageGuideTextList(pkg.highlights, effectiveLicensedGuide),
+      inclusions: sanitizePackageGuideTextList(pkg.inclusions, effectiveLicensedGuide),
+      termsAndConditions: syncedTermsEval.snapshot.combinedPlainText || '',
+      destinationTermsSnapshot: syncedTermsEval.snapshot,
+      destinationTermsStatus: syncedTermsEval.termsStatus,
+      destinationTermsConfigRefs: syncedTermsEval.configRefs,
       slug,
       durationDays,
       durationNights,
@@ -849,6 +985,103 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                       alt="Hero Preview" 
                       className="w-full h-full object-cover"
                     />
+                  </div>
+                </div>
+              </div>
+
+              {/* AUTHORITATIVE PACKAGE-LEVEL LICENSED GUIDE & MULTI-DESTINATION CONFIGURATION */}
+              <div className="pt-4 border-t border-slate-100 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/80 space-y-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <label className="flex items-start space-x-3 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={pkg.licensedGuideIncluded === true}
+                        onChange={(e) => handleTogglePackageLicensedGuide(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 rounded text-[#008972] focus:ring-[#008972] border-slate-300 cursor-pointer accent-[#008972]"
+                      />
+                      <div>
+                        <span className="text-xs font-black text-slate-900 block">
+                          Include Licensed Guide in Package
+                        </span>
+                        <span className="text-[11px] text-slate-500 block mt-0.5 leading-relaxed">
+                          Single authoritative setting. When unchecked, Licensed Guide is disabled across all itinerary days, cards, Quote Builder, PDF, Email, and Booking outputs. Independently added Guide products remain unaffected.
+                        </span>
+                      </div>
+                    </label>
+                    <span
+                      className={`shrink-0 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                        pkg.licensedGuideIncluded === true
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-slate-200 text-slate-700 border border-slate-300'
+                      }`}
+                    >
+                      {pkg.licensedGuideIncluded === true ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                  {initialGuideAudit.needsReview && (
+                    <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 flex items-start space-x-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                      <span>
+                        Legacy package had no explicit Licensed Guide setting recorded — defaulted safely to <strong>Disabled</strong>. Save to record this explicit configuration.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50/80 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-black text-slate-900 block">
+                        Associated Destinations (Multi-Destination Terms Sync)
+                      </span>
+                      <span className="text-[11px] text-slate-500 block">
+                        Select any additional destinations included in this circuit so their destination-level Terms & Conditions synchronise automatically.
+                      </span>
+                    </div>
+                    <span className="shrink-0 text-[10px] font-bold text-slate-600 bg-white border border-slate-200 px-2 py-0.5 rounded-lg">
+                      {livePackageTerms.destinationTargets.length} Destination{livePackageTerms.destinationTargets.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {destinations.map((destOption) => {
+                      const isPrimary = destOption.id === pkg.destinationId;
+                      const currentDestIds = Array.isArray(pkg.destinationIds) && pkg.destinationIds.length > 0
+                        ? pkg.destinationIds
+                        : (pkg.destinationId ? [pkg.destinationId] : []);
+                      const isSelected = isPrimary || currentDestIds.includes(destOption.id);
+                      return (
+                        <button
+                          key={destOption.id}
+                          type="button"
+                          disabled={isPrimary}
+                          onClick={() => {
+                            if (isPrimary) return;
+                            const nextIds = isSelected
+                              ? currentDestIds.filter((id) => id !== destOption.id)
+                              : Array.from(new Set([...currentDestIds, destOption.id]));
+                            const nextNames = nextIds.map(
+                              (id) => destinations.find((d) => d.id === id)?.name || id
+                            );
+                            setPkg((prev) => ({
+                              ...prev,
+                              destinationIds: nextIds,
+                              destinationNames: nextNames
+                            }));
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                            isPrimary
+                              ? 'bg-slate-900 text-white border-slate-900 cursor-default'
+                              : isSelected
+                              ? 'bg-[#00C6A6]/15 text-teal-900 border-[#00C6A6] cursor-pointer'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300 cursor-pointer'
+                          }`}
+                          title={isPrimary ? 'Primary destination (change via Destination dropdown above)' : 'Toggle additional destination'}
+                        >
+                          {destOption.name}{isPrimary ? ' (Primary)' : ''}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -1403,15 +1636,18 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                     const days = pkg.itinerary || [];
                     const nextDayNum = days.length + 1;
                     const hub = (pkg.routeHubs || [])[Math.min(days.length, (pkg.routeHubs || []).length - 1)];
+                    const isPkgGuideEnabled = pkg.licensedGuideIncluded === true;
                     const newDay: PackageItineraryDay = {
                       dayNumber: nextDayNum,
                       title: `Day ${nextDayNum} Excursions & Discovery`,
                       hubId: hub?.hubId,
                       hubName: hub?.hubName,
-                      description: `Private guided experiences, cultural discovery, and leisure in ${hub?.hubName || 'the city'}.`,
+                      description: isPkgGuideEnabled
+                        ? `Private guided experiences, cultural discovery, and leisure in ${hub?.hubName || 'the city'}.`
+                        : `Scheduled excursions, cultural discovery, and leisure in ${hub?.hubName || 'the city'}.`,
                       productIds: [],
                       mealsIncluded: { breakfast: true, lunch: false, dinner: false },
-                      guideIncluded: true,
+                      guideIncluded: isPkgGuideEnabled,
                       freeTime: false
                     };
                     const updated = [...days, newDay];
@@ -1696,11 +1932,20 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                           <label className="flex items-center space-x-1.5 text-slate-700 font-semibold cursor-pointer">
                             <input
                               type="checkbox"
-                              checked={day.guideIncluded ?? true}
+                              checked={pkg.licensedGuideIncluded === true && day.guideIncluded === true}
                               onChange={(e) => {
+                                const isChecked = e.target.checked;
                                 const copy = [...(pkg.itinerary || [])];
-                                copy[dayIdx] = { ...copy[dayIdx], guideIncluded: e.target.checked };
-                                setPkg({ ...pkg, itinerary: copy });
+                                copy[dayIdx] = { ...copy[dayIdx], guideIncluded: isChecked };
+                                const anyDayNowEnabled = copy.some((d) => d.guideIncluded === true);
+                                setPkg({
+                                  ...pkg,
+                                  licensedGuideIncluded: anyDayNowEnabled,
+                                  licensedGuideAuditStatus: 'EXPLICIT',
+                                  itinerary: copy,
+                                  highlights: sanitizePackageGuideTextList(pkg.highlights, anyDayNowEnabled),
+                                  inclusions: sanitizePackageGuideTextList(pkg.inclusions, anyDayNowEnabled)
+                                });
                               }}
                               className="rounded text-[#008972]"
                             />
@@ -2117,6 +2362,73 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                   />
                 </div>
               </div>
+
+              {/* SYNCHRONISED DESTINATION-LEVEL COMMERCIAL QUOTATION TERMS (SINGLE SOURCE OF TRUTH) */}
+              <div className="pt-5 border-t border-slate-100 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center space-x-2">
+                      <ShieldCheck className="w-4 h-4 text-[#008972]" />
+                      <span>Synchronised Destination-Level Terms & Conditions</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Automatically inherited from Admin CMS → Destinations → Commercial Quotation Terms (single source of truth). Read-only here; updates published at Destination level automatically sync to new quotations.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleRefreshDestinationTerms}
+                    disabled={termsSyncLoading}
+                    className="self-start sm:self-auto px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-xl text-[11px] font-bold flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${termsSyncLoading ? 'animate-spin' : ''}`} />
+                    <span>{termsSyncLoading ? 'Syncing...' : 'Refresh Latest Terms'}</span>
+                  </button>
+                </div>
+
+                {livePackageTerms.missingTargets.length > 0 && (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 space-y-1.5">
+                    <div className="flex items-center space-x-2 text-xs font-black text-amber-900">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Destination Terms Missing — Action Required in Destination CMS</span>
+                    </div>
+                    <p className="text-[11px] text-amber-900 leading-relaxed">
+                      No published Destination-level Commercial Quotation Terms are configured for:{' '}
+                      <strong>{livePackageTerms.missingTargets.map((m) => m.targetName).join(', ')}</strong>.
+                      Generic or unrelated destination terms will <strong>NOT</strong> be substituted. Configure and publish Terms & Conditions under Admin CMS → Destinations → Commercial Quotation Terms.
+                    </p>
+                  </div>
+                )}
+
+                {livePackageTerms.resolvedEntries.length > 0 && (
+                  <div className="space-y-3">
+                    {livePackageTerms.resolvedEntries.map((entry) => (
+                      <div
+                        key={entry.targetId}
+                        className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
+                          <div className="flex items-center space-x-2">
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase">
+                              Synced
+                            </span>
+                            <h4 className="text-xs font-black text-slate-900">
+                              {entry.targetName} — Commercial Quotation Terms
+                            </h4>
+                          </div>
+                          <span className="text-[10px] font-mono font-bold text-slate-500">
+                            Version v{entry.version} • {entry.sections.length} Section{entry.sections.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                        <div className="max-h-72 overflow-y-auto pr-1 text-xs text-slate-700">
+                          <RichTextRenderer content={entry.htmlText} className="leading-relaxed" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -2292,7 +2604,7 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                   <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">Featured Accommodations</h4>
                   {pkg.isLandOnly ? (
                     <div className="p-4 bg-purple-50 rounded-2xl border border-purple-200 text-xs text-purple-900 font-semibold">
-                      Accommodation is arranged independently by the client. Land-Only circuit includes all guided sightseeing, ground transfers, and itinerary services.
+                      Accommodation is arranged independently by the client. Land-Only circuit includes {pkg.licensedGuideIncluded === true ? 'licensed guide service, ' : ''}ground transfers, and scheduled itinerary services.
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2308,6 +2620,28 @@ export const ReadyMadePackageBuilder: React.FC<ReadyMadePackageBuilderProps> = (
                           )}
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Synchronised Destination Terms Preview */}
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-400">Destination Commercial Quotation Terms</h4>
+                  {livePackageTerms.resolvedEntries.length > 0 ? (
+                    <div className="space-y-2.5">
+                      {livePackageTerms.resolvedEntries.map((entry) => (
+                        <div key={entry.targetId} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                          <div className="flex items-center justify-between text-xs font-black text-slate-900">
+                            <span>{entry.targetName} — Commercial Quotation Terms</span>
+                            <span className="text-[10px] font-mono text-slate-500">v{entry.version}</span>
+                          </div>
+                          <RichTextRenderer content={entry.htmlText} className="text-xs text-slate-700 leading-relaxed" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 font-semibold">
+                      Destination-level Commercial Quotation Terms are not yet configured for {livePackageTerms.missingTargets.map((m) => m.targetName).join(', ') || pkg.destinationName}.
                     </div>
                   )}
                 </div>

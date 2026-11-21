@@ -816,16 +816,19 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                                 <h5 className="font-bold text-slate-900 text-xs mt-1.5 line-clamp-1">{pkg.title}</h5>
                                 <p className="text-[11px] text-slate-500 line-clamp-1">{pkg.tagline}</p>
                               </div>
-                              <div className="flex items-center space-x-2 pt-1">
+                              <div className="flex flex-wrap items-center gap-2 pt-1">
                                 <button
+                                  type="button"
                                   onClick={() => onOpenPackageCustomizer ? onOpenPackageCustomizer(pkg) : onNavigate('create-quote')}
-                                  className="flex-1 py-1.5 rounded-lg bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white text-[11px] font-bold transition-all cursor-pointer"
+                                  className="flex-1 min-h-[34px] px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-[#00C6A6] hover:text-slate-950 text-white text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap"
                                 >
                                   Customize Package
                                 </button>
                                 <button
+                                  type="button"
                                   onClick={() => onViewPackageDetails ? onViewPackageDetails(pkg) : onNavigate('packages')}
-                                  className="p-1.5 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 cursor-pointer"
+                                  className="p-2 min-h-[34px] min-w-[34px] flex items-center justify-center rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 cursor-pointer shrink-0"
+                                  aria-label="View Package"
                                 >
                                   <Eye className="w-3.5 h-3.5" />
                                 </button>

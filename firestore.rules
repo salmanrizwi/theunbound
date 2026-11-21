@@ -581,7 +581,8 @@ service cloud.firestore {
 
     match /b2b_packages/{document=**} {
       allow read: if true;
-      allow create, update: if canAccessCMSOperations() || isValidAdminCMSData();
+      allow create, update: if (canAccessCMSOperations() || isValidAdminCMSData()) &&
+        (!('licensedGuideIncluded' in request.resource.data) || request.resource.data.licensedGuideIncluded is bool);
       allow delete: if canAccessCMSOperations() || isResourceAdminOwned();
     }
 

@@ -12,9 +12,11 @@ import { canUserViewInternalCostBreakdown } from '../services/permissionEngine';
 import { canonicalImageService } from '../services/imageService';
 import {
   cleanPackageText,
+  isDayLicensedGuideEnabled,
   normalizePackageRecord,
   resolvePackageOrderedHubs
 } from '../services/packageToQuoteTransformer';
+import { destinationTermsService } from '../services/destinationTermsService';
 import { useAuth } from '../context/AuthContext';
 import { useQuotation } from '../context/QuotationContext';
 import { RichTextRenderer } from './common/RichTextRenderer';
@@ -63,6 +65,26 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
   const { user } = useAuth();
   const { currency: quoteCurrency } = useQuotation();
   const db = AppDatabase.getInstance();
+  const [pkgTermsTick, setPkgTermsTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    destinationTermsService
+      .loadPackageDestinationTermsAsync(initialPackageItem, { forceRefresh: false })
+      .then(() => {
+        if (!cancelled) setPkgTermsTick((n) => n + 1);
+      })
+      .catch(() => {
+        // non-fatal
+      });
+    const unsub = destinationTermsService.subscribe(() => {
+      if (!cancelled) setPkgTermsTick((n) => n + 1);
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [initialPackageItem.id, initialPackageItem.destinationId]);
 
   const [dbTick, setDbTick] = useState(0);
   useEffect(() => {
@@ -623,38 +645,44 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                             )}
 
                             {/* Accommodation & Meals Strip (only if configured) */}
-                            {(resolvedHotelName || mealsList.length > 0 || day.guideIncluded || day.freeTime) && (
-                              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px]">
-                                <div className="flex flex-wrap items-center gap-3">
-                                  {resolvedHotelName && !packageItem.isLandOnly && (
-                                    <div className="flex items-center space-x-1.5 text-slate-700 font-semibold">
-                                      <HotelIcon className="w-3.5 h-3.5 text-[#008972]" />
-                                      <span>
-                                        Stay: <strong className="text-slate-900">{resolvedHotelName}</strong>
-                                        {dayHotel?.starRating ? ` (${dayHotel.starRating}★)` : ''}
+                            {(() => {
+                              const dayHasLicensedGuide = isDayLicensedGuideEnabled(packageItem, day);
+                              if (!(resolvedHotelName || mealsList.length > 0 || dayHasLicensedGuide || day.freeTime)) {
+                                return null;
+                              }
+                              return (
+                                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100 text-[11px]">
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    {resolvedHotelName && !packageItem.isLandOnly && (
+                                      <div className="flex items-center space-x-1.5 text-slate-700 font-semibold">
+                                        <HotelIcon className="w-3.5 h-3.5 text-[#008972]" />
+                                        <span>
+                                          Stay: <strong className="text-slate-900">{resolvedHotelName}</strong>
+                                          {dayHotel?.starRating ? ` (${dayHotel.starRating}★)` : ''}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {dayHasLicensedGuide && (
+                                      <span className="px-2 py-0.5 rounded bg-teal-50 text-teal-800 font-semibold text-[10px] border border-teal-200">
+                                        Licensed Guide Included
                                       </span>
+                                    )}
+                                    {day.freeTime && (
+                                      <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold text-[10px]">
+                                        Includes Free Time
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {mealsList.length > 0 && (
+                                    <div className="flex items-center space-x-1 text-slate-600 font-medium">
+                                      <Utensils className="w-3 h-3 text-[#008972]" />
+                                      <span>Meals: {mealsList.join(' • ')}</span>
                                     </div>
                                   )}
-                                  {day.guideIncluded && (
-                                    <span className="px-2 py-0.5 rounded bg-teal-50 text-teal-800 font-semibold text-[10px] border border-teal-200">
-                                      Guide Included
-                                    </span>
-                                  )}
-                                  {day.freeTime && (
-                                    <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold text-[10px]">
-                                      Includes Free Time
-                                    </span>
-                                  )}
                                 </div>
-
-                                {mealsList.length > 0 && (
-                                  <div className="flex items-center space-x-1 text-slate-600 font-medium">
-                                    <Utensils className="w-3 h-3 text-[#008972]" />
-                                    <span>Meals: {mealsList.join(' • ')}</span>
-                                  </div>
-                                )}
-                              </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         )}
                       </div>
@@ -897,23 +925,69 @@ export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
                 </div>
               )}
 
-              {packageItem.termsAndConditions && (
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2">
-                  <h4 className="font-bold text-slate-900">Terms & Conditions</h4>
-                  <RichTextRenderer
-                    content={packageItem.termsAndConditions}
-                    className="text-slate-600 leading-relaxed"
-                  />
-                </div>
-              )}
+              {/* Synchronised Destination-Level Commercial Quotation Terms */}
+              {(() => {
+                // Re-evaluate live from destinationTermsService (with tick dependency via render)
+                void pkgTermsTick;
+                const liveEval = destinationTermsService.evaluatePackageDestinationTerms(packageItem);
+                const resolvedEntries =
+                  liveEval.resolvedEntries.length > 0
+                    ? liveEval.resolvedEntries
+                    : (packageItem.destinationTermsSnapshot?.entries || []);
+                const missingTargets = liveEval.missingTargets;
 
-              {!packageItem.importantInformation &&
-                !packageItem.cancellationPolicy &&
-                !packageItem.termsAndConditions && (
-                  <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 text-slate-500">
-                    No special terms or advisories configured for this package. Standard partner terms apply.
+                return (
+                  <div className="space-y-3">
+                    {missingTargets.length > 0 && (
+                      <div className="bg-amber-50 p-4 rounded-2xl border border-amber-300 space-y-1.5">
+                        <h4 className="font-bold text-amber-900 flex items-center space-x-1.5">
+                          <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                          <span>Destination Terms & Conditions Missing</span>
+                        </h4>
+                        <p className="text-amber-900 leading-relaxed">
+                          Published destination-level Commercial Quotation Terms are not yet configured for:{' '}
+                          <strong>{missingTargets.map((m) => m.targetName).join(', ')}</strong>.
+                          No generic or unrelated terms have been substituted.
+                        </p>
+                      </div>
+                    )}
+
+                    {resolvedEntries.length > 0 && (
+                      <div className="space-y-3">
+                        {resolvedEntries.map((entry) => (
+                          <div
+                            key={entry.targetId}
+                            className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-2"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200">
+                              <h4 className="font-bold text-slate-900 flex items-center space-x-1.5">
+                                <ShieldCheck className="w-4 h-4 text-[#008972] shrink-0" />
+                                <span>{entry.targetName} — Commercial Quotation Terms</span>
+                              </h4>
+                              <span className="text-[10px] font-mono font-bold text-slate-500">
+                                Version v{entry.version}
+                              </span>
+                            </div>
+                            <RichTextRenderer
+                              content={entry.htmlText}
+                              className="text-slate-700 leading-relaxed"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {resolvedEntries.length === 0 &&
+                      missingTargets.length === 0 &&
+                      !packageItem.importantInformation &&
+                      !packageItem.cancellationPolicy && (
+                        <div className="p-8 text-center bg-slate-50 rounded-2xl border border-slate-200 text-slate-500">
+                          No destination terms or travel advisories configured for this package yet.
+                        </div>
+                      )}
                   </div>
-                )}
+                );
+              })()}
             </div>
           )}
         </div>

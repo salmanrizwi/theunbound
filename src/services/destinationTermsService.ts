@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db as firestore } from './firebase';
 import {
+  B2BPackage,
   DestinationCommercialTermsConfig,
   DestinationTermsSection,
   DestinationTermsTargetType,
@@ -428,12 +429,16 @@ class DestinationCommercialTermsService {
    * Does NOT retrieve unrelated destinations.
    */
   public async loadPublishedTermsForTargetsAsync(
-    targets: ResolvedTargetDescriptor[],
+    targets: Array<ResolvedTargetDescriptor | string>,
     forceRefresh = false
   ): Promise<DestinationCommercialTermsConfig[]> {
     if (!targets || targets.length === 0) return [];
 
-    const canonicalTargets = targets.map((t) => this.resolveCanonicalTarget(t));
+    const canonicalTargets = targets.map((t) =>
+      typeof t === 'string'
+        ? this.resolveCanonicalTarget({ targetId: t })
+        : this.resolveCanonicalTarget(t)
+    );
     const uniqueTargetIds = Array.from(
       new Set(
         canonicalTargets.flatMap((t) =>
@@ -602,13 +607,275 @@ class DestinationCommercialTermsService {
   }
 
   /**
+   * Derives the ordered, deduplicated list of Destination-level targets for a Pre-Curated Multi-Day Itinerary.
+   * Supports both single-destination and multi-destination packages cleanly in itinerary order.
+   */
+  public extractPackageDestinationTargets(pkg: Partial<B2BPackage> | null | undefined): ResolvedTargetDescriptor[] {
+    if (!pkg) return [];
+    const seen = new Set<string>();
+    const results: ResolvedTargetDescriptor[] = [];
+
+    const addDestinationTarget = (rawId?: string, rawName?: string) => {
+      if (!rawId && !rawName) return;
+      const desc = this.resolveCanonicalTarget({
+        targetId: rawId || rawName,
+        targetName: rawName || rawId,
+        targetType: 'DESTINATION'
+      });
+      if (!desc.targetId || seen.has(desc.targetId)) return;
+      seen.add(desc.targetId);
+      results.push({
+        targetId: desc.targetId,
+        targetType: 'DESTINATION',
+        targetName: desc.targetName || rawName || desc.targetId
+      });
+    };
+
+    // 1. Explicit multi-destination array if configured on package
+    if (Array.isArray(pkg.destinationIds) && pkg.destinationIds.length > 0) {
+      pkg.destinationIds.forEach((destId, idx) => {
+        const destName = Array.isArray(pkg.destinationNames) ? pkg.destinationNames[idx] : undefined;
+        addDestinationTarget(destId, destName);
+      });
+    }
+
+    // 2. Primary package destination
+    if (pkg.destinationId || pkg.destinationName) {
+      addDestinationTarget(pkg.destinationId, pkg.destinationName);
+    }
+
+    // 3. Additional destinations present in routeHubs (preserving itinerary order)
+    if (Array.isArray(pkg.routeHubs) && pkg.routeHubs.length > 0) {
+      pkg.routeHubs.forEach((hub) => {
+        if (hub.destinationId || hub.destinationName) {
+          addDestinationTarget(hub.destinationId, hub.destinationName);
+        } else if (hub.hubId || hub.hubName) {
+          const resolvedHub = this.resolveCanonicalTarget({
+            targetId: hub.hubId || hub.hubName,
+            targetName: hub.hubName,
+            targetType: 'HUB'
+          });
+          if (resolvedHub.parentDestinationId) {
+            addDestinationTarget(resolvedHub.parentDestinationId, resolvedHub.parentDestinationName);
+          }
+        }
+      });
+    }
+
+    // 4. Additional destinations present in day-by-day itinerary entries
+    if (Array.isArray(pkg.itinerary) && pkg.itinerary.length > 0) {
+      pkg.itinerary.forEach((day) => {
+        if (day.destinationId || day.destinationName) {
+          addDestinationTarget(day.destinationId, day.destinationName);
+        }
+      });
+    }
+
+    return results;
+  }
+
+  /**
+   * Targeted async loader for a Pre-Curated Package's Destination-level Commercial Quotation Terms.
+   * Fetches ONLY the package's associated destinations and evaluates readiness without generic fallbacks.
+   */
+  public async loadPackageDestinationTermsAsync(
+    pkg: Partial<B2BPackage> | null | undefined,
+    options?: {
+      forceRefresh?: boolean;
+      user?: Partial<User> | null;
+      quoteId?: string;
+      quoteVersion?: number;
+      isFinalised?: boolean;
+    }
+  ): Promise<
+    DestinationTermsReadinessResult & {
+      destinationTargets: ResolvedTargetDescriptor[];
+      configRefs: Array<{
+        destinationId: string;
+        destinationName: string;
+        termsConfigId: string;
+        version: number;
+        capturedAt: string;
+      }>;
+    }
+  > {
+    const targets = this.extractPackageDestinationTargets(pkg);
+    if (targets.length > 0) {
+      await this.loadPublishedTermsForTargetsAsync(targets, Boolean(options?.forceRefresh));
+    }
+    return this.evaluatePackageDestinationTerms(pkg, options);
+  }
+
+  /**
+   * Evaluates authoritative Destination-level Commercial Quotation Terms for a Pre-Curated Package.
+   * - Single destination: returns that destination's published terms with version & formatting intact.
+   * - Multi-destination: keeps each destination's terms clearly separated with per-destination headings in order.
+   * - Missing destination terms: returns TERMS_MISSING and explicit missingTargets — NEVER substitutes generic terms.
+   */
+  public evaluatePackageDestinationTerms(
+    pkg: Partial<B2BPackage> | null | undefined,
+    options?: {
+      user?: Partial<User> | null;
+      quoteId?: string;
+      quoteVersion?: number;
+      isFinalised?: boolean;
+      termsExceptionApproval?: QuotationTermsExceptionApproval;
+    }
+  ): DestinationTermsReadinessResult & {
+    destinationTargets: ResolvedTargetDescriptor[];
+    configRefs: Array<{
+      destinationId: string;
+      destinationName: string;
+      termsConfigId: string;
+      version: number;
+      capturedAt: string;
+    }>;
+  } {
+    const destinationTargets = this.extractPackageDestinationTargets(pkg);
+    const missingTargets: ResolvedTargetDescriptor[] = [];
+    const entries: QuotationDestinationTermsEntry[] = [];
+    const configRefs: Array<{
+      destinationId: string;
+      destinationName: string;
+      termsConfigId: string;
+      version: number;
+      capturedAt: string;
+    }> = [];
+    const capturedAt = new Date().toISOString();
+
+    destinationTargets.forEach((target) => {
+      const resolution = this.resolvePublishedConfigForTarget(target);
+      if (!resolution.config) {
+        missingTargets.push(target);
+        return;
+      }
+
+      const activeSections = [...(resolution.config.sections || [])]
+        .filter((s) => s.isActive !== false && (s.heading?.trim() || s.htmlContent?.trim()))
+        .sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+
+      if (activeSections.length === 0) {
+        missingTargets.push(target);
+        return;
+      }
+
+      const contentHash = resolution.config.contentHash || computeSectionsContentHash(activeSections);
+      const htmlText = renderDestinationSectionsToHtml(activeSections);
+      const plainText = renderDestinationSectionsToPlainText(activeSections);
+      const whatsAppText = renderDestinationSectionsToWhatsApp(activeSections);
+
+      entries.push({
+        targetId: target.targetId,
+        targetType: 'DESTINATION',
+        targetName: target.targetName,
+        configId: resolution.config.id,
+        version: resolution.config.version || 1,
+        consolidatedTargetIds: [target.targetId],
+        consolidatedTargetNames: [target.targetName],
+        contentHash,
+        sections: activeSections.map((s) => ({ ...s })),
+        htmlText,
+        plainText,
+        whatsAppText
+      });
+
+      configRefs.push({
+        destinationId: target.targetId,
+        destinationName: target.targetName,
+        termsConfigId: resolution.config.id,
+        version: resolution.config.version || 1,
+        capturedAt
+      });
+    });
+
+    const approval = options?.termsExceptionApproval;
+    const isExceptionApproved = Boolean(
+      approval &&
+      approval.approved &&
+      approval.reason?.trim() &&
+      missingTargets.every((mt) => approval.missingDestinationIds.includes(mt.targetId))
+    );
+
+    let termsStatus: QuotationTermsStatus = 'DRAFT_UNCHECKED';
+    if (destinationTargets.length === 0) {
+      termsStatus = 'DRAFT_UNCHECKED';
+    } else if (missingTargets.length > 0) {
+      termsStatus = isExceptionApproved ? 'TERMS_APPROVED' : 'TERMS_MISSING';
+    } else if (entries.length > 0) {
+      termsStatus = options?.isFinalised ? 'QUOTATION_FINALISED' : 'TERMS_CONFIGURED';
+    }
+
+    const canFinalise =
+      termsStatus === 'TERMS_CONFIGURED' ||
+      termsStatus === 'TERMS_APPROVED' ||
+      termsStatus === 'QUOTATION_FINALISED';
+
+    const combinedHtml = entries
+      .map((entry) => {
+        const groupHeader = `<div style="margin: 8px 0 4px 0; padding: 4px 8px; background: #f8fafc; border-left: 3px solid #0f172a; font-size: 10.5px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.04em;">${entry.targetName} — Commercial Quotation Terms <span style="font-weight: 600; color: #64748b; text-transform: none;">(v${entry.version})</span></div>`;
+        return `<div style="margin-bottom: 10px;">${groupHeader}${entry.htmlText}</div>`;
+      })
+      .join('');
+
+    const combinedPlainText = entries
+      .map((entry) => {
+        const header = `${entry.targetName.toUpperCase()} — COMMERCIAL QUOTATION TERMS (v${entry.version})`;
+        return `${header}\n${entry.plainText}`;
+      })
+      .join('\n\n----------------------------------------\n\n');
+
+    const combinedWhatsAppText = entries
+      .map((entry) => {
+        const header = `📍 *${entry.targetName.toUpperCase()} — COMMERCIAL QUOTATION TERMS (v${entry.version})*`;
+        return `${header}\n\n${entry.whatsAppText}`;
+      })
+      .join('\n\n━━━━━━━━━━━━━━━━━━━━━\n\n');
+
+    const snapshot: QuotationCommercialTermsSnapshot = {
+      snapshotId: `terms-snap-pkg-${pkg?.id || options?.quoteId || 'draft'}-v${options?.quoteVersion || 1}-${Date.now()}`,
+      capturedAt,
+      capturedBy: options?.user?.name || options?.user?.email || 'System',
+      quoteVersion: options?.quoteVersion || 1,
+      destinationIds: destinationTargets.map((t) => t.targetId),
+      destinationNames: destinationTargets.map((t) => t.targetName),
+      entries,
+      missingDestinationIds: missingTargets.map((t) => t.targetId),
+      missingDestinationNames: missingTargets.map((t) => t.targetName),
+      termsStatus,
+      termsExceptionApproval: isExceptionApproved ? approval : undefined,
+      combinedHeading:
+        entries.length === 1
+          ? `${COMMERCIAL_QUOTATION_TERMS_HEADING} — ${entries[0].targetName}`
+          : COMMERCIAL_QUOTATION_TERMS_HEADING,
+      combinedHtml,
+      combinedPlainText,
+      combinedWhatsAppText
+    };
+
+    return {
+      termsStatus,
+      canFinalise,
+      canExportCompleteQuote: canFinalise,
+      missingTargets,
+      resolvedEntries: entries,
+      snapshot,
+      destinationTargets,
+      configRefs
+    };
+  }
+
+  /**
    * Strict Per-Target Published Terms Resolution.
    * - Returns own published active config if present.
-   * - Falls back to parent destination ONLY when `allowParentInheritance === true` is explicitly configured
-   *   and parent has active published terms.
+   * - Falls back to parent destination when `allowParentInheritance === true` is explicitly configured
+   *   OR when `allowParentDestinationFallback` is explicitly requested (e.g., Pre-Curated Package destination-level sync
+   *   when no hub-specific override document exists).
    * - NEVER falls back to sibling hubs or unrelated destinations.
    */
-  public resolvePublishedConfigForTarget(target: ResolvedTargetDescriptor): {
+  public resolvePublishedConfigForTarget(
+    target: ResolvedTargetDescriptor,
+    options?: { allowParentDestinationFallback?: boolean }
+  ): {
     config: DestinationCommercialTermsConfig | null;
     inheritedFromParentId?: string;
     inheritedFromParentName?: string;
@@ -643,7 +910,25 @@ class DestinationCommercialTermsService {
       return { config: null };
     }
 
-    // No config on targetId -> strictly missing (do NOT silently inherit parent unless explicit config allows it)
+    // For Pre-Curated Packages / destination-level sync: if a hub has NO hub-specific config at all,
+    // resolve its own parent Destination's published Destination-level terms (never unrelated destinations).
+    if (options?.allowParentDestinationFallback && target.parentDestinationId) {
+      const parentConfig = this.getCachedConfigByTargetId(target.parentDestinationId);
+      if (parentConfig && parentConfig.status === 'PUBLISHED' && parentConfig.isActive === true) {
+        const parentActiveSections = (parentConfig.sections || []).filter(
+          (s) => s.isActive !== false && (s.heading?.trim() || s.htmlContent?.trim())
+        );
+        if (parentActiveSections.length > 0) {
+          return {
+            config: parentConfig,
+            inheritedFromParentId: parentConfig.targetId,
+            inheritedFromParentName: parentConfig.targetName
+          };
+        }
+      }
+    }
+
+    // No config on targetId -> strictly missing (do NOT silently inherit parent unless explicit config or package destination fallback allows it)
     return { config: null };
   }
 
@@ -657,18 +942,84 @@ class DestinationCommercialTermsService {
     quoteVersion?: number;
     destinationId?: string;
     destinationName?: string;
+    destinationIds?: string[];
+    sourcePackageId?: string | null;
+    preferDestinationLevelFallback?: boolean;
     routeHubs?: TripRouteHub[];
     items?: QuoteItem[];
     user?: Partial<User> | null;
     isFinalised?: boolean;
     termsExceptionApproval?: QuotationTermsExceptionApproval;
   }): DestinationTermsReadinessResult {
-    const targets = this.extractQuotationDestinationTargets({
+    const isPackageDestinationSync = Boolean(params.sourcePackageId || params.preferDestinationLevelFallback);
+
+    // When originating from a Pre-Curated Package, resolve distinct Destination-level targets
+    // (preserving multi-destination separation and order) while still respecting hub-level configs if published.
+    let targets = this.extractQuotationDestinationTargets({
       destinationId: params.destinationId,
       destinationName: params.destinationName,
       routeHubs: params.routeHubs,
       items: params.items
     });
+
+    if (isPackageDestinationSync) {
+      // Ensure explicit multi-destination IDs from the source package are included at destination level
+      const destTargetsSeen = new Set<string>();
+      const destLevelTargets: ResolvedTargetDescriptor[] = [];
+
+      const pushDestTarget = (rawId?: string, rawName?: string) => {
+        if (!rawId && !rawName) return;
+        const resolved = this.resolveCanonicalTarget({
+          targetId: rawId || rawName,
+          targetName: rawName || rawId,
+          targetType: 'DESTINATION'
+        });
+        if (!resolved.targetId || destTargetsSeen.has(resolved.targetId)) return;
+        destTargetsSeen.add(resolved.targetId);
+        destLevelTargets.push({
+          targetId: resolved.targetId,
+          targetType: 'DESTINATION',
+          targetName: resolved.targetName || rawName || resolved.targetId
+        });
+      };
+
+      if (Array.isArray(params.destinationIds)) {
+        params.destinationIds.forEach((did) => pushDestTarget(did));
+      }
+
+      // Check if any hub has its own published hub-specific config; otherwise map cleanly to its parent Destination
+      targets.forEach((t) => {
+        if (t.targetType === 'DESTINATION') {
+          pushDestTarget(t.targetId, t.targetName);
+          return;
+        }
+        const ownHubCfg = this.getCachedConfigByTargetId(t.targetId);
+        const hasOwnPublishedHubCfg = Boolean(
+          ownHubCfg &&
+          ownHubCfg.status === 'PUBLISHED' &&
+          ownHubCfg.isActive === true &&
+          (ownHubCfg.sections || []).some((s) => s.isActive !== false && (s.heading?.trim() || s.htmlContent?.trim()))
+        );
+        if (hasOwnPublishedHubCfg) {
+          if (!destTargetsSeen.has(t.targetId)) {
+            destTargetsSeen.add(t.targetId);
+            destLevelTargets.push(t);
+          }
+        } else if (t.parentDestinationId) {
+          pushDestTarget(t.parentDestinationId, t.parentDestinationName);
+        } else {
+          pushDestTarget(params.destinationId || t.targetId, params.destinationName || t.targetName);
+        }
+      });
+
+      if (destLevelTargets.length === 0 && (params.destinationId || params.destinationName)) {
+        pushDestTarget(params.destinationId, params.destinationName);
+      }
+
+      if (destLevelTargets.length > 0) {
+        targets = destLevelTargets;
+      }
+    }
 
     const missingTargets: ResolvedTargetDescriptor[] = [];
     const rawResolved: Array<{
@@ -681,7 +1032,9 @@ class DestinationCommercialTermsService {
     }> = [];
 
     targets.forEach((target) => {
-      const resolution = this.resolvePublishedConfigForTarget(target);
+      const resolution = this.resolvePublishedConfigForTarget(target, {
+        allowParentDestinationFallback: isPackageDestinationSync
+      });
       if (!resolution.config) {
         missingTargets.push(target);
         return;
@@ -865,6 +1218,7 @@ class DestinationCommercialTermsService {
       quoteId: quote.id,
       quoteVersion: quote.version || 1,
       destinationName: quote.destination,
+      sourcePackageId: quote.sourcePackageId,
       routeHubs: quote.routeHubs,
       items: quote.items,
       user,

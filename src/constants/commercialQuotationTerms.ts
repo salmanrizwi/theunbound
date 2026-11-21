@@ -401,6 +401,7 @@ export function resolveAuthoritativeCommercialTerms(quote?: {
   termsAndConditions?: string;
   isLocked?: boolean;
   status?: string;
+  termsStatus?: string;
   brandingSnapshot?: { disclaimer?: string };
   commercialTermsSnapshot?: QuotationCommercialTermsSnapshot;
 } | null): {
@@ -451,6 +452,21 @@ export function resolveAuthoritativeCommercialTerms(quote?: {
       isCustomHistoricalSnapshot: false,
       isDestinationWiseSnapshot: true,
       snapshotEntriesCount: snapshot.entries.length
+    };
+  }
+
+  // Strictly block generic fallback when Destination-level terms are explicitly missing
+  if (quote?.termsStatus === 'TERMS_MISSING' || snapshot?.termsStatus === 'TERMS_MISSING') {
+    return {
+      heading: snapshot?.combinedHeading || COMMERCIAL_QUOTATION_TERMS_HEADING,
+      items: [],
+      plainText: '',
+      markdownText: '',
+      whatsAppText: '',
+      htmlText: '',
+      isCustomHistoricalSnapshot: false,
+      isDestinationWiseSnapshot: true,
+      snapshotEntriesCount: 0
     };
   }
 

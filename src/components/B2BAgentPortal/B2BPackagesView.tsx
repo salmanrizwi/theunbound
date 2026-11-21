@@ -289,10 +289,10 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
               <div
                 key={pkg.id}
                 onClick={() => handleViewPackage(pkg)}
-                className="bg-white rounded-3xl border border-slate-200/90 overflow-hidden shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col cursor-pointer group"
+                className="min-w-0 bg-white rounded-3xl border border-slate-200/90 shadow-xs hover:shadow-xl transition-all duration-300 flex flex-col cursor-pointer group"
               >
                 {/* Hero Image Header */}
-                <div className="relative h-56 overflow-hidden bg-slate-900">
+                <div className="relative min-h-[14rem] h-56 rounded-t-3xl overflow-hidden bg-slate-900">
                   <img
                     src={canonicalImageService.resolvePackageImage(pkg)}
                     alt={pkg.title}
@@ -308,10 +308,10 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                   <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/40 to-transparent" />
 
                   {/* Top Badges */}
-                  <div className="absolute top-4 left-4 right-4 flex justify-between items-start gap-2">
-                    <div className="flex flex-wrap gap-1.5">
+                  <div className="absolute top-4 left-4 right-4 flex flex-wrap justify-between items-start gap-2">
+                    <div className="flex flex-wrap gap-1.5 min-w-0">
                       <span className="px-3 py-1 rounded-full bg-slate-900/80 backdrop-blur-md text-white text-xs font-bold flex items-center space-x-1.5 border border-white/15">
-                        <MapPin className="w-3 h-3 text-teal-400" />
+                        <MapPin className="w-3 h-3 text-teal-400 shrink-0" />
                         <span>{pkg.destinationName}</span>
                       </span>
                       <span className="px-3 py-1 rounded-full bg-teal-500/90 backdrop-blur-md text-slate-950 text-xs font-extrabold uppercase tracking-wider">
@@ -362,7 +362,7 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
 
                   {/* Bottom Title & Overview */}
                   <div className="absolute bottom-4 left-4 right-4 text-white">
-                    <h3 className="text-xl font-bold leading-snug line-clamp-1">{pkg.title}</h3>
+                    <h3 className="text-lg sm:text-xl font-bold leading-snug line-clamp-2 break-words">{pkg.title}</h3>
                     {cleanOverview && (
                       <p className="text-xs text-slate-300 line-clamp-2 mt-1">{cleanOverview}</p>
                     )}
@@ -370,7 +370,7 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                 </div>
 
                 {/* Card Body */}
-                <div className="p-6 flex-1 flex flex-col justify-between space-y-5">
+                <div className="p-4 sm:p-6 flex-1 flex flex-col justify-between space-y-5 min-w-0">
                   <div className="space-y-4">
                     {/* Selected Hubs in Saved Order */}
                     {orderedHubs.length > 0 && (
@@ -467,25 +467,25 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                     )}
                   </div>
 
-                  {/* Pricing & Actions Footer */}
-                  <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
+                  {/* Pricing & Actions Footer — Responsive Wrap-Safe Layout */}
+                  <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:flex-wrap sm:items-end justify-between gap-3">
+                    <div className="min-w-0">
                       {canViewInternalPricing && calc.internalAudit ? (
-                        <div className="flex items-center space-x-4">
-                          <div>
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+                          <div className="min-w-0">
                             <span className="text-[10px] font-bold uppercase text-slate-400 block">
                               B2B Nett Cost
                             </span>
-                            <span className="text-lg font-extrabold text-slate-900">
+                            <span className="text-base sm:text-lg font-extrabold text-slate-900">
                               {formatCurrency(calc.internalAudit.totalNetCostTarget, currency as CurrencyCode)}
                             </span>
                           </div>
-                          <div className="h-7 w-px bg-slate-200" />
-                          <div>
+                          <div className="hidden sm:block h-7 w-px bg-slate-200" />
+                          <div className="min-w-0">
                             <span className="text-[10px] font-bold uppercase text-teal-600 block">
                               Final Selling Price
                             </span>
-                            <span className="text-lg font-extrabold text-[#008972]">
+                            <span className="text-base sm:text-lg font-extrabold text-[#008972]">
                               {formatCurrency(calc.pricePerPerson, currency as CurrencyCode)}
                             </span>
                           </div>
@@ -495,23 +495,23 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                           <span className="text-[10px] font-bold uppercase text-teal-600 block">
                             Final Selling Price (Per Person)
                           </span>
-                          <span className="text-xl font-extrabold text-slate-900">
+                          <span className="text-lg sm:text-xl font-extrabold text-slate-900">
                             {formatCurrency(calc.pricePerPerson, currency as CurrencyCode)}
                           </span>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center space-x-2 shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                       <button
                         type="button"
                         onClick={e => {
                           e.stopPropagation();
                           handleViewPackage(pkg);
                         }}
-                        className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 cursor-pointer"
+                        className="flex-1 sm:flex-none min-h-[40px] px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center justify-center space-x-1.5 cursor-pointer whitespace-nowrap"
                       >
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-3.5 h-3.5 shrink-0" />
                         <span>View Package</span>
                       </button>
                       <button
@@ -523,9 +523,9 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                           if (!isPackageVisibleToB2BAgent(normalized)) return;
                           onCustomizePackage(normalized);
                         }}
-                        className="px-4 py-2.5 bg-[#008972] hover:bg-[#00705d] text-white rounded-xl text-xs font-bold transition-all shadow-sm hover:shadow flex items-center space-x-1.5 cursor-pointer"
+                        className="flex-1 sm:flex-none min-h-[40px] px-4 py-2 bg-[#008972] hover:bg-[#00705d] text-white rounded-xl text-xs font-bold transition-all shadow-sm hover:shadow flex items-center justify-center space-x-1.5 cursor-pointer whitespace-nowrap"
                       >
-                        <Sliders className="w-3.5 h-3.5" />
+                        <Sliders className="w-3.5 h-3.5 shrink-0" />
                         <span>Customize Package</span>
                       </button>
                     </div>

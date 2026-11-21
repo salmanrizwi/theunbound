@@ -507,7 +507,7 @@ export function buildDayWiseItinerary(
           paxCount: it.pax?.adults || 2,
           instructions: (it as any).transferInstructions || undefined
         });
-      } else if (pType === 'ACTIVITY' || pType === 'TOUR' || pType === 'DAY_TOUR' || cat === 'Activities' || cat === 'Private Tours' || cat === 'Day Trips' || cat === 'Tours') {
+      } else if (pType === 'ACTIVITY' || pType === 'TOUR' || pType === 'DAY_TOUR' || String(pType).toUpperCase() === 'GUIDE' || cat === 'Activities' || cat === 'Private Tours' || cat === 'Day Trips' || cat === 'Tours' || cat === 'Guides' || String(cat).toLowerCase() === 'guide') {
         activities.push({
           id: it.id,
           title: p.name,
@@ -759,7 +759,7 @@ export function buildQuoteCommunicationPayload(
         transferType: (p as any).transferType || 'Private Dedicated Chauffeur',
         instructions: (it as any).transferInstructions || undefined
       });
-    } else if (pType === 'ACTIVITY' || pType === 'TOUR' || pType === 'DAY_TOUR' || cat === 'Activities' || cat === 'Private Tours' || cat === 'Day Trips' || cat === 'Tours') {
+    } else if (pType === 'ACTIVITY' || pType === 'TOUR' || pType === 'DAY_TOUR' || String(pType).toUpperCase() === 'GUIDE' || cat === 'Activities' || cat === 'Private Tours' || cat === 'Day Trips' || cat === 'Tours' || cat === 'Guides' || String(cat).toLowerCase() === 'guide') {
       activities.push({
         id: it.id,
         activityName: p.name,
@@ -793,11 +793,19 @@ export function buildQuoteCommunicationPayload(
   });
 
   // 7. Inclusions & Exclusions
+  const hasExplicitLicensedGuide = effectiveItems.some(it => {
+    const c = (it.product?.category || '').toLowerCase();
+    const pt = (it.product?.productType || '').toLowerCase();
+    return c === 'guide' || c === 'guides' || pt === 'guide' || /\blicensed\b.*\bguide\b/i.test(it.product?.name || '');
+  }) || Object.values(quote.dayNotes || {}).some(note => /\blicensed\s+guide\s+included\b/i.test(String(note || '')));
+
   const inclusions: string[] = [
     `${durationText} bespoke itinerary management by Destination Management & Ground Operations`,
     `Hand-picked accommodation across ${effectiveHubs.map(h => h.hubName).join(', ') || quote.destination}`,
     `All contracted private transfers and airport ground logistics as specified in Day-Wise Plan`,
-    `All listed sightseeing experiences, entrance tickets, and licensed local guide services`,
+    hasExplicitLicensedGuide
+      ? `All listed sightseeing experiences, entrance tickets, and licensed guide services`
+      : `All listed sightseeing experiences and entrance tickets as specified in the itinerary`,
     `24/7 dedicated local emergency ground assistance hotline & dispatch team`
   ];
   if (visaServices.length > 0) {
@@ -1568,7 +1576,7 @@ ${payload.pricing.hasHotelAccommodation && payload.pricing.formattedHotelAccommo
 Final Selling Price: ${payload.pricing.formattedPrice}
 
 ${(payload.commercialTerms?.heading || COMMERCIAL_QUOTATION_TERMS_HEADING).toUpperCase()}
-${payload.commercialTerms?.plainText || COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT}
+${payload.commercialTerms?.plainText ?? COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT}
 
 Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground Operations Team'})
   `.trim();
@@ -1767,10 +1775,12 @@ Prepared by: ${payload.preparedBy.name} (${payload.preparedBy.agency || 'Ground 
         </div>
 
         <!-- Commercial Quotation Terms -->
+        ${(payload.commercialTerms?.htmlText ?? COMMERCIAL_QUOTATION_TERMS_HTML) ? `
         <div style="border-top: 1px solid #e2e8f0; padding-top: 14px; margin-bottom: 20px; font-size: 11px; color: #475569;">
           <div style="font-weight: 800; color: #1e293b; text-transform: uppercase; font-size: 10.5px; margin-bottom: 8px;">${payload.commercialTerms?.heading || COMMERCIAL_QUOTATION_TERMS_HEADING}</div>
-          ${payload.commercialTerms?.htmlText || COMMERCIAL_QUOTATION_TERMS_HTML}
+          ${payload.commercialTerms?.htmlText ?? COMMERCIAL_QUOTATION_TERMS_HTML}
         </div>
+        ` : ''}
 
         <!-- Prepared By Section -->
         <div style="border-top: 1px solid #e2e8f0; padding-top: 18px; font-size: 12px; color: #64748b;">
