@@ -30,7 +30,6 @@ import {
   Crown
 } from 'lucide-react';
 import { RichTextRenderer } from './common/RichTextRenderer';
-import { downloadQuotationPDF } from '../services/pdfGenerator';
 import { buildQuotePresentationModel } from '../services/quotePresentationModel';
 import { resolveAuthoritativeCategory } from '../services/configuratorRegistry';
 import { COMMERCIAL_QUOTATION_TERMS_ITEMS } from '../constants/commercialQuotationTerms';
@@ -392,11 +391,12 @@ const ProposalDocumentViewBase: React.FC<ProposalDocumentViewProps> = ({
     });
   }, [quote, agentUser, selectedOptionIndexOrId]);
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (onDownloadPdf) {
       onDownloadPdf();
     } else {
-      downloadQuotationPDF({
+      const { downloadQuotationPDF } = await import('../services/pdfGenerator');
+      await downloadQuotationPDF({
         quote,
         agentName: model.agentName,
         agentAgency: model.agencyName,

@@ -291,6 +291,48 @@
   .builder-day-card-cv {
     contain: layout style;
   }
+
+  /* Eliminate 300ms tap delay on mobile/tablet interactive elements */
+  button,
+  a,
+  select,
+  input,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+
+  /* Smooth momentum horizontal scrolling for responsive tables */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
 }
+
+/* Respect OS-level reduced motion preference across all devices */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Adaptive GPU relief for older PCs, low-RAM laptops, and constrained mobile devices.
+ * Replaces expensive real-time backdrop-filter blur passes (heavy on older Intel integrated GPUs)
+ * with clean solid/translucent light surfaces while preserving TheUnbound's exact visual identity.
+ */
+html[data-perf-tier="low"] [class*="backdrop-blur"] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+html[data-perf-tier="low"] .animate-pulse,
+html[data-perf-tier="low"] .animate-bounce {
+  animation: none !important;
+}
+
 
 

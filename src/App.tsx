@@ -1,17 +1,19 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DisplayCurrencyProvider } from './context/DisplayCurrencyContext';
-import { QuotationProvider, useQuotation } from './context/QuotationContext';
+import { QuotationProvider, useQuotationActions } from './context/QuotationContext';
 import { RosterProvider } from './context/RosterContext';
 import { AppDatabase } from './services/db';
 import { Product, Destination, Quotation, Booking, Hotel, FooterConfig } from './types';
 import { Navbar, MainNavTab } from './components/Navbar';
 import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { GlobalToastContainer } from './components/common/GlobalToastContainer';
+import { BrowserCompatibilityBanner } from './components/common/BrowserCompatibilityBanner';
 import { isRailProduct } from './services/rail/JapanRailJourneyDataService';
 import { PublicPromotionsBanner } from './components/PublicPromotionsBanner';
 import { BuyerFooter } from './components/BuyerPortal/BuyerFooter';
 import { GlobalErrorBoundary } from './components/common/GlobalErrorBoundary';
+import { performanceMonitor } from './services/performanceMonitor';
 import { lazyWithRetry } from './utils/lazyWithRetry';
 
 // Code-split landing, destination, restricted & auth views so portal routes don't pay landing bundle cost and vice versa
@@ -82,7 +84,7 @@ const ModuleLoadingFallback: React.FC<{ label?: string }> = ({ label = 'Loading.
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated, role, user, isInitializing, openAuthModal } = useAuth();
-  const { setIsQuoteDrawerOpen, loadSavedQuote, loadPackageIntoQuote } = useQuotation();
+  const { setIsQuoteDrawerOpen, loadSavedQuote, loadPackageIntoQuote } = useQuotationActions();
   const db = AppDatabase.getInstance();
 
   // URL and Routing State
@@ -135,8 +137,25 @@ const MainAppContent: React.FC = () => {
 
   useEffect(() => {
     const handleLocationChange = () => {
+      const navStart = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const parsed = parseRoute(getCurrentPath());
       setCurrentRoute(parsed);
+
+      if (
+        parsed.namespace === 'ADMIN' ||
+        parsed.subTab === 'blogs' ||
+        parsed.subTab === 'page' ||
+        parsed.subTab === 'visas'
+      ) {
+        void db.ensureSecondaryCollectionsHydrated();
+      }
+
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(() => {
+          const navEnd = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          performanceMonitor.recordTiming('ROUTE_SWITCH', parsed.pathname || '/', navEnd - navStart);
+        });
+      }
 
       if (parsed.namespace === 'PUBLIC' || parsed.namespace === 'BUYER') {
         if (parsed.subTab === 'dashboard') {
@@ -229,13 +248,19 @@ const MainAppContent: React.FC = () => {
   };
 
   useEffect(() => {
-    // Defer non-essential automation schedulers until after initial paint & hydration
+    // Load internal automation & marketing schedulers ONLY for authenticated internal Admin/Staff roles
+    // so public visitors and B2B agents never download or run background admin schedulers.
+    const isInternalStaff =
+      isAuthenticated &&
+      (role === 'ADMIN' || role === 'TEAM_MEMBER' || role === 'DMC_STAFF' || (role as any) === 'SUPER_ADMIN');
+    if (!isInternalStaff) return;
+
     const timer = setTimeout(() => {
       import('./services/automaticTaskEngine').catch(() => {});
       import('./services/marketingAutomationScheduler').catch(() => {});
-    }, 1200);
+    }, 1800);
     return () => clearTimeout(timer);
-  }, []);
+  }, [isAuthenticated, role]);
 
   useEffect(() => {
     const unsubDest = db.subscribeToCollections(['destinations', 'city_hubs', 'inventory_tombstones'], () => {
@@ -300,18 +325,23 @@ const MainAppContent: React.FC = () => {
     );
   }, [destinations, role]);
 
-  // Strict B2B Portal Active Destination Rule: status === 'ACTIVE' ONLY (excludes COMING_SOON, INACTIVE, DRAFT, ARCHIVED, DISABLED)
+  // Strict B2B Portal Active Destination Rule: only compute when B2B portal or B2B builder is active
+  const needsB2BCollections = currentRoute.namespace === 'B2B' || activeTab === 'B2B_BUILDER';
+
   const b2bActiveDestinations = useMemo(() => {
+    if (!needsB2BCollections) return [];
     return inventoryVisibilityService.getB2BActiveDestinations();
-  }, [destinations]);
+  }, [destinations, needsB2BCollections]);
 
   const b2bActiveHotels = useMemo(() => {
+    if (!needsB2BCollections) return [];
     return inventoryVisibilityService.getB2BActiveHotels();
-  }, [destinations, hotels]);
+  }, [destinations, hotels, needsB2BCollections]);
 
   const b2bActiveProducts = useMemo(() => {
+    if (!needsB2BCollections) return [];
     return inventoryVisibilityService.getB2BActiveProducts();
-  }, [destinations, products]);
+  }, [destinations, products, needsB2BCollections]);
 
   const handleSelectDestination = (slug: string) => {
     setSelectedDestinationSlug(slug);
@@ -466,6 +496,7 @@ const MainAppContent: React.FC = () => {
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden min-w-0 bg-[#F8FAFC] text-slate-900 flex flex-col font-sans selection:bg-[#00C6A6] selection:text-white">
+      <BrowserCompatibilityBanner />
       {/* Authenticated Staff & Partner Quick Navigation Bar */}
       {isAuthenticated && (hasCMSAccess || isB2BAuthorized) && (
         <div className="bg-slate-900 text-slate-300 px-4 py-2 text-xs flex flex-wrap items-center justify-between border-b border-slate-800 gap-2">

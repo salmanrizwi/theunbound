@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, ReactNode, ErrorInfo } from 'react';
+import React, { useState, useMemo, useEffect, useDeferredValue, Suspense, ReactNode, ErrorInfo } from 'react';
 import { 
   ShoppingBag, 
   Search, 
@@ -28,14 +28,20 @@ import { Product, Destination, CityHub } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
 import { formatCurrency, calculateDeliveredPriceForUser } from '../../services/pricingEngine';
-import { GlobalConfiguratorRouter } from '../Configurators/GlobalConfiguratorRouter';
 import { isRailProduct } from '../../services/rail/JapanRailJourneyDataService';
 import { AppDatabase } from '../../services/db';
 import { canonicalImageService } from '../../services/imageService';
-import { sanitizeImageUrl } from '../../utils/imageUtils';
-import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
+import { sanitizeImageUrl, getOptimizedImageUrl } from '../../utils/imageUtils';
 import { inventoryDiscoveryService } from '../../services/inventoryDiscoveryService';
 import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
+
+const GlobalConfiguratorRouter = lazyWithRetry(() =>
+  import('../Configurators/GlobalConfiguratorRouter').then(m => ({ default: m.GlobalConfiguratorRouter }))
+);
+const B2BViewDetailsModal = lazyWithRetry(() =>
+  import('../B2BViewDetailsModal').then(m => ({ default: m.B2BViewDetailsModal }))
+);
 
 // Safely normalize any value to a lowercase trimmed string
 const safeStr = (val: any): string => {
@@ -171,6 +177,7 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
 
   // Additional Advanced Filter States
   const [isAdvancedFiltersOpen, setIsAdvancedFiltersOpen] = useState(false);
@@ -241,7 +248,7 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
         hubId: selectedHub,
         date: selectedDate,
         category: selectedCategory,
-        searchQuery: searchQuery,
+        searchQuery: deferredSearchQuery,
         page: currentPage,
         pageSize
       },
@@ -253,7 +260,7 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
     selectedHub,
     selectedDate,
     selectedCategory,
-    searchQuery,
+    deferredSearchQuery,
     currentPage,
     canonicalProducts,
     pageSize
@@ -724,12 +731,12 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
                       <img
                         loading="lazy"
                         decoding="async"
-                        src={canonicalImageService.resolveProductImage(prod)}
+                        src={getOptimizedImageUrl(canonicalImageService.resolveProductImage(prod), 'card')}
                         alt={prod.name || 'Product Image'}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         referrerPolicy="no-referrer"
                         onError={(e) => {
-                          const fallback = sanitizeImageUrl('', prod.category || prod.city);
+                          const fallback = getOptimizedImageUrl(sanitizeImageUrl('', prod.category || prod.city), 'card');
                           if ((e.currentTarget as HTMLImageElement).src !== fallback) {
                             (e.currentTarget as HTMLImageElement).src = fallback;
                           }
@@ -1013,31 +1020,37 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
         </div>
       )}
 
-      {/* Standardized B2B View Details Modal */}
+      {/* Standardized B2B View Details Modal (Lazy-loaded on click) */}
       {selectedProductDetails && (
-        <B2BViewDetailsModal
-          product={selectedProductDetails}
-          onClose={() => setSelectedProductDetails(null)}
-          onOpenCalculator={(p) => {
-            setSelectedProductDetails(null);
-            handleOpenAddProductModal(p);
-          }}
-        />
+        <Suspense fallback={null}>
+          <B2BViewDetailsModal
+            product={selectedProductDetails}
+            onClose={() => setSelectedProductDetails(null)}
+            onOpenCalculator={(p) => {
+              setSelectedProductDetails(null);
+              handleOpenAddProductModal(p);
+            }}
+          />
+        </Suspense>
       )}
 
-      {/* Dedicated Category Configurator Router */}
-      <GlobalConfiguratorRouter
-        itemOrProduct={selectedProductForQuoteModal}
-        isOpen={Boolean(selectedProductForQuoteModal)}
-        portalOrigin="B2B_AGENT"
-        onClose={() => setSelectedProductForQuoteModal(null)}
-        onSuccess={(product, details) => {
-          setQuoteSuccessNotification({
-            product,
-            details
-          });
-        }}
-      />
+      {/* Dedicated Category Configurator Router (Lazy-loaded on click) */}
+      {selectedProductForQuoteModal && (
+        <Suspense fallback={null}>
+          <GlobalConfiguratorRouter
+            itemOrProduct={selectedProductForQuoteModal}
+            isOpen={Boolean(selectedProductForQuoteModal)}
+            portalOrigin="B2B_AGENT"
+            onClose={() => setSelectedProductForQuoteModal(null)}
+            onSuccess={(product, details) => {
+              setQuoteSuccessNotification({
+                product,
+                details
+              });
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

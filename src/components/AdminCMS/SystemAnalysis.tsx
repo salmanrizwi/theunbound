@@ -12,6 +12,7 @@ import {
 import { canUserAccessSystemAnalysis } from '../../services/permissionEngine';
 import { performanceMonitor } from '../../services/performanceMonitor';
 import { backgroundJobService } from '../../services/backgroundJobService';
+import { auth } from '../../services/firebase';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { 
   Activity, 
@@ -94,15 +95,46 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
   }, [db]);
 
   const [perfTick, setPerfTick] = useState(0);
+  const [serverTelemetry, setServerTelemetry] = useState<any | null>(null);
+  const [serverTelemetryLoading, setServerTelemetryLoading] = useState(false);
+  const [serverTelemetryError, setServerTelemetryError] = useState<string | null>(null);
+
+  const loadServerTelemetry = React.useCallback(async () => {
+    setServerTelemetryLoading(true);
+    setServerTelemetryError(null);
+    try {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : '';
+      if (!idToken) {
+        setServerTelemetryError('Sign in with an Admin Firebase session to view live backend telemetry.');
+        return;
+      }
+      const res = await fetch('/api/admin/performance', {
+        headers: { Authorization: `Bearer ${idToken}` }
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        setServerTelemetryError(errJson?.error || `Backend telemetry unavailable (HTTP ${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      setServerTelemetry(data);
+    } catch (err: any) {
+      setServerTelemetryError(err?.message || 'Unable to reach backend telemetry endpoint');
+    } finally {
+      setServerTelemetryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeSubView !== 'PERFORMANCE') return;
     const unsubPerf = performanceMonitor.subscribe(() => setPerfTick(t => t + 1));
     const unsubJobs = backgroundJobService.subscribe(() => setPerfTick(t => t + 1));
+    void loadServerTelemetry();
     return () => {
       unsubPerf();
       unsubJobs();
     };
-  }, [activeSubView]);
+  }, [activeSubView, loadServerTelemetry]);
 
   const perfSummary = useMemo(() => {
     return activeSubView === 'PERFORMANCE' ? performanceMonitor.getSummary() : null;
@@ -1851,10 +1883,13 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
               <div className="flex items-center space-x-2">
                 <button
                   type="button"
-                  onClick={() => setPerfTick(t => t + 1)}
+                  onClick={() => {
+                    setPerfTick(t => t + 1);
+                    void loadServerTelemetry();
+                  }}
                   className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer flex items-center space-x-1"
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
+                  <RefreshCw className={`w-3.5 h-3.5 ${serverTelemetryLoading ? 'animate-spin' : ''}`} />
                   <span>Refresh Snapshot</span>
                 </button>
                 <button
@@ -1869,6 +1904,116 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Active Performance Alerts */}
+            {perfSummary.alerts && perfSummary.alerts.length > 0 && (
+              <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-amber-800">
+                  Active Performance Threshold Alerts ({perfSummary.alerts.length})
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  {perfSummary.alerts.map((alert, idx) => (
+                    <div
+                      key={`${alert.metric}-${idx}`}
+                      className={`text-xs px-3 py-2 rounded-xl border font-medium flex items-center justify-between gap-2 ${
+                        alert.severity === 'CRITICAL'
+                          ? 'bg-rose-50 border-rose-200 text-rose-800'
+                          : 'bg-white border-amber-200 text-amber-900'
+                      }`}
+                    >
+                      <span>{alert.message}</span>
+                      <span className="font-mono font-bold shrink-0">{alert.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Core Web Vitals & Device Profile */}
+            <div className="space-y-2">
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Core Web Vitals &amp; Client Responsiveness</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">TTFB</span>
+                  <div className="text-lg font-black font-mono text-slate-900">
+                    {perfSummary.webVitals.ttfbMs !== undefined ? `${perfSummary.webVitals.ttfbMs} ms` : '—'}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Target &le; 800 ms</div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">FCP</span>
+                  <div className="text-lg font-black font-mono text-slate-900">
+                    {perfSummary.webVitals.fcpMs !== undefined ? `${(perfSummary.webVitals.fcpMs / 1000).toFixed(2)} s` : '—'}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Target &le; 1.8 s</div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">LCP</span>
+                  <div className={`text-lg font-black font-mono ${perfSummary.webVitals.lcpMs !== undefined && perfSummary.webVitals.lcpMs > 2500 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {perfSummary.webVitals.lcpMs !== undefined ? `${(perfSummary.webVitals.lcpMs / 1000).toFixed(2)} s` : '—'}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Target &le; 2.5 s</div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">INP</span>
+                  <div className={`text-lg font-black font-mono ${perfSummary.webVitals.inpMs !== undefined && perfSummary.webVitals.inpMs > 200 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {perfSummary.webVitals.inpMs !== undefined ? `${perfSummary.webVitals.inpMs} ms` : '—'}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Target &le; 200 ms</div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">CLS</span>
+                  <div className={`text-lg font-black font-mono ${perfSummary.webVitals.cls > 0.1 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                    {perfSummary.webVitals.cls.toFixed(3)}
+                  </div>
+                  <div className="text-[10px] text-slate-500">Target &le; 0.10</div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Long Tasks / TBT</span>
+                  <div className="text-lg font-black font-mono text-slate-900">
+                    {perfSummary.webVitals.longTaskCount} <span className="text-xs text-slate-400">({perfSummary.webVitals.totalBlockingMs}ms)</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500">Tasks &gt; 50 ms</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Client Device & Hardware Profile */}
+            {perfSummary.deviceProfile && (
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+                  <div>
+                    <span className="text-slate-500 font-semibold">Device: </span>
+                    <span className="font-bold text-slate-900">{perfSummary.deviceProfile.deviceCategory} ({perfSummary.deviceProfile.viewportWidth}&times;{perfSummary.deviceProfile.viewportHeight})</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-semibold">Browser: </span>
+                    <span className="font-bold text-slate-900">
+                      {perfSummary.deviceProfile.browserFamily} {perfSummary.deviceProfile.browserVersion ?? ''}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-semibold">CPU / RAM: </span>
+                    <span className="font-mono font-bold text-slate-900">
+                      {perfSummary.deviceProfile.hardwareConcurrency ?? '?'} cores · {perfSummary.deviceProfile.deviceMemoryGB ? `${perfSummary.deviceProfile.deviceMemoryGB} GB` : 'N/A'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-semibold">Network: </span>
+                    <span className="font-mono font-bold text-slate-900 uppercase">
+                      {perfSummary.deviceProfile.effectiveConnectionType}{perfSummary.deviceProfile.saveData ? ' (Save-Data)' : ''}
+                    </span>
+                  </div>
+                </div>
+                <span className={`px-2.5 py-1 rounded-lg font-bold text-[11px] border ${
+                  perfSummary.deviceProfile.perfTier === 'low'
+                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                    : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                }`}>
+                  Adaptive Tier: {perfSummary.deviceProfile.perfTier === 'low' ? 'Low-Spec Relief Active' : 'Standard'}
+                </span>
+              </div>
+            )}
 
             {/* Key Infrastructure Counters */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -1908,7 +2053,7 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
 
             {/* Category Timings Table */}
             <div className="space-y-2">
-              <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Measured Execution Latencies</h4>
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Measured Frontend Execution Latencies</h4>
               <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold border-b border-slate-200">
@@ -1937,20 +2082,114 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
               </div>
             </div>
 
-            {/* Caches & Background Export Jobs */}
+            {/* Live Backend API Performance & Compression Telemetry */}
+            <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/60 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">Backend API, Compression &amp; Concurrency Telemetry</h4>
+                  <p className="text-[11px] text-slate-500">Live server metrics from /api/admin/performance (Admin-verified)</p>
+                </div>
+                {serverTelemetry && (
+                  <span className="text-[11px] font-mono text-slate-500">
+                    Uptime: {serverTelemetry.uptimeSeconds}s · RSS: {serverTelemetry.serverMemoryMB?.rssMB} MB
+                  </span>
+                )}
+              </div>
+
+              {serverTelemetryError ? (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                  {serverTelemetryError}
+                </p>
+              ) : serverTelemetry ? (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3 rounded-xl bg-white border border-slate-200">
+                      <span className="text-[10px] font-bold uppercase text-slate-500">API Requests / Errors</span>
+                      <div className="text-lg font-black font-mono text-slate-900">
+                        {serverTelemetry.totalApiRequests} <span className="text-xs text-slate-400">({serverTelemetry.apiErrorRatePercent}% err)</span>
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-white border border-slate-200">
+                      <span className="text-[10px] font-bold uppercase text-slate-500">Active / Peak Concurrency</span>
+                      <div className="text-lg font-black font-mono text-slate-900">
+                        {serverTelemetry.activeRequests} <span className="text-slate-400 text-sm">/</span> {serverTelemetry.peakConcurrentRequests}
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-white border border-slate-200">
+                      <span className="text-[10px] font-bold uppercase text-slate-500">HTTP Compression Saved</span>
+                      <div className="text-lg font-black font-mono text-emerald-700">
+                        {serverTelemetry.compression?.savingsPercent ?? 0}%
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {serverTelemetry.compression?.savedKB ?? 0} KB saved ({serverTelemetry.compression?.responsesCompressed ?? 0} responses)
+                      </div>
+                    </div>
+                    <div className="p-3 rounded-xl bg-white border border-slate-200">
+                      <span className="text-[10px] font-bold uppercase text-slate-500">Rate Limit Blocks</span>
+                      <div className="text-lg font-black font-mono text-slate-900">
+                        {serverTelemetry.rateLimitBlocked}
+                      </div>
+                      <div className="text-[10px] text-slate-500">300 req / 60s per IP guard</div>
+                    </div>
+                  </div>
+
+                  {Array.isArray(serverTelemetry.routes) && serverTelemetry.routes.length > 0 && (
+                    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold border-b border-slate-200">
+                          <tr>
+                            <th className="py-2 px-3">Backend Route</th>
+                            <th className="py-2 px-3 text-right">Requests</th>
+                            <th className="py-2 px-3 text-right">Avg (ms)</th>
+                            <th className="py-2 px-3 text-right">P95 (ms)</th>
+                            <th className="py-2 px-3 text-right">Errors (%)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {serverTelemetry.routes.slice(0, 10).map((r: any) => (
+                            <tr key={r.route} className="hover:bg-slate-50/60">
+                              <td className="py-2 px-3 font-mono text-[11px] font-bold text-slate-800">{r.route}</td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-600">{r.count}</td>
+                              <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">{r.avgMs}</td>
+                              <td className="py-2 px-3 text-right font-mono text-slate-700">{r.p95Ms}</td>
+                              <td className={`py-2 px-3 text-right font-mono font-bold ${r.errorCount > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                                {r.errorCount} ({r.errorRatePercent}%)
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">Loading server telemetry...</p>
+              )}
+            </div>
+
+            {/* Caches, Background Export Jobs, Slowest Operations & Unhandled Frontend Errors */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               <div className="p-4 rounded-2xl border border-slate-200 space-y-3">
-                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">In-Memory Cache Hit Ratios</h4>
-                {perfSummary.caches.length === 0 ? (
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">In-Memory &amp; Server Cache Hit Ratios</h4>
+                {perfSummary.caches.length === 0 && !(serverTelemetry?.caches?.length > 0) ? (
                   <p className="text-xs text-slate-400">No cache hits or misses recorded yet in this session.</p>
                 ) : (
                   <div className="space-y-2">
                     {perfSummary.caches.map(c => (
-                      <div key={c.name} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                      <div key={`fe-${c.name}`} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-slate-50 border border-slate-100">
                         <span className="font-mono font-bold text-slate-800">{c.name}</span>
                         <div className="flex items-center space-x-3 font-mono text-[11px]">
                           <span className="text-emerald-700 font-bold">{c.hitRatePercent}% Hit</span>
                           <span className="text-slate-500">H:{c.hits} / M:{c.misses} / E:{c.evictions}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {(serverTelemetry?.caches || []).map((c: any) => (
+                      <div key={`be-${c.name}`} className="flex items-center justify-between text-xs p-2.5 rounded-xl bg-teal-50/40 border border-teal-100">
+                        <span className="font-mono font-bold text-slate-800">server:{c.name}</span>
+                        <div className="flex items-center space-x-3 font-mono text-[11px]">
+                          <span className="text-teal-700 font-bold">{c.hitRatePercent}% Hit</span>
+                          <span className="text-slate-500">H:{c.hits} / M:{c.misses}</span>
                         </div>
                       </div>
                     ))}
@@ -1981,6 +2220,49 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                         }`}>
                           {job.status} ({job.progressPercent}%)
                         </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 rounded-2xl border border-slate-200 space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">Slowest Session Operations &amp; Route Switches</h4>
+                {(!perfSummary.slowestSamples || perfSummary.slowestSamples.length === 0) ? (
+                  <p className="text-xs text-slate-400">No slow timings recorded yet in this session.</p>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                    {perfSummary.slowestSamples.map(sample => (
+                      <div key={sample.id} className="flex items-center justify-between gap-2 text-xs p-2 rounded-xl bg-slate-50 border border-slate-100">
+                        <div className="min-w-0">
+                          <span className="font-mono text-[10px] font-bold text-teal-700 mr-2">{sample.category}</span>
+                          <span className="text-slate-800 font-medium truncate">{sample.label}</span>
+                        </div>
+                        <span className={`font-mono font-bold shrink-0 ${sample.durationMs > 1000 ? 'text-amber-700' : 'text-slate-800'}`}>
+                          {sample.durationMs} ms
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-4 rounded-2xl border border-slate-200 space-y-3">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                  Unhandled Frontend Errors ({perfSummary.frontendErrorCount || 0})
+                </h4>
+                {(!perfSummary.frontendErrors || perfSummary.frontendErrors.length === 0) ? (
+                  <p className="text-xs text-emerald-700 font-medium">Zero unhandled frontend runtime errors in this session.</p>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto">
+                    {perfSummary.frontendErrors.map(err => (
+                      <div key={err.id} className="text-xs p-2.5 rounded-xl bg-rose-50/70 border border-rose-200 space-y-0.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-[10px] font-bold text-rose-700">{err.type}</span>
+                          <span className="text-[10px] text-slate-500 font-mono">{new Date(err.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                        <p className="text-rose-900 font-medium break-words">{err.message}</p>
+                        {err.source && <p className="text-[10px] text-rose-700/80 font-mono">{err.source}</p>}
                       </div>
                     ))}
                   </div>

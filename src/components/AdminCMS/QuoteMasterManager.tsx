@@ -5,7 +5,6 @@ import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { resolveUserAccountManager } from '../../services/accountManagerService';
-import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { 
   FileSpreadsheet, 
@@ -190,8 +189,9 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
   };
 
   // 4. Download PDF
-  const handleDownloadPDF = (q: Quotation) => {
-    downloadQuotationPDF({
+  const handleDownloadPDF = async (q: Quotation) => {
+    const { downloadQuotationPDF } = await import('../../services/pdfGenerator');
+    await downloadQuotationPDF({
       quote: q,
       agentName: q.agentName || q.createdByName || user?.name,
       agentAgency: q.agentAgency || q.agentCompany || user?.agencyName || user?.companyName,

@@ -19,7 +19,7 @@ import { INITIAL_AFFILIATIONS, INITIAL_HOMEPAGE_CONFIG } from '../data/initialHo
 export interface HomepageSectionRegistryItem {
   sectionId: string;
   sectionName: string;
-  sectionType: 'HERO' | 'BRAND' | 'HUBS' | 'DESTINATIONS' | 'BENEFITS' | 'AFFILIATIONS' | 'ONBOARDING' | 'TESTIMONIALS' | 'FAQS' | 'CTA' | 'GALLERY' | 'PARTNERS' | 'NEWSLETTER';
+  sectionType: 'HERO' | 'BRAND' | 'HUBS' | 'DESTINATIONS' | 'BENEFITS' | 'AFFILIATIONS' | 'ONBOARDING' | 'TESTIMONIALS' | 'FAQS' | 'CTA' | 'GALLERY' | 'PARTNERS' | 'NEWSLETTER' | 'DEMO_BOOKING';
   displayOrder: number;
   isActive: boolean;
   dataSource: string;
@@ -73,6 +73,8 @@ export class HomepageService {
       'testimonials',
       'happyCustomerGallery',
       'homepageFaqs',
+      'newsletter',
+      'demoBooking',
       'conversionCta'
     ];
 
@@ -185,6 +187,26 @@ export class HomepageService {
         countSource: 'config.homepageFAQs.length',
         visibilityRule: 'config.showHomepageFAQs !== false'
       },
+      newsletter: {
+        sectionId: 'newsletter',
+        sectionName: 'Newsletter Subscription (Sendy)',
+        sectionType: 'NEWSLETTER',
+        dataSource: 'HomepageConfig.newsletterConfig',
+        cmsControl: 'HomepageManager -> NEWSLETTER Subtab (config.showNewsletterSection)',
+        firestoreSource: 'homepage_config/main.newsletterConfig',
+        query: 'db.getHomepageConfig()',
+        visibilityRule: 'config.showNewsletterSection !== false'
+      },
+      demoBooking: {
+        sectionId: 'demoBooking',
+        sectionName: 'Demo Booking / Schedule a Meeting',
+        sectionType: 'DEMO_BOOKING',
+        dataSource: 'HomepageConfig.demoBookingConfig',
+        cmsControl: 'HomepageManager -> Layout Manager & Demo Booking (config.showDemoBookingSection)',
+        firestoreSource: 'homepage_config/main.demoBookingConfig',
+        query: 'db.getHomepageConfig()',
+        visibilityRule: 'config.showDemoBookingSection !== false && >= 1 enabled button with valid Calendly URL'
+      },
       conversionCta: {
         sectionId: 'conversionCta',
         sectionName: 'Final Trade Accreditation CTA Banner',
@@ -206,10 +228,13 @@ export class HomepageService {
       else if (cleanId === 'destinationfilter' || cleanId === 'destinations' || cleanId === 'b2bdestinationexpertise') matchKey = 'destinationFilter';
       else if (cleanId === 'partnershipbenefits' || cleanId === 'b2bpartnershipbenefits') matchKey = 'partnershipBenefits';
       else if (cleanId === 'affiliations' || cleanId === 'regulatoryaffiliations') matchKey = 'affiliations';
+      else if (cleanId === 'associatedpartners' || cleanId === 'partners') matchKey = 'associatedPartners';
       else if (cleanId === 'onboardingprocess' || cleanId === 'b2bonboardingprocess') matchKey = 'onboardingProcess';
       else if (cleanId === 'testimonials' || cleanId === 'reviews') matchKey = 'testimonials';
       else if (cleanId === 'happycustomergallery' || cleanId === 'customergallery' || cleanId === 'gallery') matchKey = 'happyCustomerGallery';
       else if (cleanId === 'homepagefaqs' || cleanId === 'faqs') matchKey = 'homepageFaqs';
+      else if (cleanId === 'newsletter' || cleanId === 'homepagenewsletter') matchKey = 'newsletter';
+      else if (cleanId === 'demobooking' || cleanId === 'scheduleameeting' || cleanId === 'bookdemo') matchKey = 'demoBooking';
       else if (cleanId === 'conversioncta' || cleanId === 'cta') matchKey = 'conversionCta';
 
       const def = registryMap[matchKey] || {
@@ -230,10 +255,13 @@ export class HomepageService {
       else if (matchKey === 'destinationFilter') isActive = config.showDestinationFilter !== false;
       else if (matchKey === 'partnershipBenefits') isActive = config.showPartnershipBenefits !== false;
       else if (matchKey === 'affiliations') isActive = config.showAffiliationsSection !== false;
+      else if (matchKey === 'associatedPartners') isActive = config.showAssociatedPartners !== false;
       else if (matchKey === 'onboardingProcess') isActive = config.showOnboardingProcess !== false;
       else if (matchKey === 'testimonials') isActive = config.showGoogleReviews !== false;
       else if (matchKey === 'happyCustomerGallery') isActive = config.showHappyCustomerGallery !== false;
       else if (matchKey === 'homepageFaqs') isActive = config.showHomepageFAQs !== false;
+      else if (matchKey === 'newsletter') isActive = config.showNewsletterSection !== false;
+      else if (matchKey === 'demoBooking') isActive = config.showDemoBookingSection !== false;
       else if (matchKey === 'conversionCta') isActive = config.showConversionCTA !== false;
 
       return {

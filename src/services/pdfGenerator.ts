@@ -11,6 +11,8 @@ import {
 } from './pdfPaginationEngine';
 import { backgroundJobService, yieldToMainThread } from './backgroundJobService';
 import { withBoundedTimeout } from './quotationOperationsService';
+import { performanceMonitor } from './performanceMonitor';
+import { getAdaptivePdfScale } from '../utils/deviceCapabilities';
 
 export interface PDFExportOptions {
   quote: Quotation;
@@ -220,6 +222,9 @@ export async function generateQuotationPDFFromModel(
     // Verify rendered DOM geometry invariants strictly before rasterizing
     const pageElements = Array.from(wrapper.querySelectorAll('.proposal-pdf-page')) as HTMLElement[];
     for (let i = 0; i < pageElements.length; i++) {
+      if (i > 0 && i % 4 === 0) {
+        await yieldToMainThread();
+      }
       const pageEl = pageElements[i];
       const pageData = pages[i];
       const bounds = pageData?.bounds || getPageContentBounds(i + 1);
@@ -280,6 +285,8 @@ export async function generateQuotationPDFFromModel(
     });
 
     const total = Math.max(1, pageElements.length);
+    const rasterScale = getAdaptivePdfScale();
+    const jpegQuality = rasterScale < 2 ? 0.92 : 0.96;
 
     for (let i = 0; i < pageElements.length; i++) {
       await yieldToMainThread();
@@ -287,7 +294,7 @@ export async function generateQuotationPDFFromModel(
 
       const canvas = await withBoundedTimeout(
         html2canvas(pageEl, {
-          scale: 2,
+          scale: rasterScale,
           useCORS: true,
           imageTimeout: 3500,
           logging: false,
@@ -300,7 +307,14 @@ export async function generateQuotationPDFFromModel(
         `PDF Page ${i + 1} Rasterization`
       );
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.96);
+      let imgData = '';
+      try {
+        imgData = canvas.toDataURL('image/jpeg', jpegQuality);
+      } finally {
+        // Explicitly release GPU/RAM canvas backing store after each page to prevent OOM on low-RAM laptops & mobile devices
+        canvas.width = 0;
+        canvas.height = 0;
+      }
 
       if (i > 0) {
         pdf.addPage('a4', 'portrait');
@@ -356,7 +370,12 @@ export async function downloadQuotationPDF(options: PDFExportOptions): Promise<{
           selectedOptionIndexOrId: options.selectedOptionIndexOrId ?? options.quote.activeOptionId
         });
 
-        const pdf = await generateQuotationPDFFromModel(presentationModel, updateProgress);
+        const pdf = await performanceMonitor.measureAsync(
+          'PDF_GENERATION',
+          `PDF:${options.quote.quoteNumber || quoteKey}`,
+          () => generateQuotationPDFFromModel(presentationModel, updateProgress),
+          { daysCount: presentationModel.days.length, scale: getAdaptivePdfScale() }
+        );
         const filename = `Itinerary-${options.quote.quoteNumber || 'Proposal'}.pdf`;
         pdf.save(filename);
         updateProgress(100);

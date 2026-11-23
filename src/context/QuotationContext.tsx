@@ -11,7 +11,6 @@ import { createQuoteItemContentSnapshot } from '../utils/b2bQuotationHelpers';
 import { isRailQuoteItem } from '../services/rail/JapanRailJourneyDataService';
 import { japanRailJourneyService } from '../services/rail/JapanRailJourneyService';
 import { canUserViewInternalCostBreakdown } from '../services/permissionEngine';
-import { transformPackageToQuoteState } from '../services/packageToQuoteTransformer';
 import { COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT } from '../constants/commercialQuotationTerms';
 import { shouldExcludeHotelItemByNoAccommodation } from '../utils/hubStayMatching';
 import {
@@ -212,9 +211,63 @@ interface QuotationContextType {
   clearDestinationVisibilityError: () => void;
 }
 
+export type QuotationActionsContextType = Pick<
+  QuotationContextType,
+  | 'setItems'
+  | 'loadQuoteItems'
+  | 'setCurrency'
+  | 'setIsQuoteDrawerOpen'
+  | 'addProductToQuote'
+  | 'removeProductFromQuote'
+  | 'removeProductsByIds'
+  | 'updateItemPax'
+  | 'updateItemTravelDate'
+  | 'updateItemServiceTime'
+  | 'updateItemFull'
+  | 'updateQuoteItem'
+  | 'toggleItemAddon'
+  | 'updateItemNotes'
+  | 'clearQuote'
+  | 'setClientName'
+  | 'setClientEmail'
+  | 'setClientCompany'
+  | 'setClientPhone'
+  | 'setDestination'
+  | 'setQuotationDates'
+  | 'setClientDetails'
+  | 'setLeadId'
+  | 'setAgentNotes'
+  | 'setOverallDiscountPercent'
+  | 'setQuoteTitle'
+  | 'setSourcePackageId'
+  | 'setSourcePackageName'
+  | 'setQuotationScope'
+  | 'setRouteHubs'
+  | 'setPaxConfig'
+  | 'setDayThemes'
+  | 'setDayDescriptions'
+  | 'setDayOverviews'
+  | 'setDayNotes'
+  | 'setItineraryOverview'
+  | 'setInclusions'
+  | 'setExclusions'
+  | 'setImportantInformation'
+  | 'setCancellationPolicy'
+  | 'setHandoffPayload'
+  | 'setQuoteSource'
+  | 'clearPriceRefreshNotice'
+  | 'loadAiPlannerPayload'
+  | 'saveCurrentQuote'
+  | 'loadSavedQuote'
+  | 'loadPackageIntoQuote'
+  | 'deleteSavedQuote'
+  | 'clearDestinationVisibilityError'
+>;
+
 const STORAGE_KEY_SAVED_QUOTES = 'theunbound_saved_quotes';
 
 const QuotationContext = createContext<QuotationContextType | undefined>(undefined);
+const QuotationActionsContext = createContext<QuotationActionsContextType | undefined>(undefined);
 
 export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
@@ -1448,39 +1501,46 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return false;
     }
     setDestinationVisibilityError(null);
-
-    const transformed = transformPackageToQuoteState(freshPkg, {
-      user,
-      currency,
-      adultsCount: paxConfig.adults || 2,
-      childrenCount: paxConfig.children || 0,
-      infantsCount: paxConfig.infants || 0
-    });
-
-    setSourcePackageId(transformed.sourcePackageId);
-    setSourcePackageName(transformed.sourcePackageName);
-    setQuoteTitle(transformed.quoteTitle);
-    setDestination(transformed.destination.name);
-    setQuotationScope(transformed.quotationScope);
-    setTravelStartDate(transformed.startDate);
-    setTravelEndDate(transformed.endDate);
-    setRouteHubs(transformed.routeHubs);
-    setItems(transformed.items);
-    setDayThemes(transformed.dayThemes);
-    setDayDescriptions(transformed.dayDescriptions);
-    setDayOverviews(transformed.dayOverviews);
-    setDayNotes(transformed.dayNotes);
-    setItineraryOverview((freshPkg as any).overview || (freshPkg as any).narrative || '');
-    setInclusions(transformed.inclusions);
-    setExclusions(transformed.exclusions);
-    setImportantInformation(transformed.importantInformation);
-    setCancellationPolicy(transformed.cancellationPolicy);
-    setAgentNotes(transformed.agentNotes);
-    setQuoteSource('PACKAGE');
-    setActiveQuoteId(null);
-    setCurrentVersion(1);
-    setIsLocked(false);
     setIsQuoteDrawerOpen(false);
+
+    void import('../services/packageToQuoteTransformer')
+      .then(({ transformPackageToQuoteState }) => {
+        const transformed = transformPackageToQuoteState(freshPkg, {
+          user,
+          currency,
+          adultsCount: paxConfig.adults || 2,
+          childrenCount: paxConfig.children || 0,
+          infantsCount: paxConfig.infants || 0
+        });
+
+        setSourcePackageId(transformed.sourcePackageId);
+        setSourcePackageName(transformed.sourcePackageName);
+        setQuoteTitle(transformed.quoteTitle);
+        setDestination(transformed.destination.name);
+        setQuotationScope(transformed.quotationScope);
+        setTravelStartDate(transformed.startDate);
+        setTravelEndDate(transformed.endDate);
+        setRouteHubs(transformed.routeHubs);
+        setItems(transformed.items);
+        setDayThemes(transformed.dayThemes);
+        setDayDescriptions(transformed.dayDescriptions);
+        setDayOverviews(transformed.dayOverviews);
+        setDayNotes(transformed.dayNotes);
+        setItineraryOverview((freshPkg as any).overview || (freshPkg as any).narrative || '');
+        setInclusions(transformed.inclusions);
+        setExclusions(transformed.exclusions);
+        setImportantInformation(transformed.importantInformation);
+        setCancellationPolicy(transformed.cancellationPolicy);
+        setAgentNotes(transformed.agentNotes);
+        setQuoteSource('PACKAGE');
+        setActiveQuoteId(null);
+        setCurrentVersion(1);
+        setIsLocked(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load package transformer module:', err);
+      });
+
     return true;
   }, [currency, paxConfig.adults, paxConfig.children, paxConfig.infants, setIsQuoteDrawerOpen, user]);
 
@@ -1665,10 +1725,88 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     destinationVisibilityError
   ]);
 
+  const actionsValue = useMemo<QuotationActionsContextType>(() => ({
+    setItems,
+    loadQuoteItems,
+    setCurrency,
+    setIsQuoteDrawerOpen,
+    addProductToQuote,
+    removeProductFromQuote,
+    removeProductsByIds,
+    updateItemPax,
+    updateItemTravelDate,
+    updateItemServiceTime,
+    updateItemFull,
+    updateQuoteItem,
+    toggleItemAddon,
+    updateItemNotes,
+    clearQuote,
+    setClientName,
+    setClientEmail,
+    setClientCompany,
+    setClientPhone,
+    setDestination,
+    setQuotationDates,
+    setClientDetails,
+    setLeadId,
+    setAgentNotes,
+    setOverallDiscountPercent,
+    setQuoteTitle,
+    setSourcePackageId,
+    setSourcePackageName,
+    setQuotationScope,
+    setRouteHubs,
+    setPaxConfig,
+    setDayThemes,
+    setDayDescriptions,
+    setDayOverviews,
+    setDayNotes,
+    setItineraryOverview,
+    setInclusions,
+    setExclusions,
+    setImportantInformation,
+    setCancellationPolicy,
+    setHandoffPayload,
+    setQuoteSource,
+    clearPriceRefreshNotice,
+    loadAiPlannerPayload,
+    saveCurrentQuote,
+    loadSavedQuote,
+    loadPackageIntoQuote,
+    deleteSavedQuote,
+    clearDestinationVisibilityError
+  }), [
+    loadQuoteItems,
+    setCurrency,
+    setIsQuoteDrawerOpen,
+    addProductToQuote,
+    removeProductFromQuote,
+    removeProductsByIds,
+    updateItemPax,
+    updateItemTravelDate,
+    updateItemServiceTime,
+    updateItemFull,
+    updateQuoteItem,
+    toggleItemAddon,
+    updateItemNotes,
+    clearQuote,
+    setQuotationDates,
+    setClientDetails,
+    clearPriceRefreshNotice,
+    loadAiPlannerPayload,
+    saveCurrentQuote,
+    loadSavedQuote,
+    loadPackageIntoQuote,
+    deleteSavedQuote,
+    clearDestinationVisibilityError
+  ]);
+
   return (
-    <QuotationContext.Provider value={contextValue}>
-      {children}
-    </QuotationContext.Provider>
+    <QuotationActionsContext.Provider value={actionsValue}>
+      <QuotationContext.Provider value={contextValue}>
+        {children}
+      </QuotationContext.Provider>
+    </QuotationActionsContext.Provider>
   );
 };
 
@@ -1676,6 +1814,18 @@ export const useQuotation = (): QuotationContextType => {
   const context = useContext(QuotationContext);
   if (!context) {
     throw new Error('useQuotation must be used within a QuotationProvider');
+  }
+  return context;
+};
+
+/**
+ * Subscribe ONLY to quotation action dispatchers without re-rendering when quote draft fields change.
+ * Prevents root shells (App, Navbar, B2BAgentPortal) from re-rendering on every Quote Builder keystroke.
+ */
+export const useQuotationActions = (): QuotationActionsContextType => {
+  const context = useContext(QuotationActionsContext);
+  if (!context) {
+    throw new Error('useQuotationActions must be used within a QuotationProvider');
   }
   return context;
 };

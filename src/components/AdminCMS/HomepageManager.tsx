@@ -50,7 +50,8 @@ import {
   Handshake,
   ChevronDown,
   ChevronUp,
-  Camera
+  Camera,
+  Calendar
 } from 'lucide-react';
 import { UniversalHero } from '../UniversalHero';
 import { BuyerHeroSection } from '../BuyerPortal/BuyerHeroSection';
@@ -58,6 +59,9 @@ import { UniversalHeroConfig, HeroTrustItem } from '../../types';
 import { NewsletterManager } from './NewsletterManager';
 import { AssociatedPartnersManager } from './AssociatedPartnersManager';
 import { HappyCustomerGalleryManager } from './HappyCustomerGalleryManager';
+import { DemoBookingManager } from './DemoBookingManager';
+import { DemoBookingSection } from '../public/DemoBookingSection';
+import { getPublishableDemoBookingButtons } from '../../utils/demoBookingValidation';
 import { 
   uploadAffiliationLogo, 
   uploadSectionBanner, 
@@ -86,6 +90,7 @@ export const CANONICAL_SECTION_DEFINITIONS: Array<{ key: string; label: string; 
   { key: 'happyCustomerGallery', label: 'Happy Customer Gallery', desc: 'Real guest photo stories, verified experiences, and social proof with tags', toggleKey: 'showHappyCustomerGallery' as any },
   { key: 'homepageFaqs', label: 'Homepage FAQs Accordion', desc: 'Trade buyer & operational SLA Q&A section', toggleKey: 'showHomepageFAQs' },
   { key: 'newsletter', label: 'Newsletter Subscription (Sendy)', desc: 'Public email newsletter invitation synced with Sendy list', toggleKey: 'showNewsletterSection' },
+  { key: 'demoBooking', label: 'Demo Booking / Schedule a Meeting', desc: 'Premium two-button Calendly demo & partnership booking section', toggleKey: 'showDemoBookingSection' },
   { key: 'conversionCta', label: 'Final B2B Trade Accreditation CTA', desc: 'Bottom call-to-action to register and contact trade desk', toggleKey: 'showConversionCTA' }
 ];
 
@@ -155,7 +160,7 @@ export function initSequenceDraft(currentConfig: HomepageConfig): SequenceModule
 
 interface HomepageManagerProps {
   destinations: Destination[];
-  defaultSubTab?: 'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'FAQS' | 'GALLERY';
+  defaultSubTab?: 'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'DEMO_BOOKING' | 'FAQS' | 'GALLERY';
   defaultSectionKey?: string;
 }
 
@@ -167,8 +172,9 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
   const [cityHubs, setCityHubs] = useState<CityHub[]>(() => db.getCityHubs());
   const [regions, setRegions] = useState<MasterRegion[]>(() => db.getMasterRegions());
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'FAQS' | 'GALLERY'>(defaultSubTab || 'LAYOUT');
+  const [activeSubTab, setActiveSubTab] = useState<'LAYOUT' | 'HERO' | 'HUBS' | 'DESTINATIONS' | 'SECTIONS' | 'AFFILIATIONS' | 'PARTNERS' | 'NEWSLETTER' | 'DEMO_BOOKING' | 'FAQS' | 'GALLERY'>(defaultSubTab || 'LAYOUT');
   const [expandedSectionKey, setExpandedSectionKey] = useState<string | null>(defaultSectionKey || null);
+  const [previewPositionKey, setPreviewPositionKey] = useState<string | null>(null);
 
   // Sequence & Ordering Draft State
   const [sequenceDraftModules, setSequenceDraftModules] = useState<SequenceModuleItem[]>(() => initSequenceDraft(db.getHomepageConfig()));
@@ -324,14 +330,28 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
     });
 
     const nextVersion = (latest.version || 1) + 1;
+    const now = new Date().toISOString();
+    const actor = user?.email || 'admin@theunbound.in';
+    const demoEntry = normalized.find(m => m.key === 'demoBooking');
+    const syncedDemoBookingConfig = config.demoBookingConfig
+      ? {
+          ...config.demoBookingConfig,
+          isActive: demoEntry ? demoEntry.active : config.demoBookingConfig.isActive,
+          displayOrder: demoEntry ? demoEntry.sequence : config.demoBookingConfig.displayOrder,
+          updatedAt: now,
+          updatedBy: actor
+        }
+      : config.demoBookingConfig;
+
     const updatedConfig: HomepageConfig = {
       ...config,
       ...toggleUpdates,
+      demoBookingConfig: syncedDemoBookingConfig,
       homepageModuleOrder: orderKeys,
       homepageSections: sectionsMap,
       version: nextVersion,
-      updatedAt: new Date().toISOString(),
-      updatedBy: user?.email || 'admin@theunbound.in'
+      updatedAt: now,
+      updatedBy: actor
     };
 
     // 3. Atomic persistence & Audit logging
@@ -350,27 +370,41 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
       const canonicalKeys = CANONICAL_SECTION_DEFINITIONS.map(c => c.key);
       const toggleUpdates: Partial<HomepageConfig> = {};
       const sectionsMap: Record<string, { sequence: number; active: boolean; updatedAt: string; updatedBy: string }> = {};
+      const now = new Date().toISOString();
+      const actor = user?.email || 'admin@theunbound.in';
 
       CANONICAL_SECTION_DEFINITIONS.forEach((def, idx) => {
         sectionsMap[def.key] = {
           sequence: idx + 1,
           active: true,
-          updatedAt: new Date().toISOString(),
-          updatedBy: user?.email || 'admin@theunbound.in'
+          updatedAt: now,
+          updatedBy: actor
         };
         (toggleUpdates as any)[def.toggleKey] = true;
       });
 
       const latest = db.getHomepageConfig();
       const nextVersion = (latest.version || 1) + 1;
+      const demoCanonicalIdx = canonicalKeys.indexOf('demoBooking');
+      const syncedDemoBookingConfig = config.demoBookingConfig
+        ? {
+            ...config.demoBookingConfig,
+            isActive: true,
+            displayOrder: demoCanonicalIdx >= 0 ? demoCanonicalIdx + 1 : undefined,
+            updatedAt: now,
+            updatedBy: actor
+          }
+        : config.demoBookingConfig;
+
       const updatedConfig: HomepageConfig = {
         ...config,
         ...toggleUpdates,
+        demoBookingConfig: syncedDemoBookingConfig,
         homepageModuleOrder: canonicalKeys,
         homepageSections: sectionsMap,
         version: nextVersion,
-        updatedAt: new Date().toISOString(),
-        updatedBy: user?.email || 'admin@theunbound.in'
+        updatedAt: now,
+        updatedBy: actor
       };
 
       db.updateHomepageConfig(updatedConfig, user);
@@ -769,6 +803,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
           { id: 'PARTNERS', label: 'Associated Partners Carousel', icon: Handshake },
           { id: 'GALLERY', label: 'Happy Customer Gallery', icon: Sparkles },
           { id: 'NEWSLETTER', label: 'Newsletter (Sendy)', icon: Mail },
+          { id: 'DEMO_BOOKING', label: 'Demo Booking (Calendly)', icon: Calendar },
           { id: 'FAQS', label: 'Homepage FAQs Manager', icon: HelpCircle }
         ].map(tab => {
           const Icon = tab.icon;
@@ -873,7 +908,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
                 return (
                   <div
                     key={item.key}
-                    className={`flex flex-col sm:flex-row sm:items-center justify-between p-4 rounded-2xl border transition-all ${
+                    className={`flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between p-4 rounded-2xl border transition-all ${
                       item.active
                         ? 'bg-white border-slate-200 shadow-2xs'
                         : 'bg-slate-50/70 border-slate-200 opacity-75'
@@ -910,7 +945,7 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between sm:justify-end space-x-3 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+                    <div className="flex items-center justify-between sm:justify-end space-x-2.5 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 flex-wrap gap-y-2">
                       {/* Manage Gallery Action Button if happyCustomerGallery */}
                       {item.key === 'happyCustomerGallery' && (
                         <button
@@ -927,6 +962,48 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
                           <span>{expandedSectionKey === item.key ? 'Collapse Gallery' : 'Manage Gallery'}</span>
                           {expandedSectionKey === item.key ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
                         </button>
+                      )}
+
+                      {/* Manage & Preview in Position Action Buttons if demoBooking */}
+                      {item.key === 'demoBooking' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPreviewPositionKey(previewPositionKey === item.key ? null : item.key)
+                            }
+                            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                              previewPositionKey === item.key
+                                ? 'border-slate-900 bg-slate-900 text-white'
+                                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                            }`}
+                            title="Preview Demo Booking section in its current homepage sequence position"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{previewPositionKey === item.key ? 'Close Preview' : 'Preview Position'}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedSectionKey(expandedSectionKey === item.key ? null : item.key)
+                            }
+                            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                              expandedSectionKey === item.key
+                                ? 'border-[#008972] bg-teal-50 text-[#008972] shadow-2xs'
+                                : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                            }`}
+                            title="Configure headlines, two Calendly booking links, and styling"
+                          >
+                            <Calendar className="w-3.5 h-3.5 text-[#008972]" />
+                            <span>
+                              {expandedSectionKey === item.key
+                                ? 'Collapse Settings'
+                                : `Configure (${getPublishableDemoBookingButtons(config.demoBookingConfig).length}/2 Links)`}
+                            </span>
+                            {expandedSectionKey === item.key ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                          </button>
+                        </>
                       )}
 
                       {/* Activate / Deactivate Toggle Button */}
@@ -972,6 +1049,51 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
                         </button>
                       </div>
                     </div>
+
+                    {/* Inline Position Context Preview for Demo Booking */}
+                    {item.key === 'demoBooking' && previewPositionKey === item.key && (() => {
+                      const prevActive = [...sequenceDraftModules.slice(0, idx)].reverse().find(m => m.active);
+                      const nextActive = sequenceDraftModules.slice(idx + 1).find(m => m.active);
+                      return (
+                        <div className="mt-4 pt-4 border-t border-slate-200 w-full space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                            <span className="font-bold text-slate-900">
+                              Homepage Position Preview — Sequence #{item.sequence} of {sequenceDraftModules.length} ({item.active ? 'Visible' : 'Hidden'})
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {prevActive ? `Below: ${prevActive.label}` : 'Top of Homepage'} · {nextActive ? `Above: ${nextActive.label}` : 'Bottom of Homepage'}
+                            </span>
+                          </div>
+                          <div className="rounded-2xl bg-[#F8FAFC] border border-slate-200 p-4 space-y-4">
+                            {prevActive && (
+                              <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-2.5 text-center text-[11px] font-semibold text-slate-500">
+                                ↑ Preceding Section (#{prevActive.sequence}): {prevActive.label}
+                              </div>
+                            )}
+                            <DemoBookingSection
+                              config={config.demoBookingConfig}
+                              sectionActive={item.active}
+                              previewMode
+                            />
+                            {nextActive && (
+                              <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-2.5 text-center text-[11px] font-semibold text-slate-500">
+                                ↓ Following Section (#{nextActive.sequence}): {nextActive.label}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Inline Content Workspace for Demo Booking */}
+                    {item.key === 'demoBooking' && expandedSectionKey === item.key && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 w-full">
+                        <DemoBookingManager
+                          compact
+                          sequencePositionLabel={`Position ${item.sequence} of ${sequenceDraftModules.length}`}
+                        />
+                      </div>
+                    )}
 
                     {/* Inline Content Workspace for Happy Customer Gallery */}
                     {item.key === 'happyCustomerGallery' && expandedSectionKey === item.key && (
@@ -3470,6 +3592,12 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
 
       {activeSubTab === 'NEWSLETTER' && (
         <NewsletterManager />
+      )}
+
+      {activeSubTab === 'DEMO_BOOKING' && (
+        <DemoBookingManager
+          onOpenLayoutOrdering={() => setActiveSubTab('LAYOUT')}
+        />
       )}
 
       {activeSubTab === 'FAQS' && (

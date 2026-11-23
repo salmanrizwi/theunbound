@@ -9,6 +9,12 @@ import { createMarginGovernanceRouter } from "./marginGovernanceService";
 import { createCashbackRouter, createAdminCashbackRouter, startCashbackScheduler } from "./cashbackService";
 import { createNewsletterRouter } from "./newsletterService";
 import { createB2BVisibilityRouter } from "./b2bVisibilityService";
+import {
+  createCompressionMiddleware,
+  createApiTelemetryMiddleware,
+  createApiRateLimiter,
+  createAdminPerformanceRouter
+} from "./performanceMiddleware";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -28,13 +34,24 @@ export async function startServer() {
   serverPromise = new Promise(async (resolve, reject) => {
     try {
       const app = express();
+      app.disable('x-powered-by');
+
+      // Transparent HTTP Brotli / Gzip compression for JS, CSS, HTML & JSON responses
+      app.use(createCompressionMiddleware());
 
       app.use(express.json({ limit: '10mb' }));
+
+      // API latency telemetry & generous sliding-window rate limiting
+      app.use("/api", createApiTelemetryMiddleware());
+      app.use("/api", createApiRateLimiter({ windowMs: 60_000, maxRequests: 300 }));
 
       // API routes FIRST
       app.get("/api/health", (req, res) => {
         res.json({ status: "ok", service: "theunbound-dmc-portal" });
       });
+
+      // Admin-only backend performance & health telemetry endpoint
+      app.use("/api/admin/performance", createAdminPerformanceRouter());
 
       // Strict B2B Portal Destination Visibility API
       app.use("/api/b2b", createB2BVisibilityRouter());

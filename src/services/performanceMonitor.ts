@@ -4,6 +4,8 @@
  * and memory snapshots with zero network/Firestore overhead.
  */
 
+import { getDeviceCapabilities, DeviceCapabilitiesProfile } from '../utils/deviceCapabilities';
+
 export type PerfCategory =
   | 'APP_INIT'
   | 'ROUTE_SWITCH'
@@ -59,6 +61,22 @@ export interface WebVitalsSnapshot {
   lastUpdatedAt?: string;
 }
 
+export interface CapturedFrontendError {
+  id: string;
+  type: 'RUNTIME_ERROR' | 'UNHANDLED_REJECTION';
+  message: string;
+  source?: string;
+  timestamp: string;
+}
+
+export interface PerfAlert {
+  severity: 'WARN' | 'CRITICAL';
+  metric: string;
+  message: string;
+  value: number;
+  threshold: number;
+}
+
 class PerformanceMonitorService {
   private static instance: PerformanceMonitorService;
   private samples: PerfSample[] = [];
@@ -82,7 +100,10 @@ class PerformanceMonitorService {
     longTaskCount: 0,
     totalBlockingMs: 0
   };
+  private capturedErrors: CapturedFrontendError[] = [];
+  private readonly maxErrors = 30;
   private vitalsInitialized = false;
+  private errorTrackingInitialized = false;
   private observers: PerformanceObserver[] = [];
   private subscribers: Set<() => void> = new Set();
   private notifyTimer: any = null;
@@ -349,8 +370,111 @@ class PerformanceMonitorService {
     });
   }
 
+  public initGlobalErrorTracking(): void {
+    if (this.errorTrackingInitialized || typeof window === 'undefined') return;
+    this.errorTrackingInitialized = true;
+
+    window.addEventListener('error', (event) => {
+      const rawMessage = event?.message || (event?.error && event.error.message) || 'Unknown runtime error';
+      // Privacy-safe sanitization: truncate and strip potential email/token strings
+      const safeMsg = String(rawMessage)
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+        .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [redacted]')
+        .slice(0, 220);
+      this.recordFrontendError('RUNTIME_ERROR', safeMsg, event?.filename ? String(event.filename).split('/').pop() : undefined);
+    });
+
+    window.addEventListener('unhandledrejection', (event) => {
+      const reason = event?.reason;
+      const rawMessage = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : 'Unhandled promise rejection';
+      const safeMsg = String(rawMessage)
+        .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+        .replace(/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [redacted]')
+        .slice(0, 220);
+      this.recordFrontendError('UNHANDLED_REJECTION', safeMsg);
+    });
+  }
+
+  public recordFrontendError(
+    type: 'RUNTIME_ERROR' | 'UNHANDLED_REJECTION',
+    message: string,
+    source?: string
+  ): void {
+    this.capturedErrors.unshift({
+      id: `err-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      type,
+      message,
+      source,
+      timestamp: new Date().toISOString()
+    });
+    if (this.capturedErrors.length > this.maxErrors) {
+      this.capturedErrors.length = this.maxErrors;
+    }
+    this.scheduleNotify();
+  }
+
   public getWebVitals(): WebVitalsSnapshot {
     return { ...this.webVitals };
+  }
+
+  public getDeviceProfile(): DeviceCapabilitiesProfile {
+    return getDeviceCapabilities();
+  }
+
+  public getSlowestSamples(limit = 10): PerfSample[] {
+    return [...this.samples]
+      .sort((a, b) => b.durationMs - a.durationMs)
+      .slice(0, limit);
+  }
+
+  public getAlerts(): PerfAlert[] {
+    const alerts: PerfAlert[] = [];
+    if (this.webVitals.lcpMs !== undefined && this.webVitals.lcpMs > 2500) {
+      alerts.push({
+        severity: this.webVitals.lcpMs > 4000 ? 'CRITICAL' : 'WARN',
+        metric: 'LCP',
+        message: 'Largest Contentful Paint exceeded target (2.5s)',
+        value: this.webVitals.lcpMs,
+        threshold: 2500
+      });
+    }
+    if (this.webVitals.inpMs !== undefined && this.webVitals.inpMs > 200) {
+      alerts.push({
+        severity: this.webVitals.inpMs > 500 ? 'CRITICAL' : 'WARN',
+        metric: 'INP',
+        message: 'Interaction to Next Paint exceeded target (200ms)',
+        value: this.webVitals.inpMs,
+        threshold: 200
+      });
+    }
+    if (this.webVitals.cls > 0.1) {
+      alerts.push({
+        severity: this.webVitals.cls > 0.25 ? 'CRITICAL' : 'WARN',
+        metric: 'CLS',
+        message: 'Cumulative Layout Shift exceeded target (0.10)',
+        value: this.webVitals.cls,
+        threshold: 0.1
+      });
+    }
+    if (this.webVitals.totalBlockingMs > 300) {
+      alerts.push({
+        severity: this.webVitals.totalBlockingMs > 600 ? 'CRITICAL' : 'WARN',
+        metric: 'TBT',
+        message: 'Main-thread long task blocking exceeded 300ms',
+        value: this.webVitals.totalBlockingMs,
+        threshold: 300
+      });
+    }
+    if (this.capturedErrors.length > 0) {
+      alerts.push({
+        severity: this.capturedErrors.length >= 5 ? 'CRITICAL' : 'WARN',
+        metric: 'ERRORS',
+        message: `${this.capturedErrors.length} unhandled frontend error(s) captured this session`,
+        value: this.capturedErrors.length,
+        threshold: 0
+      });
+    }
+    return alerts;
   }
 
   public getSummary() {
@@ -364,6 +488,7 @@ class PerformanceMonitorService {
     });
 
     const categories: PerfCategory[] = [
+      'ROUTE_SWITCH',
       'QUOTE_BUILDER_INIT',
       'QUOTE_STEP_SWITCH',
       'PRODUCT_SEARCH',
@@ -391,6 +516,11 @@ class PerformanceMonitorService {
       autoSave: { ...this.autoSaveStat },
       webVitals: { ...this.webVitals },
       memory: this.getMemoryUsageMB(),
+      deviceProfile: this.getDeviceProfile(),
+      alerts: this.getAlerts(),
+      slowestSamples: this.getSlowestSamples(10),
+      frontendErrors: this.capturedErrors.slice(0, 15),
+      frontendErrorCount: this.capturedErrors.length,
       recentSamples: this.samples.slice(0, 30)
     };
   }
@@ -400,6 +530,7 @@ class PerformanceMonitorService {
     this.cacheStats = {};
     this.firestoreReadCount = 0;
     this.firestoreWriteCount = 0;
+    this.capturedErrors = [];
   }
 }
 

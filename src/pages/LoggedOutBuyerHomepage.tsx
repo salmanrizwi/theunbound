@@ -6,6 +6,7 @@ import { PublicHappyCustomerGallery } from '../components/PublicHappyCustomerGal
 import { AssociatedPartnersCarousel } from '../components/public/AssociatedPartnersCarousel';
 import { FinalCTA } from '../components/FinalCTA';
 import { NewsletterSignup } from '../components/Newsletter/NewsletterSignup';
+import { DemoBookingSection } from '../components/public/DemoBookingSection';
 import { AppDatabase } from '../services/db';
 import { GlobalCountingEngine } from '../services/countingEngine';
 import { inventoryVisibilityService, useInventoryVisibility } from '../services/inventoryVisibilityService';
@@ -142,6 +143,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     'happyCustomerGallery',
     'homepageFaqs',
     'newsletter',
+    'demoBooking',
     'conversionCta'
   ];
 
@@ -159,6 +161,7 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     if (clean === 'happycustomergallery' || clean === 'customergallery' || clean === 'gallery' || clean === 'happycustomermoments') return 'happyCustomerGallery';
     if (clean === 'homepagefaqs' || clean === 'b2btradefaqs' || clean === 'faqs') return 'homepageFaqs';
     if (clean === 'newsletter' || clean === 'homepagenewsletter' || clean === 'newslettersubscription') return 'newsletter';
+    if (clean === 'demobooking' || clean === 'scheduleameeting' || clean === 'bookdemo' || clean === 'calendlydemo') return 'demoBooking';
     if (clean === 'conversioncta' || clean === 'b2bfinalcta' || clean === 'cta') return 'conversionCta';
     return id;
   };
@@ -1008,6 +1011,15 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
               }}
             />
           </section>
+        ) : null;
+
+      case 'demoBooking':
+        return (config.showDemoBookingSection !== false && config.demoBookingConfig?.isActive !== false) ? (
+          <DemoBookingSection
+            key="module-demo-booking"
+            config={config.demoBookingConfig}
+            sectionActive={config.showDemoBookingSection !== false}
+          />
         ) : null;
 
       case 'conversionCta':

@@ -1,4 +1,46 @@
-import { HomepageConfig, HomepageAffiliation } from '../types';
+import { HomepageConfig, HomepageAffiliation, HomepageDemoBookingConfig } from '../types';
+
+export const INITIAL_DEMO_BOOKING_CONFIG: HomepageDemoBookingConfig = {
+  sectionId: 'demoBooking',
+  sectionType: 'DEMO_BOOKING',
+  eyebrowText: "LET'S CONNECT",
+  headline: "Let's Build Something Extraordinary Together.",
+  description:
+    'Discover how TheUnbound can simplify your Japan travel operations, streamline quotations and help your agency unlock new opportunities.',
+  buttons: [
+    {
+      id: 'demo-btn-1',
+      slot: 1,
+      label: 'Book a Platform Demo',
+      calendlyUrl: '',
+      supportingText: '',
+      enabled: false,
+      displayOrder: 1,
+      style: 'primary-teal'
+    },
+    {
+      id: 'demo-btn-2',
+      slot: 2,
+      label: 'Schedule a Partnership Discussion',
+      calendlyUrl: '',
+      supportingText: '',
+      enabled: false,
+      displayOrder: 2,
+      style: 'outline-teal'
+    }
+  ],
+  background: {
+    style: 'pure-white',
+    decorativeTreatment: 'architectural-lines'
+  },
+  layout: {
+    alignment: 'center',
+    contentWidth: 'standard',
+    buttonSpacing: 'comfortable',
+    sectionPadding: 'standard'
+  },
+  isActive: true
+};
 
 export const INITIAL_AFFILIATIONS: HomepageAffiliation[] = [
   {
@@ -196,6 +238,7 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     'happyCustomerGallery',
     'homepageFaqs',
     'newsletter',
+    'demoBooking',
     'conversionCta'
   ],
 
@@ -251,6 +294,8 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
     errorMessage: "We couldn't complete your subscription right now. Please try again.",
     sendyListId: 'NL-THEUNBOUND-2026'
   },
+  showDemoBookingSection: true,
+  demoBookingConfig: INITIAL_DEMO_BOOKING_CONFIG,
   showConversionCTA: true,
   tradeContactEmail: 'business@theunbound.in',
 

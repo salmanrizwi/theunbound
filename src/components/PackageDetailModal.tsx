@@ -46,6 +46,46 @@ import {
 } from 'lucide-react';
 
 interface PackageDetailModalProps {
+  packageItem?: B2BPackage | null;
+  /** Legacy prop alias kept for backwards compatibility */
+  pkg?: B2BPackage | null;
+  portalOrigin?: 'B2B_AGENT' | 'ADMIN_CMS' | 'BUYER';
+  onClose: () => void;
+  onCustomizePackage?: (pkg: B2BPackage) => void;
+  /** Legacy prop alias kept for backwards compatibility */
+  onCustomizeInBuilder?: (pkg: B2BPackage) => void;
+  onInstantBook?: (pkg: B2BPackage) => void;
+  onEnquirePackage?: (pkg: B2BPackage) => void;
+}
+
+export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
+  packageItem,
+  pkg,
+  portalOrigin = 'B2B_AGENT',
+  onClose,
+  onCustomizePackage,
+  onCustomizeInBuilder,
+  onInstantBook,
+  onEnquirePackage
+}) => {
+  const resolvedPackage = packageItem ?? pkg;
+  if (!resolvedPackage) {
+    return null;
+  }
+
+  return (
+    <PackageDetailModalContent
+      packageItem={resolvedPackage}
+      portalOrigin={portalOrigin}
+      onClose={onClose}
+      onCustomizePackage={onCustomizePackage ?? onCustomizeInBuilder}
+      onInstantBook={onInstantBook}
+      onEnquirePackage={onEnquirePackage}
+    />
+  );
+};
+
+interface PackageDetailModalContentProps {
   packageItem: B2BPackage;
   portalOrigin?: 'B2B_AGENT' | 'ADMIN_CMS' | 'BUYER';
   onClose: () => void;
@@ -54,7 +94,7 @@ interface PackageDetailModalProps {
   onEnquirePackage?: (pkg: B2BPackage) => void;
 }
 
-export const PackageDetailModal: React.FC<PackageDetailModalProps> = ({
+const PackageDetailModalContent: React.FC<PackageDetailModalContentProps> = ({
   packageItem: initialPackageItem,
   portalOrigin = 'B2B_AGENT',
   onClose,

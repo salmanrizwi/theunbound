@@ -109,7 +109,6 @@ import {
   getHubOccurrenceId,
   computeStayDatesForHub
 } from '../../utils/hubStayMatching';
-import { downloadQuotationPDF } from '../../services/pdfGenerator';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { EmailNotificationService } from '../../services/emailNotificationService';
 import {
@@ -4496,6 +4495,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       });
       let recordedFailure = false;
       try {
+        const { downloadQuotationPDF } = await import('../../services/pdfGenerator');
         const pdfResult = await withBoundedTimeout(
           downloadQuotationPDF({
             quote: synced,
@@ -7694,9 +7694,9 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       {viewingSavedMasterPackage && (
         <Suspense fallback={null}>
           <PackageDetailModal
-            pkg={viewingSavedMasterPackage}
+            packageItem={viewingSavedMasterPackage}
             onClose={() => setViewingSavedMasterPackage(null)}
-            onCustomizeInBuilder={(pkgToCustomize) => {
+            onCustomizePackage={(pkgToCustomize) => {
               setViewingSavedMasterPackage(null);
               showBuilderToast(`Package "${pkgToCustomize.title}" is already loaded in this workspace.`, 'INFO');
             }}

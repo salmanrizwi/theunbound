@@ -45,9 +45,18 @@ export class ImageService {
   private imageRegistry: Map<string, ImageMetadata> = new Map();
   private entityIndex: Map<string, string[]> = new Map(); // entityKey -> imageId[]
   private subscribers: Set<() => void> = new Set();
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistIdleHandle: number | null = null;
+  private persistDirty: boolean = false;
+  private persistWriteCount: number = 0;
 
   private constructor() {
     this.loadPersistedRegistry();
+    if (typeof window !== 'undefined') {
+      const flushHandler = () => this.flushPersistedRegistry();
+      window.addEventListener('pagehide', flushHandler);
+      window.addEventListener('beforeunload', flushHandler);
+    }
   }
 
   public static getInstance(): ImageService {
@@ -111,7 +120,8 @@ export class ImageService {
     }
   }
 
-  private persistRegistry(): void {
+  private persistRegistryNow(): void {
+    this.persistDirty = false;
     if (typeof window === 'undefined' || !window.localStorage) return;
     try {
       const items = Array.from(this.imageRegistry.values()).filter(
@@ -120,9 +130,58 @@ export class ImageService {
       // Keep up to 1000 latest image metadata entries
       const slice = items.slice(-1000);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(slice));
+      this.persistWriteCount += 1;
     } catch (e) {
       console.warn('Failed to persist image registry to localStorage:', e);
     }
+  }
+
+  /**
+   * Schedules an asynchronous idle write to localStorage instead of blocking the main thread
+   * during startup hydration or catalog card renders.
+   */
+  private persistRegistry(): void {
+    this.persistDirty = true;
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (this.persistTimer !== null || this.persistIdleHandle !== null) return;
+
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      if (!this.persistDirty) return;
+      const winAny = window as any;
+      if (typeof winAny.requestIdleCallback === 'function') {
+        this.persistIdleHandle = winAny.requestIdleCallback(
+          () => {
+            this.persistIdleHandle = null;
+            if (this.persistDirty) this.persistRegistryNow();
+          },
+          { timeout: 1500 }
+        );
+      } else {
+        this.persistRegistryNow();
+      }
+    }, 600);
+  }
+
+  /**
+   * Immediately flushes any pending image registry persistence (called on pagehide / tests).
+   */
+  public flushPersistedRegistry(): void {
+    if (this.persistTimer !== null) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    if (this.persistIdleHandle !== null && typeof window !== 'undefined' && typeof (window as any).cancelIdleCallback === 'function') {
+      (window as any).cancelIdleCallback(this.persistIdleHandle);
+      this.persistIdleHandle = null;
+    }
+    if (this.persistDirty) {
+      this.persistRegistryNow();
+    }
+  }
+
+  public getPersistWriteCount(): number {
+    return this.persistWriteCount;
   }
 
   public getEntityKey(entityType: ImageEntityType, entityId: string): string {
@@ -478,22 +537,42 @@ export class ImageService {
     sourceUrl: string,
     role: ImageRole = 'PRIMARY',
     altText?: string,
-    version?: string | number
+    version?: string | number,
+    deferPersist: boolean = false
   ): ImageMetadata {
     const validation = this.validateImage(sourceUrl);
     const imageId = this.computeImageId(entityType, entityId, role);
-    const now = new Date().toISOString();
-    
+    const resolvedSource = validation.isValid ? validation.cleanUrl : sourceUrl;
+    const resolvedStorage = validation.isValid ? validation.cleanUrl : DEFAULT_FALLBACK_IMAGE;
+    const resolvedStatus: ImageSyncStatus = validation.isValid ? 'SYNCED' : 'INVALID';
+
     const existing = this.imageRegistry.get(imageId);
+    const entityKey = this.getEntityKey(entityType, entityId);
+    const existingIds = this.entityIndex.get(entityKey);
+
+    // Fast path: if image metadata is completely unchanged, skip Map mutation and localStorage scheduling
+    if (
+      existing &&
+      existing.sourceUrl === resolvedSource &&
+      existing.storageUrl === resolvedStorage &&
+      existing.status === resolvedStatus &&
+      (!version || (existing as any).version === version) &&
+      existingIds &&
+      existingIds.includes(imageId)
+    ) {
+      return existing;
+    }
+
+    const now = new Date().toISOString();
     const record: ImageMetadata = {
       imageId,
       entityType,
       entityId,
       role,
-      sourceUrl: validation.isValid ? validation.cleanUrl : sourceUrl,
-      storageUrl: validation.isValid ? validation.cleanUrl : DEFAULT_FALLBACK_IMAGE,
+      sourceUrl: resolvedSource,
+      storageUrl: resolvedStorage,
       altText: altText || `${entityType} image for ${entityId}`,
-      status: validation.isValid ? 'SYNCED' : 'INVALID',
+      status: resolvedStatus,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
       lastSyncedAt: now
@@ -505,13 +584,14 @@ export class ImageService {
 
     this.imageRegistry.set(imageId, record);
 
-    const entityKey = this.getEntityKey(entityType, entityId);
-    const existingIds = this.entityIndex.get(entityKey) || [];
-    if (!existingIds.includes(imageId)) {
-      this.entityIndex.set(entityKey, [...existingIds, imageId]);
+    const currentIds = existingIds || [];
+    if (!currentIds.includes(imageId)) {
+      this.entityIndex.set(entityKey, [...currentIds, imageId]);
     }
 
-    this.persistRegistry();
+    if (!deferPersist) {
+      this.persistRegistry();
+    }
     return record;
   }
 
@@ -611,7 +691,8 @@ export class ImageService {
       primaryFoundUrl,
       'PRIMARY',
       record.name || record.title || record.listingName,
-      entityVersion
+      entityVersion,
+      true
     );
     extracted.push(primaryMeta);
 
@@ -623,7 +704,8 @@ export class ImageService {
         url,
         'GALLERY',
         `${record.name || record.title || record.listingName || entityType} - Gallery ${idx + 1}`,
-        entityVersion
+        entityVersion,
+        true
       );
       meta.imageId = imageId;
       this.imageRegistry.set(imageId, meta);

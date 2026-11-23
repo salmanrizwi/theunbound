@@ -5758,6 +5758,59 @@ export interface HomepageNewsletterConfig {
   sendyListId?: string;
 }
 
+export type DemoBookingButtonStyle =
+  | 'primary-teal'
+  | 'outline-teal'
+  | 'charcoal-solid'
+  | 'soft-surface';
+
+export interface DemoBookingButtonConfig {
+  id: string;
+  slot: 1 | 2;
+  label: string;
+  calendlyUrl: string;
+  supportingText?: string;
+  enabled: boolean;
+  displayOrder: number;
+  style: DemoBookingButtonStyle;
+}
+
+export type DemoBookingBackgroundStyle =
+  | 'pure-white'
+  | 'soft-slate'
+  | 'subtle-teal-wash'
+  | 'dark-charcoal';
+
+export type DemoBookingDecorativeTreatment =
+  | 'none'
+  | 'minimal-grid'
+  | 'architectural-lines'
+  | 'soft-radial-glow';
+
+export interface HomepageDemoBookingConfig {
+  sectionId: string;
+  sectionType: 'DEMO_BOOKING';
+  eyebrowText: string;
+  headline: string;
+  description: string;
+  buttons: [DemoBookingButtonConfig, DemoBookingButtonConfig] | DemoBookingButtonConfig[];
+  background: {
+    style: DemoBookingBackgroundStyle;
+    decorativeTreatment: DemoBookingDecorativeTreatment;
+  };
+  layout: {
+    alignment: 'center' | 'left';
+    contentWidth: 'narrow' | 'standard' | 'wide';
+    buttonSpacing: 'compact' | 'comfortable' | 'spacious';
+    sectionPadding: 'compact' | 'standard' | 'generous';
+  };
+  isActive: boolean;
+  displayOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface HomepageConfig {
   heroHeading: string;
   heroSubheading: string;
@@ -5807,7 +5860,7 @@ export interface HomepageConfig {
   // Module Display Order (Controls the live homepage section sequence)
   homepageModuleOrder?: string[];
 
-  // Section / Module Visibility Toggles (The 9 live modules on the homepage)
+  // Section / Module Visibility Toggles (The live modules on the homepage)
   showHeroSection: boolean;
   showBrandIntroduction?: boolean;
   brandIntroductionBadge?: string;
@@ -5843,12 +5896,14 @@ export interface HomepageConfig {
   showHomepageFAQs: boolean;
   showConversionCTA: boolean;
   showNewsletterSection?: boolean;
+  showDemoBookingSection?: boolean;
   showHotelsSection?: boolean;
   showRailSection?: boolean;
   showExperiencesSection?: boolean;
   showPackagesSection?: boolean;
   showVisaSection?: boolean;
   newsletterConfig?: HomepageNewsletterConfig;
+  demoBookingConfig?: HomepageDemoBookingConfig;
   tradeContactEmail?: string;
 
   // Grid Layout Controls (Supported on the live homepage)

@@ -14,6 +14,7 @@ import {
   resolveDestinationIdToken
 } from '../src/services/destinationVisibility';
 import { fromFirestoreDocument } from './marginGovernanceService';
+import { recordServerCacheHit, recordServerCacheMiss } from './performanceMiddleware';
 
 export interface B2BCatalogSnapshot {
   destinations: any[];
@@ -120,7 +121,8 @@ export async function fetchB2BCatalogFromFirestore(authHeader?: string): Promise
   };
 }
 
-const B2B_CATALOG_CACHE_TTL_MS = 20_000;
+const B2B_CATALOG_CACHE_TTL_MS = 30_000;
+const B2B_CATALOG_CACHE_MAX_ENTRIES = 32;
 const liveCatalogCache = new Map<string, { snapshot: B2BCatalogSnapshot; expiresAt: number }>();
 const inFlightCatalogRequests = new Map<string, Promise<B2BCatalogSnapshot>>();
 
@@ -128,18 +130,36 @@ export function invalidateB2BCatalogCache(): void {
   liveCatalogCache.clear();
 }
 
+function pruneExpiredCatalogCache(now: number): void {
+  for (const [key, entry] of liveCatalogCache.entries()) {
+    if (now >= entry.expiresAt) {
+      liveCatalogCache.delete(key);
+    }
+  }
+  while (liveCatalogCache.size > B2B_CATALOG_CACHE_MAX_ENTRIES) {
+    const oldestKey = liveCatalogCache.keys().next().value;
+    if (!oldestKey) break;
+    liveCatalogCache.delete(oldestKey);
+  }
+}
+
 async function fetchB2BCatalogCached(authHeader?: string): Promise<B2BCatalogSnapshot> {
   const cacheKey = authHeader && authHeader.startsWith('Bearer ') ? `auth:${authHeader.slice(-24)}` : 'anon';
   const now = Date.now();
   const cached = liveCatalogCache.get(cacheKey);
   if (cached && now < cached.expiresAt) {
+    recordServerCacheHit('b2b_catalog');
     return cached.snapshot;
   }
 
   const inflight = inFlightCatalogRequests.get(cacheKey);
   if (inflight) {
+    recordServerCacheHit('b2b_catalog_inflight_dedup');
     return inflight;
   }
+
+  recordServerCacheMiss('b2b_catalog');
+  pruneExpiredCatalogCache(now);
 
   const promise = fetchB2BCatalogFromFirestore(authHeader)
     .then((snapshot) => {

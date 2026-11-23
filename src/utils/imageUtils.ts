@@ -230,6 +230,76 @@ export function sanitizeImageUrl(url?: string | null, fallbackKey?: string): str
   return clean || DEFAULT_FALLBACK_IMAGE;
 }
 
+export type ImageSizePreset = 'thumb' | 'card' | 'detail' | 'hero';
+
+const PRESET_DIMENSIONS: Record<ImageSizePreset, { width: number; quality: number }> = {
+  thumb: { width: 240, quality: 72 },
+  card: { width: 520, quality: 75 },
+  detail: { width: 960, quality: 80 },
+  hero: { width: 1280, quality: 82 },
+};
+
+/**
+ * Returns a size-appropriate CDN image URL (e.g. Unsplash/Pexels/Cloudinary query parameters)
+ * so catalog thumbnails don't download 1200px full-resolution hero photos on every card.
+ * Automatically steps down quality/width on Save-Data or slow 2G/3G connections.
+ * Base64 data URLs and non-CDN external URLs are returned safely untouched.
+ */
+export function getOptimizedImageUrl(
+  url?: string | null,
+  preset: ImageSizePreset = 'card',
+  options?: { width?: number; quality?: number; constrainedNetwork?: boolean }
+): string {
+  const safeUrl = sanitizeImageUrl(url);
+  if (!safeUrl || safeUrl.startsWith('data:') || safeUrl.startsWith('/')) {
+    return safeUrl;
+  }
+
+  let constrained = options?.constrainedNetwork;
+  if (constrained === undefined && typeof navigator !== 'undefined') {
+    const conn = (navigator as any).connection;
+    constrained = Boolean(
+      conn?.saveData ||
+      conn?.effectiveType === 'slow-2g' ||
+      conn?.effectiveType === '2g' ||
+      conn?.effectiveType === '3g'
+    );
+  }
+
+  const base = PRESET_DIMENSIONS[preset] || PRESET_DIMENSIONS.card;
+  const targetWidth = Math.max(
+    160,
+    Math.round((options?.width ?? base.width) * (constrained ? 0.72 : 1))
+  );
+  const targetQuality = Math.max(
+    55,
+    Math.min(88, (options?.quality ?? base.quality) - (constrained ? 10 : 0))
+  );
+
+  try {
+    if (safeUrl.includes('images.unsplash.com')) {
+      const parsed = new URL(safeUrl);
+      parsed.searchParams.set('auto', 'format');
+      parsed.searchParams.set('fit', 'crop');
+      parsed.searchParams.set('w', String(targetWidth));
+      parsed.searchParams.set('q', String(targetQuality));
+      return parsed.toString();
+    }
+
+    if (safeUrl.includes('images.pexels.com')) {
+      const parsed = new URL(safeUrl);
+      parsed.searchParams.set('auto', 'compress');
+      parsed.searchParams.set('cs', 'tinysrgb');
+      parsed.searchParams.set('w', String(targetWidth));
+      return parsed.toString();
+    }
+  } catch {
+    return safeUrl;
+  }
+
+  return safeUrl;
+}
+
 /**
  * Converts a File object to a compressed base64 Data URL for instant preview and Firestore/localStorage persistence.
  * Automatically resizes and compresses large raster images to stay well within Firestore's 1MB document limit.

@@ -3,11 +3,14 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import { GlobalErrorBoundary } from './components/common/GlobalErrorBoundary';
 import { performanceMonitor } from './services/performanceMonitor';
+import { initDeviceCapabilities } from './utils/deviceCapabilities';
 import './index.css';
 
 // Recover automatically from stale chunk hashes when a new production build is deployed
 if (typeof window !== 'undefined') {
+  initDeviceCapabilities();
   performanceMonitor.initWebVitalsObserver();
+  performanceMonitor.initGlobalErrorTracking();
   window.addEventListener('vite:preloadError', (event) => {
     event.preventDefault();
     const reloadKey = 'theunbound_chunk_preload_recovery';

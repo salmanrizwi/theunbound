@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useDeferredValue, Suspense } from 'react';
 import { 
   Building2, 
   Search, 
@@ -24,12 +24,19 @@ import { Hotel, Destination } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { formatCurrency, convertCurrency } from '../../services/pricingEngine';
 import { calculateHotelStayPrice } from '../../utils/hotelHelpers';
-import { AddHotelToQuoteModal } from './AddHotelToQuoteModal';
-import { B2BViewDetailsModal } from '../B2BViewDetailsModal';
 import { canonicalImageService } from '../../services/imageService';
+import { getOptimizedImageUrl } from '../../utils/imageUtils';
 import { AppDatabase } from '../../services/db';
 import { inventoryDiscoveryService } from '../../services/inventoryDiscoveryService';
 import { inventoryVisibilityService } from '../../services/inventoryVisibilityService';
+import { lazyWithRetry } from '../../utils/lazyWithRetry';
+
+const AddHotelToQuoteModal = lazyWithRetry(() =>
+  import('./AddHotelToQuoteModal').then(m => ({ default: m.AddHotelToQuoteModal }))
+);
+const B2BViewDetailsModal = lazyWithRetry(() =>
+  import('../B2BViewDetailsModal').then(m => ({ default: m.B2BViewDetailsModal }))
+);
 
 interface B2BHotelsCatalogViewProps {
   hotels?: Hotel[];
@@ -101,6 +108,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   const [selectedDestination, setSelectedDestination] = useState<string>('ALL');
   const [selectedStarRating, setSelectedStarRating] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const deferredSearchQuery = useDeferredValue(searchQuery);
   const [isMoreFiltersOpen, setIsMoreFiltersOpen] = useState<boolean>(false);
 
   // Modal States
@@ -149,7 +157,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
           roomsCount,
           destinationId: selectedDestination,
           starRating: selectedStarRating,
-          searchQuery,
+          searchQuery: deferredSearchQuery,
           page: currentPage,
           pageSize
         },
@@ -185,7 +193,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
     roomsCount,
     selectedDestination,
     selectedStarRating,
-    searchQuery,
+    deferredSearchQuery,
     currentPage,
     canonicalHotels,
     calculatedNights,
@@ -673,12 +681,15 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
                       <img
                         loading="lazy"
                         decoding="async"
-                        src={canonicalImageService.resolveHotelImage(hotel)}
+                        src={getOptimizedImageUrl(canonicalImageService.resolveHotelImage(hotel), 'card')}
                         alt={hotel.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                         referrerPolicy="no-referrer"
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).src = canonicalImageService.resolveHotelImage(hotel);
+                          const fallback = getOptimizedImageUrl(canonicalImageService.resolveHotelImage(hotel), 'card');
+                          if ((e.currentTarget as HTMLImageElement).src !== fallback) {
+                            (e.currentTarget as HTMLImageElement).src = fallback;
+                          }
                         }}
                       />
                       <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent"></div>
@@ -839,34 +850,38 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
         </div>
       )}
 
-      {/* Dedicated Add Hotel to Quote Modal with Pre-populated Search Stay Parameters */}
+      {/* Dedicated Add Hotel to Quote Modal with Pre-populated Search Stay Parameters (Lazy-loaded) */}
       {selectedHotelForQuote && (
-        <AddHotelToQuoteModal
-          hotel={selectedHotelForQuote}
-          isOpen={!!selectedHotelForQuote}
-          initialCheckInDate={checkInDate}
-          initialNights={calculatedNights}
-          initialAdults={adults}
-          initialChildren={children}
-          initialInfants={infants}
-          initialRoomsCount={roomsCount}
-          onClose={() => setSelectedHotelForQuote(null)}
-          onSuccess={(h, details) => {
-            setQuoteSuccessNotification({ hotel: h, details });
-          }}
-        />
+        <Suspense fallback={null}>
+          <AddHotelToQuoteModal
+            hotel={selectedHotelForQuote}
+            isOpen={!!selectedHotelForQuote}
+            initialCheckInDate={checkInDate}
+            initialNights={calculatedNights}
+            initialAdults={adults}
+            initialChildren={children}
+            initialInfants={infants}
+            initialRoomsCount={roomsCount}
+            onClose={() => setSelectedHotelForQuote(null)}
+            onSuccess={(h, details) => {
+              setQuoteSuccessNotification({ hotel: h, details });
+            }}
+          />
+        </Suspense>
       )}
 
-      {/* Standardized Buyer-style Hotel Details Modal */}
+      {/* Standardized Buyer-style Hotel Details Modal (Lazy-loaded) */}
       {selectedHotelForDetails && (
-        <B2BViewDetailsModal
-          hotel={selectedHotelForDetails}
-          onClose={() => setSelectedHotelForDetails(null)}
-          onConfigureHotel={(h) => {
-            setSelectedHotelForDetails(null);
-            setSelectedHotelForQuote(h);
-          }}
-        />
+        <Suspense fallback={null}>
+          <B2BViewDetailsModal
+            hotel={selectedHotelForDetails}
+            onClose={() => setSelectedHotelForDetails(null)}
+            onConfigureHotel={(h) => {
+              setSelectedHotelForDetails(null);
+              setSelectedHotelForQuote(h);
+            }}
+          />
+        </Suspense>
       )}
     </div>
   );

@@ -43,7 +43,6 @@ export default defineConfig({
       'firebase/storage',
       'motion',
       'jspdf',
-      'html2canvas',
       'html2canvas-pro',
       'xlsx'
     ],
@@ -58,6 +57,7 @@ export default defineConfig({
     sourcemap: false,
     reportCompressedSize: false,
     minify: 'esbuild' as const,
+    target: ['es2020', 'chrome87', 'edge88', 'firefox78', 'safari14'],
     chunkSizeWarningLimit: 2500,
     rollupOptions: {
       maxParallelFileOps: 4,
@@ -69,9 +69,6 @@ export default defineConfig({
           }
           if (id.includes('firebase') || id.includes('@firebase')) {
             return 'vendor-firebase';
-          }
-          if (id.includes('jspdf') || id.includes('html2canvas')) {
-            return 'vendor-pdf';
           }
           if (id.includes('/xlsx/')) {
             return 'vendor-xlsx';

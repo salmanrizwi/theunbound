@@ -10,7 +10,6 @@ import { formatCurrency } from '../../../services/pricingEngine';
 import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { AppDatabase } from '../../../services/db';
 import { canUserViewInternalCostBreakdown } from '../../../services/permissionEngine';
-import { downloadQuotationPDF } from '../../../services/pdfGenerator';
 import { QuotationVersionHistoryModal } from '../../Quotations/QuotationVersionHistoryModal';
 import {
   DollarSign,
@@ -159,6 +158,7 @@ export const LeadQuotesTab: React.FC<LeadQuotesTabProps> = ({
       } else if (targetQuote.masterHydratedFromVersionId && (!targetQuote.items || targetQuote.items.length === 0)) {
         targetQuote = (await db.hydrateMasterQuotationFromVersionAsync(targetQuote.id, targetQuote.masterHydratedFromVersionId, currentUser)) || targetQuote;
       }
+      const { downloadQuotationPDF } = await import('../../../services/pdfGenerator');
       await downloadQuotationPDF({
         quote: targetQuote,
         agentName: targetQuote.agentName || targetQuote.createdByName || currentUser?.name,

@@ -213,7 +213,6 @@ import { INITIAL_RAIL_MARKUP_RULE } from '../data/initialRailMarkup';
 import { getCachedDemoSeeds, loadDemoSeedsAsync, type DemoSeedBundle } from '../data/demoSeedLoader';
 import { RailStation, RailService, RailRoute, RailFare, RailRate, RailMarkupRule, RailSeasonCalendarPeriod, JapanRailCommercialProduct, resolveRailRateNettPrice } from '../types/rail';
 import { INITIAL_JAPAN_RAIL_COMMERCIAL_PRODUCTS } from '../data/initialRailCommercialProducts';
-import { EmailNotificationService } from './emailNotificationService';
 import type { FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { envService } from './environment';
 import { MasterDataService } from './masterDataService';
@@ -1174,8 +1173,13 @@ export class AppDatabase {
     if (this.deferredStorageTimer) return;
     this.deferredStorageTimer = setTimeout(() => {
       this.deferredStorageTimer = null;
-      this.flushDeferredStorage();
-    }, 150);
+      const winAny = typeof window !== 'undefined' ? (window as any) : null;
+      if (winAny && typeof winAny.requestIdleCallback === 'function') {
+        winAny.requestIdleCallback(() => this.flushDeferredStorage(), { timeout: 1200 });
+      } else {
+        this.flushDeferredStorage();
+      }
+    }, 250);
     if (typeof this.deferredStorageTimer?.unref === 'function') {
       this.deferredStorageTimer.unref();
     }
@@ -2122,6 +2126,118 @@ export class AppDatabase {
     );
   }
 
+  private secondaryHydrationPromise: Promise<void> | null = null;
+
+  /**
+   * Hydrates secondary public content, ancillary services, fleet masters, custom pages,
+   * and canonical image metadata lazily during browser idle time or on-demand route navigation.
+   * Safe to call multiple times: deduplicates in-flight promises and respects masterDataCache TTL.
+   */
+  public ensureSecondaryCollectionsHydrated(): Promise<void> {
+    if (this.secondaryHydrationPromise) return this.secondaryHydrationPromise;
+
+    this.secondaryHydrationPromise = (async () => {
+      try {
+        await this.hydrateCollectionsOneShot([
+          { collectionName: 'travel_protection_plans', storageKey: 'travel_protection_plans' },
+          { collectionName: 'vip_ground_services', storageKey: 'vip_ground_services' },
+          { collectionName: 'connectivity_plans', storageKey: 'connectivity_plans' },
+          { collectionName: 'gallery_items', storageKey: 'gallery' },
+          { collectionName: 'faqs', storageKey: 'destination_faqs' },
+          { collectionName: 'google_reviews', storageKey: 'reviews' },
+          { collectionName: 'blog_articles', storageKey: 'blogs' },
+          { collectionName: 'master_vehicles', storageKey: 'master_vehicles' },
+          { collectionName: 'master_yachts', storageKey: 'master_yachts' },
+          { collectionName: 'master_ferries', storageKey: 'master_ferries' }
+        ]);
+
+        if (!masterDataCache.isFresh('custom_pages')) {
+          getDocs(collection(firestoreDb, 'custom_pages')).then((snapshot) => {
+            performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+            masterDataCache.markHydrated('custom_pages');
+            if (!snapshot.empty) {
+              const deletedIds = this.getDeletedCustomPageIds();
+              const list: CustomPage[] = [];
+              snapshot.forEach(docSnap => {
+                const data = docSnap.data() as CustomPage;
+                if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
+                  list.push(data);
+                }
+              });
+              this.setItem('custom_pages', list, true);
+            }
+          }).catch(() => {});
+        }
+
+        if (!masterDataCache.isFresh('image_metadata')) {
+          getDocs(collection(firestoreDb, 'image_metadata')).then((snapshot) => {
+            performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+            masterDataCache.markHydrated('image_metadata');
+            if (!snapshot.empty) {
+              const records: any[] = [];
+              snapshot.forEach(docSnap => {
+                const data = docSnap.data();
+                if (data && (data.imageId || docSnap.id)) {
+                  records.push({ ...data, imageId: data.imageId || docSnap.id });
+                }
+              });
+              if (records.length > 0) {
+                canonicalImageService.registerImagesFromSync(records);
+              }
+            }
+          }).catch(() => {});
+        }
+      } finally {
+        this.secondaryHydrationPromise = null;
+      }
+    })();
+
+    return this.secondaryHydrationPromise;
+  }
+
+  /**
+   * Hydrates Admin-only email marketing campaigns once per TTL window.
+   */
+  private async hydrateCampaignsOneShot(): Promise<void> {
+    if (masterDataCache.isFresh('campaigns')) return;
+    try {
+      const snapshot = await getDocs(collection(firestoreDb, 'campaigns'));
+      performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+      masterDataCache.markHydrated('campaigns');
+      const deletedSet = this.getDeletedEntityIds();
+      const remoteMap = new Map<string, EmailCampaignConfig>();
+      if (!snapshot.empty) {
+        snapshot.forEach(docSnap => {
+          const raw = docSnap.data() as EmailCampaignConfig;
+          const id = raw.id || docSnap.id;
+          if ((raw as any).isDeleted === true || (raw as any).status === 'DELETED') {
+            deletedSet.add(id);
+            return;
+          }
+          if (deletedSet.has(id) || deletedSet.has(`campaigns_${id}`)) return;
+          remoteMap.set(id, { ...raw, id });
+        });
+      }
+      const seedCampaigns = this.getSeedBundle()?.INITIAL_CAMPAIGNS || [];
+      const currentLocal = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? seedCampaigns : []);
+      const mergedMap = new Map<string, EmailCampaignConfig>();
+      if (envService.allowDemoData()) {
+        seedCampaigns.forEach(initCamp => mergedMap.set(initCamp.id, { ...initCamp }));
+      }
+      currentLocal.forEach(localCamp => {
+        if (localCamp && localCamp.id && !deletedSet.has(localCamp.id) && !deletedSet.has(`campaigns_${localCamp.id}`)) {
+          mergedMap.set(localCamp.id, { ...(mergedMap.get(localCamp.id) || {}), ...localCamp });
+        }
+      });
+      remoteMap.forEach((remoteCamp, id) => {
+        mergedMap.set(id, { ...(mergedMap.get(id) || {}), ...remoteCamp });
+      });
+      this.setItem('campaigns', Array.from(mergedMap.values()), true);
+    } catch {
+      // Non-fatal
+    }
+  }
+
   /**
    * Attaches a real-time listener on demand for secondary modules (e.g. Invoices, Surcharge History, Campaigns).
    */
@@ -2312,7 +2428,7 @@ export class AppDatabase {
             this.syncCollectionSafely<AccountManagerAssignmentHistory>('account_manager_assignment_history', 'account_manager_assignment_history')
           );
 
-          // Hydrate secondary CMS & rate sub-collections via parallel one-shot getDocs
+          // Hydrate secondary CMS, automation & rate sub-collections via parallel one-shot getDocs (Admin/Staff only)
           void this.hydrateCollectionsOneShot([
             ...catalogSubCollections,
             { collectionName: 'wishlist_folders', storageKey: 'wishlist_folders' },
@@ -2327,8 +2443,13 @@ export class AppDatabase {
             { collectionName: 'campaign_events', storageKey: 'campaign_events' },
             { collectionName: 'seo_redirects', storageKey: 'seo_redirects' },
             { collectionName: 'supplier_requests', storageKey: 'supplier_requests' },
-            { collectionName: 'surcharge_history', storageKey: 'surcharge_history' }
+            { collectionName: 'surcharge_history', storageKey: 'surcharge_history' },
+            { collectionName: 'automation_jobs', storageKey: 'automation_jobs' },
+            { collectionName: 'automation_logs', storageKey: 'automation_logs' }
           ]);
+
+          // Hydrate Admin-only marketing campaigns once cleanly
+          void this.hydrateCampaignsOneShot();
         } else {
           // External B2B Agents: Query strictly scoped to their own records to satisfy firestore.rules
           const uid = fbUser.uid || user.id;
@@ -2521,130 +2642,70 @@ export class AppDatabase {
         this.syncCollectionSafely<SurchargeProductMapping>('surcharge_product_mappings', 'surcharge_product_mappings')
       );
 
-      // 2. Read-mostly Reference, Navigation, Ancillary & Marketing Collections (One-shot parallel hydration)
+      // 2. Wave 1 (200ms): Essential Reference, Navigation, Visa & Rail Pricing Collections (One-shot parallel)
       setTimeout(() => {
         void this.hydrateCollectionsOneShot([
           { collectionName: 'regions', storageKey: 'regions' },
           { collectionName: 'master_regions', storageKey: 'master_regions' },
           { collectionName: 'visas', storageKey: 'visas' },
-          { collectionName: 'travel_protection_plans', storageKey: 'travel_protection_plans' },
-          { collectionName: 'vip_ground_services', storageKey: 'vip_ground_services' },
-          { collectionName: 'connectivity_plans', storageKey: 'connectivity_plans' },
-          { collectionName: 'gallery_items', storageKey: 'gallery' },
           { collectionName: 'japan_rail_commercial_products', storageKey: 'japan_rail_commercial_products' },
-          { collectionName: 'faqs', storageKey: 'destination_faqs' },
-          { collectionName: 'google_reviews', storageKey: 'reviews' },
-          { collectionName: 'blog_articles', storageKey: 'blogs' },
           { collectionName: 'rail_stations', storageKey: 'rail_stations' },
           { collectionName: 'rail_routes', storageKey: 'rail_routes' },
           { collectionName: 'rail_rates', storageKey: 'rail_rates' },
-          { collectionName: 'rail_seasons', storageKey: 'rail_seasons' },
-          { collectionName: 'master_vehicles', storageKey: 'master_vehicles' },
-          { collectionName: 'master_yachts', storageKey: 'master_yachts' },
-          { collectionName: 'master_ferries', storageKey: 'master_ferries' },
-          { collectionName: 'automation_jobs', storageKey: 'automation_jobs' },
-          { collectionName: 'automation_logs', storageKey: 'automation_logs' }
+          { collectionName: 'rail_seasons', storageKey: 'rail_seasons' }
         ]);
 
-        // Hydrate menu_items & custom_pages once with deleted tombstone filtering
-        getDocs(collection(firestoreDb, 'menu_items')).then((snapshot) => {
-          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
-          masterDataCache.markHydrated('menu_items');
-          if (!snapshot.empty) {
-            const deletedIds = this.getDeletedMenuItemIds();
-            const list: MenuItemConfig[] = [];
-            snapshot.forEach(docSnap => {
-              const data = docSnap.data() as MenuItemConfig;
-              if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
-                list.push(data);
-              }
-            });
-            this.setItem('menu_items', list, true);
-          }
-        }).catch(() => {});
-
-        getDocs(collection(firestoreDb, 'custom_pages')).then((snapshot) => {
-          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
-          masterDataCache.markHydrated('custom_pages');
-          if (!snapshot.empty) {
-            const deletedIds = this.getDeletedCustomPageIds();
-            const list: CustomPage[] = [];
-            snapshot.forEach(docSnap => {
-              const data = docSnap.data() as CustomPage;
-              if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
-                list.push(data);
-              }
-            });
-            this.setItem('custom_pages', list, true);
-          }
-        }).catch(() => {});
+        // Hydrate menu_items once with deleted tombstone filtering
+        if (!masterDataCache.isFresh('menu_items')) {
+          getDocs(collection(firestoreDb, 'menu_items')).then((snapshot) => {
+            performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+            masterDataCache.markHydrated('menu_items');
+            if (!snapshot.empty) {
+              const deletedIds = this.getDeletedMenuItemIds();
+              const list: MenuItemConfig[] = [];
+              snapshot.forEach(docSnap => {
+                const data = docSnap.data() as MenuItemConfig;
+                if (!deletedIds.has(docSnap.id) && !deletedIds.has(data.id)) {
+                  list.push(data);
+                }
+              });
+              this.setItem('menu_items', list, true);
+            }
+          }).catch(() => {});
+        }
 
         // Hydrate rail_markup_rules once cleanly
-        getDocs(collection(firestoreDb, 'rail_markup_rules')).then((snapshot) => {
-          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
-          if (!snapshot.empty) {
-            let ruleDoc: RailMarkupRule | null = null;
-            snapshot.forEach(docSnap => {
-              const data = docSnap.data() as RailMarkupRule;
-              if (docSnap.id === 'markup-jp-rail-default' || !ruleDoc) {
-                ruleDoc = { ...INITIAL_RAIL_MARKUP_RULE, ...data, id: data.id || docSnap.id };
-              }
-            });
-            if (ruleDoc) this.setItem('rail_markup_rules', ruleDoc, true);
-          }
-        }).catch(() => {});
-
-        // Hydrate campaigns once with demo merge fallback
-        getDocs(collection(firestoreDb, 'campaigns')).then((snapshot) => {
-          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
-          const deletedSet = this.getDeletedEntityIds();
-          const remoteMap = new Map<string, EmailCampaignConfig>();
-          if (!snapshot.empty) {
-            snapshot.forEach(docSnap => {
-              const raw = docSnap.data() as EmailCampaignConfig;
-              const id = raw.id || docSnap.id;
-              if ((raw as any).isDeleted === true || (raw as any).status === 'DELETED') {
-                deletedSet.add(id);
-                return;
-              }
-              if (deletedSet.has(id) || deletedSet.has(`campaigns_${id}`)) return;
-              remoteMap.set(id, { ...raw, id });
-            });
-          }
-          const seedCampaigns = this.getSeedBundle()?.INITIAL_CAMPAIGNS || [];
-          const currentLocal = this.getItem<EmailCampaignConfig[]>('campaigns', envService.allowDemoData() ? seedCampaigns : []);
-          const mergedMap = new Map<string, EmailCampaignConfig>();
-          if (envService.allowDemoData()) {
-            seedCampaigns.forEach(initCamp => mergedMap.set(initCamp.id, { ...initCamp }));
-          }
-          currentLocal.forEach(localCamp => {
-            if (localCamp && localCamp.id && !deletedSet.has(localCamp.id) && !deletedSet.has(`campaigns_${localCamp.id}`)) {
-              mergedMap.set(localCamp.id, { ...(mergedMap.get(localCamp.id) || {}), ...localCamp });
+        if (!masterDataCache.isFresh('rail_markup_rules')) {
+          getDocs(collection(firestoreDb, 'rail_markup_rules')).then((snapshot) => {
+            performanceMonitor.recordFirestoreRead(snapshot.size || 1);
+            masterDataCache.markHydrated('rail_markup_rules');
+            if (!snapshot.empty) {
+              let ruleDoc: RailMarkupRule | null = null;
+              snapshot.forEach(docSnap => {
+                const data = docSnap.data() as RailMarkupRule;
+                if (docSnap.id === 'markup-jp-rail-default' || !ruleDoc) {
+                  ruleDoc = { ...INITIAL_RAIL_MARKUP_RULE, ...data, id: data.id || docSnap.id };
+                }
+              });
+              if (ruleDoc) this.setItem('rail_markup_rules', ruleDoc, true);
             }
-          });
-          remoteMap.forEach((remoteCamp, id) => {
-            mergedMap.set(id, { ...(mergedMap.get(id) || {}), ...remoteCamp });
-          });
-          this.setItem('campaigns', Array.from(mergedMap.values()), true);
-        }).catch(() => {});
+          }).catch(() => {});
+        }
+      }, 200);
 
-        // Hydrate Canonical Image Metadata once after initial paint
-        getDocs(collection(firestoreDb, 'image_metadata')).then((snapshot) => {
-          performanceMonitor.recordFirestoreRead(snapshot.size || 1);
-          if (!snapshot.empty) {
-            const records: any[] = [];
-            snapshot.forEach(docSnap => {
-              const data = docSnap.data();
-              if (data && (data.imageId || docSnap.id)) {
-                records.push({ ...data, imageId: data.imageId || docSnap.id });
-              }
-            });
-            if (records.length > 0) {
-              canonicalImageService.registerImagesFromSync(records);
-            }
-          }
-        }).catch(() => {});
-      }, 150);
+      // 3. Wave 2 (Idle / 1800ms): Secondary public content, ancillary plans, fleet masters & image metadata
+      // Deferred off the initial render critical path so older PCs and mobile connections become interactive immediately.
+      const runWave2 = () => {
+        void this.ensureSecondaryCollectionsHydrated();
+      };
+      setTimeout(() => {
+        const winAny = typeof window !== 'undefined' ? (window as any) : null;
+        if (winAny && typeof winAny.requestIdleCallback === 'function') {
+          winAny.requestIdleCallback(runWave2, { timeout: 2500 });
+        } else {
+          runWave2();
+        }
+      }, 1800);
 
       // Check if user is already authenticated at init
       if (auth.currentUser) {
@@ -13717,24 +13778,41 @@ export class AppDatabase {
     newBookingDraft.documentStatus = docStatus.status;
     newBookingDraft.missingDocuments = docStatus.missingList;
 
-    // Generate automated confirmation & ops notification emails
-    const emailService = EmailNotificationService.getInstance();
-    const emails = emailService.generateBookingEmails(newBookingDraft);
-    newBookingDraft.notificationEmailsSent = emails;
+    // Dynamically load EmailNotificationService only when a booking is actually submitted
+    // so the 375KB+ email/proposal formatter pipeline never loads in the initial app entry bundle.
+    void import('./emailNotificationService')
+      .then(({ EmailNotificationService }) => {
+        const emailService = EmailNotificationService.getInstance();
+        const emails = emailService.generateBookingEmails(newBookingDraft);
+        newBookingDraft.notificationEmailsSent = emails;
 
-    emails.forEach(async (em) => {
-      try {
-        const result = await emailService.sendViaGmailApi(em.recipient, em.subject, em.fullHtml);
-        if (result.success && result.messageId) {
-          em.status = 'DELIVERED';
-          this.syncFirestoreDoc('bookings', newBookingDraft.id, {
-            notificationEmailsSent: newBookingDraft.notificationEmailsSent
-          });
+        const latestBookings = this.getItem<Booking[]>('bookings', []);
+        const bIdx = latestBookings.findIndex(b => b.id === newBookingDraft.id);
+        if (bIdx >= 0) {
+          latestBookings[bIdx] = { ...latestBookings[bIdx], notificationEmailsSent: emails };
+          this.setItem('bookings', latestBookings, false);
         }
-      } catch (err) {
-        console.debug('Direct Gmail API transmission notice:', err);
-      }
-    });
+        this.syncFirestoreDoc('bookings', newBookingDraft.id, {
+          notificationEmailsSent: emails
+        });
+
+        emails.forEach(async (em) => {
+          try {
+            const result = await emailService.sendViaGmailApi(em.recipient, em.subject, em.fullHtml);
+            if (result.success && result.messageId) {
+              em.status = 'DELIVERED';
+              this.syncFirestoreDoc('bookings', newBookingDraft.id, {
+                notificationEmailsSent: newBookingDraft.notificationEmailsSent
+              });
+            }
+          } catch (err) {
+            console.debug('Direct Gmail API transmission notice:', err);
+          }
+        });
+      })
+      .catch((err) => {
+        console.debug('Async booking email module load notice:', err);
+      });
 
     // Authoritative relationship tracking
     newBookingDraft.sourceQuoteId = data.quoteId;
@@ -19243,6 +19321,32 @@ export class AppDatabase {
       config.newsletterConfig = INITIAL_HOMEPAGE_CONFIG.newsletterConfig;
     } else if (config.newsletterConfig.heading && config.newsletterConfig.heading.includes('Get Japan Travel')) {
       config.newsletterConfig.heading = INITIAL_HOMEPAGE_CONFIG.newsletterConfig?.heading || 'Get Curated Travel Inspiration in Your Inbox';
+    }
+    if (config.showDemoBookingSection === undefined) {
+      config.showDemoBookingSection = INITIAL_HOMEPAGE_CONFIG.showDemoBookingSection !== false;
+    }
+    if (!config.demoBookingConfig) {
+      config.demoBookingConfig = INITIAL_HOMEPAGE_CONFIG.demoBookingConfig;
+    } else {
+      const defaults = INITIAL_HOMEPAGE_CONFIG.demoBookingConfig!;
+      config.demoBookingConfig = {
+        ...defaults,
+        ...config.demoBookingConfig,
+        sectionId: config.demoBookingConfig.sectionId || 'demoBooking',
+        sectionType: 'DEMO_BOOKING',
+        background: {
+          ...defaults.background,
+          ...(config.demoBookingConfig.background || {})
+        },
+        layout: {
+          ...defaults.layout,
+          ...(config.demoBookingConfig.layout || {})
+        },
+        buttons:
+          Array.isArray(config.demoBookingConfig.buttons) && config.demoBookingConfig.buttons.length === 2
+            ? config.demoBookingConfig.buttons
+            : defaults.buttons
+      };
     }
 
     // Dynamic destination sanitization: ensure legacy cached strings don't force hardcoded destinations

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getServerAccessToken } from './integrationsService';
+import { recordServerCacheHit, recordServerCacheMiss } from './performanceMiddleware';
 
 // Supported platform currencies
 export type CurrencyCode = 'USD' | 'EUR' | 'GBP' | 'JPY' | 'AED' | 'THB' | 'AUD' | 'CAD' | 'SGD' | 'INR' | 'CHF';
@@ -66,8 +67,9 @@ export interface FXCacheData {
   formulaSample?: string;
 }
 
-// In-memory server rate cache
+// In-memory server rate cache + in-flight refresh deduplication
 let serverRateCache: FXCacheData | null = null;
+let inFlightFxRefresh: Promise<FXCacheData> | null = null;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutes
 
 /**
@@ -262,8 +264,31 @@ export async function fetchAuthoritativeRates(
   const now = Date.now();
 
   if (!forceFresh && serverRateCache && new Date(serverRateCache.expiresAt).getTime() > now) {
+    recordServerCacheHit('fx_rates');
     return serverRateCache;
   }
+
+  // Deduplicate concurrent refresh requests so 20 simultaneous agents trigger only 1 upstream fetch
+  if (!forceFresh && inFlightFxRefresh) {
+    recordServerCacheHit('fx_rates_inflight_dedup');
+    return inFlightFxRefresh;
+  }
+
+  recordServerCacheMiss('fx_rates');
+  const fetchPromise = executeAuthoritativeRatesFetch(now, spreadsheetId, clientToken).finally(() => {
+    if (inFlightFxRefresh === fetchPromise) {
+      inFlightFxRefresh = null;
+    }
+  });
+  inFlightFxRefresh = fetchPromise;
+  return fetchPromise;
+}
+
+async function executeAuthoritativeRatesFetch(
+  now: number,
+  spreadsheetId?: string,
+  clientToken?: string | null
+): Promise<FXCacheData> {
 
   // Tier 1: Fetch from connected Google Sheet (=GOOGLEFINANCE() evaluated cells)
   try {

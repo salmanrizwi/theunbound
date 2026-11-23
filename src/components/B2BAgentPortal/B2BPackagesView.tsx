@@ -6,6 +6,7 @@ import { useQuotation } from '../../context/QuotationContext';
 import { calculatePackagePrice, formatCurrency } from '../../services/pricingEngine';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
 import { canonicalImageService } from '../../services/imageService';
+import { getOptimizedImageUrl } from '../../utils/imageUtils';
 import {
   cleanPackageText,
   isPackageVisibleToB2BAgent,
@@ -294,14 +295,19 @@ export const B2BPackagesView: React.FC<B2BPackagesViewProps> = ({
                 {/* Hero Image Header */}
                 <div className="relative min-h-[14rem] h-56 rounded-t-3xl overflow-hidden bg-slate-900">
                   <img
-                    src={canonicalImageService.resolvePackageImage(pkg)}
+                    src={getOptimizedImageUrl(canonicalImageService.resolvePackageImage(pkg), 'card')}
                     alt={pkg.title}
                     loading="lazy"
                     decoding="async"
                     referrerPolicy="no-referrer"
                     onError={e => {
-                      (e.currentTarget as HTMLImageElement).src =
-                        'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200';
+                      const fallback = getOptimizedImageUrl(
+                        'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=1200',
+                        'card'
+                      );
+                      if ((e.currentTarget as HTMLImageElement).src !== fallback) {
+                        (e.currentTarget as HTMLImageElement).src = fallback;
+                      }
                     }}
                     className="w-full h-full object-cover opacity-90 group-hover:scale-105 transition-transform duration-500"
                   />
