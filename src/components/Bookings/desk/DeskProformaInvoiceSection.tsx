@@ -453,6 +453,29 @@ TheUnbound Finance & Operations Desk`
       {/* SUB-TAB 1: SYSTEM-GENERATED PROFORMA INVOICES */}
       {activeInvoiceTab === 'proforma' && (
         <div className="space-y-6">
+          {booking.hasRevisedPricingAfterInvoice && isInternal && (
+            <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5 text-xs text-amber-900">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">Booking Pricing Revised After Earlier Proforma Invoice</p>
+                  <p className="text-[11px] text-amber-800 mt-0.5">
+                    {booking.revisedPricingNotice ||
+                      'Previously issued proforma invoices remain preserved and immutable. Issue a revised proforma invoice reflecting the latest committed selling price.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isGenerating}
+                onClick={handleGenerateInvoice}
+                className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isGenerating ? 'animate-spin' : ''}`} />
+                <span>Issue Revised Proforma</span>
+              </button>
+            </div>
+          )}
           {/* Top Banner */}
           <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>

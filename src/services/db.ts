@@ -18,6 +18,8 @@ import {
   BookingStatus,
   BookingAssignmentStatus,
   BookingAssignmentHistoryItem,
+  BookingPricingSnapshot,
+  BookingManualDiscountAdjustment,
   AgentMarginType,
   PricingSnapshot,
   AuditLog, 
@@ -231,6 +233,10 @@ import { performanceMonitor } from './performanceMonitor';
 import { calculateEligibleBookingComponents } from './cashbackEngine';
 import { withBoundedTimeout } from './quotationOperationsService';
 import { displayCurrencyService } from './displayCurrencyService';
+import {
+  buildInitialBookingPricingSnapshot,
+  getLatestBookingPricingSnapshot
+} from './bookingManualDiscountEngine';
 
 let currentAuthUser: User | null = null;
 import { 
@@ -12671,10 +12677,22 @@ export class AppDatabase {
       })
     };
 
+    // Initialize immutable baseline BookingPricingSnapshot (Version 1)
+    const baselineSnapshot = buildInitialBookingPricingSnapshot(newBookingDraft);
+    newBookingDraft.currentPricingSnapshotId = baselineSnapshot.snapshotId;
+    newBookingDraft.currentPricingSnapshotVersion = baselineSnapshot.version;
+    newBookingDraft.pricingSnapshotHistory = [baselineSnapshot];
+    newBookingDraft.manualDiscountAdjustments = [];
+    newBookingDraft.adminManualDiscountTotal = 0;
+    newBookingDraft.originalTheUnboundMargin = baselineSnapshot.originalTheUnboundMargin;
+    newBookingDraft.remainingTheUnboundMargin = baselineSnapshot.remainingTheUnboundMargin;
+    newBookingDraft.b2bPromotionDiscountAmount = baselineSnapshot.b2bPromotionDiscountAmount;
+
     // Save Booking
     bookings.unshift(newBookingDraft);
     this.setItem('bookings', bookings);
     this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
+    this.syncFirestoreDoc('booking_pricing_snapshots', baselineSnapshot.snapshotId, baselineSnapshot);
 
     // Update Quotation status and bidirectional linkage
     const quotes = this.getAllSavedQuotes();
@@ -13393,6 +13411,95 @@ export class AppDatabase {
    */
   public sanitizeBookingForExternalUser(b: Booking): Booking {
     return sanitizeBookingForAgent(b);
+  }
+
+  /**
+   * Commits an authoritative Admin Manual Discount adjustment and immutable versioned
+   * BookingPricingSnapshot to local storage (and Firestore when invoked in local fallback mode).
+   * Strictly preserves historical snapshots and never mutates Supplier Nett Cost.
+   */
+  public commitBookingManualDiscountSnapshot(
+    updatedBooking: Booking,
+    newSnapshot: BookingPricingSnapshot,
+    adjustment: BookingManualDiscountAdjustment,
+    actor: User | null,
+    syncToFirestore: boolean = true,
+    initialSnapshotToPersist?: BookingPricingSnapshot
+  ): Booking {
+    const allBookings = this.getAllBookings();
+    const idx = allBookings.findIndex(b => b.id === updatedBooking.id);
+    if (idx >= 0) {
+      allBookings[idx] = updatedBooking;
+    } else {
+      allBookings.unshift(updatedBooking);
+    }
+    this.setItem('bookings', allBookings);
+
+    // Append-only snapshot ledger in local cache
+    const allSnapshots = this.getItem<BookingPricingSnapshot[]>('booking_pricing_snapshots', []);
+    if (initialSnapshotToPersist && !allSnapshots.some(s => s.snapshotId === initialSnapshotToPersist.snapshotId)) {
+      allSnapshots.push(initialSnapshotToPersist);
+    }
+    if (!allSnapshots.some(s => s.snapshotId === newSnapshot.snapshotId)) {
+      allSnapshots.push(newSnapshot);
+    }
+    this.setItem('booking_pricing_snapshots', allSnapshots);
+
+    // Append-only manual discount adjustment ledger in local cache
+    const allAdjustments = this.getItem<BookingManualDiscountAdjustment[]>('booking_manual_discounts', []);
+    if (!allAdjustments.some(a => a.adjustmentId === adjustment.adjustmentId)) {
+      allAdjustments.unshift(adjustment);
+    }
+    this.setItem('booking_manual_discounts', allAdjustments);
+
+    if (syncToFirestore) {
+      if (initialSnapshotToPersist) {
+        this.syncFirestoreDoc('booking_pricing_snapshots', initialSnapshotToPersist.snapshotId, initialSnapshotToPersist);
+      }
+      this.syncFirestoreDoc('booking_manual_discounts', adjustment.adjustmentId, adjustment);
+      this.syncFirestoreDoc('booking_pricing_snapshots', newSnapshot.snapshotId, newSnapshot);
+      this.syncFirestoreDoc('bookings', updatedBooking.id, updatedBooking);
+    }
+
+    const auditAction =
+      adjustment.actionType === 'REVERSE'
+        ? 'BOOKING_MANUAL_DISCOUNT_REVERSED'
+        : 'BOOKING_MANUAL_DISCOUNT_APPLIED';
+
+    this.logAudit(
+      actor,
+      auditAction,
+      'Booking',
+      updatedBooking.id,
+      adjustment.actionType === 'REVERSE'
+        ? `Reversed manual discount ${adjustment.reversedAdjustmentId} (${adjustment.bookingCurrency} ${adjustment.discountAmountInBookingCurrency.toLocaleString()}) on ${updatedBooking.bookingReference}. Revised Price: ${newSnapshot.revisedCustomerSellingPrice}. Remaining Margin: ${newSnapshot.remainingTheUnboundMargin}. Reason: ${adjustment.reason}`
+        : `Applied ${adjustment.discountSource}${adjustment.couponCode ? ` (${adjustment.couponCode})` : ''} of ${adjustment.bookingCurrency} ${adjustment.discountAmountInBookingCurrency.toLocaleString()} on ${updatedBooking.bookingReference}. Revised Price: ${newSnapshot.revisedCustomerSellingPrice}. Remaining Margin: ${newSnapshot.remainingTheUnboundMargin}. Reason: ${adjustment.reason}`
+    );
+
+    return updatedBooking;
+  }
+
+  public getBookingManualDiscountAdjustments(bookingId?: string): BookingManualDiscountAdjustment[] {
+    const stored = this.getItem<BookingManualDiscountAdjustment[]>('booking_manual_discounts', []);
+    if (!bookingId) return stored;
+    const fromLedger = stored.filter(a => a.bookingId === bookingId);
+    if (fromLedger.length > 0) return fromLedger;
+    const b = this.getAllBookings().find(bk => bk.id === bookingId);
+    return b?.manualDiscountAdjustments || [];
+  }
+
+  public getBookingPricingSnapshots(bookingId: string): BookingPricingSnapshot[] {
+    const stored = this.getItem<BookingPricingSnapshot[]>('booking_pricing_snapshots', []);
+    const fromLedger = stored.filter(s => s.bookingId === bookingId);
+    if (fromLedger.length > 0) {
+      return [...fromLedger].sort((a, b) => a.version - b.version);
+    }
+    const b = this.getAllBookings().find(bk => bk.id === bookingId);
+    if (!b) return [];
+    if (b.pricingSnapshotHistory && b.pricingSnapshotHistory.length > 0) {
+      return [...b.pricingSnapshotHistory].sort((a, b) => a.version - b.version);
+    }
+    return [buildInitialBookingPricingSnapshot(b)];
   }
 
   /**
@@ -17217,7 +17324,9 @@ export class AppDatabase {
     user: User | null,
     forceRegenerate: boolean = false
   ): { success: boolean; invoice?: BookingInvoice; error?: string } {
-    const b = this.getBookingById(bookingId);
+    const b =
+      this.getAllBookings().find(bk => bk.id === bookingId || bk.bookingReference === bookingId) ||
+      this.getBookingById(bookingId, user);
     if (!b) return { success: false, error: 'Booking not found' };
 
     // Server-side idempotency check: Return existing active invoice unless explicit regeneration requested
@@ -17226,9 +17335,12 @@ export class AppDatabase {
       return { success: true, invoice: existingInvoices[0] };
     }
 
+    const latestSnapshot = getLatestBookingPricingSnapshot(b);
+    const nextInvoiceVersion = existingInvoices.length + 1;
+
     const now = new Date().toISOString();
     const issueDateStr = now.split('T')[0];
-    const invoiceNumber = `TUB-PINV-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const invoiceNumber = `TUB-PINV-2026-${Math.floor(1000 + Math.random() * 9000)}${nextInvoiceVersion > 1 ? `-R${nextInvoiceVersion}` : ''}`;
 
     const customerName = b.customer?.leadTravelerName || b.customer?.bookerName || b.customer?.name || (b as any).guestName || (b as any).leadName || 'Valued Client';
     const customerEmail = b.customer?.email || (b as any).guestEmail || (b as any).leadEmail || 'client@theunbound.com';
@@ -17256,11 +17368,16 @@ export class AppDatabase {
     }));
 
     const itemsTotalSum = mappedItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
-    const subtotal = (b.totalAmount && b.totalAmount > 0)
-      ? b.totalAmount
-      : ((b as any).pricing?.totalPrice && (b as any).pricing.totalPrice > 0)
-        ? (b as any).pricing.totalPrice
-        : (itemsTotalSum > 0 ? itemsTotalSum : 0);
+    // Authoritative customer-facing total from the latest committed BookingPricingSnapshot
+    // Never exposes internal margin, supplier nett cost, or internal funding source.
+    const subtotal =
+      latestSnapshot.revisedCustomerSellingPrice > 0
+        ? latestSnapshot.revisedCustomerSellingPrice
+        : (b.totalAmount && b.totalAmount > 0)
+          ? b.totalAmount
+          : ((b as any).pricing?.totalPrice && (b as any).pricing.totalPrice > 0)
+            ? (b as any).pricing.totalPrice
+            : (itemsTotalSum > 0 ? itemsTotalSum : 0);
 
     if (mappedItems.length === 0 && subtotal > 0) {
       const bTitle = (b as any).title || (b as any).packageName || (b as any).destination || `Ground Itinerary Arrangements & VIP Concierge (${destination})`;
@@ -17295,7 +17412,7 @@ export class AppDatabase {
       bookingReference: b.bookingReference,
       leadId: b.leadId || b.linkedLeadId,
       sourceQuoteId: b.sourceQuoteId || b.quoteId,
-      invoiceVersion: 1,
+      invoiceVersion: nextInvoiceVersion,
       isProforma: true,
       responsibleAgentId: b.submittingAgentId || b.agentId,
       assignedTeamMemberId: b.assignedTeamMemberId,
@@ -17334,13 +17451,15 @@ export class AppDatabase {
       companyRegisteredAddress: this.getCentralCompanyProfile().registeredAddress,
       companyCurrentAddress: this.getCentralCompanyProfile().currentAddress,
       companyTaxNumber: this.getCentralCompanyProfile().gstin || '27AABCT1234F1Z5',
-      notes: `Proforma invoice issued for Booking Reference ${b.bookingReference}. Please quote the booking reference during wire transfer.`,
+      notes: nextInvoiceVersion > 1
+        ? `Revised Proforma Invoice (Version ${nextInvoiceVersion}, Pricing Snapshot v${latestSnapshot.version}) for Booking Reference ${b.bookingReference}. Supersedes prior proforma for payment purposes; historical issued documents remain preserved.`
+        : `Proforma invoice issued for Booking Reference ${b.bookingReference}. Please quote the booking reference during wire transfer.`,
       terms: 'Payment due within 7 days of invoice issuance or 14 days prior to travel departure, whichever is earlier. Wire transfer fees to be borne by remitter.',
       createdAt: now,
       updatedAt: now
     };
 
-    // Persist in global invoices collection
+    // Persist in global invoices collection (append-only: prior invoices remain strictly immutable)
     const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
     allInvoices.unshift(invoice);
     this.setItem('booking_invoices', allInvoices);
@@ -17351,6 +17470,7 @@ export class AppDatabase {
     b.proformaInvoiceIds = Array.from(new Set([...b.proformaInvoiceIds, invoice.id]));
     b.activeProformaInvoiceId = invoice.id;
     b.proformaInvoiceUrl = `/invoices/${invoice.id}`;
+    b.hasRevisedPricingAfterInvoice = false;
     b.updatedAt = now;
     this.saveBooking(b, user);
 

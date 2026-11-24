@@ -22,6 +22,8 @@ import {
   resolveEffectivePromotionStatus
 } from '../../services/promotionEngine';
 import { fetchAdminPromotionReportAsync } from '../../services/promotionApiService';
+import { buildBookingManualDiscountReport } from '../../services/bookingManualDiscountEngine';
+import { formatCurrency } from '../../services/pricingEngine';
 import {
   Tag,
   Plus,
@@ -128,7 +130,11 @@ function createDefaultFormData(): Partial<Promotion> {
     endDate: plus90,
     priority: 1,
     status: 'ACTIVE',
-    isActive: true
+    isActive: true,
+    couponChannel: 'B2B_AGENT',
+    fundingSource: 'THEUNBOUND_MARGIN',
+    permittedForExistingBookings: false,
+    requiresAdminApproval: false
   };
 }
 
@@ -270,7 +276,14 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
       allowOnDraftQuotations: promo.allowOnDraftQuotations !== false,
       allowAtBookingConfirmation: promo.allowAtBookingConfirmation !== false,
       bookingValidityPolicy: promo.bookingValidityPolicy || 'REQUIRE_REACCEPTANCE',
-      status: promo.status || (promo.isActive ? 'ACTIVE' : 'PAUSED')
+      status: promo.status || (promo.isActive ? 'ACTIVE' : 'PAUSED'),
+      couponChannel: promo.couponChannel || 'B2B_AGENT',
+      fundingSource: promo.fundingSource || 'THEUNBOUND_MARGIN',
+      permittedForExistingBookings: Boolean(
+        promo.permittedForExistingBookings ??
+          (promo.couponChannel === 'ADMIN_MANUAL' || promo.couponChannel === 'BOTH')
+      ),
+      requiresAdminApproval: Boolean(promo.requiresAdminApproval)
     });
     setFormError(null);
     setProductSearch('');
@@ -414,6 +427,16 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
       successfulRedemptionsCount: editingPromo?.successfulRedemptionsCount || 0,
       failedApplicationsCount: editingPromo?.failedApplicationsCount || 0,
       totalDiscountValueGranted: editingPromo?.totalDiscountValueGranted || 0,
+      couponChannel: formData.couponChannel || 'B2B_AGENT',
+      fundingSource: formData.fundingSource || 'THEUNBOUND_MARGIN',
+      permittedForExistingBookings: Boolean(
+        formData.couponChannel === 'ADMIN_MANUAL' || formData.couponChannel === 'BOTH'
+          ? formData.permittedForExistingBookings !== false
+          : formData.permittedForExistingBookings
+      ),
+      requiresAdminApproval: Boolean(formData.requiresAdminApproval),
+      adminManualRedemptionsCount: editingPromo?.adminManualRedemptionsCount || 0,
+      adminManualDiscountValueGranted: editingPromo?.adminManualDiscountValueGranted || 0,
       createdBy: editingPromo?.createdBy || user?.id,
       updatedBy: user?.id,
       createdAt: editingPromo?.createdAt || new Date().toISOString(),
@@ -1209,6 +1232,104 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
               </table>
             </div>
           </div>
+
+          {/* Admin Manual Booking Discounts Utilization & Margin Impact (Strictly Distinct from B2B Promos) */}
+          {(() => {
+            const manualReport = buildBookingManualDiscountReport({
+              bookings: db.getAllBookings()
+            });
+            return (
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-indigo-50/40">
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900">
+                      Admin Manual Booking Discounts &amp; Margin-Funded Coupons
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Tracked independently from B2B Agent promotional redemptions. Funded strictly from TheUnbound&apos;s applicable margin.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="px-2.5 py-1 rounded-lg bg-indigo-100 text-indigo-800 font-bold">
+                      {manualReport.totalActiveAdjustments} Active
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold">
+                      {manualReport.totalReversedAdjustments} Reversed
+                    </span>
+                    {manualReport.totalLossOverrideCount > 0 && (
+                      <span className="px-2.5 py-1 rounded-lg bg-rose-100 text-rose-800 font-bold">
+                        {manualReport.totalLossOverrideCount} Loss Overrides
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 uppercase text-[10px]">
+                      <tr>
+                        <th className="py-3 px-4">Booking</th>
+                        <th className="py-3 px-4">Agency / Agent</th>
+                        <th className="py-3 px-4 text-right">Supplier Nett</th>
+                        <th className="py-3 px-4 text-right">B2B Promo</th>
+                        <th className="py-3 px-4 text-right">Admin Manual</th>
+                        <th className="py-3 px-4 text-right">Remaining Margin</th>
+                        <th className="py-3 px-4 text-right">Revised Selling</th>
+                        <th className="py-3 px-4">Last Adjusted By</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {manualReport.rows.map(row => (
+                        <tr key={row.bookingId} className="hover:bg-slate-50/70">
+                          <td className="py-3 px-4">
+                            <div className="font-mono font-bold text-slate-900">{row.bookingReference}</div>
+                            <div className="text-[10px] text-slate-500">{row.customerName}</div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="font-semibold text-slate-800">{row.agencyName || 'Direct'}</div>
+                            <div className="text-[10px] text-slate-400">{row.agentName || '—'}</div>
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-rose-700">
+                            {formatCurrency(row.supplierNettCost, row.currency)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono text-sky-700">
+                            -{formatCurrency(row.b2bPromotionDiscountAmount, row.currency)}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-bold text-indigo-700">
+                            -{formatCurrency(row.adminManualDiscountTotal, row.currency)}
+                          </td>
+                          <td className={`py-3 px-4 text-right font-mono font-bold ${row.remainingTheUnboundMargin < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                            {formatCurrency(row.remainingTheUnboundMargin, row.currency)}
+                            {row.hasLossOverride && (
+                              <span className="block text-[9px] font-black text-rose-600 uppercase">Loss Override</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-right font-mono font-black text-slate-900">
+                            {formatCurrency(row.revisedCustomerSellingPrice, row.currency)}
+                          </td>
+                          <td className="py-3 px-4 text-slate-500">
+                            <div>{row.lastAdjustedByName || 'Admin'}</div>
+                            {row.lastAdjustedAt && (
+                              <div className="text-[10px] text-slate-400">
+                                {new Date(row.lastAdjustedAt).toLocaleDateString()}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                      {manualReport.rows.length === 0 && (
+                        <tr>
+                          <td colSpan={8} className="py-8 text-center text-slate-400">
+                            No Admin manual booking discounts recorded yet. Apply margin-funded discounts from Admin CMS → Booking Management → Pricing, Discounts &amp; Financials.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1330,6 +1451,89 @@ export const PromotionManager: React.FC<PromotionManagerProps> = ({ destinations
                       className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-[#00C6A6]"
                     />
                   </div>
+                </div>
+
+                {/* Coupon Channel & Admin Manual Booking Discount Configuration */}
+                <div className="p-4 rounded-2xl bg-indigo-50/50 border border-indigo-200/70 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-black uppercase tracking-wider text-indigo-900">
+                      Discount Channel &amp; Margin Funding Governance
+                    </span>
+                    <span className="text-[10px] font-bold text-indigo-700">
+                      Strictly separates B2B Agent Promos vs Admin Manual Booking Coupons
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">Coupon Application Channel</label>
+                      <select
+                        value={formData.couponChannel || 'B2B_AGENT'}
+                        onChange={(e) => {
+                          const ch = e.target.value as Promotion['couponChannel'];
+                          setFormData({
+                            ...formData,
+                            couponChannel: ch,
+                            permittedForExistingBookings:
+                              ch === 'ADMIN_MANUAL' || ch === 'BOTH'
+                                ? true
+                                : formData.permittedForExistingBookings
+                          });
+                        }}
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="B2B_AGENT">B2B Agent Quotation / Booking Promo Only</option>
+                        <option value="ADMIN_MANUAL">Admin Manual Booking Coupon Only (Margin-Funded)</option>
+                        <option value="BOTH">Both B2B Agent Promo &amp; Admin Manual Booking Coupon</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="font-semibold text-slate-700">Funding Source</label>
+                      <select
+                        value={formData.fundingSource || 'THEUNBOUND_MARGIN'}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            fundingSource: e.target.value as Promotion['fundingSource']
+                          })
+                        }
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
+                      >
+                        <option value="THEUNBOUND_MARGIN">TheUnbound Margin (Never reduces Supplier Nett)</option>
+                        <option value="MARKETING_BUDGET">Marketing Budget (Tracked Against Margin)</option>
+                        <option value="SHARED">Shared Commercial Pool</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {(formData.couponChannel === 'ADMIN_MANUAL' || formData.couponChannel === 'BOTH') && (
+                    <div className="flex flex-wrap items-center gap-5 pt-1 text-xs">
+                      <label className="flex items-center gap-2 font-semibold text-slate-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={formData.permittedForExistingBookings !== false}
+                          onChange={(e) =>
+                            setFormData({ ...formData, permittedForExistingBookings: e.target.checked })
+                          }
+                          className="rounded border-slate-300 text-indigo-600"
+                        />
+                        <span>Permitted on Existing Bookings in Booking Management</span>
+                      </label>
+
+                      <label className="flex items-center gap-2 font-semibold text-slate-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(formData.requiresAdminApproval)}
+                          onChange={(e) =>
+                            setFormData({ ...formData, requiresAdminApproval: e.target.checked })
+                          }
+                          className="rounded border-slate-300 text-indigo-600"
+                        />
+                        <span>Requires Admin Approval Reference</span>
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

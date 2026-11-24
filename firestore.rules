@@ -736,7 +736,50 @@ service cloud.firestore {
         (data.discountValue is int || data.discountValue is float) &&
         data.discountValue >= 0 &&
         (data.discountType != 'PERCENTAGE' || data.discountValue <= 100) &&
-        (!('status' in data) || data.status in ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED', 'EXPIRED', 'DISABLED', 'ARCHIVED']);
+        (!('status' in data) || data.status in ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED', 'EXPIRED', 'DISABLED', 'ARCHIVED']) &&
+        (!('couponChannel' in data) || data.couponChannel == null || data.couponChannel in ['B2B_AGENT', 'ADMIN_MANUAL', 'BOTH']) &&
+        (!('fundingSource' in data) || data.fundingSource == null || data.fundingSource in ['THEUNBOUND_MARGIN', 'MARKETING_BUDGET', 'SHARED']) &&
+        (!('permittedForExistingBookings' in data) || data.permittedForExistingBookings == null || data.permittedForExistingBookings is bool) &&
+        (!('requiresAdminApproval' in data) || data.requiresAdminApproval == null || data.requiresAdminApproval is bool);
+    }
+
+    function isValidBookingPricingSnapshotCreate(data, snapId) {
+      return isValidId(snapId) &&
+        data != null &&
+        data.snapshotId == snapId &&
+        data.bookingId is string && data.bookingId.size() > 0 && data.bookingId.size() <= 128 &&
+        data.version is int && data.version >= 1 &&
+        data.currency is string && data.currency.size() > 0 && data.currency.size() <= 8 &&
+        (data.supplierNettCost is int || data.supplierNettCost is float) && data.supplierNettCost >= 0 &&
+        (data.originalBaseSellingPrice is int || data.originalBaseSellingPrice is float) && data.originalBaseSellingPrice >= 0 &&
+        (data.originalCustomerSellingPrice is int || data.originalCustomerSellingPrice is float) && data.originalCustomerSellingPrice >= 0 &&
+        (data.originalTheUnboundMargin is int || data.originalTheUnboundMargin is float) &&
+        (data.b2bPromotionDiscountAmount is int || data.b2bPromotionDiscountAmount is float) && data.b2bPromotionDiscountAmount >= 0 &&
+        (data.cumulativeAdminManualDiscount is int || data.cumulativeAdminManualDiscount is float) && data.cumulativeAdminManualDiscount >= 0 &&
+        (data.remainingTheUnboundMargin is int || data.remainingTheUnboundMargin is float) &&
+        (data.revisedCustomerSellingPrice is int || data.revisedCustomerSellingPrice is float) && data.revisedCustomerSellingPrice >= 0 &&
+        data.sourceAction in ['INITIAL_BOOKING', 'ADMIN_MANUAL_DISCOUNT_APPLIED', 'ADMIN_MANUAL_DISCOUNT_REVERSED'] &&
+        data.immutable == true;
+    }
+
+    function isValidBookingManualDiscountCreate(data, adjId) {
+      return isValidId(adjId) &&
+        data != null &&
+        data.adjustmentId == adjId &&
+        data.bookingId is string && data.bookingId.size() > 0 && data.bookingId.size() <= 128 &&
+        data.actionType in ['APPLY', 'REVERSE'] &&
+        data.discountSource in ['ADMIN_MANUAL_COUPON', 'ADMIN_MANUAL_ADJUSTMENT'] &&
+        data.fundingSource == 'THEUNBOUND_MARGIN' &&
+        data.discountType in ['FIXED', 'PERCENTAGE'] &&
+        (data.discountValue is int || data.discountValue is float) && data.discountValue > 0 &&
+        (data.discountAmountInBookingCurrency is int || data.discountAmountInBookingCurrency is float) && data.discountAmountInBookingCurrency > 0 &&
+        data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 1000 &&
+        (!('couponCode' in data) || data.couponCode == null || (data.couponCode is string && data.couponCode.size() <= 64)) &&
+        (!('internalNotes' in data) || data.internalNotes == null || (data.internalNotes is string && data.internalNotes.size() <= 2000)) &&
+        (!('marginOverrideReason' in data) || data.marginOverrideReason == null || (data.marginOverrideReason is string && data.marginOverrideReason.size() <= 1000)) &&
+        data.previousSnapshotId is string && data.previousSnapshotId.size() > 0 && data.previousSnapshotId.size() <= 160 &&
+        data.resultingSnapshotId is string && data.resultingSnapshotId.size() > 0 && data.resultingSnapshotId.size() <= 160 &&
+        data.immutable == true;
     }
 
     function isValidPromotionReservationCreate(data, resId) {
@@ -823,6 +866,26 @@ service cloud.firestore {
         (isApprovedUser() && isValidPromotionRedemptionCreate(request.resource.data, redemptionId))
       );
       allow update, delete: if isValidId(redemptionId) && (canAccessCMSContent() || isMasterAdmin());
+    }
+
+    // Strictly Admin-Only Append-Only Booking Pricing Snapshots (Never readable by B2B Agents/Buyers)
+    match /booking_pricing_snapshots/{snapshotId} {
+      allow get: if isValidId(snapshotId) && (canAccessCMSOperations() || isMasterAdmin());
+      allow list: if canAccessCMSOperations() || isMasterAdmin();
+      allow create: if isValidId(snapshotId) &&
+        (canAccessCMSOperations() || isMasterAdmin()) &&
+        isValidBookingPricingSnapshotCreate(request.resource.data, snapshotId);
+      allow update, delete: if false;
+    }
+
+    // Strictly Admin-Only Append-Only Booking Manual Discount Ledger (Immutable — Reversals create new REVERSE records)
+    match /booking_manual_discounts/{adjustmentId} {
+      allow get: if isValidId(adjustmentId) && (canAccessCMSOperations() || isMasterAdmin());
+      allow list: if canAccessCMSOperations() || isMasterAdmin();
+      allow create: if isValidId(adjustmentId) &&
+        (canAccessCMSOperations() || isMasterAdmin()) &&
+        isValidBookingManualDiscountCreate(request.resource.data, adjustmentId);
+      allow update, delete: if false;
     }
 
     match /gallery_items/{document=**} {
@@ -1339,7 +1402,12 @@ service cloud.firestore {
           !('totalSupplierCost' in request.resource.data) &&
           !('internalNettCost' in request.resource.data) &&
           !('internalProfit' in request.resource.data) &&
-          !('supplierCost' in request.resource.data)
+          !('supplierCost' in request.resource.data) &&
+          !('originalTheUnboundMargin' in request.resource.data) &&
+          !('remainingTheUnboundMargin' in request.resource.data) &&
+          !('adminManualDiscountTotal' in request.resource.data) &&
+          !('manualDiscountAdjustments' in request.resource.data) &&
+          !('pricingSnapshotHistory' in request.resource.data)
         )
       );
 
@@ -1378,6 +1446,16 @@ service cloud.firestore {
             'assignmentHistory',
             'assignmentNotes',
             'agentId',
+            'originalTheUnboundMargin',
+            'remainingTheUnboundMargin',
+            'adminManualDiscountTotal',
+            'manualDiscountAdjustments',
+            'pricingSnapshotHistory',
+            'currentPricingSnapshotId',
+            'currentPricingSnapshotVersion',
+            'hasRevisedPricingAfterInvoice',
+            'revisedPricingNotice',
+            'revisedPricingVersion',
             'agentNameSnapshot',
             'agentEmailSnapshot',
             'agentAgencySnapshot',

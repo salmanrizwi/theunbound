@@ -3,7 +3,9 @@ import { Booking, User, CurrencyCode } from '../../../types';
 import { AppDatabase } from '../../../services/db';
 import { formatCurrency, convertCurrency } from '../../../services/pricingEngine';
 import { isInternalStaff } from '../../../services/permissionEngine';
+import { getLatestBookingPricingSnapshot, resolveAdminManualDiscountPermissions } from '../../../services/bookingManualDiscountEngine';
 import { PaymentProofsManager } from '../PaymentProofsManager';
+import { BookingManualDiscountPanel } from '../../AdminCMS/BookingManualDiscountPanel';
 import { 
   DollarSign, 
   CreditCard, 
@@ -43,16 +45,16 @@ export const DeskFinancialsSection: React.FC<DeskFinancialsSectionProps> = ({
 
   const paymentSummary = db.calculateBookingPaymentSummary(booking);
   const items = db.normalizeServiceItems(booking.items || [], booking);
+  const discountPerms = useMemo(() => resolveAdminManualDiscountPermissions(currentUser), [currentUser]);
+  const snapshots = useMemo(() => db.getBookingPricingSnapshots(booking.id), [db, booking]);
+  const latestSnapshot = useMemo(() => getLatestBookingPricingSnapshot(booking, snapshots), [booking, snapshots]);
 
-  // Supplier Commercial Calculations (Internal Only)
-  const totalCommercialCost = useMemo(() => {
-    return items.reduce((sum, it) => sum + (it.supplierPrice || 0), 0);
-  }, [items]);
-
-  const totalSellingPrice = booking.totalAmount || 0;
-  const grossMargin = totalSellingPrice - totalCommercialCost;
+  // Central Pricing Authority values (zero independent UI margin calculation)
+  const totalCommercialCost = latestSnapshot.supplierNettCost;
+  const totalSellingPrice = latestSnapshot.revisedCustomerSellingPrice;
+  const grossMargin = latestSnapshot.remainingTheUnboundMargin;
   const grossMarginPercent = totalSellingPrice > 0 ? Math.round((grossMargin / totalSellingPrice) * 100) : 0;
-  const taxOnMargin = grossMargin > 0 ? Math.round(grossMargin * 0.18) : 0; // Standard 18% GST on Margin
+  const taxOnMargin = grossMargin > 0 ? Math.round(grossMargin * 0.18) : 0;
   const netMarginRealized = grossMargin - taxOnMargin;
 
   // Conversion Preview (e.g. from Native Currency to USD / EUR if different)
@@ -216,65 +218,75 @@ export const DeskFinancialsSection: React.FC<DeskFinancialsSectionProps> = ({
       </div>
 
       {/* Internal Staff Commercial Profitability Desk (Restricted from B2B Agents) */}
-      {isInternal ? (
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div className="flex items-center gap-2.5">
-              <div className="p-2 rounded-xl bg-purple-50 text-purple-700">
-                <TrendingUp className="w-5 h-5" />
+      {isInternal && discountPerms.canViewInternalMargin ? (
+        <>
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-purple-50 text-purple-700">
+                  <TrendingUp className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                    <span>Internal Commercial Margin &amp; Profitability Realization</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
+                      Confidential
+                    </span>
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Strictly hidden from B2B agents and end-clients. Derived from the central booking pricing snapshot (v{latestSnapshot.version}).
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                  <span>Internal Commercial Margin & Profitability Realization</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-purple-100 text-purple-800 border border-purple-200">
-                    Confidential
-                  </span>
-                </h3>
-                <p className="text-[11px] text-slate-400">
-                  Strictly hidden from B2B agents and end-clients. Derived from authoritative supplier commercial rates.
-                </p>
-              </div>
+
+              <span className="text-xs font-black text-purple-800 bg-purple-50 border border-purple-200 px-3 py-1 rounded-xl">
+                Remaining Margin: {grossMarginPercent}%
+              </span>
             </div>
 
-            <span className="text-xs font-black text-purple-800 bg-purple-50 border border-purple-200 px-3 py-1 rounded-xl">
-              Gross Margin: {grossMarginPercent}%
-            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Revised Client Selling</span>
+                <span className="text-base font-black text-slate-900 font-mono mt-0.5 block">
+                  {formatCurrency(totalSellingPrice, booking.currency)}
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Supplier Nett Commercial Cost</span>
+                <span className="text-base font-black text-rose-700 font-mono mt-0.5 block">
+                  {formatCurrency(totalCommercialCost, booking.currency)}
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Remaining TheUnbound Margin</span>
+                <span className={`text-base font-black font-mono mt-0.5 block ${grossMargin < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                  {formatCurrency(grossMargin, booking.currency)}
+                </span>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Estimated Net Retained (Post-Tax)</span>
+                <span className="text-base font-black text-teal-800 font-mono mt-0.5 block">
+                  {formatCurrency(netMarginRealized, booking.currency)}
+                </span>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-              <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Client Selling</span>
-              <span className="text-base font-black text-slate-900 font-mono mt-0.5 block">
-                {formatCurrency(totalSellingPrice, booking.currency)}
-              </span>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-              <span className="text-[10px] font-bold text-slate-400 uppercase block">Supplier Nett Commercial Cost</span>
-              <span className="text-base font-black text-rose-700 font-mono mt-0.5 block">
-                {formatCurrency(totalCommercialCost, booking.currency)}
-              </span>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-              <span className="text-[10px] font-bold text-slate-400 uppercase block">Pre-Tax Gross Margin</span>
-              <span className="text-base font-black text-emerald-700 font-mono mt-0.5 block">
-                {formatCurrency(grossMargin, booking.currency)}
-              </span>
-            </div>
-
-            <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-              <span className="text-[10px] font-bold text-slate-400 uppercase block">Estimated Net Retained (Post-Tax)</span>
-              <span className="text-base font-black text-teal-800 font-mono mt-0.5 block">
-                {formatCurrency(netMarginRealized, booking.currency)}
-              </span>
-            </div>
-          </div>
-        </div>
+          {/* Admin Manual Discount Coupons & Margin-Funded Adjustments */}
+          <BookingManualDiscountPanel
+            booking={booking}
+            currentUser={currentUser}
+            onRefresh={onRefresh}
+            onNavigateToInvoices={onNavigateToSection ? () => onNavigateToSection('PROFORMA_INVOICE') : undefined}
+          />
+        </>
       ) : (
         <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 text-xs text-slate-500 flex items-center gap-2">
           <Lock className="w-4 h-4 text-slate-400" />
-          <span>Commercial supplier rates and margin analytics are restricted to internal DMC operations staff.</span>
+          <span>Commercial supplier rates, margin analytics, and manual discount controls are restricted to authorized internal Admin roles.</span>
         </div>
       )}
 

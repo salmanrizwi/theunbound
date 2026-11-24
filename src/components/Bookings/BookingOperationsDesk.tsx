@@ -111,7 +111,9 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
       'vouchers',
       'job_sheets',
       'suppliers',
-      'supplier_requests'
+      'supplier_requests',
+      'booking_manual_discounts',
+      'booking_pricing_snapshots'
     ], () => {
       setAllBookings(getAccessibleBookings());
       setRefreshKey(prev => prev + 1);
@@ -167,7 +169,7 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
       },
       {
         id: 'FINANCIALS' as DeskSection,
-        label: 'Financials & Tranches',
+        label: 'Pricing, Discounts & Financials',
         icon: CreditCard,
         badge: booking.paymentStatus === 'PAID' ? 'Settled' : 'Pending',
         badgeColor: booking.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
@@ -475,6 +477,7 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
               <DeskFinancialsSection
                 booking={booking}
                 currentUser={currentUser}
+                onNavigateToSection={handleNavigateSection}
                 onRefresh={handleRefresh}
               />
             )}

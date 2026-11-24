@@ -11,6 +11,7 @@ import {
   Supplier,
   SupplierRequest
 } from '../types';
+import { getLatestBookingPricingSnapshot, roundMoney } from './bookingManualDiscountEngine';
 
 /**
  * 15 Odoo-Style CRM Pipeline Stages with SLA hours, win probabilities, and default statuses
@@ -436,31 +437,34 @@ export function calculateTransparentLeadScore(lead: Partial<TravelLead>): {
  * Calculates financial profitability & margin for a booking
  */
 export function calculateBookingProfitability(booking: Booking): BookingFinancialProfitability {
-  const sellingPrice = booking.totalAmount || 0;
-  
-  // Calculate sourcing costs across items or allocated suppliers
-  let totalSupplierCost = 0;
-  if (booking.totalNetCost && booking.totalNetCost > 0) {
-    totalSupplierCost = booking.totalNetCost;
-  } else if (booking.supplierTotalCost && booking.supplierTotalCost > 0) {
-    totalSupplierCost = booking.supplierTotalCost;
-  } else if (booking.items && booking.items.length > 0) {
-    totalSupplierCost = booking.items.reduce((acc, item) => {
-      const net = (item.unitNetPrice || (item.unitSellingPrice * 0.8)) * (item.totalPax || 1);
-      return acc + net;
-    }, 0);
-  } else {
-    // Default estimated 80% cost (20% margin)
+  const latestSnapshot = getLatestBookingPricingSnapshot(booking);
+  const sellingPrice = latestSnapshot.revisedCustomerSellingPrice;
+
+  // Supplier Nett Cost is strictly preserved from the authoritative baseline snapshot
+  let totalSupplierCost = latestSnapshot.supplierNettCost;
+  if (totalSupplierCost <= 0 && sellingPrice > 0 && !booking.pricingSnapshotHistory?.length) {
+    // Legacy booking without recorded supplier nett cost fallback
     totalSupplierCost = Math.round(sellingPrice * 0.8);
   }
 
-  const grossMarginAmount = Math.max(0, sellingPrice - totalSupplierCost);
-  const grossMarginPercent = sellingPrice > 0 ? Math.round((grossMarginAmount / sellingPrice) * 100) : 0;
-  
-  // Agency commission if booked by B2B agent (e.g. 5-10% of selling)
-  const agencyCommissionAmount = booking.customer?.agencyName ? Math.round(sellingPrice * 0.05) : 0;
-  const netProfitAmount = Math.max(0, grossMarginAmount - agencyCommissionAmount);
-  const netProfitMarginPercent = sellingPrice > 0 ? Math.round((netProfitAmount / sellingPrice) * 100) : 0;
+  const grossMarginAmount =
+    booking.pricingSnapshotHistory && booking.pricingSnapshotHistory.length > 0
+      ? latestSnapshot.remainingTheUnboundMargin
+      : roundMoney(sellingPrice - totalSupplierCost);
+
+  const grossMarginPercent =
+    sellingPrice > 0 ? roundMoney((grossMarginAmount / sellingPrice) * 100) : 0;
+
+  // Agency commission if booked by B2B agent (only when no explicit agent additional markup model is used)
+  const agencyCommissionAmount =
+    latestSnapshot.agentAdditionalMarkupAmount > 0
+      ? 0
+      : booking.customer?.agencyName
+        ? Math.round(sellingPrice * 0.05)
+        : 0;
+  const netProfitAmount = roundMoney(grossMarginAmount - agencyCommissionAmount);
+  const netProfitMarginPercent =
+    sellingPrice > 0 ? roundMoney((netProfitAmount / sellingPrice) * 100) : 0;
 
   return {
     bookingId: booking.id,
@@ -472,7 +476,13 @@ export function calculateBookingProfitability(booking: Booking): BookingFinancia
     agencyCommissionAmount,
     netProfitAmount,
     netProfitMarginPercent,
-    currency: booking.currency || 'EUR'
+    currency: booking.currency || 'EUR',
+    originalSellingPrice: latestSnapshot.originalCustomerSellingPrice,
+    b2bPromotionDiscountAmount: latestSnapshot.b2bPromotionDiscountAmount,
+    adminManualDiscountTotal: latestSnapshot.cumulativeAdminManualDiscount,
+    originalTheUnboundMargin: latestSnapshot.originalTheUnboundMargin,
+    remainingTheUnboundMargin: latestSnapshot.remainingTheUnboundMargin,
+    isLossMakingOverride: latestSnapshot.isLossMaking
   };
 }
 

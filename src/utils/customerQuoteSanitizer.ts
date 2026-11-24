@@ -1129,6 +1129,24 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
   delete clone.assignmentHistory;
   delete clone.assignmentNotes;
 
+  // Strictly strip Admin Manual Discount internal margins, funding sources, reasons, and snapshot history.
+  // B2B Agents & customer-facing documents MUST ONLY see the revised customer-facing selling price.
+  delete clone.originalTheUnboundMargin;
+  delete clone.remainingTheUnboundMargin;
+  delete clone.adminManualDiscountTotal;
+  delete clone.manualDiscountAdjustments;
+  delete clone.pricingSnapshotHistory;
+  delete clone.currentPricingSnapshotId;
+  delete clone.currentPricingSnapshotVersion;
+  delete clone.revisedPricingNotice;
+  delete clone.revisedPricingVersion;
+  delete clone.hasRevisedPricingAfterInvoice;
+
+  // Ensure external customer-facing totalAmount matches the committed revised selling price
+  if (typeof clone.finalCustomerSellingPrice === 'number' && Number.isFinite(clone.finalCustomerSellingPrice)) {
+    clone.totalAmount = clone.finalCustomerSellingPrice;
+  }
+
   // Strips internal invoices
   clone.uploadedInvoices = [];
 

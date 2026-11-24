@@ -288,6 +288,15 @@ export function evaluatePromotionEligibilityAndDiscount(params: {
     );
   }
 
+  // 0. Strict Channel Separation: Admin-only manual coupons cannot be self-applied by B2B Agents
+  if (promo.couponChannel === 'ADMIN_MANUAL') {
+    return makeFailure(
+      'AGENT_NOT_ELIGIBLE',
+      'This coupon code is reserved for Admin Manual Booking Discounts and cannot be applied in B2B quotations.',
+      now
+    );
+  }
+
   // 1. Lifecycle Status & Validity Dates
   const effectiveStatus = resolveEffectivePromotionStatus(promo, now);
   if (effectiveStatus === 'ARCHIVED') {

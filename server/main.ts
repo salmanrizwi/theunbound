@@ -17,6 +17,7 @@ import {
 } from "./performanceMiddleware";
 import { createHomepageVideoRouter } from "./homepageVideoService";
 import { createPromotionRouter, createAdminPromotionRouter } from "./promotionService";
+import { createAdminBookingManualDiscountRouter } from "./bookingManualDiscountService";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -77,6 +78,9 @@ export async function startServer() {
       // Secure Server-Side Promotion Management & Redemption Routers
       app.use("/api/promotions", createPromotionRouter());
       app.use("/api/admin/promotions", createAdminPromotionRouter());
+
+      // Secure Server-Side Admin Manual Discount Coupon & Margin Governance Router
+      app.use("/api/admin", createAdminBookingManualDiscountRouter());
 
       // Centralized Live XE.com FX Currency Engine Router
       app.use("/api/fx", createFXRouter());

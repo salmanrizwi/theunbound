@@ -333,6 +333,14 @@ export interface BookingOperationsPermissions {
   view_internal_financials?: boolean;
   override_confirmation?: boolean;
   manage_supplier_records?: boolean;
+  // Admin Manual Discount Coupon & Margin Governance Permissions
+  view_internal_margin?: boolean;
+  apply_manual_discount?: boolean;
+  apply_admin_coupon?: boolean;
+  approve_manual_discount?: boolean;
+  override_margin_protection?: boolean;
+  reverse_manual_discount?: boolean;
+  view_discount_reports?: boolean;
 }
 
 export interface SupplierPermissions {
@@ -4036,6 +4044,19 @@ export interface Booking {
   brandingSnapshot?: AgencyBrandingSnapshot;
   commercialTermsSnapshot?: QuotationCommercialTermsSnapshot;
   termsAndConditions?: string;
+
+  // Admin Manual Discount Coupons & Immutable Versioned Pricing Snapshots
+  currentPricingSnapshotId?: string;
+  currentPricingSnapshotVersion?: number;
+  pricingSnapshotHistory?: BookingPricingSnapshot[];
+  manualDiscountAdjustments?: BookingManualDiscountAdjustment[];
+  adminManualDiscountTotal?: number;
+  originalTheUnboundMargin?: number;
+  remainingTheUnboundMargin?: number;
+  b2bPromotionDiscountAmount?: number;
+  hasRevisedPricingAfterInvoice?: boolean;
+  revisedPricingNotice?: string;
+  revisedPricingVersion?: number;
 }
 
 /**
@@ -4317,8 +4338,243 @@ export interface Promotion {
   successfulRedemptionsCount?: number;
   failedApplicationsCount?: number;
   totalDiscountValueGranted?: number;
+
+  // Admin Manual Discount Coupon Configuration (Margin-Funded for Existing Bookings)
+  couponChannel?: 'B2B_AGENT' | 'ADMIN_MANUAL' | 'BOTH';
+  fundingSource?: 'THEUNBOUND_MARGIN' | 'MARKETING_BUDGET' | 'SHARED';
+  permittedForExistingBookings?: boolean;
+  requiresAdminApproval?: boolean;
+  eligibleBookingCategories?: string[];
+  eligibleBookingIds?: string[];
+  adminManualRedemptionsCount?: number;
+  adminManualDiscountValueGranted?: number;
+
   createdAt: string;
   updatedAt: string;
+}
+
+// ----------------------------------------------------
+// ADMIN MANUAL DISCOUNT COUPONS & BOOKING PRICING SNAPSHOTS
+// ----------------------------------------------------
+export type BookingManualDiscountType = 'FIXED' | 'PERCENTAGE';
+
+export type BookingManualDiscountSource =
+  | 'ADMIN_MANUAL_COUPON'
+  | 'ADMIN_MANUAL_ADJUSTMENT';
+
+export type BookingManualDiscountAdjustmentStatus = 'ACTIVE' | 'REVERSED';
+
+export interface BookingPricingSnapshot {
+  snapshotId: string;
+  id?: string;
+  bookingId: string;
+  bookingReference?: string;
+  version: number;
+  currency: CurrencyCode;
+  supplierNettCost: number;
+  originalBaseSellingPrice: number;
+  originalCustomerSellingPrice: number;
+  originalTheUnboundMargin: number;
+  b2bPromotionDiscountAmount: number;
+  b2bPromotionCode?: string;
+  b2bPromotionId?: string;
+  agentAdditionalMarkupAmount: number;
+  cumulativeAdminManualDiscount: number;
+  remainingTheUnboundMargin: number;
+  revisedBaseSellingPrice: number;
+  revisedCustomerSellingPrice: number;
+  isLossMaking: boolean;
+  sourceAction:
+    | 'INITIAL_BOOKING'
+    | 'ADMIN_MANUAL_DISCOUNT_APPLIED'
+    | 'ADMIN_MANUAL_DISCOUNT_REVERSED';
+  sourceAdjustmentId?: string;
+  createdBy: string;
+  createdByName: string;
+  createdByRole: string;
+  createdAt: string;
+  immutable: true;
+}
+
+export interface BookingManualDiscountAdjustment {
+  adjustmentId: string;
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  idempotencyKey?: string;
+  actionType: 'APPLY' | 'REVERSE';
+  discountSource: BookingManualDiscountSource;
+  fundingSource: 'THEUNBOUND_MARGIN';
+  couponId?: string;
+  couponCode?: string;
+  couponTitle?: string;
+  discountType: BookingManualDiscountType;
+  discountValue: number;
+  discountCurrency: CurrencyCode;
+  bookingCurrency: CurrencyCode;
+  fxRateApplied?: number;
+  discountAmountInBookingCurrency: number;
+  signedDeltaAmount: number; // Negative on APPLY, positive on REVERSE
+  status: BookingManualDiscountAdjustmentStatus;
+  reason: string;
+  internalNotes?: string;
+  requiresApproval: boolean;
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: string;
+  approvalReference?: string;
+  marginOverrideUsed: boolean;
+  marginOverrideReason?: string;
+  marginOverrideApprovedBy?: string;
+  marginOverrideApprovedByName?: string;
+  previousSnapshotId: string;
+  previousSnapshotVersion: number;
+  resultingSnapshotId: string;
+  resultingSnapshotVersion: number;
+  supplierNettCostSnapshot: number;
+  marginBefore: number;
+  marginAfter: number;
+  sellingPriceBefore: number;
+  sellingPriceAfter: number;
+  reversedAdjustmentId?: string;
+  reversedByAdjustmentId?: string;
+  reversedAt?: string;
+  reversedBy?: string;
+  reversedByName?: string;
+  reversalReason?: string;
+  appliedBy: string;
+  appliedByName: string;
+  appliedByEmail?: string;
+  appliedByRole: string;
+  appliedAt: string;
+  agencyId?: string;
+  agencyName?: string;
+  agentId?: string;
+  agentName?: string;
+  accountManagerId?: string;
+  accountManagerName?: string;
+  immutable: true;
+}
+
+export interface BookingManualDiscountPermissions {
+  canViewInternalMargin: boolean;
+  canApplyManualDiscount: boolean;
+  canApplyAdminCoupon: boolean;
+  canApproveManualDiscount: boolean;
+  canOverrideMarginProtection: boolean;
+  canReverseManualDiscount: boolean;
+  canViewDiscountReports: boolean;
+}
+
+export interface BookingManualDiscountPreview {
+  bookingId: string;
+  bookingReference: string;
+  bookingStatus: BookingStatus;
+  bookingCurrency: CurrencyCode;
+  discountCurrency: CurrencyCode;
+  fxRateApplied: number;
+  discountSource: BookingManualDiscountSource;
+  discountType: BookingManualDiscountType;
+  discountValue: number;
+  couponId?: string;
+  couponCode?: string;
+  couponTitle?: string;
+  couponCapApplied?: boolean;
+  supplierNettCost: number;
+  originalBaseSellingPrice: number;
+  originalCustomerSellingPrice: number;
+  originalTheUnboundMargin: number;
+  b2bPromotionDiscountAmount: number;
+  b2bPromotionCode?: string;
+  agentAdditionalMarkupAmount: number;
+  previousAdminManualDiscountTotal: number;
+  availableMarginBeforeDiscount: number;
+  requestedDiscountAmount: number;
+  cumulativeAdminManualDiscountAfter: number;
+  remainingTheUnboundMarginAfter: number;
+  previousCustomerSellingPrice: number;
+  revisedCustomerSellingPrice: number;
+  previousBaseSellingPrice: number;
+  revisedBaseSellingPrice: number;
+  marginProtectionBlocked: boolean;
+  requiresLossOverride: boolean;
+  isLossMakingOverride: boolean;
+  requiresApproval: boolean;
+  hasExistingInvoices: boolean;
+  eligible: boolean;
+  canApply: boolean;
+  validationErrors: string[];
+  validationWarnings: string[];
+  latestSnapshotVersion: number;
+  latestSnapshotId: string;
+}
+
+export interface AdminManualDiscountApplyPayload {
+  bookingId: string;
+  discountSource: BookingManualDiscountSource;
+  discountType: BookingManualDiscountType;
+  discountValue: number;
+  discountCurrency?: CurrencyCode;
+  couponId?: string;
+  couponCode?: string;
+  reason: string;
+  internalNotes?: string;
+  allowMarginOverride?: boolean;
+  marginOverrideReason?: string;
+  approvalReference?: string;
+  approvedBy?: string;
+  approvedByName?: string;
+  idempotencyKey?: string;
+  expectedSnapshotVersion?: number;
+}
+
+export interface AdminManualDiscountReversePayload {
+  bookingId: string;
+  adjustmentId: string;
+  reason: string;
+  idempotencyKey?: string;
+}
+
+export interface BookingManualDiscountReportRow {
+  bookingId: string;
+  bookingReference: string;
+  customerName: string;
+  agencyId?: string;
+  agencyName?: string;
+  agentId?: string;
+  agentName?: string;
+  accountManagerName?: string;
+  currency: CurrencyCode;
+  supplierNettCost: number;
+  originalCustomerSellingPrice: number;
+  b2bPromotionDiscountAmount: number;
+  adminManualDiscountTotal: number;
+  revisedCustomerSellingPrice: number;
+  originalTheUnboundMargin: number;
+  remainingTheUnboundMargin: number;
+  activeAdjustmentsCount: number;
+  reversedAdjustmentsCount: number;
+  hasLossOverride: boolean;
+  lastAdjustedAt?: string;
+  lastAdjustedByName?: string;
+}
+
+export interface BookingManualDiscountReportSummary {
+  totalBookingsWithManualDiscounts: number;
+  totalActiveAdjustments: number;
+  totalReversedAdjustments: number;
+  totalLossOverrideCount: number;
+  totalAdminManualDiscountByCurrency: Record<string, number>;
+  totalRemainingMarginByCurrency: Record<string, number>;
+  byCouponCode: Array<{
+    couponCode: string;
+    couponTitle?: string;
+    applicationsCount: number;
+    reversalsCount: number;
+    totalDiscountAmount: number;
+    currency: CurrencyCode;
+  }>;
+  rows: BookingManualDiscountReportRow[];
 }
 
 export type PromotionValidationErrorCode =
@@ -4768,6 +5024,10 @@ export type AuditAction =
   | 'PROMOTION_DELETED'
   | 'PROMOTION_TARGETING_CHANGED'
   | 'PROMOTION_CTA_CHANGED'
+  | 'BOOKING_MANUAL_DISCOUNT_APPLIED'
+  | 'BOOKING_MANUAL_DISCOUNT_REVERSED'
+  | 'BOOKING_MANUAL_DISCOUNT_REJECTED'
+  | 'BOOKING_MANUAL_DISCOUNT_APPROVED'
   // Quote Actions
   | 'QUOTE_CREATED'
   | 'QUOTE_EDITED'
@@ -6413,6 +6673,12 @@ export interface BookingFinancialProfitability {
   netProfitAmount: number;
   netProfitMarginPercent: number;
   currency: CurrencyCode;
+  originalSellingPrice?: number;
+  b2bPromotionDiscountAmount?: number;
+  adminManualDiscountTotal?: number;
+  originalTheUnboundMargin?: number;
+  remainingTheUnboundMargin?: number;
+  isLossMakingOverride?: boolean;
 }
 
 export interface OperationsCalendarEvent {
