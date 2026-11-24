@@ -894,6 +894,11 @@ export function renderProposalViewHtmlEmail(
                           </div>
                         ` : ''}
                         <h3 style="font-size: 15px; font-weight: 900; color: #ffffff; margin: 3px 0 3px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.landPartTotalFormatted}</span></h3>
+                        ${model.appliedPromotion ? `
+                          <div style="font-size: 12.5px; font-weight: 800; color: #6ee7b7; margin: 3px 0 3px 0;">
+                            <strong>Promotional Discount (${cleanInlineFormattedText(model.appliedPromotion.code)}):</strong> <span style="font-family: monospace;">-${model.appliedPromotion.discountAmountFormatted}</span> <span style="font-weight: 600; color: #a7f3d0;">• ${cleanInlineFormattedText(model.appliedPromotion.promotionName)}</span>
+                          </div>
+                        ` : ''}
                         <div style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 3px 0 4px 0;">
                           <strong>Final Selling Price:</strong> <span style="color: #00E5C0; font-family: monospace;">${model.finalCustomerSellingPriceFormatted}</span>
                         </div>
@@ -1472,6 +1477,9 @@ export function renderSimpleSemanticQuotationEmailFromModel(
     lines.push(`Hotel Accommodation Total: ${model.hotelAccommodationTotalFormatted}`);
   }
   lines.push(`Land Part Total: ${model.landPartTotalFormatted}`);
+  if (model.appliedPromotion) {
+    lines.push(`Promotional Discount (${model.appliedPromotion.code}): -${model.appliedPromotion.discountAmountFormatted} (${model.appliedPromotion.promotionName})`);
+  }
   lines.push(`Final Selling Price: ${model.finalCustomerSellingPriceFormatted}`);
   lines.push(`Currency Guarantee: ${model.guaranteedCurrencyLine}`);
   lines.push(`Quotation Validity: Valid until ${model.validUntilFormatted}`);
@@ -2987,6 +2995,12 @@ export function renderOption2CompleteFormattedHtmlEmail(
           <td style="${tdBase} width: 68%; background-color: ${EXCEL_BLUE_ROW}; font-size: 11.5px; font-weight: bold; color: ${EXCEL_NAVY};">Hotel Part Total</td>
           <td style="${tdBase} width: 32%; background-color: ${EXCEL_BLUE_ROW}; text-align: right; font-size: 12px; font-weight: bold; color: ${EXCEL_NAVY};">${hotelPartCellValue}</td>
         </tr>
+        ${model.appliedPromotion ? `
+        <tr>
+          <td style="${tdBase} width: 68%; background-color: #ecfdf5; font-size: 11px; font-weight: bold; color: #065f46;">Promotional Discount (${cleanInlineFormattedText(model.appliedPromotion.code)} — ${cleanInlineFormattedText(model.appliedPromotion.promotionName)})</td>
+          <td style="${tdBase} width: 32%; background-color: #ecfdf5; text-align: right; font-size: 11.5px; font-weight: bold; color: #065f46;">-${cleanInlineFormattedText(model.appliedPromotion.discountAmountFormatted)}</td>
+        </tr>
+        ` : ''}
       </tbody>
     </table>
   `;

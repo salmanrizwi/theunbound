@@ -7,6 +7,8 @@ import { AssociatedPartnersCarousel } from '../components/public/AssociatedPartn
 import { FinalCTA } from '../components/FinalCTA';
 import { NewsletterSignup } from '../components/Newsletter/NewsletterSignup';
 import { DemoBookingSection } from '../components/public/DemoBookingSection';
+import { PortalTutorialVideoSection } from '../components/public/PortalTutorialVideoSection';
+import { CashbackRewardsVideoSection } from '../components/public/CashbackRewardsVideoSection';
 import { AppDatabase } from '../services/db';
 import { GlobalCountingEngine } from '../services/countingEngine';
 import { inventoryVisibilityService, useInventoryVisibility } from '../services/inventoryVisibilityService';
@@ -133,9 +135,11 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
   const CANONICAL_MODULE_ORDER = [
     'hero',
     'brandIntroduction',
+    'portalTutorialVideo',
     'cityHubs',
     'destinationFilter',
     'partnershipBenefits',
+    'cashbackRewardsVideo',
     'affiliations',
     'associatedPartners',
     'onboardingProcess',
@@ -151,9 +155,11 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
     const clean = (id || '').toLowerCase().replace(/[-_]/g, '');
     if (clean === 'hero' || clean === 'buyerhomepagehero') return 'hero';
     if (clean === 'brandintroduction' || clean === 'b2bbrandintroduction') return 'brandIntroduction';
+    if (clean === 'portaltutorialvideo' || clean === 'portaltutorial' || clean === 'tutorialvideo') return 'portalTutorialVideo';
     if (clean === 'cityhubs' || clean === 'homepagecityhubs') return 'cityHubs';
     if (clean === 'destinationfilter' || clean === 'b2bdestinationexpertise' || clean === 'destinations' || clean === 'destinationexpertise') return 'destinationFilter';
     if (clean === 'partnershipbenefits' || clean === 'b2bpartnershipbenefits') return 'partnershipBenefits';
+    if (clean === 'cashbackrewardsvideo' || clean === 'cashbackrewards' || clean === 'cashbackvideo') return 'cashbackRewardsVideo';
     if (clean === 'affiliations' || clean === 'regulatoryaffiliations' || clean === 'b2bregulatoryaffiliations') return 'affiliations';
     if (clean === 'associatedpartners' || clean === 'partners' || clean === 'partnercarousel' || clean === 'ourpartners' || clean === 'ourassociatedpartners') return 'associatedPartners';
     if (clean === 'onboardingprocess' || clean === 'b2bonboardingprocess') return 'onboardingProcess';
@@ -1019,6 +1025,30 @@ export const LoggedOutBuyerHomepage: React.FC<LoggedOutBuyerHomepageProps> = ({
             key="module-demo-booking"
             config={config.demoBookingConfig}
             sectionActive={config.showDemoBookingSection !== false}
+          />
+        ) : null;
+
+      case 'portalTutorialVideo':
+        return (config.showPortalTutorialVideo !== false && config.portalTutorialVideoConfig?.isActive !== false) ? (
+          <PortalTutorialVideoSection
+            key="module-portal-tutorial-video"
+            config={config.portalTutorialVideoConfig}
+            sectionActive={config.showPortalTutorialVideo !== false}
+          />
+        ) : null;
+
+      case 'cashbackRewardsVideo':
+        return (config.showCashbackRewardsVideo !== false && config.cashbackRewardsVideoConfig?.isActive !== false) ? (
+          <CashbackRewardsVideoSection
+            key="module-cashback-rewards-video"
+            config={config.cashbackRewardsVideoConfig}
+            sectionActive={config.showCashbackRewardsVideo !== false}
+            user={user}
+            isAuthenticated={isAuthenticated}
+            onRequireAuth={() => {
+              if (onOpenLogin) onOpenLogin();
+              else openAuthModal('login');
+            }}
           />
         ) : null;
 

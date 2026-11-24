@@ -15,6 +15,8 @@ import {
   createApiRateLimiter,
   createAdminPerformanceRouter
 } from "./performanceMiddleware";
+import { createHomepageVideoRouter } from "./homepageVideoService";
+import { createPromotionRouter, createAdminPromotionRouter } from "./promotionService";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -53,6 +55,9 @@ export async function startServer() {
       // Admin-only backend performance & health telemetry endpoint
       app.use("/api/admin/performance", createAdminPerformanceRouter());
 
+      // Admin-only Homepage YouTube URL validation endpoint
+      app.use("/api/admin/homepage", createHomepageVideoRouter());
+
       // Strict B2B Portal Destination Visibility API
       app.use("/api/b2b", createB2BVisibilityRouter());
 
@@ -65,10 +70,13 @@ export async function startServer() {
       // Secure Server-Side Margin & Commission Governance Router (Transactional Firestore Updates)
       app.use("/api/admin/margins", createMarginGovernanceRouter());
 
-      // Secure Server-Side Cashback & Rewards Wallet Routers + Background Scheduler
+      // Secure Server-Side Cashback & Rewards Wallet Routers
       app.use("/api/cashback", createCashbackRouter());
       app.use("/api/admin/cashback", createAdminCashbackRouter());
-      startCashbackScheduler();
+
+      // Secure Server-Side Promotion Management & Redemption Routers
+      app.use("/api/promotions", createPromotionRouter());
+      app.use("/api/admin/promotions", createAdminPromotionRouter());
 
       // Centralized Live XE.com FX Currency Engine Router
       app.use("/api/fx", createFXRouter());
@@ -92,14 +100,31 @@ export async function startServer() {
       const isProduction = isCompiledBundle || process.env.NODE_ENV === "production" || !isDev;
 
       if (!isProduction) {
-        const { createServer: createViteServer } = await import("vite");
-        const vite = await createViteServer({
-          server: { middlewareMode: true, hmr: false },
-          appType: "custom",
+        // Initialize Vite asynchronously so Express binds port 3000 immediately on cold boot
+        // and never trips container startup readiness probes.
+        const vitePromise = import("vite").then(({ createServer: createViteServer }) =>
+          createViteServer({
+            server: { middlewareMode: true, hmr: false },
+            appType: "custom",
+          })
+        );
+
+        vitePromise.catch((err) => {
+          console.error("[SERVER] Vite initialization failed:", err);
         });
 
-        // Vite dev middleware handles code bundling, HMR, assets, and node_modules
-        app.use(vite.middlewares);
+        // Delegate non-API requests to Vite middlewares once ready
+        app.use(async (req, res, next) => {
+          if (req.originalUrl.startsWith("/api")) {
+            return next();
+          }
+          try {
+            const vite = await vitePromise;
+            vite.middlewares(req, res, next);
+          } catch (e) {
+            next(e);
+          }
+        });
 
         // Handle HTML requests with SEO meta injection in development
         app.use(async (req, res, next) => {
@@ -110,13 +135,19 @@ export async function startServer() {
           }
 
           try {
+            const vite = await vitePromise;
             const templatePath = path.resolve(process.cwd(), "index.html");
             let template = fs.readFileSync(templatePath, "utf-8");
             template = await vite.transformIndexHtml(url, template);
             const htmlWithSEO = injectSEOIntoHtml(template, url, req.get("host") || "theunbound.luxury");
             res.status(200).set({ "Content-Type": "text/html" }).end(htmlWithSEO);
           } catch (e: any) {
-            vite.ssrFixStacktrace(e);
+            try {
+              const vite = await vitePromise;
+              vite.ssrFixStacktrace(e);
+            } catch {
+              // ignore
+            }
             next(e);
           }
         });
@@ -177,6 +208,7 @@ export async function startServer() {
         const s = app.listen(port, "0.0.0.0", () => {
           console.log(`[SERVER] Ready and listening on port ${port}`);
           primaryServer = s;
+          startCashbackScheduler();
           resolve(primaryServer);
         });
 

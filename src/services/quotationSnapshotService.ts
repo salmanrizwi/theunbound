@@ -199,6 +199,16 @@ export function computeQuotationCommercialContentHash(
     adminManualMarginValue: Number(quote.adminManualMarginValue ?? 0),
     adminMarginMode: quote.adminMarginMode || 'ADD',
     overallDiscountPercent: Number(quote.overallDiscountPercent || 0),
+    appliedPromotion: quote.appliedPromotion
+      ? {
+          promotionId: quote.appliedPromotion.promotionId,
+          code: quote.appliedPromotion.code,
+          discountType: quote.appliedPromotion.discountType,
+          discountValue: quote.appliedPromotion.discountValue,
+          discountAmount: quote.appliedPromotion.discountAmount,
+          promotionConfigVersion: quote.appliedPromotion.promotionConfigVersion
+        }
+      : null,
     companyId: (quote as any).companyId || hashAgencyCtx.companyId || '',
     agentAgency: quote.agentAgency || hashAgencyCtx.agencyName || '',
     productLevelMarginEnabled: hashAgencyCtx.productLevelMarginEnabled,
@@ -484,6 +494,11 @@ export function buildAuthoritativeQuotationSnapshot(
       effectiveCurrency
     );
 
+    const activeAppliedPromotion =
+      quote.appliedPromotion !== undefined
+        ? quote.appliedPromotion
+        : (quote.authoritativeSnapshot?.pricing?.appliedPromotion || null);
+
     const internalBreakdown = calculateQuoteInternalBreakdown({
       items: (activeOption?.items && activeOption.items.length > 0 ? activeOption.items : quote.items || []) as any,
       targetCurrency: effectiveCurrency,
@@ -505,7 +520,8 @@ export function buildAuthoritativeQuotationSnapshot(
       adminMarginMode: quote.adminMarginMode,
       preserveHistoricalSnapshot: shouldPreserveLockedCurrency,
       historicalSnapshot: shouldPreserveLockedCurrency ? quote.currencyConversionSnapshot : undefined,
-      surchargeOverrides: quote.surchargeOverrides
+      surchargeOverrides: quote.surchargeOverrides,
+      appliedPromotion: activeAppliedPromotion
     });
 
     const reqAdminType: 'PERCENTAGE' | 'FIXED' =
@@ -530,9 +546,15 @@ export function buildAuthoritativeQuotationSnapshot(
         (internalBreakdown.productLevelMarginEnabled ||
           quote.currencyConversionSnapshot?.agentLevelMarginPercent === undefined ||
           Math.abs(Number(quote.currencyConversionSnapshot.agentLevelMarginPercent) - internalBreakdown.configuredAgentLevelMarginPercent) < 0.001));
+    const snapPromoId = snapTotalsAny?.appliedPromotion?.promotionId || '';
+    const reqPromoId = activeAppliedPromotion?.promotionId || '';
+    const snapPromoCode = snapTotalsAny?.appliedPromotion?.code || '';
+    const reqPromoCode = activeAppliedPromotion?.code || '';
+    const currencySnapPromoMatches = snapPromoId === reqPromoId && snapPromoCode === reqPromoCode;
     const currencySnapMatchesConfig = Boolean(
       quote.currencyConversionSnapshot &&
       quote.currencyConversionSnapshot.targetCurrency === effectiveCurrency &&
+      currencySnapPromoMatches &&
       quote.currencyConversionSnapshot.lineItems.length ===
         (activeOption?.items && activeOption.items.length > 0 ? activeOption.items : quote.items || []).length &&
       Math.abs(
@@ -585,6 +607,7 @@ export function buildAuthoritativeQuotationSnapshot(
             agentMarginType: quote.agentMarginType || 'PERCENTAGE',
             agentMarginValue: Math.max(0, Number(quote.agentMarginValue ?? quote.overallMarkupPercent ?? 0)),
             surchargeOverrides: quote.surchargeOverrides,
+            appliedPromotion: activeAppliedPromotion,
             precomputedBreakdown: internalBreakdown
           });
 
@@ -678,10 +701,25 @@ export function buildAuthoritativeQuotationSnapshot(
         }
       : currencySnapshot;
 
+    const resolvedPromoSnapshot =
+      internalBreakdown.appliedPromotion ?? centralTotals.appliedPromotion ?? activeAppliedPromotion ?? null;
+    const resolvedPromoDiscount = roundCurrencyAmount(
+      internalBreakdown.promotionDiscountAmount ?? centralTotals.promotionDiscountAmount ?? resolvedPromoSnapshot?.discountAmount ?? 0,
+      effectiveCurrency
+    );
+    const resolvedPreDiscountBase = roundCurrencyAmount(
+      internalBreakdown.preDiscountBaseSellingPrice ?? centralTotals.preDiscountBaseSellingPrice ?? (resolvedBaseSelling + resolvedPromoDiscount),
+      effectiveCurrency
+    );
+
     pricingBlock = {
       currency: effectiveCurrency,
       theUnboundBaseSellingPrice: resolvedBaseSelling,
       baseFinalSellingPrice: resolvedBaseSelling,
+      preDiscountBaseSellingPrice: resolvedPreDiscountBase,
+      promotionDiscountAmount: resolvedPromoDiscount,
+      discountedBaseSellingPrice: resolvedBaseSelling,
+      appliedPromotion: resolvedPromoSnapshot,
       agentMarginType: quote.agentMarginType || 'PERCENTAGE',
       agentMarginValue: Math.max(0, Number(quote.agentMarginValue ?? quote.overallMarkupPercent ?? 0)),
       agentMarginAmount: resolvedAgentMargin,

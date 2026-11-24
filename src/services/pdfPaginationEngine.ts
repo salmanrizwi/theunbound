@@ -2637,6 +2637,11 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
             </div>
           ` : ''}
           <h3 style="font-size: 15px; font-weight: 900; color: #ffffff; margin: 3px 0 3px 0;"><strong>Land Part Total:</strong> <span style="color: #00E5C0; font-family: monospace;">${escapePdfText(model.landPartTotalFormatted)}</span></h3>
+          ${model.appliedPromotion ? `
+            <div style="font-size: 12px; font-weight: 800; color: #6ee7b7; margin: 3px 0 3px 0;">
+              <strong>Promotional Discount (${escapePdfText(model.appliedPromotion.code)}):</strong> <span style="font-family: monospace;">-${escapePdfText(model.appliedPromotion.discountAmountFormatted)}</span>
+            </div>
+          ` : ''}
           <div style="font-size: 16px; font-weight: 900; color: #ffffff; margin: 3px 0 4px 0;">
             <strong>Final Selling Price:</strong> <span style="color: #00E5C0; font-family: monospace;">${escapePdfText(model.finalCustomerSellingPriceFormatted)}</span>
           </div>
@@ -2647,15 +2652,18 @@ export function buildSemanticBlocks(model: QuotePresentationModel): PaginationBl
             <div style="font-size: 10px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 2px;">Hotel Total: <span style="color: #00E5C0; font-family: monospace;">${escapePdfText(model.hotelAccommodationTotalFormatted)}</span></div>
             <div style="font-size: 10px; font-weight: 800; color: #cbd5e1; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Land Total: <span style="color: #00E5C0; font-family: monospace;">${escapePdfText(model.landPartTotalFormatted)}</span></div>
           ` : ''}
+          ${model.appliedPromotion ? `
+            <div style="font-size: 10px; font-weight: 800; color: #6ee7b7; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Promo (${escapePdfText(model.appliedPromotion.code)}): <span style="font-family: monospace;">-${escapePdfText(model.appliedPromotion.discountAmountFormatted)}</span></div>
+          ` : ''}
           <div style="font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em;">Final Selling Price</div>
           <div style="font-size: 22px; font-weight: 900; font-family: monospace; color: #00E5C0;">${escapePdfText(model.finalCustomerSellingPriceFormatted)}</div>
           <div style="font-size: 9px; color: #94a3b8; margin-top: 2px;">${escapePdfText(model.guaranteedCurrencyLine)}</div>
         </div>
       </div>
     `,
-    estimatedHeight: model.hasHotelAccommodation ? 175 : 150,
+    estimatedHeight: model.hasHotelAccommodation ? (model.appliedPromotion ? 195 : 175) : (model.appliedPromotion ? 170 : 150),
     splittable: false,
-    minMeaningfulHeight: model.hasHotelAccommodation ? 175 : 150
+    minMeaningfulHeight: model.hasHotelAccommodation ? (model.appliedPromotion ? 195 : 175) : (model.appliedPromotion ? 170 : 150)
   });
 
   // 6B. PACKAGE INCLUSIONS, EXCLUSIONS & POLICY NOTES (Granular & Page-Break Safe, zero arbitrary height cap)

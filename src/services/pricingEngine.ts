@@ -1,5 +1,6 @@
-import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice, InventoryValidity, InventorySurcharge, AppliedSurchargeDetail, SurchargeOverlapWarning, InventoryValidityEvaluation, SurchargeApplicationBasis, TripRouteHub, Quotation, QuoteItem, CurrencyConversionLineRecord, QuotationCurrencySnapshot, SurchargeMaster, QuotationSurchargeOverride } from '../types';
+import { CurrencyCode, PricingCalculationRequest, PricingCalculationResult, AgentPricingResponse, Product, User, UserRole, HotelRate, B2BPackage, FXRateDetails, TieredPrice, InventoryValidity, InventorySurcharge, AppliedSurchargeDetail, SurchargeOverlapWarning, InventoryValidityEvaluation, SurchargeApplicationBasis, TripRouteHub, Quotation, QuoteItem, CurrencyConversionLineRecord, QuotationCurrencySnapshot, SurchargeMaster, QuotationSurchargeOverride, AppliedPromotionSnapshot } from '../types';
 import { currencyEngine, convertCurrency as engineConvert, formatCurrency as engineFormat, getExchangeRateInfo, BASELINE_USD_RATES } from './currencyEngine';
+import { computeStage1PromotionDiscount } from './promotionEngine';
 import { AppDatabase } from './db';
 import { hotelToProduct, manualHotelToProduct } from '../utils/hotelHelpers';
 import { sanitizePricingResultForAgent } from '../utils/customerQuoteSanitizer';
@@ -3409,6 +3410,7 @@ export interface QuoteInternalBreakdownParams {
   historicalSnapshot?: QuotationCurrencySnapshot;
   surchargeOverrides?: QuotationSurchargeOverride[];
   bookingDate?: string;
+  appliedPromotion?: AppliedPromotionSnapshot | null;
 }
 
 export interface QuoteInternalBreakdownResult {
@@ -3434,8 +3436,12 @@ export interface QuoteInternalBreakdownResult {
   serviceFee: number;             // Applicable service fee calculated according to existing pricing rules
   surchargesTotal?: number;       // Total converted selling surcharges across items
   appliedSurcharges?: AppliedSurchargeDetail[]; // Aggregated applied surcharge records
-  baseSellingPrice: number;       // TheUnbound Base Selling Price before agent additional markup
+  baseSellingPrice: number;       // TheUnbound Base Selling Price (after Stage 1 promo discount, before agent additional markup)
   theUnboundBaseSellingPrice?: number; // Explicit alias for TheUnbound Base Selling Price
+  preDiscountBaseSellingPrice?: number; // TheUnbound Base Selling Price BEFORE promotion code discount
+  promotionDiscountAmount?: number;     // Stage 1 Promotional Discount Amount
+  discountedBaseSellingPrice?: number;  // TheUnbound Base Selling Price AFTER promotion code discount
+  appliedPromotion?: AppliedPromotionSnapshot | null; // Active promotion snapshot reflected in Stage 1
   discountAmount: number;         // Overall package discount amount
   finalPackagePrice: number;      // Customer-facing total produced by existing Pricing Engine
   hotelAccommodationTotal?: number; // Authoritative converted Hotel Accommodation Total
@@ -3880,7 +3886,8 @@ export function calculateQuoteInternalBreakdown(
     preserveHistoricalSnapshot = false,
     historicalSnapshot,
     surchargeOverrides,
-    bookingDate
+    bookingDate,
+    appliedPromotion
   } = params;
 
   const agencySettings = resolveQuoteAgencyPricingContext(
@@ -3925,7 +3932,8 @@ export function calculateQuoteInternalBreakdown(
     preserveHistoricalSnapshot,
     historicalSnapshotId: historicalSnapshot?.snapshotId,
     surchargeOverrides,
-    bookingDate: bookingDate || ''
+    bookingDate: bookingDate || '',
+    appliedPromotion: appliedPromotion || null
   });
 
   const cachedBreakdown = pricingCache.getBreakdown<QuoteInternalBreakdownResult>(breakdownCacheKey);
@@ -4599,15 +4607,31 @@ export function calculateQuoteInternalBreakdown(
     roundCurrencyAmount(stage1PreDiscountTotal - discountAmount, targetCurrency)
   );
 
+  // STAGE 1B: Promotional Discount Code Application (strictly on TheUnbound Base Selling Price, BEFORE Stage 2 Agent Additional Markup)
+  // Supplier Nett Cost and internal margins are NEVER modified. Base Selling Price is floored at 0.
+  const stage1PromoResult = computeStage1PromotionDiscount({
+    appliedPromotion: appliedPromotion || null,
+    stage1PreDiscountBase: adminFinalTotal,
+    targetCurrency
+  });
+  const preDiscountBaseSellingPrice = stage1PromoResult.preDiscountBaseSellingPrice;
+  const promotionDiscountAmount = stage1PromoResult.promotionDiscountAmount;
+  const discountedBaseSellingPrice = stage1PromoResult.discountedBaseSellingPrice;
+  const resolvedAppliedPromotion = stage1PromoResult.updatedSnapshot;
+  const promoScaleRatio =
+    preDiscountBaseSellingPrice > 0 && promotionDiscountAmount > 0
+      ? discountedBaseSellingPrice / preDiscountBaseSellingPrice
+      : 1;
+
   // STAGE 2: Agent-Controlled Additional Markup ("Your Additional Markup")
   // Commercial Rules:
-  // 1. Stage 1 (adminFinalTotal) is TheUnbound Base Selling Price (already incorporating Product-Level Margin when ON or Internal Agent-Level Margin when OFF, plus applicable surcharges).
-  // 2. Stage 2 is the B2B Agent's own additional markup ("Your Additional Markup"), which works whether Product-Level Margin is ON or OFF.
-  // 3. Increase-Only Rule: Markup must be >= 0. Negative markups are rejected/clamped to 0 so Final Customer Selling Price >= TheUnbound Base Selling Price.
+  // 1. Stage 1 (discountedBaseSellingPrice) is TheUnbound Base Selling Price (incorporating Product-Level/Agent-Level Margin, surcharges, and any active Promotion Discount).
+  // 2. Stage 2 is the B2B Agent's own additional markup ("Your Additional Markup"), calculated strictly on the Discounted Base Selling Price.
+  // 3. Increase-Only Rule: Markup must be >= 0. Negative markups are rejected/clamped to 0 so Final Customer Selling Price >= Discounted Base Selling Price.
   // 4. Deterministic No-Double-Application Rule:
   //    - If a line item has an individual Product-Level Additional Markup (> 0), that specific markup applies to that item.
   //    - Overall Quotation Percentage Markup applies only to items that do NOT already have an individual Product-Level Additional Markup.
-  const baseSellingPrice = adminFinalTotal;
+  const baseSellingPrice = discountedBaseSellingPrice;
 
   // Compute Stage 1 Hotel & Land bases before Stage 2 Agent Additional Markup
   const roundedHotelNet = roundCurrencyAmount(hotelNetCost, targetCurrency);
@@ -4649,7 +4673,10 @@ export function calculateQuoteInternalBreakdown(
   const hotelDiscount = overallDiscountPercent > 0 && discountAmount > 0
     ? roundCurrencyAmount(effectiveHotelStage1 * (overallDiscountPercent / 100), targetCurrency)
     : 0;
-  const stage1HotelAfterDiscount = Math.max(0, roundCurrencyAmount(effectiveHotelStage1 - hotelDiscount, targetCurrency));
+  const stage1HotelPrePromo = Math.max(0, roundCurrencyAmount(effectiveHotelStage1 - hotelDiscount, targetCurrency));
+  const stage1HotelAfterDiscount = promotionDiscountAmount > 0
+    ? Math.max(0, roundCurrencyAmount(stage1HotelPrePromo * promoScaleRatio, targetCurrency))
+    : stage1HotelPrePromo;
 
   const validatedOverallAgentMarginValue = validateAgentAdditionalMarkup(agentMarginValue).sanitizedValue;
   const stage1ScaleRatio = accumulatedSellingPrice > 0 ? (baseSellingPrice / accumulatedSellingPrice) : 1;
@@ -4697,11 +4724,14 @@ export function calculateQuoteInternalBreakdown(
     const itemStage1Discount = overallDiscountPercent > 0
       ? roundCurrencyAmount(itemStage1PreDiscount * (overallDiscountPercent / 100), targetCurrency)
       : 0;
-    const itemStage1Base = hasAdminManualMargin
+    const itemStage1BasePrePromo = hasAdminManualMargin
       ? Math.max(0, roundCurrencyAmount(itemStage1PreDiscount - itemStage1Discount, targetCurrency))
       : (Math.abs(stage1ScaleRatio - 1) > 0.00001
           ? roundCurrencyAmount(ib.finalSellingPrice * stage1ScaleRatio, targetCurrency)
           : roundCurrencyAmount(ib.finalSellingPrice, targetCurrency));
+    const itemStage1Base = hasAdminManualMargin && promotionDiscountAmount > 0
+      ? Math.max(0, roundCurrencyAmount(itemStage1BasePrePromo * promoScaleRatio, targetCurrency))
+      : itemStage1BasePrePromo;
 
     ib.theUnboundBaseSellingPrice = itemStage1Base;
 
@@ -4793,7 +4823,7 @@ export function calculateQuoteInternalBreakdown(
     roundCurrencyAmount(baseSellingPrice + partnerMarginAmount, targetCurrency)
   );
   const totalMargin = roundCurrencyAmount(
-    effectiveUnderlyingMargin + partnerMarginAmount - discountAmount,
+    effectiveUnderlyingMargin + partnerMarginAmount - discountAmount - promotionDiscountAmount,
     targetCurrency
   );
 
@@ -4834,6 +4864,10 @@ export function calculateQuoteInternalBreakdown(
     appliedSurcharges: allAppliedSurcharges,
     baseSellingPrice,
     theUnboundBaseSellingPrice: baseSellingPrice,
+    preDiscountBaseSellingPrice,
+    promotionDiscountAmount,
+    discountedBaseSellingPrice,
+    appliedPromotion: resolvedAppliedPromotion,
     discountAmount,
     finalPackagePrice,
     hotelAccommodationTotal,
@@ -4872,6 +4906,7 @@ function buildQuoteBreakdownCacheKey(args: {
   historicalSnapshotId?: string;
   surchargeOverrides?: QuotationSurchargeOverride[];
   bookingDate: string;
+  appliedPromotion?: AppliedPromotionSnapshot | null;
 }): string {
   const itemSig = args.items.map((it: any) => {
     if (!it) return '';
@@ -4939,6 +4974,10 @@ function buildQuoteBreakdownCacheKey(args: {
         .join(',')
     : '';
 
+  const promoSig = args.appliedPromotion
+    ? `${args.appliedPromotion.promotionId}:${args.appliedPromotion.code}:${args.appliedPromotion.discountType}:${args.appliedPromotion.discountValue}:${args.appliedPromotion.promotionCurrency || args.appliedPromotion.currency || ''}:${args.appliedPromotion.eligibleBaseSellingPrice ?? ''}:${args.appliedPromotion.eligibilitySnapshot?.maxDiscountCap ?? ''}`
+    : '';
+
   return [
     args.targetCurrency,
     args.scope || '',
@@ -4962,6 +5001,7 @@ function buildQuoteBreakdownCacheKey(args: {
     `rmr${masterDataCache.getVersion('rail_markup_rules')}`,
     `cmp${masterDataCache.getVersion('companies')}`,
     `usr${masterDataCache.getVersion('system_users')}`,
+    promoSig,
     hubSig,
     ovSig,
     itemSig
@@ -4988,6 +5028,10 @@ export function calculateQuoteTotal(
   baseSellingPrice: number;
   baseTotalPrice: number;
   theUnboundBaseSellingPrice: number;
+  preDiscountBaseSellingPrice: number;
+  promotionDiscountAmount: number;
+  discountedBaseSellingPrice: number;
+  appliedPromotion?: AppliedPromotionSnapshot | null;
   markupAmount: number;
   marginAmount: number;
   additionalAgentMarginAmount: number;
@@ -5133,6 +5177,13 @@ export function calculateQuoteTotal(
     const activeHasProductMarkup = activeItems.some(it => Number(it.agentAdditionalMarkupValue || 0) > 0);
     const snapHasProductMarkup = Number(authSnap?.pricing?.productLevelAgentMarkupTotal || 0) > 0;
     const authSnapItemMarkupsMatch = activeHasProductMarkup === snapHasProductMarkup;
+    const quotePromoSig = quote.appliedPromotion
+      ? `${quote.appliedPromotion.promotionId}:${quote.appliedPromotion.code}:${quote.appliedPromotion.discountValue}:${quote.appliedPromotion.discountAmount ?? ''}`
+      : '';
+    const authSnapPromoSig = authSnap?.pricing?.appliedPromotion
+      ? `${authSnap.pricing.appliedPromotion.promotionId}:${authSnap.pricing.appliedPromotion.code}:${authSnap.pricing.appliedPromotion.discountValue}:${authSnap.pricing.appliedPromotion.discountAmount ?? ''}`
+      : '';
+    const authSnapPromoMatches = quotePromoSig === authSnapPromoSig;
 
     if (
       authSnap &&
@@ -5140,7 +5191,7 @@ export function calculateQuoteTotal(
       currencyEngine.normalizeCurrencyCode(authSnap.pricing.currency) === effectiveCurrency &&
       (!requestedOptionId || !authSnap.selectedOptionId || authSnap.selectedOptionId === requestedOptionId) &&
       (
-        (isWorkingQuoteLocked && authSnapVersionMatches && authSnapAdminMatches && authSnapOverridesMatch) ||
+        (isWorkingQuoteLocked && authSnapVersionMatches && authSnapAdminMatches && authSnapOverridesMatch && authSnapPromoMatches) ||
         (
           !isWorkingQuoteLocked &&
           authSnapVersionMatches &&
@@ -5151,7 +5202,8 @@ export function calculateQuoteTotal(
           authSnapAdminMatches &&
           authSnapAgencyMatches &&
           authSnapOverridesMatch &&
-          authSnapItemMarkupsMatch
+          authSnapItemMarkupsMatch &&
+          authSnapPromoMatches
         )
       )
     ) {
@@ -5162,6 +5214,8 @@ export function calculateQuoteTotal(
       const landSelling = roundCurrencyAmount(sp.landPartTotal || 0, effectiveCurrency);
       const finalPrice = isLandOnly ? landSelling : roundCurrencyAmount(sp.finalCustomerSellingPrice || 0, effectiveCurrency);
       const b2bBase = roundCurrencyAmount(sp.theUnboundBaseSellingPrice ?? sp.baseFinalSellingPrice ?? finalPrice, effectiveCurrency);
+      const spPromoAmt = roundCurrencyAmount(sp.promotionDiscountAmount ?? sp.appliedPromotion?.discountAmount ?? 0, effectiveCurrency);
+      const spPreDiscountBase = roundCurrencyAmount(sp.preDiscountBaseSellingPrice ?? (b2bBase + spPromoAmt), effectiveCurrency);
       const markupAmt = roundCurrencyAmount(sp.agentMarginAmount ?? 0, effectiveCurrency);
       const snapTotalNet = roundCurrencyAmount(
         sp.currencyConversionSnapshot?.totals?.convertedTotalNetCost ?? (quote.totalNetCost || 0),
@@ -5184,6 +5238,10 @@ export function calculateQuoteTotal(
         baseSellingPrice: b2bBase,
         baseTotalPrice: b2bBase,
         theUnboundBaseSellingPrice: b2bBase,
+        preDiscountBaseSellingPrice: spPreDiscountBase,
+        promotionDiscountAmount: spPromoAmt,
+        discountedBaseSellingPrice: b2bBase,
+        appliedPromotion: sp.appliedPromotion || null,
         markupAmount: markupAmt,
         marginAmount: markupAmt,
         additionalAgentMarginAmount: markupAmt,
@@ -5249,14 +5307,20 @@ export function calculateQuoteTotal(
           (activeCurrencySnapshot as any)?.agentLevelMarginPercent === undefined ||
           Math.abs(Number((activeCurrencySnapshot as any).agentLevelMarginPercent) - quoteAgencyCtxForSnap.agentLevelMarginPercent) < 0.001));
     const curSnapHasProductMarkup = Number((activeCurrencySnapshot?.totals as any)?.productLevelAgentMarkupTotal || 0) > 0;
+    const curSnapPromo = (activeCurrencySnapshot?.totals as any)?.appliedPromotion as AppliedPromotionSnapshot | null | undefined;
+    const curSnapPromoSig = curSnapPromo
+      ? `${curSnapPromo.promotionId}:${curSnapPromo.code}:${curSnapPromo.discountValue}:${curSnapPromo.discountAmount ?? ''}`
+      : '';
+    const curSnapPromoMatches = quotePromoSig === curSnapPromoSig;
 
     // HISTORICAL QUOTE PROTECTION:
     // If the quote has a valid immutable currencyConversionSnapshot for this targetCurrency
-    // and its margin, agency, admin manual adjustment & item count match (or the quote is locked/finalized), return the exact snapshot values!
+    // and its margin, agency, admin manual adjustment, promo & item count match (or the quote is locked/finalized), return the exact snapshot values!
     if (
       activeCurrencySnapshot &&
       activeCurrencySnapshot.isValid &&
       !snapshotHasMissingHubHotel &&
+      curSnapPromoMatches &&
       currencyEngine.normalizeCurrencyCode(activeCurrencySnapshot.targetCurrency) === effectiveCurrency &&
       (
         (isWorkingQuoteLocked && currencySnapAdminMatches && !hasQuoteSurchargeOverrides) ||
@@ -5293,6 +5357,8 @@ export function calculateQuoteTotal(
         (snapTotals as any).theUnboundBaseSellingPrice ?? snapTotals.b2bSellingPriceTotal ?? snapTotals.finalCustomerSellingPrice,
         effectiveCurrency
       );
+      const snapPromoAmt = roundCurrencyAmount((snapTotals as any).promotionDiscountAmount ?? curSnapPromo?.discountAmount ?? 0, effectiveCurrency);
+      const snapPreDiscountBase = roundCurrencyAmount((snapTotals as any).preDiscountBaseSellingPrice ?? (snapB2BBase + snapPromoAmt), effectiveCurrency);
       const snapMarkup = roundCurrencyAmount(snapTotals.additionalAgentMarginAmount ?? 0, effectiveCurrency);
       const snapProductMarkup = roundCurrencyAmount((snapTotals as any).productLevelAgentMarkupTotal ?? 0, effectiveCurrency);
       const snapOverallMarkup = roundCurrencyAmount((snapTotals as any).overallAgentMarkupAmount ?? snapMarkup, effectiveCurrency);
@@ -5301,6 +5367,10 @@ export function calculateQuoteTotal(
         baseSellingPrice: snapB2BBase,
         baseTotalPrice: snapB2BBase,
         theUnboundBaseSellingPrice: snapB2BBase,
+        preDiscountBaseSellingPrice: snapPreDiscountBase,
+        promotionDiscountAmount: snapPromoAmt,
+        discountedBaseSellingPrice: snapB2BBase,
+        appliedPromotion: curSnapPromo || null,
         markupAmount: snapMarkup,
         marginAmount: snapMarkup,
         additionalAgentMarginAmount: snapMarkup,
@@ -5697,16 +5767,64 @@ export function calculateQuoteTotal(
     : (discountPercent > 0 && (totalNetCost > 0 || Array.isArray(quoteOrItems))
         ? roundCurrencyAmount(effectiveBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
         : 0);
-  const stage1FinalBase = usedSavedStage1Base
+  const stage1PrePromoBase = usedSavedStage1Base
     ? effectiveBaseSellingPrice
     : Math.max(0, roundCurrencyAmount(effectiveBaseSellingPrice - stage1DiscountAmount, effectiveCurrency));
 
   const hotelDiscountAmount = !usedSavedStage1Base && discountPercent > 0 && stage1DiscountAmount > 0
     ? roundCurrencyAmount(effectiveHotelBaseSellingPrice * (discountPercent / 100), effectiveCurrency)
     : 0;
-  const stage1HotelFinalBase = Math.max(0, roundCurrencyAmount(effectiveHotelBaseSellingPrice - hotelDiscountAmount, effectiveCurrency));
+  const stage1HotelPrePromo = Math.max(0, roundCurrencyAmount(effectiveHotelBaseSellingPrice - hotelDiscountAmount, effectiveCurrency));
   const landDiscountAmount = !usedSavedStage1Base ? roundCurrencyAmount(stage1DiscountAmount - hotelDiscountAmount, effectiveCurrency) : 0;
-  const stage1LandFinalBase = Math.max(0, roundCurrencyAmount(effectiveLandBaseSellingPrice - landDiscountAmount, effectiveCurrency));
+  const stage1LandPrePromo = Math.max(0, roundCurrencyAmount(effectiveLandBaseSellingPrice - landDiscountAmount, effectiveCurrency));
+
+  // STAGE 1B: Promotional Discount Code Application (strictly on TheUnbound Base Selling Price, BEFORE Stage 2 Agent Markup)
+  const quoteAppliedPromo: AppliedPromotionSnapshot | null = !Array.isArray(quoteOrItems)
+    ? ((quoteOrItems as any).appliedPromotion || (quoteOrItems as any).authoritativeSnapshot?.pricing?.appliedPromotion || null)
+    : null;
+  const savedBaseAlreadyIncludesPromo =
+    usedSavedStage1Base &&
+    Boolean(quoteAppliedPromo) &&
+    !Array.isArray(quoteOrItems) &&
+    typeof (quoteOrItems as any).discountedBaseSellingPrice === 'number' &&
+    Math.abs(effectiveBaseSellingPrice - Number((quoteOrItems as any).discountedBaseSellingPrice)) < 0.05;
+
+  const quotePromoCalc = savedBaseAlreadyIncludesPromo
+    ? {
+        preDiscountBaseSellingPrice: roundCurrencyAmount(
+          Number((quoteOrItems as any).preDiscountBaseSellingPrice ?? (effectiveBaseSellingPrice + Number((quoteOrItems as any).promotionDiscountAmount ?? quoteAppliedPromo?.discountAmount ?? 0))),
+          effectiveCurrency
+        ),
+        promotionDiscountAmount: roundCurrencyAmount(
+          Number((quoteOrItems as any).promotionDiscountAmount ?? quoteAppliedPromo?.discountAmount ?? 0),
+          effectiveCurrency
+        ),
+        discountedBaseSellingPrice: effectiveBaseSellingPrice,
+        updatedSnapshot: quoteAppliedPromo
+      }
+    : computeStage1PromotionDiscount({
+        appliedPromotion: quoteAppliedPromo,
+        stage1PreDiscountBase: stage1PrePromoBase,
+        targetCurrency: effectiveCurrency
+      });
+
+  const preDiscountBaseSellingPrice = quotePromoCalc.preDiscountBaseSellingPrice;
+  const promotionDiscountAmount = quotePromoCalc.promotionDiscountAmount;
+  const stage1FinalBase = quotePromoCalc.discountedBaseSellingPrice;
+  const resolvedAppliedPromotion = quotePromoCalc.updatedSnapshot;
+  const promoScaleRatio =
+    !savedBaseAlreadyIncludesPromo && preDiscountBaseSellingPrice > 0 && promotionDiscountAmount > 0
+      ? stage1FinalBase / preDiscountBaseSellingPrice
+      : 1;
+
+  const stage1HotelFinalBase =
+    !savedBaseAlreadyIncludesPromo && promotionDiscountAmount > 0
+      ? Math.max(0, roundCurrencyAmount(stage1HotelPrePromo * promoScaleRatio, effectiveCurrency))
+      : stage1HotelPrePromo;
+  const stage1LandFinalBase =
+    !savedBaseAlreadyIncludesPromo && promotionDiscountAmount > 0
+      ? Math.max(0, roundCurrencyAmount(stage1FinalBase - stage1HotelFinalBase, effectiveCurrency))
+      : stage1LandPrePromo;
 
   // STAGE 2: Agent-Controlled Additional Markup ("Your Additional Markup")
   // Enforce non-negative validation and deterministic No-Double-Application rule
@@ -5738,11 +5856,14 @@ export function calculateQuoteTotal(
     const itemStage1Discount = !usedSavedStage1Base && discountPercent > 0
       ? roundCurrencyAmount(itemStage1PreDiscount * (discountPercent / 100), effectiveCurrency)
       : 0;
-    return hasAdminMarginConfig && !usedSavedStage1Base
+    const itemStage1PrePromo = hasAdminMarginConfig && !usedSavedStage1Base
       ? Math.max(0, roundCurrencyAmount(itemStage1PreDiscount - itemStage1Discount, effectiveCurrency))
       : (Math.abs(stage1ScaleRatio - 1) > 0.00001
           ? roundCurrencyAmount(rawSelling * stage1ScaleRatio, effectiveCurrency)
           : roundCurrencyAmount(rawSelling, effectiveCurrency));
+    return hasAdminMarginConfig && !usedSavedStage1Base && !savedBaseAlreadyIncludesPromo && promotionDiscountAmount > 0
+      ? Math.max(0, roundCurrencyAmount(itemStage1PrePromo * promoScaleRatio, effectiveCurrency))
+      : itemStage1PrePromo;
   };
 
   hotelItems.forEach((it, idx) => {
@@ -5846,6 +5967,10 @@ export function calculateQuoteTotal(
     baseSellingPrice: stage1FinalBase,
     baseTotalPrice: stage1FinalBase,
     theUnboundBaseSellingPrice: stage1FinalBase,
+    preDiscountBaseSellingPrice,
+    promotionDiscountAmount,
+    discountedBaseSellingPrice: stage1FinalBase,
+    appliedPromotion: resolvedAppliedPromotion,
     markupAmount,
     marginAmount: markupAmount,
     additionalAgentMarginAmount: markupAmount,
@@ -5897,6 +6022,7 @@ export function buildQuotationCurrencySnapshot(params: {
   existingSnapshot?: QuotationCurrencySnapshot;
   surchargeOverrides?: QuotationSurchargeOverride[];
   bookingDate?: string;
+  appliedPromotion?: AppliedPromotionSnapshot | null;
   precomputedBreakdown?: QuoteInternalBreakdownResult;
 }): QuotationCurrencySnapshot {
   const {
@@ -5922,6 +6048,7 @@ export function buildQuotationCurrencySnapshot(params: {
     existingSnapshot,
     surchargeOverrides,
     bookingDate,
+    appliedPromotion,
     precomputedBreakdown
   } = params;
 
@@ -5947,7 +6074,8 @@ export function buildQuotationCurrencySnapshot(params: {
         preserveHistoricalSnapshot,
         historicalSnapshot: existingSnapshot,
         surchargeOverrides,
-        bookingDate
+        bookingDate,
+        appliedPromotion: appliedPromotion || null
       });
 
   const fxStatus = currencyEngine.getStatus();
@@ -6055,6 +6183,14 @@ export function buildQuotationCurrencySnapshot(params: {
       discountsTotal: breakdown.discountAmount,
       b2bSellingPriceTotal: breakdown.baseSellingPrice,
       theUnboundBaseSellingPrice: breakdown.theUnboundBaseSellingPrice ?? breakdown.baseSellingPrice,
+      ...(breakdown.appliedPromotion
+        ? {
+            preDiscountBaseSellingPrice: breakdown.preDiscountBaseSellingPrice,
+            promotionDiscountAmount: breakdown.promotionDiscountAmount || 0,
+            discountedBaseSellingPrice: breakdown.discountedBaseSellingPrice ?? breakdown.baseSellingPrice,
+            appliedPromotion: breakdown.appliedPromotion
+          }
+        : {}),
       additionalAgentMarginType: agentMarginType,
       additionalAgentMarginValue: agentMarginValue,
       additionalAgentMarginAmount: breakdown.partnerMarginAmount,

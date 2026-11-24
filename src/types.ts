@@ -2451,6 +2451,10 @@ export interface QuoteVersionRecord {
   totalSellingPrice: number;
   finalCustomerSellingPrice?: number;
   theUnboundBaseSellingPrice?: number;
+  preDiscountBaseSellingPrice?: number;
+  promotionDiscountAmount?: number;
+  discountedBaseSellingPrice?: number;
+  appliedPromotion?: AppliedPromotionSnapshot | null;
   agentMarginType?: AgentMarginType;
   agentMarginValue?: number;
   agentMarginAmount?: number;
@@ -2709,6 +2713,10 @@ export interface AuthoritativeQuotationSnapshot {
     surchargeOverrides: QuotationSurchargeOverride[];
     hotelAccommodationTotal: number;
     landPartTotal: number;
+    preDiscountBaseSellingPrice?: number;
+    promotionDiscountAmount?: number;
+    discountedBaseSellingPrice?: number;
+    appliedPromotion?: AppliedPromotionSnapshot | null;
     finalCustomerSellingPrice: number;
     pricePerPerson: number;
     totalGroundLogisticsSnapshot?: number;
@@ -2956,6 +2964,12 @@ export interface Quotation {
   admin_margin_mode?: 'REPLACE' | 'ADD';
   revisedSellingPrice?: number;
   revised_selling_price?: number;
+
+  // Promotion / Discount Code Applied Strictly to TheUnbound Base Selling Price (Stage 1)
+  appliedPromotion?: AppliedPromotionSnapshot | null;
+  preDiscountBaseSellingPrice?: number;
+  promotionDiscountAmount?: number;
+  discountedBaseSellingPrice?: number;
 
   // Centralized Surcharges & Controlled Overrides
   surchargesTotal?: number;
@@ -3913,6 +3927,13 @@ export interface Booking {
   quoteId?: string;
   quoteNumber?: string;
   sourceQuoteId?: string;
+  appliedPromotion?: AppliedPromotionSnapshot | null;
+  preDiscountBaseSellingPrice?: number;
+  promotionDiscountAmount?: number;
+  discountedBaseSellingPrice?: number;
+  promotionReservationId?: string;
+  promotionRedemptionId?: string;
+  promotionRedemptionStatus?: 'REDEEMED' | 'VOIDED' | 'NONE';
   sourceQuoteVersionId?: string;
   sourceSnapshotVersion?: number;
   sourceSnapshotHash?: string;
@@ -4144,7 +4165,7 @@ export type PromotionAudience = 'ALL' | 'BUYER' | 'B2B_AGENT';
 export type PromotionPlacement = 'BANNER' | 'MODAL' | 'SLIDER' | 'PRODUCT_PAGE' | 'DESTINATION_PAGE' | 'PROMO_SECTION';
 export type PromotionFrequency = 'ONCE_PER_SESSION' | 'ONCE_PER_DAY' | 'ALWAYS';
 
-export type CampaignStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED';
+export type CampaignStatus = 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'DISABLED' | 'ARCHIVED';
 
 export type CampaignEventType = 'VIEW' | 'CLICK' | 'PRODUCT_VIEW' | 'QUOTE_CREATED' | 'BOOKING_CREATED';
 
@@ -4218,44 +4239,242 @@ export interface CampaignAnalyticsSummary {
 
 export type CampaignDateFilter = 'TODAY' | 'YESTERDAY' | 'LAST_7_DAYS' | 'LAST_30_DAYS' | 'THIS_MONTH' | 'PREVIOUS_MONTH' | 'CUSTOM';
 
+export type PromotionBookingValidityPolicy =
+  | 'REQUIRE_REACCEPTANCE'
+  | 'HONOR_QUOTE_SNAPSHOT'
+  | 'BLOCK_IF_EXPIRED';
+
 export interface Promotion {
   id: string;
   title: string;
   subtitle?: string;
   description: string;
+  internalAdminNotes?: string; // Strictly Admin-only; never exposed to B2B agents or customer outputs
   promoCode?: string;
+  normalizedPromoCode?: string; // Uppercase trimmed canonical unique key
+  caseInsensitiveCode?: boolean; // Default true
+  promotionType?: 'DISCOUNT_CODE' | 'CAMPAIGN_BANNER' | 'HYBRID';
+  configVersion?: number;
+
+  // Discount Rules (Strictly applied to TheUnbound Base Selling Price)
   discountType: PromotionDiscountType;
-  discountValue: number; // e.g. 15 for 15% or 100 for 100 USD
+  discountValue: number; // e.g. 10 for 10% or 5000 for 5000 INR/USD/JPY
   currency?: CurrencyCode;
   minBookingValue?: number;
-  maxDiscount?: number;
+  minEligibleBaseSellingPrice?: number;
+  maxDiscount?: number; // Maximum discount cap (for percentage or fixed)
+  maxDiscountAmount?: number; // Alias / explicit cap field
+  maxDiscountPerQuotation?: number;
   bannerImage?: string;
   ctaText?: string;
   ctaLink?: string;
   
-  // Targeting & Placements
+  // Targeting, Eligibility & Placements
   targetAudience: PromotionAudience;
   displayPlacement: PromotionPlacement;
   frequency: PromotionFrequency;
-  destinationId?: string; // 'all' or specific destination ID
+  destinationId?: string; // 'all' or specific destination ID (backward-compatible)
+  applicableDestinationIds?: string[]; // empty or ['all'] = all destinations
+  applyToAllDestinations?: boolean;
+  applicableProductCategories?: string[]; // e.g. ['HOTEL', 'ACTIVITY', 'TRANSFER', 'VEHICLE', 'GUIDE', 'RAIL', 'VISA', 'PACKAGE']
   applicableProductIds: string[]; // empty array = all
   applyToAllProducts: boolean;
+  applicableAgencyIds?: string[]; // empty = all agencies
+  applicableAgentIds?: string[]; // empty = all B2B agents
+  applyToAllAgents?: boolean;
+  minPassengers?: number;
+
+  // Usage Restrictions & Booking Policy
+  totalUsageLimit?: number; // null/undefined/0 = unlimited
+  maxUsesPerAgent?: number; // Max redemptions per individual B2B agent UID
+  maxUsesPerAgency?: number; // Max redemptions per agency
+  maxUsesPerBooking?: number; // Default 1
+  oneTimePerUser?: boolean;
+  allowReuseOnRevisedQuotation?: boolean; // Default true
+  newQuotationsOnly?: boolean;
+  allowOnDraftQuotations?: boolean; // Default true
+  allowAtBookingConfirmation?: boolean; // Default true
+  bookingValidityPolicy?: PromotionBookingValidityPolicy;
   
   // Lifecycle & Status
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   priority: number; // 1 (highest) to 10
-  status?: CampaignStatus; // 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'ARCHIVED'
+  status?: CampaignStatus; // 'DRAFT' | 'SCHEDULED' | 'ACTIVE' | 'PAUSED' | 'EXPIRED' | 'DISABLED' | 'ARCHIVED'
   isActive: boolean;
   isArchived?: boolean;
+  disabledAt?: string;
+  disabledBy?: string;
+  createdBy?: string;
+  updatedBy?: string;
   
-  // Aggregated Real-time counters (synced from actual campaign_events)
+  // Aggregated Real-time counters (synced from actual campaign_events & promotion_redemptions)
   viewCount?: number;
   clickCount?: number;
   impressions?: number;
   clicks?: number;
+  totalApplicationsCount?: number;
+  successfulRedemptionsCount?: number;
+  failedApplicationsCount?: number;
+  totalDiscountValueGranted?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export type PromotionValidationErrorCode =
+  | 'EMPTY_CODE'
+  | 'NOT_FOUND'
+  | 'NOT_ACTIVE'
+  | 'DRAFT'
+  | 'PAUSED'
+  | 'DISABLED'
+  | 'ARCHIVED'
+  | 'SCHEDULED'
+  | 'EXPIRED'
+  | 'USAGE_LIMIT_REACHED'
+  | 'AGENT_USAGE_LIMIT_REACHED'
+  | 'AGENCY_USAGE_LIMIT_REACHED'
+  | 'DESTINATION_NOT_ELIGIBLE'
+  | 'PRODUCT_CATEGORY_NOT_ELIGIBLE'
+  | 'PRODUCT_NOT_ELIGIBLE'
+  | 'AGENCY_NOT_ELIGIBLE'
+  | 'AGENT_NOT_ELIGIBLE'
+  | 'MIN_PASSENGERS_NOT_MET'
+  | 'MIN_VALUE_NOT_MET'
+  | 'DRAFT_QUOTES_NOT_ALLOWED'
+  | 'NEW_QUOTES_ONLY'
+  | 'BOOKING_STAGE_NOT_ALLOWED'
+  | 'REVISED_QUOTE_NOT_ALLOWED'
+  | 'FX_CONVERSION_UNAVAILABLE'
+  | 'ZERO_ELIGIBLE_BASE'
+  | 'UNAUTHORIZED';
+
+export interface AppliedPromotionSnapshot {
+  promotionId: string;
+  code: string;
+  normalizedCode: string;
+  promotionName: string;
+  promotionDescription?: string; // Customer/Agent-safe description only (NEVER internalAdminNotes)
+  promotionConfigVersion: number;
+  discountType: PromotionDiscountType;
+  discountValue: number;
+  promotionCurrency?: CurrencyCode;
+  currency: CurrencyCode; // Quotation/Booking display currency
+  fxConversionRate?: number;
+  eligibleBaseSellingPrice: number;
+  preDiscountBaseSellingPrice: number;
+  discountAmount: number;
+  discountedBaseSellingPrice: number;
+  eligibleComponentIds?: string[];
+  eligibleProductCategories?: string[];
+  appliedAt: string;
+  appliedByUid?: string;
+  appliedByName?: string;
+  appliedStage: 'QUOTATION' | 'BOOKING_CONFIRMATION';
+  validationStatus: 'VALID' | 'REVALIDATED_VALID' | 'INVALID_AT_BOOKING';
+  validationMessage?: string;
+  reservationId?: string;
+  redemptionId?: string;
+  eligibilitySnapshot?: {
+    destinationIds?: string[];
+    productCategories?: string[];
+    minPassengers?: number;
+    minEligibleBaseSellingPrice?: number;
+    maxDiscountCap?: number;
+    bookingValidityPolicy?: PromotionBookingValidityPolicy;
+    startDate?: string;
+    endDate?: string;
+  };
+}
+
+export interface PromotionValidationResult {
+  valid: boolean;
+  errorCode?: PromotionValidationErrorCode;
+  message: string;
+  appliedPromotion?: AppliedPromotionSnapshot;
+  remainingTotalUses?: number | null;
+  remainingAgentUses?: number | null;
+  remainingAgencyUses?: number | null;
+  validatedAt: string;
+  source?: 'SERVER' | 'ENGINE';
+}
+
+export interface PromotionReservationRecord {
+  id: string;
+  promotionId: string;
+  code: string;
+  normalizedCode: string;
+  quotationId: string;
+  quotationNumber?: string;
+  quotationVersion: number;
+  bookingId?: string;
+  agentUid: string;
+  agentName?: string;
+  agencyId?: string;
+  agencyName?: string;
+  discountAmount: number;
+  currency: CurrencyCode;
+  preDiscountBaseSellingPrice: number;
+  discountedBaseSellingPrice: number;
+  idempotencyKey: string;
+  status: 'RESERVED' | 'COMMITTED' | 'RELEASED' | 'EXPIRED';
+  reservedAt: string;
+  expiresAt: string;
+  committedAt?: string;
+  releasedAt?: string;
+  releaseReason?: string;
+}
+
+export interface PromotionRedemptionRecord {
+  id: string;
+  promotionId: string;
+  promotionName: string;
+  code: string;
+  normalizedCode: string;
+  bookingId: string;
+  bookingReference?: string;
+  quotationId: string;
+  quotationNumber?: string;
+  quotationVersion: number;
+  reservationId?: string;
+  idempotencyKey: string;
+  agencyId?: string;
+  agencyName?: string;
+  agentUid: string;
+  agentName?: string;
+  agentEmail?: string;
+  discountType: PromotionDiscountType;
+  discountValue: number;
+  preDiscountBaseSellingPrice: number;
+  discountAmount: number;
+  discountedBaseSellingPrice: number;
+  currency: CurrencyCode;
+  status: 'REDEEMED' | 'VOIDED';
+  appliedStage: 'QUOTATION' | 'BOOKING_CONFIRMATION';
+  redeemedAt: string;
+}
+
+export interface PromotionReportRow {
+  promotionId: string;
+  code: string;
+  promotionName: string;
+  status: CampaignStatus;
+  startDate: string;
+  endDate: string;
+  discountType: PromotionDiscountType;
+  discountValue: number;
+  currency?: CurrencyCode;
+  totalUsageLimit: number | null;
+  totalApplications: number;
+  successfulRedemptions: number;
+  pendingReservations: number;
+  releasedReservations: number;
+  failedApplications: number;
+  remainingUsage: number | null;
+  totalDiscountValueGranted: number;
+  bookingsCount: number;
+  uniqueAgenciesCount: number;
+  uniqueAgentsCount: number;
 }
 
 // ----------------------------------------------------
@@ -5811,6 +6030,61 @@ export interface HomepageDemoBookingConfig {
   updatedBy?: string;
 }
 
+export type HomepageVideoBackgroundStyle =
+  | 'pure-white'
+  | 'soft-slate'
+  | 'subtle-teal-wash'
+  | 'dark-charcoal';
+
+export interface HomepagePortalTutorialVideoConfig {
+  sectionId: 'portalTutorialVideo';
+  sectionType: 'PORTAL_TUTORIAL_VIDEO';
+  eyebrowText?: string;
+  heading: string;
+  description: string;
+  youtubeUrl: string;
+  youtubeVideoId: string;
+  customThumbnailUrl?: string;
+  customThumbnailStoragePath?: string;
+  videoMaxWidthPercent: number; // Clamped between 60 and 70 on desktop (default 65)
+  alignment: 'center' | 'left';
+  backgroundStyle: HomepageVideoBackgroundStyle;
+  isActive: boolean;
+  displayOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface CashbackBenefitPoint {
+  id: string;
+  text: string;
+}
+
+export interface HomepageCashbackRewardsVideoConfig {
+  sectionId: 'cashbackRewardsVideo';
+  sectionType: 'CASHBACK_REWARDS_VIDEO';
+  eyebrowText?: string;
+  heading: string;
+  description: string;
+  benefitPoints: CashbackBenefitPoint[];
+  supportingText?: string;
+  ctaEnabled: boolean;
+  ctaLabel: string;
+  ctaDestination: string; // e.g. '/b2b/my-cashback' or safe internal/HTTPS URL
+  textAlignment: 'left' | 'center';
+  backgroundStyle: HomepageVideoBackgroundStyle;
+  youtubeUrl: string;
+  youtubeVideoId: string;
+  customThumbnailUrl?: string;
+  customThumbnailStoragePath?: string;
+  isActive: boolean;
+  displayOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export interface HomepageConfig {
   heroHeading: string;
   heroSubheading: string;
@@ -5897,6 +6171,8 @@ export interface HomepageConfig {
   showConversionCTA: boolean;
   showNewsletterSection?: boolean;
   showDemoBookingSection?: boolean;
+  showPortalTutorialVideo?: boolean;
+  showCashbackRewardsVideo?: boolean;
   showHotelsSection?: boolean;
   showRailSection?: boolean;
   showExperiencesSection?: boolean;
@@ -5904,6 +6180,8 @@ export interface HomepageConfig {
   showVisaSection?: boolean;
   newsletterConfig?: HomepageNewsletterConfig;
   demoBookingConfig?: HomepageDemoBookingConfig;
+  portalTutorialVideoConfig?: HomepagePortalTutorialVideoConfig;
+  cashbackRewardsVideoConfig?: HomepageCashbackRewardsVideoConfig;
   tradeContactEmail?: string;
 
   // Grid Layout Controls (Supported on the live homepage)

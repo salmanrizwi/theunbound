@@ -51,7 +51,8 @@ import {
   ChevronDown,
   ChevronUp,
   Camera,
-  Calendar
+  Calendar,
+  GripVertical
 } from 'lucide-react';
 import { UniversalHero } from '../UniversalHero';
 import { BuyerHeroSection } from '../BuyerPortal/BuyerHeroSection';
@@ -61,7 +62,11 @@ import { AssociatedPartnersManager } from './AssociatedPartnersManager';
 import { HappyCustomerGalleryManager } from './HappyCustomerGalleryManager';
 import { DemoBookingManager } from './DemoBookingManager';
 import { DemoBookingSection } from '../public/DemoBookingSection';
+import { HomepageVideoSectionManager } from './HomepageVideoSectionManager';
+import { PortalTutorialVideoSection } from '../public/PortalTutorialVideoSection';
+import { CashbackRewardsVideoSection } from '../public/CashbackRewardsVideoSection';
 import { getPublishableDemoBookingButtons } from '../../utils/demoBookingValidation';
+import { isValidYouTubeVideoId } from '../../utils/youtubeValidation';
 import { 
   uploadAffiliationLogo, 
   uploadSectionBanner, 
@@ -80,9 +85,11 @@ export interface SequenceModuleItem {
 export const CANONICAL_SECTION_DEFINITIONS: Array<{ key: string; label: string; desc: string; toggleKey: keyof HomepageConfig }> = [
   { key: 'hero', label: 'Hero Section & Terminal Gateway', desc: 'Main visual backdrop, headlines & B2B login terminal', toggleKey: 'showHeroSection' },
   { key: 'brandIntroduction', label: 'Brand Introduction & Architecture', desc: 'Direct DMC ground handling architecture & verified SLAs', toggleKey: 'showBrandIntroduction' },
+  { key: 'portalTutorialVideo', label: 'Portal Tutorial Video', desc: 'Prominent centrally-aligned YouTube walkthrough showcasing the B2B portal', toggleKey: 'showPortalTutorialVideo' },
   { key: 'cityHubs', label: 'Direct Operations Hubs & Regional Gateways', desc: 'Direct regional gateways (Tokyo, Kyoto, London, etc.)', toggleKey: 'showCityHubs' },
   { key: 'destinationFilter', label: 'Destination Expertise Across Global Corridors', desc: 'Editorial global corridors and active ground desks', toggleKey: 'showDestinationFilter' },
   { key: 'partnershipBenefits', label: 'Why Travel Agents Partner With TheUnbound', desc: 'Direct contracts, SLA turnaround, white-label quotes, 24/7 dispatch', toggleKey: 'showPartnershipBenefits' },
+  { key: 'cashbackRewardsVideo', label: 'Cashback & Rewards Video', desc: 'Two-column partner cashback overview paired with an explainer YouTube video', toggleKey: 'showCashbackRewardsVideo' },
   { key: 'affiliations', label: 'Regulatory Affiliations (JATA / MSME / NIDHI)', desc: 'Official government, tourism & association regulatory accreditations', toggleKey: 'showAffiliationsSection' },
   { key: 'associatedPartners', label: 'Our Associated Partners (Logo Carousel)', desc: 'Continuous horizontal showcase for suppliers, airlines, hotels & tourism boards', toggleKey: 'showAssociatedPartners' as any },
   { key: 'onboardingProcess', label: 'Partner Onboarding in 4 Simple Steps', desc: '4-step trade verification & account activation workflow', toggleKey: 'showOnboardingProcess' },
@@ -181,6 +188,8 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [loadedVersion, setLoadedVersion] = useState<number>(() => db.getHomepageConfig().version || 1);
   const [concurrencyNotice, setConcurrencyNotice] = useState<string | null>(null);
+  const [draggedModuleIdx, setDraggedModuleIdx] = useState<number | null>(null);
+  const [dragOverModuleIdx, setDragOverModuleIdx] = useState<number | null>(null);
 
   // Hubs Management Specific State
   const [hubSearchQuery, setHubSearchQuery] = useState('');
@@ -294,6 +303,22 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
     setHasUnsavedChanges(true);
   };
 
+  const handleDropModule = (targetIdx: number) => {
+    if (draggedModuleIdx === null || draggedModuleIdx === targetIdx) {
+      setDraggedModuleIdx(null);
+      setDragOverModuleIdx(null);
+      return;
+    }
+    const updated = [...sequenceDraftModules];
+    const [movedItem] = updated.splice(draggedModuleIdx, 1);
+    updated.splice(targetIdx, 0, movedItem);
+    const reindexed = updated.map((item, i) => ({ ...item, sequence: i + 1 }));
+    setSequenceDraftModules(reindexed);
+    setHasUnsavedChanges(true);
+    setDraggedModuleIdx(null);
+    setDragOverModuleIdx(null);
+  };
+
   const handleDiscardSequenceChanges = () => {
     const latest = db.getHomepageConfig();
     setSequenceDraftModules(initSequenceDraft(latest));
@@ -343,10 +368,34 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
         }
       : config.demoBookingConfig;
 
+    const portalVideoEntry = normalized.find(m => m.key === 'portalTutorialVideo');
+    const syncedPortalVideoConfig = config.portalTutorialVideoConfig
+      ? {
+          ...config.portalTutorialVideoConfig,
+          isActive: portalVideoEntry ? portalVideoEntry.active : config.portalTutorialVideoConfig.isActive,
+          displayOrder: portalVideoEntry ? portalVideoEntry.sequence : config.portalTutorialVideoConfig.displayOrder,
+          updatedAt: now,
+          updatedBy: actor
+        }
+      : config.portalTutorialVideoConfig;
+
+    const cashbackVideoEntry = normalized.find(m => m.key === 'cashbackRewardsVideo');
+    const syncedCashbackVideoConfig = config.cashbackRewardsVideoConfig
+      ? {
+          ...config.cashbackRewardsVideoConfig,
+          isActive: cashbackVideoEntry ? cashbackVideoEntry.active : config.cashbackRewardsVideoConfig.isActive,
+          displayOrder: cashbackVideoEntry ? cashbackVideoEntry.sequence : config.cashbackRewardsVideoConfig.displayOrder,
+          updatedAt: now,
+          updatedBy: actor
+        }
+      : config.cashbackRewardsVideoConfig;
+
     const updatedConfig: HomepageConfig = {
       ...config,
       ...toggleUpdates,
       demoBookingConfig: syncedDemoBookingConfig,
+      portalTutorialVideoConfig: syncedPortalVideoConfig,
+      cashbackRewardsVideoConfig: syncedCashbackVideoConfig,
       homepageModuleOrder: orderKeys,
       homepageSections: sectionsMap,
       version: nextVersion,
@@ -396,10 +445,34 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
           }
         : config.demoBookingConfig;
 
+      const portalVideoIdx = canonicalKeys.indexOf('portalTutorialVideo');
+      const syncedPortalVideoConfig = config.portalTutorialVideoConfig
+        ? {
+            ...config.portalTutorialVideoConfig,
+            isActive: true,
+            displayOrder: portalVideoIdx >= 0 ? portalVideoIdx + 1 : undefined,
+            updatedAt: now,
+            updatedBy: actor
+          }
+        : config.portalTutorialVideoConfig;
+
+      const cashbackVideoIdx = canonicalKeys.indexOf('cashbackRewardsVideo');
+      const syncedCashbackVideoConfig = config.cashbackRewardsVideoConfig
+        ? {
+            ...config.cashbackRewardsVideoConfig,
+            isActive: true,
+            displayOrder: cashbackVideoIdx >= 0 ? cashbackVideoIdx + 1 : undefined,
+            updatedAt: now,
+            updatedBy: actor
+          }
+        : config.cashbackRewardsVideoConfig;
+
       const updatedConfig: HomepageConfig = {
         ...config,
         ...toggleUpdates,
         demoBookingConfig: syncedDemoBookingConfig,
+        portalTutorialVideoConfig: syncedPortalVideoConfig,
+        cashbackRewardsVideoConfig: syncedCashbackVideoConfig,
         homepageModuleOrder: canonicalKeys,
         homepageSections: sectionsMap,
         version: nextVersion,
@@ -899,24 +972,60 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
               </div>
             )}
 
-            {/* Section Sequence List */}
+            {/* Section Sequence List (Drag-and-Drop, Arrows, or Direct Sequence Input) */}
             <div className="space-y-3">
               {sequenceDraftModules.map((item, idx) => {
                 const isFirst = idx === 0;
                 const isLast = idx === sequenceDraftModules.length - 1;
+                const isDragging = draggedModuleIdx === idx;
+                const isDragOver = dragOverModuleIdx === idx && draggedModuleIdx !== null && draggedModuleIdx !== idx;
 
                 return (
                   <div
                     key={item.key}
+                    draggable={expandedSectionKey !== item.key}
+                    onDragStart={(e) => {
+                      setDraggedModuleIdx(idx);
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', item.key);
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'move';
+                      if (dragOverModuleIdx !== idx) setDragOverModuleIdx(idx);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverModuleIdx === idx) setDragOverModuleIdx(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      handleDropModule(idx);
+                    }}
+                    onDragEnd={() => {
+                      setDraggedModuleIdx(null);
+                      setDragOverModuleIdx(null);
+                    }}
                     className={`flex flex-col sm:flex-row sm:flex-wrap sm:items-center justify-between p-4 rounded-2xl border transition-all ${
-                      item.active
+                      isDragOver
+                        ? 'border-[#008972] bg-teal-50/40 ring-2 ring-[#00C6A6]/40'
+                        : isDragging
+                        ? 'opacity-50 border-dashed border-slate-400 bg-slate-50'
+                        : item.active
                         ? 'bg-white border-slate-200 shadow-2xs'
                         : 'bg-slate-50/70 border-slate-200 opacity-75'
                     }`}
                   >
-                    <div className="flex items-center space-x-3.5 mb-3 sm:mb-0">
+                    <div className="flex items-center space-x-3 mb-3 sm:mb-0">
+                      {/* Drag handle */}
+                      <div
+                        className="text-slate-400 hover:text-slate-700 cursor-grab active:cursor-grabbing shrink-0"
+                        title="Drag to reorder homepage section"
+                      >
+                        <GripVertical className="w-4 h-4" />
+                      </div>
+
                       {/* Monospaced 2-digit sequence number badge & direct order input */}
-                      <div className="flex items-center space-x-1 shrink-0" title="Directly edit sequence number or use arrows to reorder">
+                      <div className="flex items-center space-x-1 shrink-0" title="Directly edit sequence number, drag handle, or use arrows to reorder">
                         <input
                           type="number"
                           min={1}
@@ -1006,6 +1115,56 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
                         </>
                       )}
 
+                      {/* Manage & Preview in Position Action Buttons for YouTube Video Sections */}
+                      {(item.key === 'portalTutorialVideo' || item.key === 'cashbackRewardsVideo') && (() => {
+                        const isPortalVid = item.key === 'portalTutorialVideo';
+                        const hasConfiguredVideo = isPortalVid
+                          ? isValidYouTubeVideoId(config.portalTutorialVideoConfig?.youtubeVideoId)
+                          : isValidYouTubeVideoId(config.cashbackRewardsVideoConfig?.youtubeVideoId);
+                        return (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewPositionKey(previewPositionKey === item.key ? null : item.key)
+                              }
+                              className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                                previewPositionKey === item.key
+                                  ? 'border-slate-900 bg-slate-900 text-white'
+                                  : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                              }`}
+                              title="Preview video section in its current homepage sequence position"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>{previewPositionKey === item.key ? 'Close Preview' : 'Preview Position'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedSectionKey(expandedSectionKey === item.key ? null : item.key)
+                              }
+                              className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                                expandedSectionKey === item.key
+                                  ? 'border-[#008972] bg-teal-50 text-[#008972] shadow-2xs'
+                                  : 'border-slate-200 bg-white hover:bg-slate-50 text-slate-700'
+                              }`}
+                              title="Edit content, YouTube video URL, thumbnail, and layout"
+                            >
+                              <Video className="w-3.5 h-3.5 text-[#008972]" />
+                              <span>
+                                {expandedSectionKey === item.key
+                                  ? 'Collapse Video Settings'
+                                  : hasConfiguredVideo
+                                  ? 'Configure Video (Linked)'
+                                  : 'Configure Video (No URL)'}
+                              </span>
+                              {expandedSectionKey === item.key ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                            </button>
+                          </>
+                        );
+                      })()}
+
                       {/* Activate / Deactivate Toggle Button */}
                       <button
                         type="button"
@@ -1090,6 +1249,59 @@ export const HomepageManager: React.FC<HomepageManagerProps> = ({ destinations, 
                       <div className="mt-4 pt-4 border-t border-slate-200 w-full">
                         <DemoBookingManager
                           compact
+                          sequencePositionLabel={`Position ${item.sequence} of ${sequenceDraftModules.length}`}
+                        />
+                      </div>
+                    )}
+
+                    {/* Inline Position Context Preview for Portal Tutorial Video & Cashback & Rewards Video */}
+                    {(item.key === 'portalTutorialVideo' || item.key === 'cashbackRewardsVideo') && previewPositionKey === item.key && (() => {
+                      const prevActive = [...sequenceDraftModules.slice(0, idx)].reverse().find(m => m.active);
+                      const nextActive = sequenceDraftModules.slice(idx + 1).find(m => m.active);
+                      return (
+                        <div className="mt-4 pt-4 border-t border-slate-200 w-full space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                            <span className="font-bold text-slate-900">
+                              Homepage Position Preview — Sequence #{item.sequence} of {sequenceDraftModules.length} ({item.active ? 'Visible' : 'Hidden'})
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {prevActive ? `Below: ${prevActive.label}` : 'Top of Homepage'} · {nextActive ? `Above: ${nextActive.label}` : 'Bottom of Homepage'}
+                            </span>
+                          </div>
+                          <div className="rounded-2xl bg-[#F8FAFC] border border-slate-200 p-4 space-y-4">
+                            {prevActive && (
+                              <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-2.5 text-center text-[11px] font-semibold text-slate-500">
+                                ↑ Preceding Section (#{prevActive.sequence}): {prevActive.label}
+                              </div>
+                            )}
+                            {item.key === 'portalTutorialVideo' ? (
+                              <PortalTutorialVideoSection
+                                config={config.portalTutorialVideoConfig}
+                                sectionActive={item.active}
+                                previewMode
+                              />
+                            ) : (
+                              <CashbackRewardsVideoSection
+                                config={config.cashbackRewardsVideoConfig}
+                                sectionActive={item.active}
+                                previewMode
+                              />
+                            )}
+                            {nextActive && (
+                              <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 px-4 py-2.5 text-center text-[11px] font-semibold text-slate-500">
+                                ↓ Following Section (#{nextActive.sequence}): {nextActive.label}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Inline Content Workspace for Portal Tutorial Video & Cashback & Rewards Video */}
+                    {(item.key === 'portalTutorialVideo' || item.key === 'cashbackRewardsVideo') && expandedSectionKey === item.key && (
+                      <div className="mt-4 pt-4 border-t border-slate-200 w-full">
+                        <HomepageVideoSectionManager
+                          sectionKey={item.key}
                           sequencePositionLabel={`Position ${item.sequence} of ${sequenceDraftModules.length}`}
                         />
                       </div>

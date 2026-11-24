@@ -24,6 +24,7 @@ const BookingModal = lazyWithRetry(() => import('../BookingModal').then(m => ({ 
 const BookingConfirmationModal = lazyWithRetry(() => import('../BookingConfirmationModal').then(m => ({ default: m.BookingConfirmationModal })));
 const QuoteBuilderDrawer = lazyWithRetry(() => import('../QuoteBuilderDrawer').then(m => ({ default: m.QuoteBuilderDrawer })));
 const MyCashbackWalletView = lazyWithRetry(() => import('./MyCashbackWalletView').then(m => ({ default: m.MyCashbackWalletView })));
+const QuoteBookingConfirmationModal = lazyWithRetry(() => import('./QuoteBookingConfirmationModal').then(m => ({ default: m.QuoteBookingConfirmationModal })));
 import { Destination, Hotel, Product, B2BPackage, Quotation, B2BCustomer, CityHub, Booking, HotelRoomType, HotelRate, TravelLead } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
@@ -312,8 +313,10 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
     setActiveTab('create-quote');
   };
 
+  const [pendingQuoteBookingConfirm, setPendingQuoteBookingConfirm] = useState<Quotation | null>(null);
+
   const handleConvertToBooking = useCallback((quote: Quotation) => {
-    setBookingItem({ quotation: quote });
+    setPendingQuoteBookingConfirm(quote);
   }, []);
 
   const handleBackToDashboardFromBuilder = useCallback(() => {
@@ -724,6 +727,23 @@ export const B2BAgentPortal: React.FC<B2BAgentPortalProps> = ({
           packageItem={bookingItem.packageItem || null}
           currentUser={user}
           onBookingComplete={handleBookingCompleted}
+        />
+      )}
+
+      {/* Quotation-to-Booking Confirmation & Promotion Validation Modal */}
+      {pendingQuoteBookingConfirm && (
+        <QuoteBookingConfirmationModal
+          isOpen={true}
+          quote={pendingQuoteBookingConfirm}
+          user={user}
+          onClose={() => setPendingQuoteBookingConfirm(null)}
+          onConfirmBooking={async (finalizedQuote, specialNotes) => {
+            const booking = await db.convertQuotationToBookingAsync(finalizedQuote, user, specialNotes);
+            if (booking) {
+              handleBookingCompleted(booking);
+            }
+            return booking;
+          }}
         />
       )}
 

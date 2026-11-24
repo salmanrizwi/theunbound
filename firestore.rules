@@ -726,10 +726,103 @@ service cloud.firestore {
       allow write: if canAccessCMSContent();
     }
 
-    match /promotions/{document=**} {
+    function isValidPromotionData(data) {
+      return data != null &&
+        data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+        (!('promoCode' in data) || data.promoCode == null || (data.promoCode is string && data.promoCode.size() <= 64)) &&
+        (!('normalizedPromoCode' in data) || data.normalizedPromoCode == null || (data.normalizedPromoCode is string && data.normalizedPromoCode.size() <= 64)) &&
+        (!('internalAdminNotes' in data) || data.internalAdminNotes == null || (data.internalAdminNotes is string && data.internalAdminNotes.size() <= 4000)) &&
+        data.discountType in ['PERCENTAGE', 'FIXED'] &&
+        (data.discountValue is int || data.discountValue is float) &&
+        data.discountValue >= 0 &&
+        (data.discountType != 'PERCENTAGE' || data.discountValue <= 100) &&
+        (!('status' in data) || data.status in ['DRAFT', 'SCHEDULED', 'ACTIVE', 'PAUSED', 'EXPIRED', 'DISABLED', 'ARCHIVED']);
+    }
+
+    function isValidPromotionReservationCreate(data, resId) {
+      return isValidId(resId) &&
+        data != null &&
+        data.id == resId &&
+        data.promotionId is string && data.promotionId.size() > 0 && data.promotionId.size() <= 128 &&
+        data.code is string && data.code.size() > 0 && data.code.size() <= 64 &&
+        data.normalizedCode is string && data.normalizedCode.size() > 0 && data.normalizedCode.size() <= 64 &&
+        data.quotationId is string && data.quotationId.size() > 0 && data.quotationId.size() <= 128 &&
+        data.agentUid is string && data.agentUid == request.auth.uid &&
+        data.idempotencyKey is string && data.idempotencyKey.size() > 0 && data.idempotencyKey.size() <= 200 &&
+        (data.discountAmount is int || data.discountAmount is float) && data.discountAmount >= 0 &&
+        (data.preDiscountBaseSellingPrice is int || data.preDiscountBaseSellingPrice is float) && data.preDiscountBaseSellingPrice >= 0 &&
+        (data.discountedBaseSellingPrice is int || data.discountedBaseSellingPrice is float) && data.discountedBaseSellingPrice >= 0 &&
+        data.status == 'RESERVED';
+    }
+
+    function isValidPromotionReservationAgentUpdate(data, prev, resId) {
+      return isValidId(resId) &&
+        prev != null &&
+        data != null &&
+        prev.status == 'RESERVED' &&
+        prev.agentUid == request.auth.uid &&
+        data.agentUid == prev.agentUid &&
+        data.promotionId == prev.promotionId &&
+        data.quotationId == prev.quotationId &&
+        data.discountAmount == prev.discountAmount &&
+        data.status in ['COMMITTED', 'RELEASED', 'EXPIRED'] &&
+        data.diff(prev).affectedKeys().hasOnly(['status', 'committedAt', 'releasedAt', 'bookingId', 'bookingReference', 'updatedAt']);
+    }
+
+    function isValidPromotionRedemptionCreate(data, redId) {
+      return isValidId(redId) &&
+        data != null &&
+        data.id == redId &&
+        data.promotionId is string && data.promotionId.size() > 0 && data.promotionId.size() <= 128 &&
+        data.code is string && data.code.size() > 0 && data.code.size() <= 64 &&
+        data.bookingId is string && data.bookingId.size() > 0 && data.bookingId.size() <= 128 &&
+        data.quotationId is string && data.quotationId.size() > 0 && data.quotationId.size() <= 128 &&
+        data.agentUid is string && data.agentUid == request.auth.uid &&
+        data.idempotencyKey is string && data.idempotencyKey.size() > 0 && data.idempotencyKey.size() <= 200 &&
+        (data.discountAmount is int || data.discountAmount is float) && data.discountAmount >= 0 &&
+        (data.discountedBaseSellingPrice is int || data.discountedBaseSellingPrice is float) && data.discountedBaseSellingPrice >= 0 &&
+        data.status == 'REDEEMED' &&
+        data.appliedStage in ['QUOTATION', 'BOOKING_CONFIRMATION'];
+    }
+
+    match /promotions/{promoId} {
       allow read: if true;
-      allow create, update: if canAccessCMSContent() || isValidAdminCMSData();
-      allow delete: if canAccessCMSContent() || isResourceAdminOwned();
+      allow create, update: if isValidId(promoId) &&
+        (canAccessCMSContent() || isMasterAdmin()) &&
+        isValidPromotionData(request.resource.data);
+      allow delete: if isValidId(promoId) && (canAccessCMSContent() || isMasterAdmin());
+    }
+
+    match /promotion_reservations/{reservationId} {
+      allow get: if isValidId(reservationId) && (
+        canAccessCMSContent() || isMasterAdmin() ||
+        (isAuthenticated() && resource.data.agentUid == request.auth.uid)
+      );
+      allow list: if canAccessCMSContent() || isMasterAdmin() ||
+        (isAuthenticated() && resource.data.agentUid == request.auth.uid);
+      allow create: if isValidId(reservationId) && (
+        (canAccessCMSContent() || isMasterAdmin()) ||
+        (isApprovedUser() && isValidPromotionReservationCreate(request.resource.data, reservationId))
+      );
+      allow update: if isValidId(reservationId) && (
+        (canAccessCMSContent() || isMasterAdmin()) ||
+        (isApprovedUser() && isValidPromotionReservationAgentUpdate(request.resource.data, resource.data, reservationId))
+      );
+      allow delete: if isValidId(reservationId) && (canAccessCMSContent() || isMasterAdmin());
+    }
+
+    match /promotion_redemptions/{redemptionId} {
+      allow get: if isValidId(redemptionId) && (
+        canAccessCMSContent() || isMasterAdmin() ||
+        (isAuthenticated() && resource.data.agentUid == request.auth.uid)
+      );
+      allow list: if canAccessCMSContent() || isMasterAdmin() ||
+        (isAuthenticated() && resource.data.agentUid == request.auth.uid);
+      allow create: if isValidId(redemptionId) && (
+        (canAccessCMSContent() || isMasterAdmin()) ||
+        (isApprovedUser() && isValidPromotionRedemptionCreate(request.resource.data, redemptionId))
+      );
+      allow update, delete: if isValidId(redemptionId) && (canAccessCMSContent() || isMasterAdmin());
     }
 
     match /gallery_items/{document=**} {

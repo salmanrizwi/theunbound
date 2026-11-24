@@ -401,7 +401,7 @@ function readFirebaseConfig(): { projectId: string; apiKey: string; firestoreDat
   return { projectId: '', apiKey: '', firestoreDatabaseId: '(default)' };
 }
 
-async function verifyAdminBearerToken(req: Request): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+export async function verifyAdminBearerToken(req: Request): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
   const authHeader = String(req.headers.authorization || '');
   if (!authHeader.startsWith('Bearer ')) {
     return { ok: false, status: 401, error: 'Authentication required.' };

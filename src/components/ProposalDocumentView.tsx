@@ -885,6 +885,13 @@ const ProposalDocumentViewBase: React.FC<ProposalDocumentViewProps> = ({
             <span>Land Part Total:</span>{' '}
             <span className="text-[#00E5C0] font-mono">{model.landPartTotalFormatted}</span>
           </h3>
+          {model.appliedPromotion && (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/15 border border-emerald-400/30 text-emerald-300 text-xs font-bold">
+              <span>Promotional Discount ({model.appliedPromotion.code}):</span>
+              <span className="font-mono font-black">-{model.appliedPromotion.discountAmountFormatted}</span>
+              <span className="text-emerald-200/80 font-medium">• {model.appliedPromotion.promotionName}</span>
+            </div>
+          )}
           {model.hasHotelAccommodation && (
             <div className="text-lg font-black text-white pt-1 border-t border-slate-800/80">
               <span>Final Selling Price:</span>{' '}

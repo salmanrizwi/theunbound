@@ -41,10 +41,7 @@ export default defineConfig({
       'firebase/auth',
       'firebase/firestore',
       'firebase/storage',
-      'motion',
-      'jspdf',
-      'html2canvas-pro',
-      'xlsx'
+      'motion'
     ],
   },
   preview: {

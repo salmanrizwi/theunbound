@@ -1,4 +1,10 @@
-import { HomepageConfig, HomepageAffiliation, HomepageDemoBookingConfig } from '../types';
+import {
+  HomepageConfig,
+  HomepageAffiliation,
+  HomepageDemoBookingConfig,
+  HomepagePortalTutorialVideoConfig,
+  HomepageCashbackRewardsVideoConfig,
+} from '../types';
 
 export const INITIAL_DEMO_BOOKING_CONFIG: HomepageDemoBookingConfig = {
   sectionId: 'demoBooking',
@@ -40,6 +46,49 @@ export const INITIAL_DEMO_BOOKING_CONFIG: HomepageDemoBookingConfig = {
     sectionPadding: 'standard'
   },
   isActive: true
+};
+
+export const INITIAL_PORTAL_TUTORIAL_VIDEO_CONFIG: HomepagePortalTutorialVideoConfig = {
+  sectionId: 'portalTutorialVideo',
+  sectionType: 'PORTAL_TUTORIAL_VIDEO',
+  eyebrowText: 'PORTAL WALKTHROUGH',
+  heading: 'Explore TheUnbound Portal',
+  description:
+    'Everything You Need to Plan, Quote and Manage Your Japan Travel Business — All in One Place.',
+  youtubeUrl: '',
+  youtubeVideoId: '',
+  customThumbnailUrl: '',
+  customThumbnailStoragePath: '',
+  videoMaxWidthPercent: 65,
+  alignment: 'center',
+  backgroundStyle: 'pure-white',
+  isActive: true,
+};
+
+export const INITIAL_CASHBACK_REWARDS_VIDEO_CONFIG: HomepageCashbackRewardsVideoConfig = {
+  sectionId: 'cashbackRewardsVideo',
+  sectionType: 'CASHBACK_REWARDS_VIDEO',
+  eyebrowText: 'PARTNER REWARDS',
+  heading: 'Travel More. Earn More.',
+  description:
+    'Every completed journey brings you closer to your next reward. With TheUnbound Cashback, eligible B2B agents can earn cashback on qualifying land services booked through our platform.',
+  benefitPoints: [
+    { id: 'cb-pt-1', text: 'Earn rewards on qualifying land service bookings' },
+    { id: 'cb-pt-2', text: 'Transparent tracking inside your B2B portal' },
+    { id: 'cb-pt-3', text: 'Credited automatically after qualifying trip completion' },
+    { id: 'cb-pt-4', text: 'Apply unlocked rewards toward future eligible bookings' },
+  ],
+  supportingText: 'Available to verified B2B travel agencies booking qualifying ground services.',
+  ctaEnabled: true,
+  ctaLabel: 'Explore Cashback Program',
+  ctaDestination: '/b2b/my-cashback',
+  textAlignment: 'left',
+  backgroundStyle: 'soft-slate',
+  youtubeUrl: '',
+  youtubeVideoId: '',
+  customThumbnailUrl: '',
+  customThumbnailStoragePath: '',
+  isActive: true,
 };
 
 export const INITIAL_AFFILIATIONS: HomepageAffiliation[] = [
@@ -228,9 +277,11 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   homepageModuleOrder: [
     'hero',
     'brandIntroduction',
+    'portalTutorialVideo',
     'cityHubs',
     'destinationFilter',
     'partnershipBenefits',
+    'cashbackRewardsVideo',
     'affiliations',
     'associatedPartners',
     'onboardingProcess',
@@ -296,6 +347,10 @@ export const INITIAL_HOMEPAGE_CONFIG: HomepageConfig = {
   },
   showDemoBookingSection: true,
   demoBookingConfig: INITIAL_DEMO_BOOKING_CONFIG,
+  showPortalTutorialVideo: true,
+  portalTutorialVideoConfig: INITIAL_PORTAL_TUTORIAL_VIDEO_CONFIG,
+  showCashbackRewardsVideo: true,
+  cashbackRewardsVideoConfig: INITIAL_CASHBACK_REWARDS_VIDEO_CONFIG,
   showConversionCTA: true,
   tradeContactEmail: 'business@theunbound.in',
 

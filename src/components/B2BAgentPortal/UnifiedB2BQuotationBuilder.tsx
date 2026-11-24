@@ -76,10 +76,14 @@ import {
   QuotationCommercialTermsSnapshot,
   QuotationTermsExceptionApproval,
   QuotationOutputOptionKey,
-  VisaProduct
+  VisaProduct,
+  AppliedPromotionSnapshot,
+  Booking
 } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useQuotation } from '../../context/QuotationContext';
+import { validatePromotionCodeAsync } from '../../services/promotionApiService';
+import { QuoteBookingConfirmationModal } from './QuoteBookingConfirmationModal';
 import { formatCurrency, convertCurrency, calculateQuoteInternalBreakdown, calculateProductPrice, calculateProductPriceForAgent, roundCurrencyAmount, buildQuotationCurrencySnapshot, resolveQuoteAgencyPricingContext } from '../../services/pricingEngine';
 import { performanceMonitor } from '../../services/performanceMonitor';
 import { backgroundJobService, BackgroundJobRecord } from '../../services/backgroundJobService';
@@ -1118,6 +1122,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         const savedAdminMarginMode = q.adminMarginMode || (q as any).admin_margin_mode || q.pricingSnapshot?.adminMarginMode || (q as any).pricing_snapshot?.adminMarginMode;
         setAdminMarginMode(savedAdminMarginMode === 'REPLACE' ? 'REPLACE' : 'ADD');
         setOverallDiscountPercent(Math.max(0, Number(q.overallDiscountPercent || 0) || 0));
+        setAppliedPromotion(q.appliedPromotion || q.authoritativeSnapshot?.pricing?.appliedPromotion || null);
+        setPromotionError(null);
 
         setQuoteCompanyId((q as any).companyId || undefined);
         setQuoteAgentId(q.agentId || q.createdBy || undefined);
@@ -2770,6 +2776,11 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
   }), [quoteAgencyContext]);
   const isProductLevelMarginActive = agencyPricingSettings.productLevelMarginEnabled !== false;
 
+  const [appliedPromotion, setAppliedPromotion] = useState<AppliedPromotionSnapshot | null>(null);
+  const [isApplyingPromotion, setIsApplyingPromotion] = useState<boolean>(false);
+  const [promotionError, setPromotionError] = useState<string | null>(null);
+  const [bookingConfirmQuote, setBookingConfirmQuote] = useState<Quotation | null>(null);
+
   const liveQuoteBreakdown = useMemo(() => {
     return calculateQuoteInternalBreakdown({
       items: effectivePricedItems,
@@ -2787,7 +2798,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       routeHubs,
       adminManualMarginType,
       adminManualMarginValue,
-      adminMarginMode
+      adminMarginMode,
+      appliedPromotion
     });
   }, [
     effectivePricedItems,
@@ -2804,8 +2816,82 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     routeHubs,
     adminManualMarginType,
     adminManualMarginValue,
-    adminMarginMode
+    adminMarginMode,
+    appliedPromotion
   ]);
+
+  const handleApplyPromotionCode = useCallback(async (rawCode: string): Promise<{ valid: boolean; message: string }> => {
+    setIsApplyingPromotion(true);
+    setPromotionError(null);
+    try {
+      const preDiscountBase =
+        liveQuoteBreakdown?.preDiscountBaseSellingPrice ??
+        liveQuoteBreakdown?.theUnboundBaseSellingPrice ??
+        0;
+      const evalItems = effectivePricedItems.map((it) => ({
+        id: it.id,
+        productId: it.product?.id,
+        productName: it.product?.name,
+        category: it.product?.category,
+        productType: (it.product as any)?.productType,
+        destinationId: it.product?.destinationId || currentDestination?.id,
+        baseSellingPrice:
+          it.calculation?.finalTotalSellingPrice ||
+          (it.calculation as any)?.sellingPriceFinal ||
+          0
+      }));
+      const res = await validatePromotionCodeAsync({
+        code: rawCode,
+        stage: 'QUOTATION',
+        quotationId: activeQuoteId,
+        quotationVersion: quoteVersion || 1,
+        quotationStatus: loadedQuoteStatus || 'DRAFT',
+        isDraftQuotation: (loadedQuoteStatus || 'DRAFT') === 'DRAFT',
+        isRevisedQuotation: (quoteVersion || 1) > 1,
+        preDiscountBaseSellingPrice: preDiscountBase,
+        currency,
+        destinationId: currentDestination?.id,
+        destinationName: currentDestination?.name,
+        items: evalItems,
+        totalPax: (adultsCount || 2) + (childrenCount || 0) + (infantsCount || 0),
+        existingQuotationPromotionId: appliedPromotion?.promotionId,
+        user
+      });
+
+      if (!res.valid || !res.appliedPromotion) {
+        setPromotionError(res.message);
+        return { valid: false, message: res.message };
+      }
+
+      setAppliedPromotion(res.appliedPromotion);
+      setPromotionError(null);
+      return { valid: true, message: res.message };
+    } catch (err: any) {
+      const msg = err?.message || 'Unable to validate promotion code at this time.';
+      setPromotionError(msg);
+      return { valid: false, message: msg };
+    } finally {
+      setIsApplyingPromotion(false);
+    }
+  }, [
+    liveQuoteBreakdown,
+    effectivePricedItems,
+    activeQuoteId,
+    quoteVersion,
+    loadedQuoteStatus,
+    currency,
+    currentDestination,
+    adultsCount,
+    childrenCount,
+    infantsCount,
+    appliedPromotion,
+    user
+  ]);
+
+  const handleRemovePromotionCode = useCallback(() => {
+    setAppliedPromotion(null);
+    setPromotionError(null);
+  }, []);
 
   const step7InternalBreakdown = canViewInternalCosts ? liveQuoteBreakdown : null;
 
@@ -2995,6 +3081,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       adminManualMarginValue,
       adminMarginMode,
       overallDiscountPercent,
+      appliedPromotion ? `${appliedPromotion.promotionId}:${appliedPromotion.normalizedCode}:${appliedPromotion.discountAmount}` : '',
       itineraryOverview,
       JSON.stringify(dayThemes),
       JSON.stringify(dayDescriptions),
@@ -3032,6 +3119,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     adminManualMarginValue,
     adminMarginMode,
     overallDiscountPercent,
+    appliedPromotion,
     itineraryOverview,
     dayThemes,
     dayDescriptions,
@@ -3168,6 +3256,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       setAgentMarginValue(restoredAgentVal);
       setAgentMarkupPercent((qToApply.agentMarginType || 'PERCENTAGE') === 'PERCENTAGE' ? restoredAgentVal : 0);
       setOverallDiscountPercent(Math.max(0, Number(qToApply.overallDiscountPercent || 0) || 0));
+      setAppliedPromotion(qToApply.appliedPromotion || qToApply.authoritativeSnapshot?.pricing?.appliedPromotion || null);
+      setPromotionError(null);
       const restoredScope = (qToApply.quotationScope as QuotationScope) || (qToApply.scope as QuotationScope) || 'HOTEL_LAND';
       setQuotationScope(restoredScope);
       setContextQuotationScope(restoredScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
@@ -3242,6 +3332,10 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           agentMarginValue: vSnap.agentMarginValue ?? target.agentMarginValue,
           agentMarginAmount: vSnap.agentMarginAmount ?? target.agentMarginAmount,
           overallDiscountPercent: vSnap.overallDiscountPercent ?? target.overallDiscountPercent,
+          appliedPromotion: vSnap.appliedPromotion ?? vSnap.authoritativeSnapshot?.pricing?.appliedPromotion ?? target.appliedPromotion,
+          preDiscountBaseSellingPrice: vSnap.preDiscountBaseSellingPrice ?? vSnap.authoritativeSnapshot?.pricing?.preDiscountBaseSellingPrice ?? target.preDiscountBaseSellingPrice,
+          promotionDiscountAmount: vSnap.promotionDiscountAmount ?? vSnap.authoritativeSnapshot?.pricing?.promotionDiscountAmount ?? target.promotionDiscountAmount,
+          discountedBaseSellingPrice: vSnap.discountedBaseSellingPrice ?? vSnap.authoritativeSnapshot?.pricing?.discountedBaseSellingPrice ?? target.discountedBaseSellingPrice,
           totalSellingPrice: vSnap.totalSellingPrice ?? target.totalSellingPrice,
           finalCustomerSellingPrice: vSnap.totalSellingPrice ?? target.finalCustomerSellingPrice
         }
@@ -3290,6 +3384,9 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     setAgentMarginValue(histAgentVal);
     setAgentMarkupPercent((snapQuote.agentMarginType || 'PERCENTAGE') === 'PERCENTAGE' ? histAgentVal : 0);
     setOverallDiscountPercent(Math.max(0, Number(snapQuote.overallDiscountPercent || 0) || 0));
+    const histPromo = snapQuote.appliedPromotion ?? snapQuote.authoritativeSnapshot?.pricing?.appliedPromotion ?? null;
+    setAppliedPromotion(histPromo);
+    setPromotionError(null);
     const histScope = (snapQuote.quotationScope as QuotationScope) || (snapQuote.scope as QuotationScope) || 'HOTEL_LAND';
     setQuotationScope(histScope);
     setContextQuotationScope(histScope === 'LAND_ONLY' ? 'LAND_ONLY' : 'HOTEL_LAND');
@@ -4001,6 +4098,10 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       currency,
       overallMarkupPercent: agentMarginType === 'PERCENTAGE' ? agentMarginValue : 0,
       overallDiscountPercent: overallDiscountPercent || 0,
+      preDiscountBaseSellingPrice: liveQuoteBreakdown?.preDiscountBaseSellingPrice ?? baseFinalSellingPrice,
+      promotionDiscountAmount: liveQuoteBreakdown?.promotionDiscountAmount ?? (appliedPromotion?.discountAmount || 0),
+      discountedBaseSellingPrice: liveQuoteBreakdown?.discountedBaseSellingPrice ?? baseFinalSellingPrice,
+      appliedPromotion: liveQuoteBreakdown?.appliedPromotion || appliedPromotion || null,
       totalNetCost: canViewInternalCosts && liveQuoteBreakdown?.isComplete ? liveQuoteBreakdown.totalNettCost : 0,
       totalSellingPrice: finalCustomerSellingPrice,
       totalTaxes: canViewInternalCosts && liveQuoteBreakdown ? liveQuoteBreakdown.taxAmount : 0,
@@ -5127,94 +5228,103 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     }
   };
 
-  // Output Option 7: Convert to Confirmed Booking (Idempotent, never auto-saves dirty working edits)
+  // Output Option 7: Convert to Confirmed Booking via Booking Confirmation & Promotion Validation Modal
   const handleConvertBooking = async () => {
     if (!validateFxBeforeFinalGeneration()) return;
     if (!validateTermsBeforeExportOrFinalise()) return;
     await runOutputWithAuthoritativeSnapshot('CONVERT_BOOKING', async (synced) => {
-      const convertOp = quotationOperationsService.startOperation({
-        operationType: 'CONVERT_BOOKING',
-        quoteId: synced.id,
-        versionId: `v${synced.version || latestSavedVersion || 1}`,
-        uid: user?.id,
-        idempotencyKey: `convert:${synced.id}:v${synced.version || latestSavedVersion || 1}`
-      });
-      try {
-        const frozenSnap = synced.commercialTermsSnapshot || termsResolution.readiness.snapshot;
-        const finalisedQuote: Quotation = {
-          ...synced,
-          isLocked: true,
-          termsStatus: 'QUOTATION_FINALISED',
-          commercialTermsSnapshot: frozenSnap,
-          authoritativeSnapshot: synced.authoritativeSnapshot
-            ? {
-                ...synced.authoritativeSnapshot,
-                isLocked: true,
-                commercialTerms: {
-                  ...synced.authoritativeSnapshot.commercialTerms,
-                  termsStatus: 'QUOTATION_FINALISED',
-                  snapshot: frozenSnap
-                }
-              }
-            : undefined
-        };
-
-        const persistedFinal = await withBoundedTimeout(
-          db.saveQuoteAsync(finalisedQuote, user, 'STATUS_CHANGED', 'Frozen Commercial Quotation Terms on booking conversion'),
-          15000,
-          'Persist Finalised Quotation Terms'
-        );
-
-        const booking = await withBoundedTimeout(
-          db.convertQuotationToBookingAsync(persistedFinal, user),
-          20000,
-          'Convert Quotation to Confirmed Booking'
-        );
-        if (!booking) {
-          throw new Error('Unable to generate confirmed booking record from this quotation snapshot.');
-        }
-
-        if (frozenSnap && frozenSnap.entries?.length > 0) {
-          setLoadedFinalisedSnapshot(frozenSnap);
-        }
-        setLoadedQuoteStatus('BOOKED');
-        setLoadedIsLocked(true);
-
-        const latestPersistedQuote = db.getQuoteByIdAuthorized(persistedFinal.id, user) || { ...persistedFinal, status: 'BOOKED' as const };
-        const rec = recordQuotationGenerationEvent(db, { ...latestPersistedQuote, status: 'BOOKED' }, {
-          outputOption: 'CONVERT_BOOKING',
-          status: 'SUCCEEDED',
-          brandingMode: persistedFinal.brandingMode,
-          selectedOptionId: persistedFinal.activeOptionId,
-          targetEntityId: booking.id,
-          targetReference: booking.bookingReference || booking.id,
-          user
-        });
-        setAuthoritativeSavedQuote(rec.updatedQuote);
-        quotationOperationsService.markSucceeded(convertOp.operationId, {
-          versionId: `v${synced.version || latestSavedVersion || 1}`,
-          resultRef: booking.bookingReference || booking.id
-        });
-        if (onConvertToBooking) {
-          onConvertToBooking(rec.updatedQuote);
-        } else if (onBookQuotation) {
-          onBookQuotation(rec.updatedQuote);
-        }
-        showBuilderToast(`Quotation converted to Booking (${booking.bookingReference || booking.id})!`, 'SUCCESS');
-      } catch (err: any) {
-        console.error('Booking conversion error:', err);
-        const errMsg = err?.message || 'Booking conversion encountered an issue.';
-        quotationOperationsService.markFailed(convertOp.operationId, err);
-        setOutputSyncError(errMsg);
-        recordQuotationGenerationEvent(db, synced, {
-          outputOption: 'CONVERT_BOOKING',
-          status: 'FAILED',
-          errorMessage: errMsg,
-          user
-        });
-        showBuilderToast(errMsg, 'WARNING');
-      }
+      setBookingConfirmQuote(synced);
     });
+  };
+
+  const executeConfirmedBookingConversion = async (
+    confirmedQuote: Quotation,
+    specialNotes?: string
+  ): Promise<Booking | null> => {
+    const convertOp = quotationOperationsService.startOperation({
+      operationType: 'CONVERT_BOOKING',
+      quoteId: confirmedQuote.id,
+      versionId: `v${confirmedQuote.version || latestSavedVersion || 1}`,
+      uid: user?.id,
+      idempotencyKey: `convert:${confirmedQuote.id}:v${confirmedQuote.version || latestSavedVersion || 1}`
+    });
+    try {
+      const frozenSnap = confirmedQuote.commercialTermsSnapshot || termsResolution.readiness.snapshot;
+      const finalisedQuote: Quotation = {
+        ...confirmedQuote,
+        isLocked: true,
+        termsStatus: 'QUOTATION_FINALISED',
+        commercialTermsSnapshot: frozenSnap,
+        authoritativeSnapshot: confirmedQuote.authoritativeSnapshot
+          ? {
+              ...confirmedQuote.authoritativeSnapshot,
+              isLocked: true,
+              commercialTerms: {
+                ...confirmedQuote.authoritativeSnapshot.commercialTerms,
+                termsStatus: 'QUOTATION_FINALISED',
+                snapshot: frozenSnap
+              }
+            }
+          : undefined
+      };
+
+      const persistedFinal = await withBoundedTimeout(
+        db.saveQuoteAsync(finalisedQuote, user, 'STATUS_CHANGED', 'Frozen Commercial Quotation Terms on booking conversion'),
+        15000,
+        'Persist Finalised Quotation Terms'
+      );
+
+      const booking = await withBoundedTimeout(
+        db.convertQuotationToBookingAsync(persistedFinal, user, specialNotes),
+        20000,
+        'Convert Quotation to Confirmed Booking'
+      );
+      if (!booking) {
+        throw new Error('Unable to generate confirmed booking record from this quotation snapshot.');
+      }
+
+      if (frozenSnap && frozenSnap.entries?.length > 0) {
+        setLoadedFinalisedSnapshot(frozenSnap);
+      }
+      setLoadedQuoteStatus('BOOKED');
+      setLoadedIsLocked(true);
+
+      const latestPersistedQuote = db.getQuoteByIdAuthorized(persistedFinal.id, user) || { ...persistedFinal, status: 'BOOKED' as const };
+      const rec = recordQuotationGenerationEvent(db, { ...latestPersistedQuote, status: 'BOOKED' }, {
+        outputOption: 'CONVERT_BOOKING',
+        status: 'SUCCEEDED',
+        brandingMode: persistedFinal.brandingMode,
+        selectedOptionId: persistedFinal.activeOptionId,
+        targetEntityId: booking.id,
+        targetReference: booking.bookingReference || booking.id,
+        user
+      });
+      setAuthoritativeSavedQuote(rec.updatedQuote);
+      quotationOperationsService.markSucceeded(convertOp.operationId, {
+        versionId: `v${confirmedQuote.version || latestSavedVersion || 1}`,
+        resultRef: booking.bookingReference || booking.id
+      });
+      if (onConvertToBooking) {
+        onConvertToBooking(rec.updatedQuote);
+      } else if (onBookQuotation) {
+        onBookQuotation(rec.updatedQuote);
+      }
+      showBuilderToast(`Quotation converted to Booking (${booking.bookingReference || booking.id})!`, 'SUCCESS');
+      return booking;
+    } catch (err: any) {
+      console.error('Booking conversion error:', err);
+      const errMsg = err?.message || 'Booking conversion encountered an issue.';
+      quotationOperationsService.markFailed(convertOp.operationId, err);
+      setOutputSyncError(errMsg);
+      recordQuotationGenerationEvent(db, confirmedQuote, {
+        outputOption: 'CONVERT_BOOKING',
+        status: 'FAILED',
+        errorMessage: errMsg,
+        user
+      });
+      showBuilderToast(errMsg, 'WARNING');
+      throw err;
+    }
   };
 
   // Resolve currently linked Master Package (from sourcePackageId or lastSavedMasterPackage)
@@ -6381,6 +6491,11 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               setAgentMarkupPercent={handleSetAgentMarkupPercentProp}
               overallDiscountPercent={overallDiscountPercent}
               setOverallDiscountPercent={setOverallDiscountPercent}
+              appliedPromotion={liveQuoteBreakdown?.appliedPromotion || appliedPromotion}
+              onApplyPromotionCode={handleApplyPromotionCode}
+              onRemovePromotionCode={handleRemovePromotionCode}
+              isApplyingPromotion={isApplyingPromotion}
+              promotionError={promotionError}
               totalNetCost={totalNetCost}
               totalSellingPrice={totalSellingPrice}
               finalClientPrice={finalCustomerSellingPrice}
@@ -8201,6 +8316,19 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
             </div>
           </div>
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* BOOKING CONFIRMATION & PROMOTION VALIDATION MODAL (ACTION 7) */}
+      {/* ========================================================================= */}
+      {bookingConfirmQuote && (
+        <QuoteBookingConfirmationModal
+          isOpen={true}
+          quote={bookingConfirmQuote}
+          user={user}
+          onClose={() => setBookingConfirmQuote(null)}
+          onConfirmBooking={executeConfirmedBookingConversion}
+        />
       )}
 
       {/* ========================================================================= */}

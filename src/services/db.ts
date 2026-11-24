@@ -8,6 +8,9 @@ import {
   Promotion, 
   CampaignEvent,
   CampaignStatus,
+  AppliedPromotionSnapshot,
+  PromotionReservationRecord,
+  PromotionRedemptionRecord,
   BlogArticle, 
   GoogleReview, 
   Quotation, 
@@ -170,6 +173,11 @@ import {
   QuotationSurchargeOverride,
   SurchargeDashboardMetrics
 } from '../types';
+import {
+  normalizePromotionCode,
+  resolveEffectivePromotionStatus,
+  isPromotionCodeUnique
+} from './promotionEngine';
 import {
   COMMERCIAL_QUOTATION_TERMS_PLAIN_TEXT,
   resolveAuthoritativeCommercialTerms
@@ -9019,28 +9027,17 @@ export class AppDatabase {
   // ==========================================
   public getPromotions(): Promotion[] {
     const raw = this.getItem<Promotion[]>('promotions', this.getSeedBundle()?.INITIAL_PROMOTIONS || []);
-    const today = new Date().toISOString().split('T')[0];
+    const now = new Date();
     
-    // Normalize status and active states
+    // Normalize status, normalizedPromoCode, and active states
     return raw.map(p => {
-      let status = p.status;
-      if (p.isArchived) {
-        status = 'ARCHIVED';
-      } else if (!status) {
-        if (!p.isActive) {
-          status = 'PAUSED';
-        } else if (p.startDate && p.startDate > today) {
-          status = 'SCHEDULED';
-        } else if (p.endDate && p.endDate < today) {
-          status = 'EXPIRED';
-        } else {
-          status = 'ACTIVE';
-        }
-      }
+      const normalizedPromoCode = p.promoCode ? normalizePromotionCode(p.promoCode) : p.normalizedPromoCode;
+      const status = resolveEffectivePromotionStatus(p, now);
       return {
         ...p,
+        normalizedPromoCode,
         status,
-        isActive: status === 'ACTIVE' || (p.isActive && status !== 'PAUSED' && status !== 'ARCHIVED' && status !== 'EXPIRED')
+        isActive: status === 'ACTIVE'
       };
     });
   }
@@ -9048,7 +9045,16 @@ export class AppDatabase {
   public getActivePromotions(audience?: 'ALL' | 'BUYER' | 'B2B_AGENT'): Promotion[] {
     const today = new Date().toISOString().split('T')[0];
     return this.getPromotions().filter(p => {
-      if (p.isArchived || p.status === 'ARCHIVED' || p.status === 'PAUSED' || p.status === 'DRAFT') return false;
+      if (
+        p.isArchived ||
+        p.status === 'ARCHIVED' ||
+        p.status === 'PAUSED' ||
+        p.status === 'DISABLED' ||
+        p.status === 'DRAFT' ||
+        p.status === 'EXPIRED'
+      ) {
+        return false;
+      }
       if (!p.isActive) return false;
       if (p.startDate && p.startDate > today) return false;
       if (p.endDate && p.endDate < today) return false;
@@ -9062,12 +9068,27 @@ export class AppDatabase {
     const index = promotions.findIndex(p => p.id === promotion.id);
     const today = new Date().toISOString().split('T')[0];
 
+    // Normalize and validate promotion code uniqueness (case-insensitive)
+    const trimmedCode = promotion.promoCode ? promotion.promoCode.trim() : '';
+    const normalizedCode = trimmedCode ? normalizePromotionCode(trimmedCode) : undefined;
+    if (normalizedCode) {
+      const uniqueness = isPromotionCodeUnique(promotions, normalizedCode, promotion.id);
+      if (!uniqueness.unique) {
+        throw new Error(
+          `Promotion code "${normalizedCode}" is already assigned to "${uniqueness.conflictingPromotion?.title || uniqueness.conflictingPromotion?.id}". Codes must be unique.`
+        );
+      }
+    }
+
     // Compute canonical status
     let status = promotion.status;
     if (promotion.isArchived || status === 'ARCHIVED') {
       status = 'ARCHIVED';
       promotion.isActive = false;
       promotion.isArchived = true;
+    } else if (status === 'DISABLED') {
+      status = 'DISABLED';
+      promotion.isActive = false;
     } else if (status === 'PAUSED' || !promotion.isActive) {
       status = 'PAUSED';
       promotion.isActive = false;
@@ -9089,7 +9110,11 @@ export class AppDatabase {
     if (index >= 0) {
       const old = promotions[index];
       savedPromo = { 
-        ...promotion, 
+        ...promotion,
+        promoCode: normalizedCode || undefined,
+        normalizedPromoCode: normalizedCode,
+        caseInsensitiveCode: promotion.caseInsensitiveCode !== false,
+        configVersion: (old.configVersion || 1) + 1,
         status, 
         updatedAt: new Date().toISOString() 
       };
@@ -9101,6 +9126,8 @@ export class AppDatabase {
           this.logAudit(user, 'PROMOTION_ACTIVATED', 'Promotion', promotion.id, `Activated campaign: "${promotion.title}"`);
         } else if (savedPromo.status === 'PAUSED') {
           this.logAudit(user, 'PROMOTION_PAUSED', 'Promotion', promotion.id, `Paused campaign: "${promotion.title}"`);
+        } else if (savedPromo.status === 'DISABLED') {
+          this.logAudit(user, 'PROMOTION_PAUSED', 'Promotion', promotion.id, `Disabled promotion: "${promotion.title}"`);
         } else if (savedPromo.status === 'ARCHIVED') {
           this.logAudit(user, 'PROMOTION_ARCHIVED', 'Promotion', promotion.id, `Archived campaign: "${promotion.title}"`);
         } else if (savedPromo.status === 'SCHEDULED') {
@@ -9119,11 +9146,18 @@ export class AppDatabase {
       savedPromo = {
         ...promotion,
         id: promotion.id || `promo-${Date.now()}`,
+        promoCode: normalizedCode || undefined,
+        normalizedPromoCode: normalizedCode,
+        caseInsensitiveCode: promotion.caseInsensitiveCode !== false,
+        configVersion: promotion.configVersion || 1,
         status,
         viewCount: promotion.viewCount || 0,
         clickCount: promotion.clickCount || 0,
         impressions: promotion.impressions || 0,
         clicks: promotion.clicks || 0,
+        redemptionCount: promotion.redemptionCount || 0,
+        activeReservationCount: promotion.activeReservationCount || 0,
+        totalDiscountGranted: promotion.totalDiscountGranted || 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -9132,6 +9166,19 @@ export class AppDatabase {
     }
     this.syncFirestoreDoc('promotions', savedPromo.id, savedPromo);
     this.setItem('promotions', promotions);
+  }
+
+  public disablePromotion(promotionId: string, user: User | null): void {
+    const promotions = this.getPromotions();
+    const promo = promotions.find(p => p.id === promotionId);
+    if (promo) {
+      promo.status = 'DISABLED';
+      promo.isActive = false;
+      promo.updatedAt = new Date().toISOString();
+      this.setItem('promotions', promotions);
+      this.syncFirestoreDoc('promotions', promo.id, promo);
+      this.logAudit(user, 'PROMOTION_PAUSED', 'Promotion', promotionId, `Disabled promotion: "${promo.title}" (historical quotes and bookings preserved)`);
+    }
   }
 
   public archivePromotion(promotionId: string, user: User | null): void {
@@ -9151,10 +9198,64 @@ export class AppDatabase {
   public deletePromotion(promotionId: string, user: User | null): void {
     const promotions = this.getPromotions();
     const target = promotions.find(p => p.id === promotionId);
+    const hasRedemptions = this.getPromotionRedemptions().some(r => r.promotionId === promotionId);
+    const hasQuoteRefs = this.getAllSavedQuotes().some(q => q.appliedPromotion?.promotionId === promotionId);
+    if (hasRedemptions || hasQuoteRefs || (target?.redemptionCount || 0) > 0) {
+      // Protect historical financial & audit integrity: disable instead of hard delete
+      this.disablePromotion(promotionId, user);
+      return;
+    }
     this.setItem('promotions', promotions.filter(p => p.id !== promotionId));
     this.deleteFirestoreDoc('promotions', promotionId);
     if (target) {
       this.logAudit(user, 'PROMOTION_DELETED', 'Promotion', promotionId, `Permanently deleted campaign: "${target.title}"`);
+    }
+  }
+
+  // ==========================================
+  // PROMOTION RESERVATIONS & REDEMPTIONS LEDGER
+  // ==========================================
+  public getPromotionRedemptions(): PromotionRedemptionRecord[] {
+    return this.getItem<PromotionRedemptionRecord[]>('promotion_redemptions', []);
+  }
+
+  public upsertLocalPromotionRedemption(record: PromotionRedemptionRecord): void {
+    const list = this.getPromotionRedemptions();
+    const idx = list.findIndex(r => r.id === record.id || (record.bookingId && r.bookingId === record.bookingId && r.promotionId === record.promotionId));
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...record };
+    } else {
+      list.unshift(record);
+    }
+    this.setItem('promotion_redemptions', list);
+  }
+
+  public getPromotionReservations(): PromotionReservationRecord[] {
+    return this.getItem<PromotionReservationRecord[]>('promotion_reservations', []);
+  }
+
+  public upsertLocalPromotionReservation(record: PromotionReservationRecord): void {
+    const list = this.getPromotionReservations();
+    const idx = list.findIndex(r => r.id === record.id);
+    if (idx >= 0) {
+      list[idx] = { ...list[idx], ...record };
+    } else {
+      list.unshift(record);
+    }
+    this.setItem('promotion_reservations', list);
+  }
+
+  public markLocalPromotionReservationReleased(reservationId: string, reason?: string): void {
+    const list = this.getPromotionReservations();
+    const idx = list.findIndex(r => r.id === reservationId);
+    if (idx >= 0) {
+      list[idx] = {
+        ...list[idx],
+        status: 'RELEASED',
+        releasedAt: new Date().toISOString(),
+        ...(reason ? { releaseReason: reason } : {})
+      };
+      this.setItem('promotion_reservations', list);
     }
   }
 
@@ -12348,18 +12449,38 @@ export class AppDatabase {
         (bookAuthSnap?.pricing?.adminManualMarginType ?? 'PERCENTAGE') === bookAdminType &&
         Math.abs(Number(bookAuthSnap?.pricing?.adminManualMarginValue ?? 0) - bookAdminVal) < 0.0001
       );
+    const bookQuotePromoId = quote.appliedPromotion?.promotionId || '';
+    const bookAuthPromoId = bookAuthSnap?.pricing?.appliedPromotion?.promotionId || '';
+    const bookAuthPromoMatches =
+      bookQuotePromoId === bookAuthPromoId &&
+      Math.abs(
+        Number(quote.appliedPromotion?.discountAmount ?? quote.promotionDiscountAmount ?? 0) -
+        Number(bookAuthSnap?.pricing?.promotionDiscountAmount ?? bookAuthSnap?.pricing?.appliedPromotion?.discountAmount ?? 0)
+      ) < 0.05;
     const authPricing =
       bookAuthSnap?.pricing &&
       bookAuthSnap.pricing.currency === quote.currency &&
       (!bookVer || !bookAuthVer || bookVer === bookAuthVer) &&
       (!quote.activeOptionId || !bookAuthSnap.selectedOptionId || bookAuthSnap.selectedOptionId === quote.activeOptionId) &&
       bookAuthAdminMatches &&
+      bookAuthPromoMatches &&
       (bookAuthSnap.pricing.agentMarginType || 'PERCENTAGE') === (quote.agentMarginType || 'PERCENTAGE') &&
       Math.abs(Number(bookAuthSnap.pricing.agentMarginValue ?? 0) - Number(quote.agentMarginValue ?? quote.overallMarkupPercent ?? 0)) < 0.0001 &&
       Math.abs(Number(bookAuthSnap.pricing.overallDiscountPercent ?? 0) - Number(quote.overallDiscountPercent ?? 0)) < 0.0001
         ? bookAuthSnap.pricing
         : undefined;
     const centralBookingTotals = calculateQuoteTotal(quote, quote.activeOptionId, undefined, quote.currency);
+    const effectiveAppliedPromotion: AppliedPromotionSnapshot | null =
+      (authPricing?.appliedPromotion ?? quote.appliedPromotion ?? centralBookingTotals.appliedPromotion) || null;
+    const effectivePromotionDiscountAmount = authPricing
+      ? (authPricing.promotionDiscountAmount ?? authPricing.appliedPromotion?.discountAmount ?? 0)
+      : (centralBookingTotals.promotionDiscountAmount ?? quote.promotionDiscountAmount ?? effectiveAppliedPromotion?.discountAmount ?? 0);
+    const effectiveDiscountedBase = authPricing
+      ? (authPricing.discountedBaseSellingPrice ?? authPricing.theUnboundBaseSellingPrice ?? authPricing.baseFinalSellingPrice)
+      : (centralBookingTotals.discountedBaseSellingPrice ?? centralBookingTotals.theUnboundBaseSellingPrice ?? quote.baseFinalSellingPrice ?? 0);
+    const effectivePreDiscountBase = authPricing
+      ? (authPricing.preDiscountBaseSellingPrice ?? (effectiveDiscountedBase + effectivePromotionDiscountAmount))
+      : (centralBookingTotals.preDiscountBaseSellingPrice ?? quote.preDiscountBaseSellingPrice ?? (effectiveDiscountedBase + effectivePromotionDiscountAmount));
     const effectiveTotalAmount = authPricing
       ? authPricing.finalCustomerSellingPrice
       : centralBookingTotals.finalCustomerSellingPrice > 0
@@ -12485,7 +12606,14 @@ export class AppDatabase {
       },
       confirmationNotice: 'Your booking has been submitted and ground allocation is underway with a 24-48h confirmation SLA.',
       pricingSnapshot: quote.pricingSnapshot || quote.pricing_snapshot,
-      baseFinalSellingPrice: authPricing ? authPricing.baseFinalSellingPrice : (quote.baseFinalSellingPrice || quote.base_final_selling_price),
+      baseFinalSellingPrice: effectiveDiscountedBase || (authPricing ? authPricing.baseFinalSellingPrice : (quote.baseFinalSellingPrice || quote.base_final_selling_price)),
+      preDiscountBaseSellingPrice: effectivePreDiscountBase,
+      promotionDiscountAmount: effectivePromotionDiscountAmount,
+      discountedBaseSellingPrice: effectiveDiscountedBase,
+      appliedPromotion: effectiveAppliedPromotion,
+      promotionReservationId: (quote as any).promotionReservationId,
+      promotionRedemptionId: (quote as any).promotionRedemptionId,
+      promotionRedemptionStatus: effectiveAppliedPromotion ? ((quote as any).promotionRedemptionStatus || 'REDEEMED') : 'NONE',
       agentMarginType: authPricing ? authPricing.agentMarginType : (quote.agentMarginType || quote.agent_margin_type),
       agentMarginValue: authPricing ? authPricing.agentMarginValue : (quote.agentMarginValue || quote.agent_margin_value),
       agentMarginAmount: agentMarkup,
@@ -19346,6 +19474,39 @@ export class AppDatabase {
           Array.isArray(config.demoBookingConfig.buttons) && config.demoBookingConfig.buttons.length === 2
             ? config.demoBookingConfig.buttons
             : defaults.buttons
+      };
+    }
+
+    if (config.showPortalTutorialVideo === undefined) {
+      config.showPortalTutorialVideo = INITIAL_HOMEPAGE_CONFIG.showPortalTutorialVideo !== false;
+    }
+    if (!config.portalTutorialVideoConfig) {
+      config.portalTutorialVideoConfig = INITIAL_HOMEPAGE_CONFIG.portalTutorialVideoConfig;
+    } else {
+      const defaults = INITIAL_HOMEPAGE_CONFIG.portalTutorialVideoConfig!;
+      config.portalTutorialVideoConfig = {
+        ...defaults,
+        ...config.portalTutorialVideoConfig,
+        sectionId: 'portalTutorialVideo',
+        sectionType: 'PORTAL_TUTORIAL_VIDEO',
+      };
+    }
+
+    if (config.showCashbackRewardsVideo === undefined) {
+      config.showCashbackRewardsVideo = INITIAL_HOMEPAGE_CONFIG.showCashbackRewardsVideo !== false;
+    }
+    if (!config.cashbackRewardsVideoConfig) {
+      config.cashbackRewardsVideoConfig = INITIAL_HOMEPAGE_CONFIG.cashbackRewardsVideoConfig;
+    } else {
+      const defaults = INITIAL_HOMEPAGE_CONFIG.cashbackRewardsVideoConfig!;
+      config.cashbackRewardsVideoConfig = {
+        ...defaults,
+        ...config.cashbackRewardsVideoConfig,
+        sectionId: 'cashbackRewardsVideo',
+        sectionType: 'CASHBACK_REWARDS_VIDEO',
+        benefitPoints: Array.isArray(config.cashbackRewardsVideoConfig.benefitPoints)
+          ? config.cashbackRewardsVideoConfig.benefitPoints
+          : defaults.benefitPoints,
       };
     }
 

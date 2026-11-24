@@ -19,7 +19,7 @@ import { INITIAL_AFFILIATIONS, INITIAL_HOMEPAGE_CONFIG } from '../data/initialHo
 export interface HomepageSectionRegistryItem {
   sectionId: string;
   sectionName: string;
-  sectionType: 'HERO' | 'BRAND' | 'HUBS' | 'DESTINATIONS' | 'BENEFITS' | 'AFFILIATIONS' | 'ONBOARDING' | 'TESTIMONIALS' | 'FAQS' | 'CTA' | 'GALLERY' | 'PARTNERS' | 'NEWSLETTER' | 'DEMO_BOOKING';
+  sectionType: 'HERO' | 'BRAND' | 'HUBS' | 'DESTINATIONS' | 'BENEFITS' | 'AFFILIATIONS' | 'ONBOARDING' | 'TESTIMONIALS' | 'FAQS' | 'CTA' | 'GALLERY' | 'PARTNERS' | 'NEWSLETTER' | 'DEMO_BOOKING' | 'PORTAL_TUTORIAL_VIDEO' | 'CASHBACK_REWARDS_VIDEO';
   displayOrder: number;
   isActive: boolean;
   dataSource: string;
@@ -65,9 +65,11 @@ export class HomepageService {
     const order = config.homepageModuleOrder || [
       'hero',
       'brandIntroduction',
+      'portalTutorialVideo',
       'cityHubs',
       'destinationFilter',
       'partnershipBenefits',
+      'cashbackRewardsVideo',
       'affiliations',
       'onboardingProcess',
       'testimonials',
@@ -207,6 +209,26 @@ export class HomepageService {
         query: 'db.getHomepageConfig()',
         visibilityRule: 'config.showDemoBookingSection !== false && >= 1 enabled button with valid Calendly URL'
       },
+      portalTutorialVideo: {
+        sectionId: 'portalTutorialVideo',
+        sectionName: 'Portal Tutorial Video',
+        sectionType: 'PORTAL_TUTORIAL_VIDEO',
+        dataSource: 'HomepageConfig.portalTutorialVideoConfig',
+        cmsControl: 'HomepageManager -> Sequence & Ordering -> Portal Tutorial Video (config.showPortalTutorialVideo)',
+        firestoreSource: 'homepage_config/main.portalTutorialVideoConfig',
+        query: 'db.getHomepageConfig()',
+        visibilityRule: 'config.showPortalTutorialVideo !== false && valid 11-char YouTube videoId'
+      },
+      cashbackRewardsVideo: {
+        sectionId: 'cashbackRewardsVideo',
+        sectionName: 'Cashback & Rewards Video',
+        sectionType: 'CASHBACK_REWARDS_VIDEO',
+        dataSource: 'HomepageConfig.cashbackRewardsVideoConfig',
+        cmsControl: 'HomepageManager -> Sequence & Ordering -> Cashback & Rewards Video (config.showCashbackRewardsVideo)',
+        firestoreSource: 'homepage_config/main.cashbackRewardsVideoConfig',
+        query: 'db.getHomepageConfig()',
+        visibilityRule: 'config.showCashbackRewardsVideo !== false && valid 11-char YouTube videoId'
+      },
       conversionCta: {
         sectionId: 'conversionCta',
         sectionName: 'Final Trade Accreditation CTA Banner',
@@ -235,6 +257,8 @@ export class HomepageService {
       else if (cleanId === 'homepagefaqs' || cleanId === 'faqs') matchKey = 'homepageFaqs';
       else if (cleanId === 'newsletter' || cleanId === 'homepagenewsletter') matchKey = 'newsletter';
       else if (cleanId === 'demobooking' || cleanId === 'scheduleameeting' || cleanId === 'bookdemo') matchKey = 'demoBooking';
+      else if (cleanId === 'portaltutorialvideo' || cleanId === 'portaltutorial' || cleanId === 'tutorialvideo') matchKey = 'portalTutorialVideo';
+      else if (cleanId === 'cashbackrewardsvideo' || cleanId === 'cashbackrewards' || cleanId === 'cashbackvideo') matchKey = 'cashbackRewardsVideo';
       else if (cleanId === 'conversioncta' || cleanId === 'cta') matchKey = 'conversionCta';
 
       const def = registryMap[matchKey] || {
@@ -262,6 +286,8 @@ export class HomepageService {
       else if (matchKey === 'homepageFaqs') isActive = config.showHomepageFAQs !== false;
       else if (matchKey === 'newsletter') isActive = config.showNewsletterSection !== false;
       else if (matchKey === 'demoBooking') isActive = config.showDemoBookingSection !== false;
+      else if (matchKey === 'portalTutorialVideo') isActive = config.showPortalTutorialVideo !== false;
+      else if (matchKey === 'cashbackRewardsVideo') isActive = config.showCashbackRewardsVideo !== false;
       else if (matchKey === 'conversionCta') isActive = config.showConversionCTA !== false;
 
       return {

@@ -333,6 +333,18 @@ export interface QuotePresentationModel {
   taxesTotalNumeric: number;
   serviceFeesTotalNumeric: number;
   discountsTotalNumeric: number;
+  promotionDiscountAmountNumeric: number;
+  promotionDiscountAmountFormatted?: string;
+  appliedPromotion?: {
+    promotionId: string;
+    code: string;
+    promotionName: string;
+    discountType: 'PERCENTAGE' | 'FIXED';
+    discountValue: number;
+    discountAmountNumeric: number;
+    discountAmountFormatted: string;
+    label: string;
+  } | null;
   
   // Separate Primary Totals: Hotel Accommodation Total & Land Part Total (Excludes Accommodation)
   hasHotelAccommodation: boolean;
@@ -1441,6 +1453,13 @@ export function buildQuotePresentationModel(
   const itemsHaveProductMarkup = items.some(it => Number(it.agentAdditionalMarkupValue || 0) > 0);
   const authSnapHasProductMarkup = Number(authSnap?.pricing?.productLevelAgentMarkupTotal || 0) > 0;
   const authSnapItemMarkupsMatch = itemsHaveProductMarkup === authSnapHasProductMarkup;
+  const quotePromoSigForAuth = quote.appliedPromotion
+    ? `${quote.appliedPromotion.promotionId}:${quote.appliedPromotion.code}:${quote.appliedPromotion.discountValue}:${quote.appliedPromotion.discountAmount ?? ''}`
+    : '';
+  const authSnapPromoSig = authSnap?.pricing?.appliedPromotion
+    ? `${authSnap.pricing.appliedPromotion.promotionId}:${authSnap.pricing.appliedPromotion.code}:${authSnap.pricing.appliedPromotion.discountValue}:${authSnap.pricing.appliedPromotion.discountAmount ?? ''}`
+    : '';
+  const authSnapPromoMatches = quotePromoSigForAuth === authSnapPromoSig;
 
   const useAuthSnapPricing = Boolean(
     authSnap &&
@@ -1448,7 +1467,7 @@ export function buildQuotePresentationModel(
     authSnap.pricing.currency === effectiveCurrency &&
     (!activeOption?.id || !authSnap.selectedOptionId || authSnap.selectedOptionId === activeOption.id) &&
     (
-      (isWorkingQuoteLocked && authSnapVersionMatches && authSnapAdminMatches && authSnapOverridesMatch) ||
+      (isWorkingQuoteLocked && authSnapVersionMatches && authSnapAdminMatches && authSnapOverridesMatch && authSnapPromoMatches) ||
       (
         !isWorkingQuoteLocked &&
         authSnapVersionMatches &&
@@ -1459,7 +1478,8 @@ export function buildQuotePresentationModel(
         authSnapAdminMatches &&
         authSnapAgencyMatches &&
         authSnapOverridesMatch &&
-        authSnapItemMarkupsMatch
+        authSnapItemMarkupsMatch &&
+        authSnapPromoMatches
       )
     )
   );
@@ -1564,6 +1584,35 @@ export function buildQuotePresentationModel(
       : (centralTotals.discountAmount || 0),
     effectiveCurrency
   );
+
+  const rawAppliedPromo = useAuthSnapPricing
+    ? (authSnap!.pricing.appliedPromotion || quote.appliedPromotion || null)
+    : ((centralTotals as any).appliedPromotion || quote.appliedPromotion || null);
+  const promotionDiscountAmountNumeric = roundCurrencyAmount(
+    rawAppliedPromo
+      ? (useAuthSnapPricing
+          ? (authSnap!.pricing.promotionDiscountAmount ?? rawAppliedPromo.discountAmount ?? 0)
+          : ((centralTotals as any).promotionDiscountAmount ?? rawAppliedPromo.discountAmount ?? 0))
+      : 0,
+    effectiveCurrency
+  );
+  const promotionDiscountAmountFormatted =
+    rawAppliedPromo && promotionDiscountAmountNumeric > 0
+      ? formatCurrency(promotionDiscountAmountNumeric, effectiveCurrency)
+      : undefined;
+  const appliedPromotionView =
+    rawAppliedPromo && promotionDiscountAmountNumeric > 0
+      ? {
+          promotionId: rawAppliedPromo.promotionId,
+          code: rawAppliedPromo.code || rawAppliedPromo.normalizedCode,
+          promotionName: rawAppliedPromo.promotionName,
+          discountType: rawAppliedPromo.discountType,
+          discountValue: rawAppliedPromo.discountValue,
+          discountAmountNumeric: promotionDiscountAmountNumeric,
+          discountAmountFormatted: formatCurrency(promotionDiscountAmountNumeric, effectiveCurrency),
+          label: `${rawAppliedPromo.promotionName} (${rawAppliedPromo.code || rawAppliedPromo.normalizedCode})`
+        }
+      : null;
 
   // Authoritative total selling price across all channels
   const effectiveSellingPrice = finalCustomerSellingPriceNumeric;
@@ -1726,6 +1775,9 @@ export function buildQuotePresentationModel(
     taxesTotalNumeric,
     serviceFeesTotalNumeric,
     discountsTotalNumeric,
+    promotionDiscountAmountNumeric,
+    promotionDiscountAmountFormatted,
+    appliedPromotion: appliedPromotionView,
     brandingMode: effectiveBrandingMode,
     isWhiteLabel,
     agencyName: effectiveAgency,
@@ -2020,6 +2072,9 @@ export function renderQuoteEmailFromPresentationModel(
       `Hotel Accommodation Total        : ${model.hotelAccommodationTotalFormatted}`
     ] : []),
     `Land Part Total                  : ${model.landPartTotalFormatted}`,
+    ...(model.appliedPromotion ? [
+      `Promotional Discount (${model.appliedPromotion.code}) : -${model.appliedPromotion.discountAmountFormatted} (${model.appliedPromotion.promotionName})`
+    ] : []),
     `Final Selling Price              : ${model.finalCustomerSellingPriceFormatted}`,
     `Currency & Tax Guarantee         : ${model.guaranteedCurrencyLine}`,
     `Quotation Valid Until            : ${model.validUntilFormatted}`
@@ -2410,6 +2465,10 @@ export function renderQuoteWhatsAppFromPresentationModel(
       ] : []),
       ``,
       `🏷️ *Land Part Total:* ${model.landPartTotalFormatted}`,
+      ...(model.appliedPromotion ? [
+        ``,
+        `🎟️ *Promotional Discount (${model.appliedPromotion.code}):* -${model.appliedPromotion.discountAmountFormatted} (${model.appliedPromotion.promotionName})`
+      ] : []),
       ``,
       `💎 *Final Selling Price:* ${model.finalCustomerSellingPriceFormatted}`,
       ``,
@@ -2429,6 +2488,10 @@ export function renderQuoteWhatsAppFromPresentationModel(
       ] : []),
       ``,
       `Land Part Total: ${model.landPartTotalFormatted}`,
+      ...(model.appliedPromotion ? [
+        ``,
+        `Promotional Discount (${model.appliedPromotion.code}): -${model.appliedPromotion.discountAmountFormatted} (${model.appliedPromotion.promotionName})`
+      ] : []),
       ``,
       `Final Selling Price: ${model.finalCustomerSellingPriceFormatted}`,
       ``,
