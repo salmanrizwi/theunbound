@@ -21,11 +21,29 @@ import {
   QuotationDestinationReviewResult
 } from '../services/destinationVisibility';
 import { inventoryVisibilityService } from '../services/inventoryVisibilityService';
+import { auth } from '../services/firebase';
+import {
+  userCartService,
+  resolveAuthenticatedCartUid,
+  resolveSecondaryAgencyId,
+  isAuthorisedCartAdmin,
+  cartDocumentToVerifiedQuoteItem,
+  readUidNamespacedCartCache,
+  clearUidNamespacedCartCache,
+  clearAllUidCartCachesFromDevice
+} from '../services/userCartService';
 
 interface QuotationContextType {
   items: QuoteItem[];
   setItems: React.Dispatch<React.SetStateAction<QuoteItem[]>>;
   loadQuoteItems: (items: QuoteItem[]) => void;
+  // Strict UID-isolated persistent user cart state
+  cartItems: QuoteItem[];
+  cartOwnerUid: string | null;
+  isCartVerified: boolean;
+  cartTotalSellingPrice: number;
+  removeFromCart: (itemId: string) => void;
+  clearCart: () => void;
   currency: CurrencyCode;
   setCurrency: (curr: CurrencyCode) => void;
   isQuoteDrawerOpen: boolean;
@@ -228,6 +246,8 @@ export type QuotationActionsContextType = Pick<
   | 'toggleItemAddon'
   | 'updateItemNotes'
   | 'clearQuote'
+  | 'removeFromCart'
+  | 'clearCart'
   | 'setClientName'
   | 'setClientEmail'
   | 'setClientCompany'
@@ -270,7 +290,7 @@ const QuotationContext = createContext<QuotationContextType | undefined>(undefin
 const QuotationActionsContext = createContext<QuotationActionsContextType | undefined>(undefined);
 
 export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, authState } = useAuth();
   const [destinationVisibilityError, setDestinationVisibilityError] = useState<string | null>(null);
   const clearDestinationVisibilityError = useCallback(() => setDestinationVisibilityError(null), []);
   const [visRevision, setVisRevision] = useState(0);
@@ -282,19 +302,22 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return unsub;
   }, []);
 
-  const [items, setItems] = useState<QuoteItem[]>(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const saved = sessionStorage.getItem('theunbound_cart_items') || localStorage.getItem('theunbound_cart_items');
-        if (saved) {
-          return JSON.parse(saved);
-        }
-      }
-    } catch (e) {
-      console.warn('Cart items storage load note:', e);
-    }
-    return [];
-  });
+  // NEVER initialize cart items from any shared global localStorage/sessionStorage key.
+  // Items remain strictly empty until Firebase Auth UID ownership is verified.
+  const [items, setItems] = useState<QuoteItem[]>([]);
+  const [cartItems, setCartItems] = useState<QuoteItem[]>([]);
+  const [cartOwnerUid, setCartOwnerUid] = useState<string | null>(null);
+  const [isCartVerified, setIsCartVerified] = useState<boolean>(false);
+
+  const activeCartUidRef = useRef<string | null>(null);
+  const prevAuthenticatedUidRef = useRef<string | null>(null);
+  const cartUnsubscribeRef = useRef<(() => void) | null>(null);
+  const isEditingSavedQuoteRef = useRef<boolean>(false);
+
+  const authenticatedCartUid = useMemo(() => {
+    if (authState !== 'AUTHENTICATED_READY' || !user) return null;
+    return resolveAuthenticatedCartUid(user, auth?.currentUser || null);
+  }, [authState, user]);
   const [currency, setCurrencyState] = useState<CurrencyCode>(() => {
     try {
       const globalCurr = displayCurrencyService.getDisplayCurrency();
@@ -357,89 +380,121 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const isQuoteDrawerOpen = isQuoteDrawerOpenState;
 
-  // Sync items to storage for session and cross-page persistence (debounced to prevent blocking main thread on multi-day edits)
-  const latestItemsRef = useRef<QuoteItem[]>(items);
-  latestItemsRef.current = items;
-  const itemsDirtyRef = useRef<boolean>(false);
-
-  const compactQuoteItemsForStorage = useCallback((targetItems: QuoteItem[]): any[] => {
-    return targetItems.map(it => {
-      const prod = it.product as any;
-      if (!prod) return it;
-      const hasHeavyGallery = Array.isArray(prod.galleryImages) && prod.galleryImages.length > 1;
-      const hasInlineDataUrl = typeof prod.image === 'string' && prod.image.startsWith('data:') && prod.image.length > 8192;
-      const hasLongDesc = typeof prod.longDescription === 'string' && prod.longDescription.length > 600;
-      const hasHeavyRooms = Array.isArray(prod.roomTypes) && prod.roomTypes.length > 0;
-      if (!hasHeavyGallery && !hasInlineDataUrl && !hasLongDesc && !hasHeavyRooms) {
-        return it;
-      }
-      const nextProd = { ...prod };
-      if (hasHeavyGallery) nextProd.galleryImages = prod.galleryImages.slice(0, 1);
-      if (hasInlineDataUrl) delete nextProd.image;
-      if (hasLongDesc) nextProd.longDescription = prod.longDescription.slice(0, 600);
-      if (hasHeavyRooms) delete nextProd.roomTypes;
-      return { ...it, product: nextProd };
-    });
-  }, []);
-
-  const flushItemsToStorage = useCallback((targetItems: QuoteItem[]) => {
-    if (typeof window === 'undefined') return;
-    if (!itemsDirtyRef.current) return;
-    try {
-      if (targetItems.length === 0) {
-        const hadSession = sessionStorage.getItem('theunbound_cart_items');
-        if (!hadSession || hadSession === '[]') {
-          itemsDirtyRef.current = false;
-          return;
-        }
-      }
-      const compact = compactQuoteItemsForStorage(targetItems);
-      const serialized = JSON.stringify(compact);
+  // =========================================================================
+  // STRICT UID-SCOPED CART SUBSCRIPTION, ACCOUNT-SWITCH & LOGOUT HYGIENE
+  // =========================================================================
+  useEffect(() => {
+    // 1. Always unsubscribe any previous Firestore cart listener immediately
+    if (cartUnsubscribeRef.current) {
       try {
-        sessionStorage.setItem('theunbound_cart_items', serialized);
+        cartUnsubscribeRef.current();
       } catch {}
-      if (serialized.length <= 262144) {
-        try {
-          localStorage.setItem('theunbound_cart_items', serialized);
-        } catch {}
-      }
-      itemsDirtyRef.current = false;
-    } catch (e) {
-      console.warn('Cart items storage sync note:', e);
+      cartUnsubscribeRef.current = null;
     }
-  }, [compactQuoteItemsForStorage]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    itemsDirtyRef.current = true;
-    const handleFlush = () => flushItemsToStorage(latestItemsRef.current);
-    let idleHandle: number | null = null;
-    const timer = window.setTimeout(() => {
-      const w = window as any;
-      if (typeof w.requestIdleCallback === 'function') {
-        idleHandle = w.requestIdleCallback(handleFlush, { timeout: 1000 });
-      } else {
-        handleFlush();
-      }
-    }, 550);
-    window.addEventListener('pagehide', handleFlush);
-    return () => {
-      window.clearTimeout(timer);
-      const w = window as any;
-      if (idleHandle !== null && typeof w.cancelIdleCallback === 'function') {
-        w.cancelIdleCallback(idleHandle);
-      }
-      window.removeEventListener('pagehide', handleFlush);
-    };
-  }, [items, flushItemsToStorage]);
+    const previousUid = prevAuthenticatedUidRef.current;
 
-  useEffect(() => {
+    // 2. Unauthenticated, initializing, or profile loading:
+    //    Immediately purge in-memory cart state so ZERO items ever flash or leak across users.
+    if (!authenticatedCartUid || authState !== 'AUTHENTICATED_READY' || !user) {
+      activeCartUidRef.current = null;
+      isEditingSavedQuoteRef.current = false;
+      setCartItems([]);
+      setCartOwnerUid(null);
+      setIsCartVerified(false);
+      setItems([]);
+      setIsQuoteDrawerOpenState(false);
+
+      if (authState === 'UNAUTHENTICATED') {
+        if (previousUid) {
+          clearUidNamespacedCartCache(previousUid);
+        }
+        clearAllUidCartCachesFromDevice();
+        prevAuthenticatedUidRef.current = null;
+      }
+      return;
+    }
+
+    // 3. Account switch detected: purge previous user's in-memory state and temporary cache BEFORE loading next user
+    if (previousUid && previousUid !== authenticatedCartUid) {
+      clearUidNamespacedCartCache(previousUid);
+      setCartItems([]);
+      setItems([]);
+      setCartOwnerUid(null);
+      setIsCartVerified(false);
+      setIsQuoteDrawerOpenState(false);
+      isEditingSavedQuoteRef.current = false;
+    }
+
+    prevAuthenticatedUidRef.current = authenticatedCartUid;
+    activeCartUidRef.current = authenticatedCartUid;
+
+    // 4. Safe idempotent quarantine/migration of any legacy shared 'theunbound_cart_items' on this browser
+    //    Ensures unowned legacy shared items NEVER leak into this authenticated agent's cart.
+    void userCartService
+      .migrateOrQuarantineLegacyCartRecords({
+        actor: user,
+        actorFirebaseUid: authenticatedCartUid,
+        verifiedKnownUids: new Set([authenticatedCartUid])
+      })
+      .catch((err) => {
+        console.warn('[QuotationContext] Legacy cart quarantine check note:', err);
+      });
+
+    // 5. Optional fast hydrate strictly from UID-namespaced cache (verified ownerUid === authenticatedCartUid ONLY)
+    const cachedDocs = readUidNamespacedCartCache(authenticatedCartUid);
+    if (cachedDocs.length > 0 && activeCartUidRef.current === authenticatedCartUid) {
+      const verifiedCached = cachedDocs
+        .map((d) => cartDocumentToVerifiedQuoteItem(d, authenticatedCartUid))
+        .filter((it): it is QuoteItem => Boolean(it));
+      setCartItems(verifiedCached);
+      setCartOwnerUid(authenticatedCartUid);
+      setIsCartVerified(true);
+      if (!isEditingSavedQuoteRef.current) {
+        setItems(verifiedCached);
+      }
+    } else {
+      setCartItems([]);
+      if (!isEditingSavedQuoteRef.current) {
+        setItems([]);
+      }
+    }
+
+    // 6. Attach authoritative real-time Firestore listener scoped strictly to users/{authenticatedCartUid}/cart
+    const unsub = userCartService.subscribeToOwnCart(
+      user,
+      authenticatedCartUid,
+      (docs) => {
+        // Stale closure guard: ignore any snapshot for a different UID
+        if (activeCartUidRef.current !== authenticatedCartUid) return;
+        const verifiedItems = docs
+          .map((d) => cartDocumentToVerifiedQuoteItem(d, authenticatedCartUid))
+          .filter((it): it is QuoteItem => Boolean(it));
+        setCartItems(verifiedItems);
+        setCartOwnerUid(authenticatedCartUid);
+        setIsCartVerified(true);
+        if (!isEditingSavedQuoteRef.current) {
+          setItems(verifiedItems);
+        }
+      },
+      () => {
+        if (activeCartUidRef.current !== authenticatedCartUid) return;
+        setCartOwnerUid(authenticatedCartUid);
+        setIsCartVerified(true);
+      }
+    );
+
+    cartUnsubscribeRef.current = unsub;
+
     return () => {
-      if (itemsDirtyRef.current) {
-        flushItemsToStorage(latestItemsRef.current);
+      try {
+        unsub();
+      } catch {}
+      if (cartUnsubscribeRef.current === unsub) {
+        cartUnsubscribeRef.current = null;
       }
     };
-  }, [flushItemsToStorage]);
+  }, [authenticatedCartUid, authState, user]);
   
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
@@ -710,6 +765,11 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
     const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
 
+    const nowIso = new Date().toISOString();
+    const ownerUid = authenticatedCartUid || undefined;
+    const secondaryAgencyId = resolveSecondaryAgencyId(user);
+    const addedByRole = isAuthorisedCartAdmin(user) ? 'ADMIN' : 'B2B_AGENT';
+
     const newItem: QuoteItem = {
       id: newItemId,
       product: effectiveProduct,
@@ -755,6 +815,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       vehicleNameSnapshot: options?.vehicleNameSnapshot || options?.configuration_snapshot?.vehicleName || options?.metadata?.vehicleName || (effectiveProduct as any).vehicleNameSnapshot,
       vehicleTypeSnapshot: options?.vehicleTypeSnapshot || options?.configuration_snapshot?.vehicleType || options?.metadata?.vehicleType || (effectiveProduct as any).vehicleTypeSnapshot,
       vehicleCapacitySnapshot: options?.vehicleCapacitySnapshot || options?.configuration_snapshot?.masterCapacity || options?.configuration_snapshot?.maxCapacity || (effectiveProduct as any).vehicleCapacitySnapshot,
+      ownerUid,
+      agencyId: secondaryAgencyId,
+      addedByUid: ownerUid,
+      addedByRole,
+      addedByName: user?.name,
+      addedByEmail: user?.email,
+      addedAt: nowIso,
+      updatedAt: nowIso,
+      cartSchemaVersion: 2,
       metadata: {
         ...(options?.metadata || {}),
         itineraryHubOccurrenceId: options?.itineraryHubOccurrenceId || options?.hubId || options?.metadata?.itineraryHubOccurrenceId,
@@ -769,14 +838,63 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     newItem.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, newItem);
 
     setItems(prev => [...prev, newItem]);
+
+    // Persist strictly to authenticated user's own cart when NOT editing an existing saved quotation
+    if (!isEditingSavedQuoteRef.current && authenticatedCartUid && user) {
+      setCartItems(prev => [...prev, newItem]);
+      setCartOwnerUid(authenticatedCartUid);
+      setIsCartVerified(true);
+      void userCartService
+        .upsertOwnCartItem({
+          actor: user,
+          actorFirebaseUid: authenticatedCartUid,
+          quoteItem: newItem
+        })
+        .catch((err) => {
+          console.warn('[QuotationContext] Failed to persist cart item to Firestore:', err);
+        });
+    }
+
     if (options?.openDrawer !== false && !isInsideB2BQuoteBuilder()) {
       setIsQuoteDrawerOpen(true);
     }
-  }, [calculateItemPrice, currency, isAgent, pricingTier, setIsQuoteDrawerOpen, travelStartDate]);
+  }, [authenticatedCartUid, calculateItemPrice, currency, isAgent, pricingTier, setIsQuoteDrawerOpen, travelStartDate, user]);
+
+  const removeFromCart = useCallback((itemId: string) => {
+    setCartItems(prev => prev.filter(i => i.id !== itemId));
+    if (!isEditingSavedQuoteRef.current) {
+      setItems(prev => prev.filter(i => i.id !== itemId));
+    }
+    if (authenticatedCartUid && user) {
+      void userCartService
+        .removeCartItem({
+          actor: user,
+          actorFirebaseUid: authenticatedCartUid,
+          cartItemId: itemId
+        })
+        .catch((err) => {
+          console.warn('[QuotationContext] Failed to remove item from user cart:', err);
+        });
+    }
+  }, [authenticatedCartUid, user]);
 
   const removeProductFromQuote = useCallback((itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
-  }, []);
+    if (!isEditingSavedQuoteRef.current) {
+      setCartItems(prev => prev.filter(i => i.id !== itemId));
+      if (authenticatedCartUid && user) {
+        void userCartService
+          .removeCartItem({
+            actor: user,
+            actorFirebaseUid: authenticatedCartUid,
+            cartItemId: itemId
+          })
+          .catch((err) => {
+            console.warn('[QuotationContext] Failed to remove item from user cart:', err);
+          });
+      }
+    }
+  }, [authenticatedCartUid, user]);
 
   const removeProductsByIds = useCallback((itemIds: string[]) => {
     if (!itemIds || itemIds.length === 0) return;
@@ -785,7 +903,35 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const next = prev.filter(i => !removeSet.has(i.id));
       return next.length === prev.length ? prev : next;
     });
-  }, []);
+    if (!isEditingSavedQuoteRef.current) {
+      setCartItems(prev => prev.filter(i => !removeSet.has(i.id)));
+      if (authenticatedCartUid && user) {
+        itemIds.forEach((id) => {
+          void userCartService
+            .removeCartItem({
+              actor: user,
+              actorFirebaseUid: authenticatedCartUid,
+              cartItemId: id
+            })
+            .catch(() => {});
+        });
+      }
+    }
+  }, [authenticatedCartUid, user]);
+
+  const persistUpdatedStandaloneCartItem = useCallback((updatedItem: QuoteItem) => {
+    if (isEditingSavedQuoteRef.current || !authenticatedCartUid || !user) return;
+    setCartItems(prev => prev.map(i => (i.id === updatedItem.id ? updatedItem : i)));
+    void userCartService
+      .upsertOwnCartItem({
+        actor: user,
+        actorFirebaseUid: authenticatedCartUid,
+        quoteItem: updatedItem
+      })
+      .catch((err) => {
+        console.warn('[QuotationContext] Failed to sync updated cart item:', err);
+      });
+  }, [authenticatedCartUid, user]);
 
   const updateItemPax = useCallback((itemId: string, pax: { adults: number; children: number; infants: number }) => {
     setItems(prev =>
@@ -806,7 +952,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
-        const updated = {
+        const updated: QuoteItem = {
           ...item,
           pax,
           calculation,
@@ -814,10 +960,11 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           aiSuggested: false
         };
         updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        persistUpdatedStandaloneCartItem(updated);
         return updated;
       })
     );
-  }, [calculateItemPrice, currency, pricingTier]);
+  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
 
   const updateItemTravelDate = useCallback((itemId: string, date: string) => {
     setItems(prev =>
@@ -838,7 +985,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           targetCurrency: currency,
           selectedAddonIds: item.selectedAddonIds
         });
-        const updated = {
+        const updated: QuoteItem = {
           ...item,
           travelDate: date,
           calculation,
@@ -846,21 +993,23 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           aiSuggested: false
         };
         updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        persistUpdatedStandaloneCartItem(updated);
         return updated;
       })
     );
-  }, [calculateItemPrice, currency, pricingTier]);
+  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
 
   const updateItemServiceTime = useCallback((itemId: string, time: string) => {
     setItems(prev =>
       prev.map(item => {
         if (item.id !== itemId) return item;
-        const updated = { ...item, serviceTime: time, source: 'USER', aiSuggested: false };
+        const updated: QuoteItem = { ...item, serviceTime: time, source: 'USER', aiSuggested: false };
         updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        persistUpdatedStandaloneCartItem(updated);
         return updated;
       })
     );
-  }, []);
+  }, [persistUpdatedStandaloneCartItem]);
 
   const updateItemFull = useCallback((
     itemId: string,
@@ -893,7 +1042,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           selectedAddonIds: nextAddons
         });
 
-        const updated = {
+        const updated: QuoteItem = {
           ...item,
           travelDate: nextDate,
           serviceTime: nextServiceTime,
@@ -905,10 +1054,11 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           aiSuggested: updates.source === 'AI_PLANNER'
         };
         updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+        persistUpdatedStandaloneCartItem(updated);
         return updated;
       })
     );
-  }, [calculateItemPrice, currency, pricingTier]);
+  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
 
   const updateQuoteItem = useCallback((
     itemId: string,
@@ -1000,10 +1150,11 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           }
         };
         updated.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, updated);
+        persistUpdatedStandaloneCartItem(updated);
         return updated;
       })
     );
-  }, [calculateItemPrice, currency, isAgent, pricingTier]);
+  }, [calculateItemPrice, currency, isAgent, persistUpdatedStandaloneCartItem, pricingTier]);
 
   const toggleItemAddon = useCallback((itemId: string, addonId: string) => {
     setItems(prev =>
@@ -1025,24 +1176,57 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           selectedAddonIds: nextAddons
         });
 
-        return {
+        const updated = {
           ...item,
           selectedAddonIds: nextAddons,
           calculation,
-          source: 'USER',
+          source: 'USER' as const,
           aiSuggested: false
         };
+        persistUpdatedStandaloneCartItem(updated);
+        return updated;
       })
     );
-  }, [calculateItemPrice, currency, pricingTier]);
+  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
 
   const updateItemNotes = useCallback((itemId: string, notes: string) => {
     setItems(prev =>
-      prev.map(item => (item.id === itemId ? { ...item, notes, source: 'USER', aiSuggested: false } : item))
+      prev.map(item => {
+        if (item.id !== itemId) return item;
+        const updated = { ...item, notes, source: 'USER' as const, aiSuggested: false };
+        persistUpdatedStandaloneCartItem(updated);
+        return updated;
+      })
     );
-  }, []);
+  }, [persistUpdatedStandaloneCartItem]);
 
+  /**
+   * Clears ONLY the authenticated user's own persistent cart (`users/{uid}/cart`).
+   * Never touches saved quotations, other users' carts, or agency-wide data.
+   */
+  const clearCart = useCallback(() => {
+    setCartItems([]);
+    if (!isEditingSavedQuoteRef.current) {
+      setItems([]);
+    }
+    if (authenticatedCartUid && user) {
+      void userCartService
+        .clearOwnCart({
+          actor: user,
+          actorFirebaseUid: authenticatedCartUid
+        })
+        .catch((err) => {
+          console.warn('[QuotationContext] Failed to clear user cart:', err);
+        });
+    }
+  }, [authenticatedCartUid, user]);
+
+  /**
+   * Resets the Quote Builder draft workspace WITHOUT wiping another user's cart
+   * or silently mutating saved quotations.
+   */
   const clearQuote = useCallback(() => {
+    isEditingSavedQuoteRef.current = false;
     setItems([]);
     setQuoteTitle('');
     setSourcePackageId(null);
@@ -1074,14 +1258,6 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setActiveQuoteId(null);
     setCurrentVersion(1);
     setIsLocked(false);
-    try {
-      if (typeof window !== 'undefined') {
-        sessionStorage.removeItem('theunbound_cart_items');
-        localStorage.removeItem('theunbound_cart_items');
-      }
-    } catch (e) {
-      console.warn('Clear cart storage note:', e);
-    }
   }, []);
 
   const loadAiPlannerPayload = useCallback((payload: QuoteBuilderHandoffPayload) => {
@@ -1461,6 +1637,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ]);
 
   const loadSavedQuote = useCallback((quote: Quotation) => {
+    // Editing an existing saved quotation is strictly isolated from the user's standalone cart
+    isEditingSavedQuoteRef.current = true;
     setItems(quote.items || []);
     setQuoteTitle(quote.title || '');
     setSourcePackageId(quote.sourcePackageId || null);
@@ -1573,10 +1751,25 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     );
   }, [activeQuoteId, user, destination, routeHubs, items, visRevision]);
 
+  const cartTotalSellingPrice = useMemo(() => {
+    if (!isCartVerified || !cartOwnerUid) return 0;
+    let sum = 0;
+    for (const item of cartItems) {
+      sum += item.calculation?.finalTotalSellingPrice || 0;
+    }
+    return roundCurrencyAmount(sum, currency);
+  }, [cartItems, cartOwnerUid, currency, isCartVerified]);
+
   const contextValue = useMemo<QuotationContextType>(() => ({
     items,
     setItems,
     loadQuoteItems,
+    cartItems: isCartVerified && cartOwnerUid === authenticatedCartUid ? cartItems : [],
+    cartOwnerUid,
+    isCartVerified,
+    cartTotalSellingPrice,
+    removeFromCart,
+    clearCart,
     currency,
     setCurrency,
     isQuoteDrawerOpen,
@@ -1663,6 +1856,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     clearDestinationVisibilityError
   }), [
     items,
+    cartItems,
+    cartOwnerUid,
+    authenticatedCartUid,
+    isCartVerified,
+    cartTotalSellingPrice,
+    removeFromCart,
+    clearCart,
     currency,
     isQuoteDrawerOpen,
     setIsQuoteDrawerOpen,
@@ -1741,6 +1941,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     toggleItemAddon,
     updateItemNotes,
     clearQuote,
+    removeFromCart,
+    clearCart,
     setClientName,
     setClientEmail,
     setClientCompany,
@@ -1790,6 +1992,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     toggleItemAddon,
     updateItemNotes,
     clearQuote,
+    removeFromCart,
+    clearCart,
     setQuotationDates,
     setClientDetails,
     clearPriceRefreshNotice,

@@ -34,6 +34,13 @@ import {
 } from '../ServiceItemActionModals';
 import { VoucherDocumentView } from '../VoucherDocumentView';
 import { GlobalConfiguratorRouter } from '../../Configurators/GlobalConfiguratorRouter';
+import {
+  CANONICAL_ALLOCATION_STATUSES,
+  CanonicalAllocationStatus,
+  HydratedBookingServiceItem,
+  hydrateBookingServiceItem,
+  resolveCanonicalAllocationStatus
+} from '../../../services/bookingOperationsSyncService';
 
 interface DeskServiceItemsSectionProps {
   booking: Booking;
@@ -47,7 +54,13 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
   onRefresh
 }) => {
   const db = AppDatabase.getInstance();
-  const items = booking.items || [];
+  const items: HydratedBookingServiceItem[] = useMemo(() => {
+    const products = db.getProducts();
+    const productMap = new Map(products.map(p => [p.id, p]));
+    return (booking.items || []).map(it =>
+      hydrateBookingServiceItem(it, booking, it.productId ? productMap.get(it.productId) || null : null)
+    );
+  }, [booking, db]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -61,10 +74,12 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
   const [deletingItem, setDeletingItem] = useState<BookingItem | null>(null);
   const [overrideItem, setOverrideItem] = useState<BookingItem | null>(null);
 
-  // Quick Allocate Modal State
+  // Synchronised Supplier Allocation Modal State
   const [isQuickAllocOpen, setIsQuickAllocOpen] = useState(false);
-  const [quickAllocItem, setQuickAllocItem] = useState<BookingItem | null>(null);
+  const [quickAllocItem, setQuickAllocItem] = useState<HydratedBookingServiceItem | null>(null);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
+  const [allocStatus, setAllocStatus] = useState<CanonicalAllocationStatus>('Pending Allocation');
+  const [allocConfirmationRef, setAllocConfirmationRef] = useState('');
   const [allocNotes, setAllocNotes] = useState('');
 
   // Quick Price Modal State
@@ -136,13 +151,12 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
     onRefresh();
   };
 
-  // Quick Allocate Supplier Submit
+  // Synchronised Supplier Allocation Submit (Updates authoritative Service Item — zero duplicate records)
   const handleQuickAllocateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!quickAllocItem) return;
 
     if (!selectedSupplierId) {
-      // Unallocate
       const res = db.allocateServiceItemSupplier(booking.id, quickAllocItem.id, null, currentUser);
       if (!res.success) alert(res.error || 'Failed to unallocate');
     } else {
@@ -156,6 +170,8 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
         supplierContact: `${sup.phone || ''} ${sup.email || ''}`.trim(),
         supplierPhone: sup.phone,
         supplierEmail: sup.email,
+        supplierConfirmationRef: allocConfirmationRef.trim() || undefined,
+        allocationStatus: allocStatus,
         supplierNotes: allocNotes.trim() || undefined
       }, currentUser);
 
@@ -368,25 +384,29 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
                                     onClick={() => {
                                       setQuickAllocItem(item);
                                       setSelectedSupplierId(item.supplierId || '');
+                                      setAllocStatus(resolveCanonicalAllocationStatus(item));
+                                      setAllocConfirmationRef(item.supplierConfirmationRef || '');
                                       setAllocNotes(item.supplierNotes || '');
                                       setIsQuickAllocOpen(true);
                                     }}
                                     className="text-[10px] text-[#008f77] hover:underline font-bold cursor-pointer mt-0.5 block"
                                   >
-                                    Change Supplier
+                                    Manage Allocation
                                   </button>
                                 )}
                               </div>
                             ) : (
                               <div>
                                 <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 text-[10px] font-bold border border-amber-200">
-                                  Unallocated
+                                  Pending Allocation
                                 </span>
                                 {canAllocate && (
                                   <button
                                     onClick={() => {
                                       setQuickAllocItem(item);
                                       setSelectedSupplierId('');
+                                      setAllocStatus('Pending Allocation');
+                                      setAllocConfirmationRef('');
                                       setAllocNotes('');
                                       setIsQuickAllocOpen(true);
                                     }}
@@ -552,7 +572,7 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
           currentUser={currentUser}
           isOpen={Boolean(editingItem)}
           onClose={() => setEditingItem(null)}
-          onRefresh={onRefresh}
+          onSuccess={onRefresh}
         />
       )}
 
@@ -563,84 +583,199 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
           currentUser={currentUser}
           isOpen={isAddModalOpen}
           onClose={() => setIsAddModalOpen(false)}
-          onRefresh={onRefresh}
+          onSuccess={onRefresh}
         />
       )}
 
       {/* 3. VOUCHER DOCUMENT PREVIEW MODAL */}
       {selectedVoucherForPreview && (
         <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-4xl w-full p-6 shadow-2xl space-y-4 border border-slate-200">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-[#00C6A6]" />
-                Activity Service Voucher • {selectedVoucherForPreview.serviceName}
-              </h3>
-              <button
-                onClick={() => setSelectedVoucherForPreview(null)}
-                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
+          <div className="bg-white rounded-3xl max-w-4xl w-full p-6 shadow-2xl space-y-4 border border-slate-200 my-8">
             <VoucherDocumentView
               voucher={selectedVoucherForPreview}
+              booking={booking}
+              isOutdated={selectedVoucherForPreview.isOutdated}
               onClose={() => setSelectedVoucherForPreview(null)}
             />
           </div>
         </div>
       )}
 
-      {/* 4. QUICK ALLOCATE SUPPLIER MODAL */}
+      {/* 4. SYNCHRONISED SUPPLIER ALLOCATION MODAL (Single Authoritative Service Record) */}
       {isQuickAllocOpen && quickAllocItem && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-8 max-h-[92vh] overflow-y-auto border border-slate-200">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                <Building2 className="w-4 h-4 text-[#008f77]" />
-                Allocate Supplier Partner
-              </h3>
+              <div>
+                <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-[#008f77]" />
+                  Synchronised Supplier Allocation
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Bound directly to authoritative Service Item <span className="font-mono font-bold">{quickAllocItem.id}</span> • Booking #{booking.bookingReference}
+                </p>
+              </div>
               <button
                 onClick={() => setIsQuickAllocOpen(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 text-xs">
-              <span className="text-[10px] text-slate-400 font-bold uppercase block">Target Service</span>
-              <span className="font-bold text-slate-900">{quickAllocItem.productName}</span>
+            {/* Authoritative Read-Only Synchronised Service Details Snapshot */}
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 text-xs">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <span className="text-[10px] text-[#008972] font-black uppercase tracking-wider block">
+                    Authoritative Service Specification (Live Synced)
+                  </span>
+                  <div className="font-black text-slate-900 text-sm mt-0.5">{quickAllocItem.productName}</div>
+                  <div className="text-[11px] text-slate-500">
+                    {quickAllocItem.category} • {[quickAllocItem.destination, quickAllocItem.hub].filter(Boolean).join(' • ')}
+                  </div>
+                </div>
+                {quickAllocItem.pricingSnapshotId && (
+                  <span className="px-2 py-0.5 rounded-md bg-white border border-slate-200 font-mono text-[10px] font-bold text-slate-600">
+                    Pricing Ref: {quickAllocItem.pricingSnapshotId}
+                  </span>
+                )}
+              </div>
+
+              {(quickAllocItem.resolvedDescription || quickAllocItem.resolvedOverview) && (
+                <div className="p-2.5 rounded-xl bg-white border border-slate-200/80 text-[11px] text-slate-700 leading-relaxed">
+                  {quickAllocItem.resolvedDescription || quickAllocItem.resolvedOverview}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                <div className="p-2 rounded-xl bg-white border border-slate-200/80">
+                  <span className="text-[9px] font-bold uppercase text-slate-400 block">Service Date</span>
+                  <strong className="text-slate-900">{quickAllocItem.resolvedServiceDate || 'Pending Date'}</strong>
+                </div>
+                <div className="p-2 rounded-xl bg-white border border-slate-200/80">
+                  <span className="text-[9px] font-bold uppercase text-slate-400 block">
+                    {quickAllocItem.isTicketedActivity ? 'Ticket Entry Time' : quickAllocItem.isTransportService ? 'Pickup Time' : 'Service Time'}
+                  </span>
+                  <strong className="text-slate-900">
+                    {quickAllocItem.resolvedTicketEntryTime || quickAllocItem.resolvedPickupTime || quickAllocItem.resolvedStartTime || 'Not Set'}
+                    {quickAllocItem.resolvedTimeZone ? ` (${quickAllocItem.resolvedTimeZone})` : ''}
+                  </strong>
+                </div>
+                <div className="p-2 rounded-xl bg-white border border-slate-200/80">
+                  <span className="text-[9px] font-bold uppercase text-slate-400 block">Passengers</span>
+                  <strong className="text-slate-900">{quickAllocItem.resolvedPassengerBreakdown}</strong>
+                </div>
+
+                {quickAllocItem.isTransportService && (
+                  <>
+                    <div className="p-2 rounded-xl bg-teal-50/60 border border-teal-100">
+                      <span className="text-[9px] font-bold uppercase text-teal-700 block">Vehicle Config</span>
+                      <strong className="text-slate-900">
+                        {quickAllocItem.vehicleType || 'Not Specified'}
+                        {quickAllocItem.vehicleSeaterCapacity ? ` (${quickAllocItem.vehicleSeaterCapacity} Seats)` : ''}
+                      </strong>
+                    </div>
+                    <div className="p-2 rounded-xl bg-teal-50/60 border border-teal-100">
+                      <span className="text-[9px] font-bold uppercase text-teal-700 block">Pickup Location</span>
+                      <strong className="text-slate-900">{quickAllocItem.resolvedPickupLocation || 'Not Specified'}</strong>
+                    </div>
+                    <div className="p-2 rounded-xl bg-teal-50/60 border border-teal-100">
+                      <span className="text-[9px] font-bold uppercase text-teal-700 block">Drop-off Location</span>
+                      <strong className="text-slate-900">{quickAllocItem.resolvedDropoffLocation || 'Not Specified'}</strong>
+                    </div>
+                  </>
+                )}
+
+                {!quickAllocItem.isTransportService && quickAllocItem.resolvedMeetingPoint && (
+                  <div className="p-2 rounded-xl bg-white border border-slate-200/80 col-span-2 sm:col-span-3">
+                    <span className="text-[9px] font-bold uppercase text-slate-400 block">Meeting Point</span>
+                    <strong className="text-slate-900">{quickAllocItem.resolvedMeetingPoint}</strong>
+                  </div>
+                )}
+              </div>
             </div>
 
             <form onSubmit={handleQuickAllocateSubmit} className="space-y-4">
-              <div>
-                <label className="text-[10px] font-bold uppercase text-slate-500">Master Supplier Partner</label>
-                <select
-                  value={selectedSupplierId}
-                  onChange={e => setSelectedSupplierId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#008f77] mt-1"
-                >
-                  <option value="">-- Unallocated / Remove Supplier --</option>
-                  {masterSuppliers.map(sup => (
-                    <option key={sup.id} value={sup.id}>
-                      {sup.name} ({sup.category || 'General'} • {sup.city || 'Japan'})
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Master Supplier Partner</label>
+                  <select
+                    value={selectedSupplierId}
+                    onChange={e => {
+                      setSelectedSupplierId(e.target.value);
+                      if (e.target.value && allocStatus === 'Pending Allocation') {
+                        setAllocStatus('Supplier Selected');
+                      } else if (!e.target.value) {
+                        setAllocStatus('Pending Allocation');
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#008f77] mt-1"
+                  >
+                    <option value="">-- Unallocated / Remove Supplier --</option>
+                    {masterSuppliers.map(sup => (
+                      <option key={sup.id} value={sup.id}>
+                        {sup.name} ({sup.categories?.[0] || 'Partner'} • {sup.city || sup.destination || 'Global'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Allocation Status</label>
+                  <select
+                    value={allocStatus}
+                    onChange={e => setAllocStatus(e.target.value as CanonicalAllocationStatus)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#008f77] mt-1"
+                  >
+                    {CANONICAL_ALLOCATION_STATUSES.map(st => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div>
-                <label className="text-[10px] font-bold uppercase text-slate-500">Dispatch / Operational Notes</label>
+                <label className="text-[10px] font-bold uppercase text-slate-500">Supplier Confirmation Reference</label>
+                <input
+                  type="text"
+                  value={allocConfirmationRef}
+                  onChange={e => setAllocConfirmationRef(e.target.value)}
+                  placeholder="e.g., SUP-CONF-2026-8841"
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-mono font-bold text-[#008972] focus:outline-none focus:border-[#008f77] mt-1"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase text-slate-500">Dispatch / Supplier Notes</label>
                 <textarea
                   rows={2}
                   value={allocNotes}
                   onChange={e => setAllocNotes(e.target.value)}
-                  placeholder="Special instructions for driver, guide, or desk..."
+                  placeholder="Special instructions for driver, guide, or supplier reservations desk..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:border-[#008f77] mt-1"
                 />
               </div>
+
+              {quickAllocItem.allocationHistory && quickAllocItem.allocationHistory.length > 0 && (
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                  <div className="text-[10px] font-black uppercase text-slate-500">
+                    Allocation &amp; Reconfirmation History ({quickAllocItem.allocationHistory.length})
+                  </div>
+                  <div className="space-y-1 max-h-28 overflow-y-auto">
+                    {quickAllocItem.allocationHistory.slice(0, 5).map((h, i) => (
+                      <div key={i} className="text-[11px] text-slate-600 flex items-center justify-between gap-2 border-b border-slate-200/60 pb-1 last:border-none">
+                        <span>
+                          <strong className="text-slate-800">{h.action.replace(/_/g, ' ')}</strong>
+                          {h.newStatus ? ` -> ${h.newStatus}` : ''}
+                          {h.previousConfirmationRef ? ` (Prev Ref: ${h.previousConfirmationRef})` : ''}
+                        </span>
+                        <span className="text-[10px] text-slate-400 shrink-0">{h.actorName}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
@@ -654,7 +789,7 @@ export const DeskServiceItemsSection: React.FC<DeskServiceItemsSectionProps> = (
                   type="submit"
                   className="px-4 py-2 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold cursor-pointer"
                 >
-                  Save Allocation
+                  Save Synchronised Allocation
                 </button>
               </div>
             </form>

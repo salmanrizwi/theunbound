@@ -60,7 +60,7 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
     currency, 
     totalSellingPrice, 
     totalNetCost, 
-    clearQuote,
+    clearCart,
     clientName,
     clientEmail,
     clientPhone,
@@ -455,8 +455,8 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
         console.debug('Google Calendar SLA automation note:', gcalErr);
       }
 
-      // 7. Clear the submitted active Cart
-      clearQuote();
+      // 7. Clear ONLY the authenticated user's submitted Cart
+      clearCart();
 
       setIsSubmitting(false);
       onBookingSuccess(newBooking);

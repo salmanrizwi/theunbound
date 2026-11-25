@@ -6,6 +6,9 @@ import { UserPermissionModal } from './UserPermissionModal';
 import { DeleteConfirmModal } from './DeleteConfirmModal';
 import { CompanyManagementView } from './CompanyManagementView';
 import { AccountManagerSelector } from './AccountManagerSelector';
+import { AdminAgentCartModal } from './AdminAgentCartModal';
+import { AdminCartQuarantinePanel } from './AdminCartQuarantinePanel';
+import { isAuthorisedCartAdmin } from '../../services/userCartService';
 import { 
   getDefaultPermissionsForRole, 
   isMasterAdmin, 
@@ -64,11 +67,12 @@ import {
   AlertCircle,
   Briefcase,
   UserPlus,
-  History
+  History,
+  ShoppingBag
 } from 'lucide-react';
 
 interface UserApprovalAccessManagerProps {
-  initialTab?: 'USERS_ACCESS' | 'PERMISSIONS' | 'COMPANIES' | 'AM_AUDIT';
+  initialTab?: 'USERS_ACCESS' | 'PERMISSIONS' | 'COMPANIES' | 'AM_AUDIT' | 'CART_ISOLATION';
 }
 
 export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps> = ({ 
@@ -78,7 +82,10 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>(() => db.getUsers());
   const [companies, setCompanies] = useState(() => db.getCompanies());
-  const [currentSectionTab, setCurrentSectionTab] = useState<'PERMISSIONS' | 'USERS_ACCESS' | 'COMPANIES' | 'AM_AUDIT'>(initialTab);
+  const [currentSectionTab, setCurrentSectionTab] = useState<'PERMISSIONS' | 'USERS_ACCESS' | 'COMPANIES' | 'AM_AUDIT' | 'CART_ISOLATION'>(initialTab);
+  const [agentCartModalTarget, setAgentCartModalTarget] = useState<User | null>(null);
+  const [isAgentCartModalOpen, setIsAgentCartModalOpen] = useState(false);
+  const canManageAgentCarts = isAuthorisedCartAdmin(currentUser);
   
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -688,6 +695,20 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
             <History className="w-4 h-4 text-[#00C6A6]" />
             <span>ACCOUNT MANAGER HISTORY</span>
           </button>
+
+          {canManageAgentCarts && (
+            <button
+              onClick={() => setCurrentSectionTab('CART_ISOLATION')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center space-x-2 cursor-pointer ${
+                currentSectionTab === 'CART_ISOLATION'
+                  ? 'bg-slate-900 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              }`}
+            >
+              <ShoppingBag className="w-4 h-4 text-[#00C6A6]" />
+              <span>AGENT CARTS &amp; QUARANTINE</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1156,6 +1177,20 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
                       {/* Actions */}
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end space-x-2">
+                          {canManageAgentCarts && isB2BAgentRole(u.role) && (u.approvalStatus || 'APPROVED') === 'APPROVED' && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAgentCartModalTarget(u);
+                                setIsAgentCartModalOpen(true);
+                              }}
+                              className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-teal-50 hover:bg-[#00C6A6] text-[#007a66] hover:text-slate-950 border border-teal-200 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                              title={`Add or manage items exclusively in ${u.name}'s isolated cart`}
+                            >
+                              <ShoppingBag className="w-3.5 h-3.5" />
+                              <span>Agent Cart</span>
+                            </button>
+                          )}
                           <button
                             onClick={() => handleOpenPermissionModal(u)}
                             className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-900 hover:bg-[#00C6A6] text-white rounded-xl text-xs font-bold transition-all shadow-2xs cursor-pointer group"
@@ -1555,6 +1590,31 @@ export const UserApprovalAccessManager: React.FC<UserApprovalAccessManagerProps>
           </div>
         );
       })()}
+
+      {currentSectionTab === 'CART_ISOLATION' && canManageAgentCarts && (
+        <AdminCartQuarantinePanel
+          currentUser={currentUser}
+          allUsers={users}
+          onOpenAgentCartModal={(agent) => {
+            setAgentCartModalTarget(agent || null);
+            setIsAgentCartModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* Authorised CMS Admin Add-to-Specific-Agent-Cart Modal */}
+      {canManageAgentCarts && (
+        <AdminAgentCartModal
+          isOpen={isAgentCartModalOpen}
+          onClose={() => {
+            setIsAgentCartModalOpen(false);
+            setAgentCartModalTarget(null);
+          }}
+          currentUser={currentUser}
+          allUsers={users}
+          initialTargetAgent={agentCartModalTarget}
+        />
+      )}
 
       {/* Bulk Operation Confirmation Modal */}
       {bulkActionConfirm && (

@@ -10,6 +10,10 @@ import {
 import { AppDatabase } from '../../services/db';
 import { formatCurrency } from '../../services/pricingEngine';
 import { hasBookingOperationsPermission } from '../../services/permissionEngine';
+import {
+  isTicketedActivityCategory,
+  isTransportServiceCategory
+} from '../../services/bookingOperationsSyncService';
 import { 
   X, 
   Building2, 
@@ -483,20 +487,48 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
       currentUser?.role === 'MASTER_ADMIN';
   }, [currentUser]);
 
-  // Operational Fields
+  // Operational Fields (Single Authoritative Service Record)
   const [productName, setProductName] = useState(item.productName || '');
   const [category, setCategory] = useState(item.category || 'Private transfer');
-  const [destination, setDestination] = useState(item.destination || booking.destination || 'Bali');
+  const [destination, setDestination] = useState(item.destination || booking.destination || '');
   const [hub, setHub] = useState(item.hub || '');
+  const [serviceDescription, setServiceDescription] = useState(item.serviceDescription || '');
+  const [serviceOverview, setServiceOverview] = useState(item.serviceOverview || '');
   const [serviceDate, setServiceDate] = useState(item.serviceDate || item.travelDate || '');
-  const [serviceTime, setServiceTime] = useState(item.serviceTime || '09:00');
+  const [serviceTime, setServiceTime] = useState(item.startTime || item.serviceTime || '');
+  const [endTime, setEndTime] = useState(item.endTime || '');
+  const [reportingTime, setReportingTime] = useState(item.reportingTime || '');
+  const [ticketDate, setTicketDate] = useState(item.ticketDate || '');
+  const [ticketEntryTime, setTicketEntryTime] = useState(item.ticketEntryTime || '');
+  const [pickupTime, setPickupTime] = useState(item.pickupTime || item.serviceTransferDetails?.pickupTime || '');
+  const [timeZone, setTimeZone] = useState(item.timeZone || item.serviceTimezone || '');
   const [serviceEndDate, setServiceEndDate] = useState(item.serviceEndDate || '');
   const [duration, setDuration] = useState(item.duration || '');
+  const [adults, setAdults] = useState<number>(item.adults ?? 0);
+  const [children, setChildren] = useState<number>(item.children ?? 0);
+  const [infants, setInfants] = useState<number>(item.infants ?? 0);
   const [totalPax, setTotalPax] = useState<number>(item.totalPax || 1);
+  const [meetingPoint, setMeetingPoint] = useState(item.meetingPoint || '');
+  const [address, setAddress] = useState(item.address || '');
+  const [googleMapsUrl, setGoogleMapsUrl] = useState(item.googleMapsUrl || '');
+  const [pickupLocation, setPickupLocation] = useState(item.pickupLocation || item.serviceTransferDetails?.pickupPoint || '');
+  const [dropoffLocation, setDropoffLocation] = useState(item.dropoffLocation || item.serviceTransferDetails?.dropoffPoint || '');
+  const [vehicleType, setVehicleType] = useState(item.vehicleType || item.vehicle || item.serviceTransferDetails?.vehicleType || '');
+  const [vehicleCategory, setVehicleCategory] = useState(item.vehicleCategory || '');
+  const [vehicleSeaterCapacity, setVehicleSeaterCapacity] = useState<string>(item.vehicleSeaterCapacity ? String(item.vehicleSeaterCapacity) : '');
+  const [vehicleCount, setVehicleCount] = useState<string>(item.vehicleCount ? String(item.vehicleCount) : '');
+  const [luggageCapacity, setLuggageCapacity] = useState(item.luggageCapacity || '');
+  const [routeDetails, setRouteDetails] = useState(item.routeDetails || '');
+  const [inclusionsText, setInclusionsText] = useState(Array.isArray(item.inclusions) ? item.inclusions.join('\n') : '');
+  const [exclusionsText, setExclusionsText] = useState(Array.isArray(item.exclusions) ? item.exclusions.join('\n') : '');
+  const [importantInstructions, setImportantInstructions] = useState(item.importantInstructions || '');
   const [operationalInstructions, setOperationalInstructions] = useState(item.operationalInstructions || '');
   const [internalNotes, setInternalNotes] = useState(item.internalNotes || '');
   const [internalOpsNotes, setInternalOpsNotes] = useState(item.internalOpsNotes || '');
   const [customerFacingNotes, setCustomerFacingNotes] = useState(item.customerFacingNotes || '');
+
+  const isTransportCat = isTransportServiceCategory({ ...item, category, productName });
+  const isTicketedCat = isTicketedActivityCategory({ ...item, category, productName });
 
   // Allocated Supplier Fields
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>(item.supplierId || '');
@@ -560,13 +592,38 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
 
     setProductName(item.productName || '');
     setCategory(item.category || 'Private transfer');
-    setDestination(item.destination || booking.destination || 'Bali');
+    setDestination(item.destination || booking.destination || '');
     setHub(item.hub || '');
+    setServiceDescription(item.serviceDescription || '');
+    setServiceOverview(item.serviceOverview || '');
     setServiceDate(item.serviceDate || item.travelDate || '');
-    setServiceTime(item.serviceTime || '09:00');
+    setServiceTime(item.startTime || item.serviceTime || '');
+    setEndTime(item.endTime || '');
+    setReportingTime(item.reportingTime || '');
+    setTicketDate(item.ticketDate || '');
+    setTicketEntryTime(item.ticketEntryTime || '');
+    setPickupTime(item.pickupTime || item.serviceTransferDetails?.pickupTime || '');
+    setTimeZone(item.timeZone || item.serviceTimezone || '');
     setServiceEndDate(item.serviceEndDate || '');
     setDuration(item.duration || '');
+    setAdults(item.adults ?? 0);
+    setChildren(item.children ?? 0);
+    setInfants(item.infants ?? 0);
     setTotalPax(item.totalPax || 1);
+    setMeetingPoint(item.meetingPoint || '');
+    setAddress(item.address || '');
+    setGoogleMapsUrl(item.googleMapsUrl || '');
+    setPickupLocation(item.pickupLocation || item.serviceTransferDetails?.pickupPoint || '');
+    setDropoffLocation(item.dropoffLocation || item.serviceTransferDetails?.dropoffPoint || '');
+    setVehicleType(item.vehicleType || item.vehicle || item.serviceTransferDetails?.vehicleType || '');
+    setVehicleCategory(item.vehicleCategory || '');
+    setVehicleSeaterCapacity(item.vehicleSeaterCapacity ? String(item.vehicleSeaterCapacity) : '');
+    setVehicleCount(item.vehicleCount ? String(item.vehicleCount) : '');
+    setLuggageCapacity(item.luggageCapacity || '');
+    setRouteDetails(item.routeDetails || '');
+    setInclusionsText(Array.isArray(item.inclusions) ? item.inclusions.join('\n') : '');
+    setExclusionsText(Array.isArray(item.exclusions) ? item.exclusions.join('\n') : '');
+    setImportantInstructions(item.importantInstructions || '');
     setOperationalInstructions(item.operationalInstructions || '');
     setInternalNotes(item.internalNotes || '');
     setInternalOpsNotes(item.internalOpsNotes || '');
@@ -720,18 +777,49 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
         ? `[APPROVED MANUAL EXCEPTION: ${manualSupplierReason.trim()}] `
         : '';
 
+      const computedPaxSum = (Number(adults) || 0) + (Number(children) || 0) + (Number(infants) || 0);
+      const effectiveTotalPax = computedPaxSum > 0 ? computedPaxSum : (Number(totalPax) || 1);
+
       const updates: Partial<BookingItem> & { changeReason?: string; forceAfterConfirmation?: boolean } = {
-        // Operations details
+        // Operations details (Single Authoritative Service Record)
         productName: productName.trim(),
         category,
         destination: destination.trim(),
         hub: hub.trim(),
+        serviceDescription: serviceDescription.trim() || undefined,
+        serviceOverview: serviceOverview.trim() || undefined,
         serviceDate,
         travelDate: serviceDate,
         serviceTime: serviceTime.trim(),
+        startTime: serviceTime.trim() || undefined,
+        endTime: endTime.trim() || undefined,
+        reportingTime: reportingTime.trim() || undefined,
+        ticketDate: ticketDate || undefined,
+        ticketEntryTime: ticketEntryTime.trim() || undefined,
+        pickupTime: pickupTime.trim() || undefined,
+        timeZone: timeZone.trim() || undefined,
+        serviceTimezone: timeZone.trim() || undefined,
         serviceEndDate: serviceEndDate || undefined,
         duration: duration.trim(),
-        totalPax: Number(totalPax) || 1,
+        adults: Number(adults) || 0,
+        children: Number(children) || 0,
+        infants: Number(infants) || 0,
+        totalPax: effectiveTotalPax,
+        meetingPoint: meetingPoint.trim() || undefined,
+        address: address.trim() || undefined,
+        googleMapsUrl: googleMapsUrl.trim() || undefined,
+        pickupLocation: pickupLocation.trim() || undefined,
+        dropoffLocation: dropoffLocation.trim() || undefined,
+        vehicleType: isTransportCat ? (vehicleType.trim() || undefined) : undefined,
+        vehicle: isTransportCat ? (vehicleType.trim() || undefined) : undefined,
+        vehicleCategory: isTransportCat ? (vehicleCategory.trim() || undefined) : undefined,
+        vehicleSeaterCapacity: isTransportCat && vehicleSeaterCapacity ? parseInt(vehicleSeaterCapacity, 10) : undefined,
+        vehicleCount: isTransportCat && vehicleCount ? parseInt(vehicleCount, 10) : undefined,
+        luggageCapacity: isTransportCat ? (luggageCapacity.trim() || undefined) : undefined,
+        routeDetails: isTransportCat ? (routeDetails.trim() || undefined) : undefined,
+        inclusions: inclusionsText.split('\n').map(s => s.trim()).filter(Boolean),
+        exclusions: exclusionsText.split('\n').map(s => s.trim()).filter(Boolean),
+        importantInstructions: importantInstructions.trim() || undefined,
         operationalInstructions: operationalInstructions.trim(),
         internalNotes: internalNotes.trim(),
         internalOpsNotes: internalOpsNotes.trim(),
@@ -960,6 +1048,29 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Service Description (Appears on Vouchers)</label>
+                  <textarea
+                    rows={2}
+                    value={serviceDescription}
+                    onChange={e => setServiceDescription(e.target.value)}
+                    placeholder="Full customer-facing description of this service..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Operational Overview / Highlights</label>
+                  <textarea
+                    rows={2}
+                    value={serviceOverview}
+                    onChange={e => setServiceOverview(e.target.value)}
+                    placeholder="Concise operational summary & highlights..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div>
                   <label className="text-[10px] font-bold uppercase text-slate-500">Service Date</label>
@@ -971,21 +1082,79 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase text-slate-500">Service Time</label>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Start / Service Time</label>
                   <input
-                    type="time"
+                    type="text"
                     value={serviceTime}
                     onChange={e => setServiceTime(e.target.value)}
+                    placeholder="e.g. 10:30 AM"
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase text-slate-500">Service End Date</label>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Reporting Time</label>
                   <input
-                    type="date"
-                    value={serviceEndDate}
-                    onChange={e => setServiceEndDate(e.target.value)}
+                    type="text"
+                    value={reportingTime}
+                    onChange={e => setReportingTime(e.target.value)}
+                    placeholder="e.g. 10:00 AM"
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Time Zone</label>
+                  <input
+                    type="text"
+                    value={timeZone}
+                    onChange={e => setTimeZone(e.target.value)}
+                    placeholder="e.g. JST (UTC+9)"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+              </div>
+
+              {/* Passenger Breakdown */}
+              <div className="grid grid-cols-4 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Adults</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={adults}
+                    onChange={e => {
+                      const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                      setAdults(v);
+                      setTotalPax(v + children + infants || 1);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold mt-1 text-center focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Children</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={children}
+                    onChange={e => {
+                      const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                      setChildren(v);
+                      setTotalPax(adults + v + infants || 1);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold mt-1 text-center focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Infants</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={infants}
+                    onChange={e => {
+                      const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                      setInfants(v);
+                      setTotalPax(adults + children + v || 1);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold mt-1 text-center focus:outline-none focus:border-[#008972]"
                   />
                 </div>
                 <div>
@@ -994,19 +1163,210 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
                     type="number"
                     min={1}
                     value={totalPax}
-                    onChange={e => setTotalPax(parseInt(e.target.value) || 1)}
-                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold mt-1 text-center focus:outline-none focus:border-[#008972]"
+                    onChange={e => setTotalPax(parseInt(e.target.value, 10) || 1)}
+                    className="w-full px-3 py-2 rounded-xl bg-teal-50/60 border border-teal-200 text-xs font-black mt-1 text-center focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+              </div>
+
+              {/* Ticketed Activity Timing (Shown for Ticketed/Activity Categories) */}
+              {isTicketedCat && (
+                <div className="p-3 rounded-2xl bg-teal-50/40 border border-teal-200/70 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-teal-800">Ticket Date</label>
+                    <input
+                      type="date"
+                      value={ticketDate}
+                      onChange={e => setTicketDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-teal-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-teal-800">Ticket Entry Time</label>
+                    <input
+                      type="text"
+                      value={ticketEntryTime}
+                      onChange={e => setTicketEntryTime(e.target.value)}
+                      placeholder="e.g. 14:00 (Timed Entry)"
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-teal-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-teal-800">End Time</label>
+                    <input
+                      type="text"
+                      value={endTime}
+                      onChange={e => setEndTime(e.target.value)}
+                      placeholder="e.g. 16:30"
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-teal-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Transport & Vehicle Configuration (STRICTLY shown ONLY for Transport Categories) */}
+              {isTransportCat && (
+                <div className="p-3.5 rounded-2xl bg-teal-50/40 border border-teal-200/70 space-y-3">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-teal-900">
+                    Vehicle &amp; Transfer Configuration (Transport Services)
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-600">Vehicle Type</label>
+                      <input
+                        type="text"
+                        value={vehicleType}
+                        onChange={e => setVehicleType(e.target.value)}
+                        placeholder="Toyota Alphard"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-600">Seater Capacity</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={vehicleSeaterCapacity}
+                        onChange={e => setVehicleSeaterCapacity(e.target.value)}
+                        placeholder="6"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-600">Vehicle Count</label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={vehicleCount}
+                        onChange={e => setVehicleCount(e.target.value)}
+                        placeholder="1"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-600">Luggage Capacity</label>
+                      <input
+                        type="text"
+                        value={luggageCapacity}
+                        onChange={e => setLuggageCapacity(e.target.value)}
+                        placeholder="4 Large + 4 Cabin"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-600">Pickup Location</label>
+                      <input
+                        type="text"
+                        value={pickupLocation}
+                        onChange={e => setPickupLocation(e.target.value)}
+                        placeholder="Narita Airport T1 Arrival"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-600">Drop-off Location</label>
+                      <input
+                        type="text"
+                        value={dropoffLocation}
+                        onChange={e => setDropoffLocation(e.target.value)}
+                        placeholder="Park Hyatt Tokyo"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase text-slate-600">Pickup Time</label>
+                      <input
+                        type="text"
+                        value={pickupTime}
+                        onChange={e => setPickupTime(e.target.value)}
+                        placeholder="15:30"
+                        className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase text-slate-600">Route Details</label>
+                    <input
+                      type="text"
+                      value={routeDetails}
+                      onChange={e => setRouteDetails(e.target.value)}
+                      placeholder="Direct Expressway transfer via Shuto Expressway"
+                      className="w-full px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs mt-1"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Venue / Meeting Point / Verified Google Maps */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Meeting Point</label>
+                  <input
+                    type="text"
+                    value={meetingPoint}
+                    onChange={e => setMeetingPoint(e.target.value)}
+                    placeholder="Main Entrance / Lobby"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Venue / Street Address</label>
+                  <input
+                    type="text"
+                    value={address}
+                    onChange={e => setAddress(e.target.value)}
+                    placeholder="6-1-16 Toyosu, Koto-ku, Tokyo"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Verified Google Maps URL</label>
+                  <input
+                    type="url"
+                    value={googleMapsUrl}
+                    onChange={e => setGoogleMapsUrl(e.target.value)}
+                    placeholder="https://maps.google.com/?q=..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+              </div>
+
+              {/* Inclusions & Exclusions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Inclusions (One per line)</label>
+                  <textarea
+                    rows={2}
+                    value={inclusionsText}
+                    onChange={e => setInclusionsText(e.target.value)}
+                    placeholder="Timed entry admission ticket&#10;Audio guide headset"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Exclusions (One per line)</label>
+                  <textarea
+                    rows={2}
+                    value={exclusionsText}
+                    onChange={e => setExclusionsText(e.target.value)}
+                    placeholder="Hotel transfers&#10;Personal expenses"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-[10px] font-bold uppercase text-slate-500">Operational Instructions</label>
+                <label className="text-[10px] font-bold uppercase text-slate-500">Important Guest Instructions (Voucher)</label>
                 <textarea
                   rows={2}
-                  value={operationalInstructions}
-                  onChange={e => setOperationalInstructions(e.target.value)}
-                  placeholder="Meeting point directions, lead guide name, driver dispatch guidance..."
+                  value={importantInstructions || operationalInstructions}
+                  onChange={e => {
+                    setImportantInstructions(e.target.value);
+                    setOperationalInstructions(e.target.value);
+                  }}
+                  placeholder="Carry valid passport/ID, arrive 15 mins prior to entry slot..."
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
                 />
               </div>
@@ -1018,7 +1378,7 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
                     type="text"
                     value={customerFacingNotes}
                     onChange={e => setCustomerFacingNotes(e.target.value)}
-                    placeholder="Voucher notes for the guest..."
+                    placeholder="Additional voucher notes for the guest..."
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
                   />
                 </div>

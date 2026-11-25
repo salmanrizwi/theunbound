@@ -11,10 +11,16 @@ import {
   BookingVoucher,
   BookingActivityTimelineEvent,
   SupplierPriceHistoryEntry,
-  Supplier
+  Supplier,
+  SupplierAllocationStatus
 } from '../../types';
 import { AppDatabase } from '../../services/db';
 import { formatCurrency } from '../../services/pricingEngine';
+import {
+  CANONICAL_ALLOCATION_STATUSES,
+  hydrateBookingServiceItem,
+  resolveCanonicalAllocationStatus
+} from '../../services/bookingOperationsSyncService';
 import { VoucherDocumentView } from './VoucherDocumentView';
 import {
   AddServiceItemModal,
@@ -112,7 +118,8 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
   const [allocPaymentCutoffDate, setAllocPaymentCutoffDate] = useState('');
   const [allocServiceDate, setAllocServiceDate] = useState('');
   const [allocServiceTime, setAllocServiceTime] = useState('');
-  const [allocTimezone, setAllocTimezone] = useState('Asia/Tokyo (JST, UTC+9)');
+  const [allocTimezone, setAllocTimezone] = useState('');
+  const [allocStatus, setAllocStatus] = useState<SupplierAllocationStatus>('Supplier Selected');
   const [allocSupplierNotes, setAllocSupplierNotes] = useState('');
   const [allocInternalNotes, setAllocInternalNotes] = useState('');
 
@@ -236,8 +243,9 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
     setAllocConfirmationRef(item.supplierConfirmationRef || '');
     setAllocPaymentCutoffDate(item.paymentCutoffDate || '');
     setAllocServiceDate(item.serviceDate || item.travelDate || '');
-    setAllocServiceTime(item.serviceTime || '09:00 AM');
-    setAllocTimezone(item.serviceTimezone || 'Asia/Tokyo (JST, UTC+9)');
+    setAllocServiceTime(item.serviceTime || item.startTime || item.ticketEntryTime || '');
+    setAllocTimezone(item.serviceTimezone || item.timeZone || '');
+    setAllocStatus(resolveCanonicalAllocationStatus(item));
     setAllocSupplierNotes(item.supplierNotes || '');
     setAllocInternalNotes(item.internalNotes || item.internalOpsNotes || '');
 
@@ -325,6 +333,7 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
         serviceDate: allocServiceDate || undefined,
         serviceTime: allocServiceTime.trim() || undefined,
         serviceTimezone: allocTimezone.trim() || undefined,
+        allocationStatus: allocStatus,
         supplierNotes: (notePrefix + (allocSupplierNotes.trim() || '')).trim() || undefined,
         internalNotes: allocInternalNotes.trim() || undefined
       },
@@ -1172,34 +1181,68 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {items.map((item, idx) => (
+            {items.map((rawItem, idx) => {
+              const productRecord = rawItem.productId ? db.getProducts().find(p => p.id === rawItem.productId) : null;
+              const item = hydrateBookingServiceItem(rawItem, booking, productRecord);
+              const canonicalStatus = item.resolvedCanonicalAllocationStatus;
+              const isAmendmentNeeded = canonicalStatus === 'Amendment Required';
+              const isConfirmed = canonicalStatus === 'Supplier Confirmed' || canonicalStatus === 'Completed';
+
+              return (
               <div 
                 key={item.id || idx}
                 className={`p-5 rounded-2xl border transition-all space-y-3 ${
-                  item.supplierName 
-                    ? 'bg-slate-50/70 border-slate-200' 
+                  isAmendmentNeeded
+                    ? 'bg-rose-50/50 border-rose-200'
+                    : isConfirmed
+                    ? 'bg-emerald-50/30 border-emerald-200'
+                    : item.supplierName
+                    ? 'bg-slate-50/70 border-slate-200'
                     : 'bg-amber-50/40 border-amber-200'
                 }`}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                    Service #{idx + 1}
+                    Service #{idx + 1} • {item.category}
                   </span>
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                    item.supplierName ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'bg-amber-100 text-amber-800'
+                    isAmendmentNeeded
+                      ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                      : isConfirmed
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      : item.supplierName
+                      ? 'bg-teal-50 text-teal-700 border border-teal-200'
+                      : 'bg-amber-100 text-amber-800'
                   }`}>
-                    {item.supplierName ? 'Allocated' : 'Unallocated'}
+                    {canonicalStatus}
                   </span>
                 </div>
 
-                <div className="font-bold text-slate-900 text-xs">
-                  {item.productName}
+                <div>
+                  <div className="font-bold text-slate-900 text-xs">
+                    {item.productName}
+                  </div>
+                  {(item.resolvedOverview || item.resolvedDescription) && (
+                    <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">
+                      {item.resolvedOverview || item.resolvedDescription}
+                    </p>
+                  )}
                 </div>
 
                 <div className="text-xs text-slate-600 space-y-1">
                   <div>Supplier: <strong className="text-slate-900">{item.supplierName || 'None assigned'}</strong></div>
-                  <div>Category: {item.supplierType || item.category}</div>
-                  <div>Date: {item.serviceDate || item.travelDate} ({item.serviceTime || '09:00 AM'})</div>
+                  <div>
+                    Date &amp; Time: <strong className="text-slate-800">{item.resolvedServiceDate || 'Date not set'}</strong>
+                    {item.resolvedStartTime ? ` • ${item.resolvedStartTime}` : ''}
+                    {item.resolvedTicketEntryTime ? ` (Entry: ${item.resolvedTicketEntryTime})` : ''}
+                  </div>
+                  <div>Passengers: <strong className="text-slate-800">{item.resolvedPassengerBreakdown}</strong></div>
+                  {item.isTransportService && (item.vehicleType || item.resolvedPickupLocation) && (
+                    <div className="text-[11px] text-indigo-800 bg-indigo-50/70 rounded-lg px-2 py-1 border border-indigo-100">
+                      {item.vehicleType && <div>Vehicle: <strong>{item.vehicleType}</strong>{item.vehicleSeaterCapacity ? ` (${item.vehicleSeaterCapacity} seats)` : ''}</div>}
+                      {item.resolvedPickupLocation && <div>Pickup: {item.resolvedPickupLocation}{item.resolvedDropoffLocation ? ` → ${item.resolvedDropoffLocation}` : ''}</div>}
+                    </div>
+                  )}
                   {item.supplierConfirmationRef && (
                     <div className="text-teal-700 font-mono font-bold">
                       Ref: {item.supplierConfirmationRef}
@@ -1214,15 +1257,16 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
 
                 <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
                   <button
-                    onClick={() => handleOpenAllocateModal(item)}
+                    onClick={() => handleOpenAllocateModal(rawItem)}
                     className="w-full py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
                   >
                     <Building2 className="w-3.5 h-3.5" />
-                    {item.supplierName ? 'Reallocate Supplier' : 'Allocate Supplier'}
+                    {item.supplierName ? 'Manage Allocation & Status' : 'Allocate Supplier'}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1832,6 +1876,40 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
             </div>
 
             <form onSubmit={handleSaveAllocation} className="space-y-4 text-xs">
+              {/* Synchronised Authoritative Service Summary */}
+              {(() => {
+                const productRecord = allocTargetItem.productId ? db.getProducts().find(p => p.id === allocTargetItem.productId) : null;
+                const hydratedTarget = hydrateBookingServiceItem(allocTargetItem, booking, productRecord);
+                return (
+                  <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                        Synchronised Service Record • {hydratedTarget.category}
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-600">
+                        {hydratedTarget.resolvedPassengerBreakdown}
+                      </span>
+                    </div>
+                    {(hydratedTarget.resolvedOverview || hydratedTarget.resolvedDescription) && (
+                      <p className="text-[11px] text-slate-600 leading-relaxed">
+                        {hydratedTarget.resolvedOverview || hydratedTarget.resolvedDescription}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-700 pt-1">
+                      <span>Date: <strong>{hydratedTarget.resolvedServiceDate || 'Not set'}</strong></span>
+                      {hydratedTarget.resolvedStartTime && <span>Start: <strong>{hydratedTarget.resolvedStartTime}</strong></span>}
+                      {hydratedTarget.resolvedTicketEntryTime && <span>Ticket Entry: <strong>{hydratedTarget.resolvedTicketEntryTime}</strong></span>}
+                      {hydratedTarget.isTransportService && hydratedTarget.vehicleType && (
+                        <span>Vehicle: <strong>{hydratedTarget.vehicleType}</strong></span>
+                      )}
+                      {hydratedTarget.resolvedMeetingPoint && (
+                        <span>Meeting: <strong>{hydratedTarget.resolvedMeetingPoint}</strong></span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Master Directory Supplier Controlled Dropdown */}
               <div className="p-3.5 bg-teal-50/70 rounded-2xl border border-teal-200 space-y-2">
                 <div className="flex items-center justify-between">
@@ -2023,14 +2101,27 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
                 </div>
 
                 <div>
-                  <label className="text-[10px] font-bold uppercase text-slate-500">Service Time & Timezone</label>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Service Time</label>
                   <input
                     type="text"
                     value={allocServiceTime}
                     onChange={e => setAllocServiceTime(e.target.value)}
-                    placeholder="09:00 AM"
+                    placeholder="e.g., 10:30 AM (leave blank if unscheduled)"
                     className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs focus:outline-none focus:border-teal-500 mt-1"
                   />
+                </div>
+
+                <div className="sm:col-span-2">
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Canonical Allocation Status</label>
+                  <select
+                    value={allocStatus}
+                    onChange={e => setAllocStatus(e.target.value as SupplierAllocationStatus)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-900 focus:outline-none focus:border-teal-500 mt-1"
+                  >
+                    {CANONICAL_ALLOCATION_STATUSES.map(st => (
+                      <option key={st} value={st}>{st}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -2570,6 +2661,7 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
           <div className="max-w-4xl w-full my-8">
             <VoucherDocumentView
               voucher={selectedVoucherForView}
+              booking={booking}
               isOutdated={selectedVoucherForView.isOutdated}
               onClose={() => setIsVoucherViewerOpen(false)}
               onRegenerate={() => {

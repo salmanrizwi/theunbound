@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { TravelLead, User } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { getLeadStatusLabel, normalizeLeadStatus } from '../../services/crmOperationsEngine';
 import { formatCurrency } from '../../services/pricingEngine';
 import { useAuth } from '../../context/AuthContext';
 import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
@@ -65,11 +66,11 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
     let list = [...leads];
 
     if (statusFilter === 'ASSIGNED') {
-      list = list.filter(l => l.status === 'NEW' || l.leadVisibilityStatus === 'ASSIGNED_TO_AGENT' || l.status === 'QUALIFIED');
+      list = list.filter(l => normalizeLeadStatus(l.status) === 'NEW' || l.leadVisibilityStatus === 'ASSIGNED_TO_AGENT' || normalizeLeadStatus(l.status) === 'QUALIFIED');
     } else if (statusFilter === 'QUOTED') {
-      list = list.filter(l => l.status === 'QUOTED' || l.quoteNumber || (l.quoteVersions && l.quoteVersions.length > 0));
+      list = list.filter(l => normalizeLeadStatus(l.status) === 'QUOTED' || l.quoteNumber || (l.quoteVersions && l.quoteVersions.length > 0));
     } else if (statusFilter === 'CONVERTED') {
-      list = list.filter(l => l.status === 'BOOKED' || l.bookingReference || l.bookingId);
+      list = list.filter(l => normalizeLeadStatus(l.status) === 'BOOKED' || l.bookingReference || l.bookingId);
     }
 
     if (searchQuery.trim()) {
@@ -78,6 +79,7 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
         l.contactName?.toLowerCase().includes(q) ||
         l.leadNumber?.toLowerCase().includes(q) ||
         l.destinationName?.toLowerCase().includes(q) ||
+        getLeadStatusLabel(l.status).toLowerCase().includes(q) ||
         l.email?.toLowerCase().includes(q) ||
         l.phone?.toLowerCase().includes(q) ||
         l.companyName?.toLowerCase().includes(q) ||
@@ -230,6 +232,10 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
                         <FileText className="w-3 h-3" />
                         <span>Quoted</span>
                       </span>
+                    ) : normalizeLeadStatus(lead.status) === 'QUALIFIED' ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-cyan-100 text-cyan-800 border border-cyan-200">
+                        {getLeadStatusLabel(lead.status)}
+                      </span>
                     ) : (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 animate-pulse">
                         Action Required
@@ -346,11 +352,18 @@ export const B2BLeadsManagerView: React.FC<B2BLeadsManagerViewProps> = ({
           <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh] my-auto">
             {/* Modal Header */}
             <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 shrink-0">
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                 <span className="font-mono text-xs font-black text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded-md shadow-xs">
                   {selectedLead.leadNumber || 'LED-DIRECT'}
                 </span>
                 <span className="text-xs font-bold text-slate-600">Assigned Inquiry Details</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  normalizeLeadStatus(selectedLead.status) === 'QUALIFIED'
+                    ? 'bg-cyan-50 text-cyan-800 border-cyan-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}>
+                  {getLeadStatusLabel(selectedLead.status)}
+                </span>
               </div>
               <button
                 onClick={() => setSelectedLead(null)}

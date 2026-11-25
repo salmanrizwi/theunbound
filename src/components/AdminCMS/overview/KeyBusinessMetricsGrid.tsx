@@ -137,7 +137,9 @@ export const KeyBusinessMetricsGrid: React.FC<KeyBusinessMetricsGridProps> = ({
             <div className="flex items-center space-x-1.5 truncate">
               <span className="text-blue-700 font-bold">{metrics.totalLeads.newCount} New</span>
               <span className="text-slate-300">·</span>
-              <span className="text-indigo-700 font-bold">{metrics.totalLeads.openCount} Open</span>
+              <span className="text-cyan-700 font-bold" title="Customisation Required">
+                {metrics.totalLeads.customisationRequiredCount ?? metrics.totalLeads.qualifiedCount} Customisation
+              </span>
               <span className="text-slate-300">·</span>
               <span className="text-emerald-700 font-bold">{metrics.totalLeads.convertedCount} Conv</span>
             </div>

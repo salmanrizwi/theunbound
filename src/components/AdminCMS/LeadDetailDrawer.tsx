@@ -13,6 +13,7 @@ import {
   QuoteVersionRecord
 } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { getLeadStatusLabel, normalizeLeadStatus, LEAD_STATUS_OPTIONS, replaceLegacyQualifiedStatusText } from '../../services/crmOperationsEngine';
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { canUserViewInternalCostBreakdown } from '../../services/permissionEngine';
@@ -380,7 +381,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   };
 
   const getStatusBadge = (status: LeadStatus) => {
-    switch (status) {
+    switch (normalizeLeadStatus(status)) {
       case 'NEW': return 'bg-blue-100 text-blue-800 border-blue-300';
       case 'PROPOSAL_SAVED': return 'bg-purple-100 text-purple-800 border-purple-300';
       case 'QUOTE_DOWNLOADED': return 'bg-amber-100 text-amber-800 border-amber-300';
@@ -453,7 +454,7 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
             <div className="flex flex-wrap items-center gap-2.5 mb-1.5">
               <h1 className="text-2xl font-black text-slate-900 tracking-tight">{lead.contactName}</h1>
               <span className={`text-xs font-extrabold px-3 py-1 rounded-full border ${getStatusBadge(lead.status)}`}>
-                {(lead.status || 'NEW').replace(/_/g, ' ')}
+                {getLeadStatusLabel(lead.status)}
               </span>
               {getPriorityBadge(lead.priority)}
             </div>
@@ -490,19 +491,15 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
               <span className="text-[10px] text-slate-400 uppercase font-bold mb-0.5">Stage / Status</span>
               <select
                 id="lead-status-quick-select"
-                value={lead.status}
+                value={normalizeLeadStatus(lead.status)}
                 onChange={e => handleStatusChange(e.target.value as LeadStatus)}
                 className="bg-slate-50 text-slate-900 text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-200 focus:outline-none focus:border-[#008f77]"
               >
-                <option value="NEW">New</option>
-                <option value="CONTACTED">Contacted</option>
-                <option value="PROPOSAL_SAVED">Proposal Saved</option>
-                <option value="QUOTE_DOWNLOADED">Quote Downloaded</option>
-                <option value="QUALIFIED">Qualified</option>
-                <option value="QUOTED">Quoted</option>
-                <option value="BOOKING_SUBMITTED">Booking Submitted</option>
-                <option value="WON">Won (Converted)</option>
-                <option value="LOST">Lost</option>
+                {LEAD_STATUS_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -1321,12 +1318,12 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
                         <div className="absolute -left-6 top-1 w-3.5 h-3.5 rounded-full bg-[#00C6A6] border-2 border-white shadow-xs" />
                         <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs">
                           <div className="flex items-center justify-between mb-0.5">
-                            <span className="font-bold text-slate-900">{evt.title}</span>
+                            <span className="font-bold text-slate-900">{replaceLegacyQualifiedStatusText(evt.title)}</span>
                             <span className="text-[10px] text-slate-400">
                               {new Date(evt.timestamp).toLocaleString()}
                             </span>
                           </div>
-                          <p className="text-slate-600">{evt.description}</p>
+                          <p className="text-slate-600">{replaceLegacyQualifiedStatusText(evt.description)}</p>
                           <div className="text-[10px] text-slate-400 mt-1">
                             By: <strong className="text-slate-700">{evt.performedBy}</strong>
                           </div>

@@ -1,292 +1,386 @@
-import React, { useRef } from 'react';
-import { BookingInvoice } from '../../../types';
+import React, { useMemo, useRef, useState } from 'react';
+import { Booking, BookingInvoice } from '../../../types';
 import { formatCurrency } from '../../../services/pricingEngine';
-import { 
-  Printer, 
-  Download, 
-  X, 
-  Receipt, 
-  Building2, 
-  Calendar, 
-  CreditCard, 
-  CheckCircle2, 
-  AlertCircle,
-  FileText
+import {
+  Printer,
+  Download,
+  X,
+  Receipt,
+  Building2,
+  Calendar,
+  CreditCard,
+  CheckCircle2,
+  FileText,
+  Info,
+  Loader2
 } from 'lucide-react';
 import { AppDatabase } from '../../../services/db';
+import {
+  formatPassengerBreakdown,
+  formatReadableDate,
+  hydrateBookingServiceItem,
+  resolveAuthoritativeProformaAmount,
+  sortBookingItemsChronologically
+} from '../../../services/bookingOperationsSyncService';
+import { generateProformaInvoicePDF } from '../../../services/bookingDocumentPdfService';
 
 interface ProformaInvoiceModalProps {
   invoice: BookingInvoice;
+  booking?: Booking | null;
   onClose: () => void;
 }
 
 export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
   invoice,
+  booking: propBooking,
   onClose
 }) => {
   const printRef = useRef<HTMLDivElement>(null);
-  const companyProfile = AppDatabase.getInstance().getCentralCompanyProfile();
+  const db = AppDatabase.getInstance();
+  const companyProfile = db.getCentralCompanyProfile();
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+
+  const resolvedBooking = useMemo(() => {
+    if (propBooking) return propBooking;
+    if (invoice.bookingId) {
+      return db.getBookingById(invoice.bookingId, db.getCurrentUser()) || null;
+    }
+    return null;
+  }, [propBooking, invoice.bookingId, db]);
+
+  // Authoritative Final Booking Amount from latest committed BookingPricingSnapshot
+  const authoritative = useMemo(() => {
+    if (resolvedBooking) {
+      return resolveAuthoritativeProformaAmount(resolvedBooking);
+    }
+    const finalAmt = Number(invoice.proformaFinalBookingAmount ?? invoice.totalAmount ?? 0);
+    const paid = Number(invoice.amountPaid ?? invoice.paidAmount ?? 0);
+    return {
+      finalBookingAmount: finalAmt,
+      currency: invoice.currency || 'USD',
+      amountPaid: paid,
+      balanceDue: Math.max(0, Math.round((finalAmt - paid) * 100) / 100),
+      sourcePricingSnapshotId: invoice.sourcePricingSnapshotId || `SNAP-v${invoice.sourcePricingSnapshotVersion || 1}`,
+      sourcePricingSnapshotVersion: invoice.sourcePricingSnapshotVersion || 1
+    };
+  }, [resolvedBooking, invoice]);
+
+  const scopeServices = useMemo(() => {
+    if (resolvedBooking?.items && resolvedBooking.items.length > 0) {
+      return sortBookingItemsChronologically(
+        resolvedBooking.items
+          .filter(it => !it.isCancelled && it.operationalStatus !== 'Cancelled')
+          .map(it => hydrateBookingServiceItem(it, resolvedBooking))
+      ).map(it => ({
+        id: it.id,
+        name: it.productName,
+        category: it.category || 'Service',
+        date: it.resolvedServiceDate ? formatReadableDate(it.resolvedServiceDate) : 'Scheduled',
+        pax: it.totalPax
+      }));
+    }
+    return (invoice.services || invoice.items || []).map((srv: any, idx: number) => ({
+      id: srv.id || `srv-${idx}`,
+      name: srv.description || srv.serviceName || srv.productName || 'Travel Service',
+      category: srv.category || 'Service',
+      date: srv.serviceDate || srv.travelDate || 'Scheduled',
+      pax: srv.pax || srv.quantity || 1
+    }));
+  }, [resolvedBooking, invoice.services, invoice.items]);
+
+  const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
+    setIsDownloadingPdf(true);
+    try {
+      const result = generateProformaInvoicePDF(invoice, resolvedBooking, companyProfile);
+      result.download();
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   const handlePrint = () => {
     window.print();
   };
 
-  const isPaid = invoice.paymentStatus === 'PAID';
-  const isPartiallyPaid = invoice.paymentStatus === 'PARTIALLY_PAID';
+  const isPaid = authoritative.balanceDue === 0 && authoritative.finalBookingAmount > 0;
+  const isPartiallyPaid = !isPaid && authoritative.amountPaid > 0;
+
+  const paxSummary = resolvedBooking?.travelers
+    ? formatPassengerBreakdown(
+        resolvedBooking.travelers.adults || 0,
+        resolvedBooking.travelers.children || 0,
+        resolvedBooking.travelers.infants || 0
+      )
+    : invoice.totalPax
+    ? `${invoice.totalPax} Passenger(s)`
+    : 'As Per Booking';
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-3xl max-w-3xl w-full p-6 sm:p-8 shadow-2xl space-y-6 my-8 border border-slate-200">
-        
+      <div className="bg-white rounded-3xl max-w-3xl w-full p-6 sm:p-8 shadow-2xl space-y-6 my-8 border border-slate-200 max-h-[92vh] overflow-y-auto">
         {/* Top Control Bar (Hidden on Print) */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 print:hidden">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-100 print:hidden">
+          <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-teal-50 text-[#008f77]">
               <Receipt className="w-5 h-5 text-[#008f77]" />
             </div>
             <div>
               <h3 className="text-sm font-black text-slate-900 flex items-center gap-2">
-                <span>Proforma Invoice</span>
+                <span>PROFORMA INVOICE</span>
                 <span className="font-mono text-xs text-slate-500 font-normal">#{invoice.invoiceNumber}</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-50 text-[#008f77] border border-teal-200">
+                  v{invoice.invoiceVersion || 1}
+                </span>
               </h3>
               <p className="text-[11px] text-slate-500">
-                Authoritative commercial proforma connected to Booking #{invoice.bookingReference}
+                Booking #{invoice.bookingReference} • Snapshot {authoritative.sourcePricingSnapshotId}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <button
+              onClick={handleDownloadPdf}
+              disabled={isDownloadingPdf}
+              className="px-4 py-2 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs disabled:opacity-60"
+            >
+              {isDownloadingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              <span>Download Proforma PDF</span>
+            </button>
+            <button
               onClick={handlePrint}
-              className="px-3.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
-              <span>Print / PDF</span>
+              <span>Print</span>
             </button>
             <button
               onClick={onClose}
               className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 cursor-pointer"
+              aria-label="Close Proforma Invoice"
             >
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
 
-        {/* Invoice Printable Area */}
+        {/* Printable Proforma Area */}
         <div ref={printRef} className="space-y-6 text-slate-900 bg-white">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between gap-4 pb-6 border-b border-slate-200">
-            <div>
+          <div className="flex flex-col sm:flex-row justify-between gap-4 pb-5 border-b border-slate-200">
+            <div className="space-y-1">
               <div className="text-xl font-black tracking-tight text-slate-950 flex items-center gap-2">
                 <Building2 className="w-6 h-6 text-[#008f77]" />
-                <span>Unbound Experiences India Pvt Ltd</span>
+                <span>{companyProfile.companyName || invoice.companyName || 'Unbound Experiences India Pvt Ltd'}</span>
               </div>
-              <p className="text-xs text-slate-600 font-semibold mt-1">TheUnbound DMC • Destination Management Operations</p>
-              <div className="text-xs text-slate-500 space-y-0.5 mt-1.5">
-                <p><strong>Registered Address:</strong> {invoice.companyRegisteredAddress || companyProfile.registeredAddress}</p>
-                <p><strong>Current Address:</strong> {invoice.companyCurrentAddress || companyProfile.currentAddress}</p>
-                <p>GSTIN: {companyProfile.gstin || '27AABCT1234F1Z5'} • CIN: {companyProfile.cin || 'U63040DL2026PTC390012'}</p>
-                <p>Contact: {companyProfile.salesEmail} • {companyProfile.phone}</p>
+              <p className="text-xs text-[#008f77] font-bold">
+                PROFORMA INVOICE — Payment &amp; Booking Confirmation Reference
+              </p>
+              <div className="text-xs text-slate-500 space-y-0.5 pt-1">
+                <p>
+                  <strong>Registered Address:</strong>{' '}
+                  {companyProfile.registeredAddress || invoice.companyRegisteredAddress || invoice.companyAddress}
+                </p>
+                {(companyProfile.currentAddress || invoice.companyCurrentAddress) && (
+                  <p>
+                    <strong>Current Address:</strong>{' '}
+                    {companyProfile.currentAddress || invoice.companyCurrentAddress}
+                  </p>
+                )}
+                <p>
+                  Contact: {companyProfile.email || invoice.companyEmail || companyProfile.salesEmail} •{' '}
+                  {companyProfile.phone || invoice.companyPhone}
+                </p>
               </div>
             </div>
 
-            <div className="text-left sm:text-right space-y-1">
-              <span className={`inline-block px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-wider border ${
-                isPaid 
-                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
-                  : isPartiallyPaid 
-                  ? 'bg-amber-50 text-amber-800 border-amber-300' 
-                  : 'bg-blue-50 text-blue-800 border-blue-300'
-              }`}>
-                {(invoice.paymentStatus || 'UNPAID').replace(/_/g, ' ')}
-              </span>
-              <div className="font-mono text-sm font-black text-slate-900 mt-2">
-                {invoice.invoiceNumber}
+            <div className="text-left sm:text-right space-y-1.5">
+              <div className="inline-block px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-slate-900 text-white">
+                PROFORMA INVOICE
+              </div>
+              <div>
+                <span
+                  className={`inline-block px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wider border ${
+                    isPaid
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                      : isPartiallyPaid
+                      ? 'bg-amber-50 text-amber-800 border-amber-300'
+                      : 'bg-blue-50 text-blue-800 border-blue-300'
+                  }`}
+                >
+                  {isPaid ? 'PAID' : isPartiallyPaid ? 'PARTIALLY PAID' : 'UNPAID'}
+                </span>
+              </div>
+              <div className="text-sm font-black font-mono text-slate-900 pt-1">
+                #{invoice.invoiceNumber}
               </div>
               <div className="text-xs text-slate-500">
-                Issue Date: <strong className="text-slate-800">{new Date(invoice.issueDate || invoice.invoiceDate || Date.now()).toLocaleDateString()}</strong>
+                Issued: <strong className="text-slate-700">{formatReadableDate(invoice.invoiceDate || invoice.issueDate)}</strong>
               </div>
-              {invoice.dueDate && (
-                <div className="text-xs text-slate-500">
-                  Payment Due: <strong className="text-slate-800">{new Date(invoice.dueDate).toLocaleDateString()}</strong>
-                </div>
-              )}
+              <div className="text-xs text-slate-500">
+                Due Date: <strong className="text-slate-700">{invoice.dueDate ? formatReadableDate(invoice.dueDate) : 'Prior to Cut-off'}</strong>
+              </div>
             </div>
           </div>
 
-          {/* Billed To & Booking Metadata */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs">
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                Billed To (B2B Partner / Client)
-              </span>
-              <div className="font-bold text-sm text-slate-900">
-                {invoice.billedToAgency || invoice.agencyName || invoice.billedToName || invoice.customerName || 'Direct VIP Client'}
-              </div>
-              {(invoice.billedToName || invoice.customerName) && (
-                <div className="text-slate-600 mt-0.5">Attn: {invoice.billedToName || invoice.customerName}</div>
-              )}
-              {(invoice.billedToEmail || invoice.customerEmail) && (
-                <div className="text-slate-500 mt-0.5">{invoice.billedToEmail || invoice.customerEmail}</div>
-              )}
-              {invoice.billedToGstin && (
-                <div className="text-slate-500 mt-0.5 font-mono">GSTIN: {invoice.billedToGstin}</div>
-              )}
-            </div>
-
-            <div>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                Operational Booking Details
-              </span>
-              <div className="text-slate-700">
-                Booking Reference: <strong className="font-mono text-slate-900">#{invoice.bookingReference}</strong>
-              </div>
-              {invoice.leadTravelerName && (
-                <div className="text-slate-700 mt-0.5">
-                  Lead Traveler: <strong className="text-slate-900">{invoice.leadTravelerName}</strong> ({invoice.totalPax || 1} Pax)
-                </div>
-              )}
-              {invoice.destination && (
-                <div className="text-slate-700 mt-0.5">
-                  Destination: <strong className="text-slate-900">{invoice.destination}</strong>
-                </div>
-              )}
-              {invoice.travelDates && (
-                <div className="text-slate-700 mt-0.5">
-                  Travel Dates: <strong className="text-slate-900">{invoice.travelDates}</strong>
-                </div>
-              )}
-            </div>
+          {/* Explicit Proforma Notice */}
+          <div className="p-3.5 rounded-2xl bg-teal-50/70 border border-teal-200/80 flex items-start gap-2.5 text-xs text-teal-950">
+            <Info className="w-4 h-4 text-[#008972] shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              {invoice.documentNotice ||
+                'This document is a Proforma Invoice issued solely for booking confirmation and payment remittance purposes. It is not a final statutory invoice.'}
+            </p>
           </div>
 
-          {/* Services & Line Items Table */}
-          <div className="border border-slate-200 rounded-2xl overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="bg-slate-100 text-slate-600 font-bold border-b border-slate-200">
-                  <th className="py-2.5 px-4">#</th>
-                  <th className="py-2.5 px-4">Service Description</th>
-                  <th className="py-2.5 px-4">Date</th>
-                  <th className="py-2.5 px-4 text-center">Pax</th>
-                  <th className="py-2.5 px-4 text-right">Selling Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {((invoice.items && invoice.items.length > 0) ? invoice.items : (invoice.services && invoice.services.length > 0) ? invoice.services : []).length > 0 ? (
-                  ((invoice.items && invoice.items.length > 0) ? invoice.items : (invoice.services || [])).map((item, idx) => (
-                    <tr key={item.id || idx} className="hover:bg-slate-50/60">
-                      <td className="py-3 px-4 text-slate-400 font-mono">{idx + 1}</td>
-                      <td className="py-3 px-4">
-                        <span className="font-bold text-slate-900 block">{item.productName || item.serviceName || 'Travel Ground Service'}</span>
-                        {item.category && (
-                          <span className="text-[10px] text-slate-500 uppercase">{item.category}</span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600">{item.serviceDate || item.travelDate || 'Scheduled'}</td>
-                      <td className="py-3 px-4 text-center font-semibold text-slate-700">
-                        {typeof (item as any).pax === 'object' && (item as any).pax !== null
-                          ? (((item as any).pax.adults ?? 0) + ((item as any).pax.children ?? 0) + ((item as any).pax.infants ?? 0)) || 1
-                          : (item.pax || item.quantity || 1)}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                        {formatCurrency(item.totalPrice || item.unitPrice || 0, invoice.currency)}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td className="py-3 px-4 text-slate-400 font-mono">1</td>
-                    <td className="py-3 px-4 font-bold text-slate-900">
-                      Ground Itinerary Arrangements & VIP Concierge
-                    </td>
-                    <td className="py-3 px-4 text-slate-600">{invoice.travelDates || 'TBA'}</td>
-                    <td className="py-3 px-4 text-center font-semibold text-slate-700">
-                      {typeof (invoice as any).totalPax === 'object' && (invoice as any).totalPax !== null
-                        ? (((invoice as any).totalPax.adults ?? 0) + ((invoice as any).totalPax.children ?? 0) + ((invoice as any).totalPax.infants ?? 0)) || 1
-                        : (invoice.totalPax || 1)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
-                      {formatCurrency(invoice.totalAmount || 0, invoice.currency)}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          {/* Billed To & Booking Summary */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs">
+            <div className="space-y-1">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Billed To</span>
+              <p className="text-sm font-black text-slate-900">
+                {invoice.agencyName || invoice.billedToAgency || resolvedBooking?.agencyName || 'Direct Partner'}
+              </p>
+              <p className="text-slate-700 font-semibold">
+                Attn: {invoice.customerName || invoice.billedToName || resolvedBooking?.customer?.leadTravelerName || 'Booking Contact'}
+              </p>
+              <p className="text-slate-600">{invoice.customerEmail || invoice.billedToEmail}</p>
+              {invoice.billingAddress && <p className="text-slate-500">{invoice.billingAddress}</p>}
+            </div>
 
-          {/* Totals & Settlement Calculation */}
-          <div className="flex flex-col sm:flex-row justify-between items-start gap-4 pt-2">
-            {/* Bank Remittance Info */}
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs w-full sm:max-w-xs space-y-1">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">
-                Remittance & Wire Transfer Details
-              </span>
-              <p className="text-slate-700"><strong>Bank:</strong> Standard Chartered Bank</p>
-              <p className="text-slate-700"><strong>A/C Name:</strong> The Unbound Travel Pvt Ltd</p>
-              <p className="text-slate-700 font-mono"><strong>A/C No:</strong> 019283746501</p>
-              <p className="text-slate-700 font-mono"><strong>SWIFT / IFSC:</strong> SCBLINBBXXX</p>
-              <p className="text-[11px] text-slate-500 mt-2 italic">
-                *Please quote Proforma #{invoice.invoiceNumber} on remittance instructions.
+            <div className="space-y-1">
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Booking Summary</span>
+              <p className="text-slate-700">
+                <strong className="text-slate-900">Booking Ref:</strong> #{invoice.bookingReference}
+              </p>
+              <p className="text-slate-700">
+                <strong className="text-slate-900">Destination:</strong> {invoice.destination || resolvedBooking?.destination || 'Ground Itinerary'}
+              </p>
+              <p className="text-slate-700">
+                <strong className="text-slate-900">Travel Dates:</strong> {invoice.travelDates || `${resolvedBooking?.travelStartDate || ''} - ${resolvedBooking?.travelEndDate || ''}`}
+              </p>
+              <p className="text-slate-700">
+                <strong className="text-slate-900">Passengers:</strong> {paxSummary}
               </p>
             </div>
+          </div>
 
-            {/* Financial Totals */}
-            <div className="w-full sm:max-w-xs space-y-2 text-xs">
-              <div className="flex justify-between text-slate-600">
-                <span>Gross Itinerary Total:</span>
-                <span className="font-mono font-bold text-slate-900">
-                  {formatCurrency(invoice.totalAmount || 0, invoice.currency)}
-                </span>
+          {/* Scope of Booked Services (Descriptive schedule ONLY — NO separate tax/fee/price breakdown) */}
+          {scopeServices.length > 0 && (
+            <div className="border border-slate-200 rounded-2xl overflow-hidden">
+              <div className="bg-slate-900 text-white px-4 py-2.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider">
+                <span>Booked Services Scope ({scopeServices.length})</span>
+                <span>Currency: {authoritative.currency}</span>
               </div>
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50 text-slate-500 border-b border-slate-200 uppercase text-[10px]">
+                  <tr>
+                    <th className="py-2.5 px-4 font-bold">#</th>
+                    <th className="py-2.5 px-4 font-bold">Service Description</th>
+                    <th className="py-2.5 px-4 font-bold">Category</th>
+                    <th className="py-2.5 px-4 font-bold">Service Date</th>
+                    <th className="py-2.5 px-4 font-bold text-right">PAX</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {scopeServices.map((srv, idx) => (
+                    <tr key={srv.id} className="hover:bg-slate-50/50">
+                      <td className="py-2.5 px-4 font-mono text-slate-400 font-bold">{idx + 1}</td>
+                      <td className="py-2.5 px-4 font-bold text-slate-900">{srv.name}</td>
+                      <td className="py-2.5 px-4 text-slate-600">{srv.category}</td>
+                      <td className="py-2.5 px-4 text-slate-600">{srv.date}</td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold text-slate-700">{srv.pax}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-              {invoice.taxAmount !== undefined && invoice.taxAmount > 0 && (
-                <div className="flex justify-between text-slate-600">
-                  <span>Applicable GST / Taxes:</span>
-                  <span className="font-mono font-bold text-slate-900">
-                    {formatCurrency(invoice.taxAmount, invoice.currency)}
-                  </span>
+          {/* Authoritative Commercial Total — FINAL BOOKING AMOUNT ONLY */}
+          <div className="rounded-2xl bg-slate-950 text-white p-5 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-widest text-teal-300">
+                  Final Booking Amount
                 </div>
-              )}
-
-              <div className="flex justify-between text-slate-600">
-                <span>Payments Received:</span>
-                <span className="font-mono font-bold text-emerald-700">
-                  - {formatCurrency(invoice.paidAmount || 0, invoice.currency)}
-                </span>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Authoritative consolidated total from committed booking snapshot ({authoritative.sourcePricingSnapshotId}).
+                </p>
               </div>
-
-              <div className="pt-2 border-t border-slate-200 flex justify-between text-sm font-black text-slate-900">
-                <span>Balance Due:</span>
-                <span className={`font-mono ${invoice.balanceDue > 0 ? 'text-[#008f77]' : 'text-emerald-700'}`}>
-                  {formatCurrency(invoice.balanceDue || 0, invoice.currency)}
-                </span>
+              <div className="text-2xl font-black font-mono text-white">
+                {formatCurrency(authoritative.finalBookingAmount, authoritative.currency)}
               </div>
+            </div>
+
+            {authoritative.amountPaid > 0 && (
+              <div className="pt-3 border-t border-slate-800 space-y-1.5 text-xs">
+                <div className="flex justify-between text-emerald-300 font-semibold">
+                  <span>Amount Received To Date</span>
+                  <span className="font-mono">{formatCurrency(authoritative.amountPaid, authoritative.currency)}</span>
+                </div>
+                <div className="flex justify-between text-teal-300 font-black text-sm">
+                  <span>Balance Due</span>
+                  <span className="font-mono">{formatCurrency(authoritative.balanceDue, authoritative.currency)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Payment / Bank Wire Remittance Details (Dynamically Sourced — Never Hardcoded) */}
+          {invoice.bankAccountDetails && (invoice.bankAccountDetails.bankName || invoice.bankAccountDetails.accountNumber) && (
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2">
+              <div className="font-black text-slate-800 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
+                <CreditCard className="w-3.5 h-3.5 text-[#008972]" />
+                <span>Wire Remittance Instructions</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-700">
+                {invoice.bankAccountDetails.bankName && (
+                  <p><strong>Bank Name:</strong> {invoice.bankAccountDetails.bankName}</p>
+                )}
+                {invoice.bankAccountDetails.accountName && (
+                  <p><strong>Account Name:</strong> {invoice.bankAccountDetails.accountName}</p>
+                )}
+                {invoice.bankAccountDetails.accountNumber && (
+                  <p><strong>Account Number:</strong> <span className="font-mono">{invoice.bankAccountDetails.accountNumber}</span></p>
+                )}
+                {invoice.bankAccountDetails.swiftBic && (
+                  <p><strong>SWIFT / BIC:</strong> <span className="font-mono">{invoice.bankAccountDetails.swiftBic}</span></p>
+                )}
+                {invoice.bankAccountDetails.iban && (
+                  <p><strong>IBAN / Routing:</strong> <span className="font-mono">{invoice.bankAccountDetails.iban}</span></p>
+                )}
+                <p><strong>Payment Reference:</strong> <span className="font-mono font-bold">#{invoice.bookingReference}</span></p>
+              </div>
+            </div>
+          )}
+
+          {/* Notes & Terms */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[11px] text-slate-600 pt-2 border-t border-slate-100">
+            <div>
+              <div className="font-bold text-slate-800 uppercase text-[10px] mb-1 flex items-center gap-1">
+                <FileText className="w-3 h-3 text-[#008972]" /> Billing Notes
+              </div>
+              <p className="leading-relaxed">
+                {invoice.notes || `Proforma Invoice issued for Booking Reference #${invoice.bookingReference}.`}
+              </p>
+            </div>
+            <div>
+              <div className="font-bold text-slate-800 uppercase text-[10px] mb-1 flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3 text-[#008972]" /> Proforma Terms
+              </div>
+              <p className="leading-relaxed">
+                {invoice.terms || 'Payment due as per booking cut-off terms. Bank transfer charges are borne by the remitter.'}
+              </p>
             </div>
           </div>
 
-          {/* Operational & Booking Notes */}
-          <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-100 text-[11px] text-slate-500 leading-relaxed">
-            <strong className="text-slate-700">Terms & Confirmation Policy:</strong> This document represents an authoritative commercial proforma invoice issued against ground operational booking #{invoice.bookingReference}. Activity and booking vouchers are issued upon receipt of scheduled advance deposit. Services are subject to DMC general ground fulfillment terms.
+          <div className="text-[10px] text-slate-400 flex items-center justify-between pt-3 border-t border-slate-100">
+            <span className="flex items-center gap-1">
+              <Calendar className="w-3 h-3" /> Issued by {companyProfile.companyName || 'TheUnbound'}
+            </span>
+            <span className="font-mono">Proforma v{invoice.invoiceVersion || 1} • {authoritative.sourcePricingSnapshotId}</span>
           </div>
         </div>
-
-        {/* Bottom Actions */}
-        <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100 print:hidden">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
-          >
-            Close
-          </button>
-          <button
-            onClick={handlePrint}
-            className="px-4 py-2 rounded-xl bg-[#008f77] hover:bg-[#00705d] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-          >
-            <Printer className="w-3.5 h-3.5" />
-            <span>Print / Save PDF</span>
-          </button>
-        </div>
-
       </div>
     </div>
   );

@@ -19,6 +19,7 @@ import {
   UserCheck
 } from 'lucide-react';
 import { RecordReminderIndicator } from '../ActionCenter/RecordReminderIndicator';
+import { getLeadStatusLabel, normalizeLeadStatus, formatLeadStageDisplayName } from '../../services/crmOperationsEngine';
 
 export interface LeadKanbanBoardProps {
   leads: TravelLead[];
@@ -53,17 +54,18 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
       if (l.stageId) {
         return l.stageId === stage.id;
       }
+      const normStatus = normalizeLeadStatus(l.status);
       // Fallback matching by status or id
-      if (stage.id === 'NEW_ENQUIRY' && (l.status === 'NEW' || !l.status)) return true;
-      if (stage.id === 'CONTACTED' && l.status === 'CONTACTED') return true;
-      if (stage.id === 'REQUIREMENTS_COLLECTED' && (l.status === 'QUALIFIED' || l.status === 'PROPOSAL_SAVED')) return true;
-      if (stage.id === 'QUOTE_DRAFTED' && l.status === 'QUOTE_CREATED') return true;
-      if (stage.id === 'QUOTE_SENT' && (l.status === 'QUOTED' || l.status === 'QUOTE_DOWNLOADED')) return true;
-      if (stage.id === 'FOLLOW_UP_REQUIRED' && l.status === 'FOLLOW_UP') return true;
-      if (stage.id === 'BOOKING_EXPECTED' && l.status === 'BOOKING_SUBMITTED') return true;
-      if (stage.id === 'WON' && (l.status === 'WON' || l.conversionStatus === 'CONVERTED')) return true;
-      if (stage.id === 'LOST' && (l.status === 'LOST' || l.conversionStatus === 'LOST')) return true;
-      if (stage.id === 'ON_HOLD' && l.status === 'ARCHIVED') return true;
+      if (stage.id === 'NEW_ENQUIRY' && (normStatus === 'NEW' || !l.status)) return true;
+      if (stage.id === 'CONTACTED' && normStatus === 'CONTACTED') return true;
+      if (stage.id === 'REQUIREMENTS_COLLECTED' && (normStatus === 'QUALIFIED' || normStatus === 'PROPOSAL_SAVED')) return true;
+      if (stage.id === 'QUOTE_DRAFTED' && normStatus === 'QUOTE_CREATED') return true;
+      if (stage.id === 'QUOTE_SENT' && (normStatus === 'QUOTED' || normStatus === 'QUOTE_DOWNLOADED')) return true;
+      if (stage.id === 'FOLLOW_UP_REQUIRED' && normStatus === 'FOLLOW_UP') return true;
+      if (stage.id === 'BOOKING_EXPECTED' && normStatus === 'BOOKING_SUBMITTED') return true;
+      if (stage.id === 'WON' && (normStatus === 'WON' || l.conversionStatus === 'CONVERTED')) return true;
+      if (stage.id === 'LOST' && (normStatus === 'LOST' || l.conversionStatus === 'LOST')) return true;
+      if (stage.id === 'ON_HOLD' && normStatus === 'ARCHIVED') return true;
       return false;
     });
   };
@@ -147,8 +149,8 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                       className="w-3 h-3 rounded-full shrink-0 shadow-xs" 
                       style={{ backgroundColor: stage.color || '#6366F1' }} 
                     />
-                    <h3 className="font-black text-xs text-slate-900 truncate" title={stage.name}>
-                      {stage.name}
+                    <h3 className="font-black text-xs text-slate-900 truncate" title={formatLeadStageDisplayName(stage.name)}>
+                      {formatLeadStageDisplayName(stage.name)}
                     </h3>
                   </div>
                   <span className="text-xs font-mono font-black bg-slate-100 text-slate-800 px-2.5 py-0.5 rounded-full shrink-0 border border-slate-200">
@@ -218,6 +220,21 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                           <div className="flex items-center gap-1 shrink-0">
                             {getPriorityBadge(lead.priority)}
                           </div>
+                        </div>
+
+                        {/* Status Badge */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
+                            normalizeLeadStatus(lead.status) === 'QUALIFIED'
+                              ? 'bg-cyan-50 text-cyan-800 border-cyan-200'
+                              : normalizeLeadStatus(lead.status) === 'WON'
+                              ? 'bg-teal-50 text-teal-800 border-teal-200'
+                              : normalizeLeadStatus(lead.status) === 'LOST'
+                              ? 'bg-slate-100 text-slate-600 border-slate-200'
+                              : 'bg-slate-50 text-slate-700 border-slate-200'
+                          }`}>
+                            {getLeadStatusLabel(lead.status)}
+                          </span>
                         </div>
 
                         {/* Title & Agency */}
@@ -334,7 +351,7 @@ export const LeadKanbanBoard: React.FC<LeadKanbanBoardProps> = ({
                                 e.stopPropagation();
                                 onStageChange(lead.id, nextStage.id);
                               }}
-                              title={`Advance to ${nextStage.name}`}
+                              title={`Advance to ${formatLeadStageDisplayName(nextStage.name)}`}
                               className="text-[#008f77] hover:text-slate-950 bg-teal-50 hover:bg-[#00C6A6] px-2 py-1 rounded-lg flex items-center gap-1 font-black transition-all text-[10px] cursor-pointer border border-[#00C6A6]/30"
                             >
                               <span>Next Stage</span>

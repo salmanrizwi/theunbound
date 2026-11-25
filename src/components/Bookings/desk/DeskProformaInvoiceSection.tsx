@@ -6,6 +6,8 @@ import { formatCurrency } from '../../../services/pricingEngine';
 import { ProformaInvoiceModal } from '../../AdminCMS/leads/ProformaInvoiceModal';
 import { validateProformaInvoicePreflight, ProformaPreflightError } from '../../../services/proformaInvoicePreflight';
 import { ProformaGenerationErrorModal, ProformaGenerationSuccessModal } from '../../AdminCMS/invoices/ProformaGenerationModals';
+import { generateProformaInvoicePDF } from '../../../services/bookingDocumentPdfService';
+import { resolveAuthoritativeProformaAmount } from '../../../services/bookingOperationsSyncService';
 import { 
   Receipt, 
   Plus, 
@@ -575,6 +577,18 @@ TheUnbound Finance & Operations Desk`
                         </span>
 
                         <button
+                          onClick={() => {
+                            const pdfRes = generateProformaInvoicePDF(invoice, booking, db.getCentralCompanyProfile());
+                            pdfRes.download();
+                          }}
+                          className="px-3 py-1.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                          title="Download Official Proforma Invoice PDF"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Download PDF</span>
+                        </button>
+
+                        <button
                           onClick={() => setSelectedInvoiceForPreview(invoice)}
                           className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
                         >
@@ -630,42 +644,52 @@ TheUnbound Finance & Operations Desk`
                       </div>
                     </div>
 
-                    {/* Numbers Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Subtotal</span>
-                        <span className="text-sm font-black text-slate-800 font-mono mt-0.5 block">
-                          {formatCurrency(invoice.subtotal, invoice.currency)}
-                        </span>
-                      </div>
+                    {/* Authoritative Proforma Commercial Summary — Final Booking Amount Only */}
+                    {(() => {
+                      const auth = isLatest ? resolveAuthoritativeProformaAmount(booking) : null;
+                      const displayFinalAmount = auth ? auth.finalBookingAmount : (invoice.proformaFinalBookingAmount ?? invoice.totalAmount);
+                      const displayPaid = auth ? auth.amountPaid : invoice.amountPaid;
+                      const displayBalance = auth ? auth.balanceDue : invoice.balanceDue;
+                      const displayCurrency = auth ? auth.currency : invoice.currency;
+                      const displaySnap = invoice.sourcePricingSnapshotId || auth?.sourcePricingSnapshotId || `v${invoice.sourcePricingSnapshotVersion || 1}`;
+                      return (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                          <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-slate-800">
+                            <span className="text-[10px] font-bold text-teal-300 uppercase block">Final Booking Amount</span>
+                            <span className="text-base font-black text-white font-mono mt-0.5 block">
+                              {formatCurrency(displayFinalAmount, displayCurrency)}
+                            </span>
+                          </div>
 
-                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Total Selling</span>
-                        <span className="text-base font-black text-slate-900 font-mono mt-0.5 block">
-                          {formatCurrency(invoice.totalAmount, invoice.currency)}
-                        </span>
-                      </div>
+                          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Amount Paid</span>
+                            <span className="text-sm font-black text-emerald-700 font-mono mt-0.5 block">
+                              {formatCurrency(displayPaid, displayCurrency)}
+                            </span>
+                          </div>
 
-                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Amount Paid</span>
-                        <span className="text-sm font-black text-emerald-700 font-mono mt-0.5 block">
-                          {formatCurrency(invoice.amountPaid, invoice.currency)}
-                        </span>
-                      </div>
+                          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Balance Due</span>
+                            <span className={`text-sm font-black font-mono mt-0.5 block ${displayBalance > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                              {formatCurrency(displayBalance, displayCurrency)}
+                            </span>
+                          </div>
 
-                      <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase block">Balance Due</span>
-                        <span className={`text-sm font-black font-mono mt-0.5 block ${invoice.balanceDue > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
-                          {formatCurrency(invoice.balanceDue, invoice.currency)}
-                        </span>
-                      </div>
-                    </div>
+                          <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase block">Pricing Snapshot</span>
+                            <span className="text-xs font-bold text-slate-700 font-mono mt-1 block truncate">
+                              {displaySnap}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
-                    {/* Line Items Sample Preview */}
+                    {/* Descriptive Booked Services Scope (No Tax/Service Fee/Itemized Margin Breakdown) */}
                     <div className="text-xs space-y-2">
                       <div className="flex items-center justify-between text-slate-500 font-bold uppercase text-[10px]">
-                        <span>Line Items Breakdown ({invoice.services?.length || 0})</span>
-                        <span>Billing Currency: {invoice.currency}</span>
+                        <span>Booked Services Scope ({invoice.services?.length || 0})</span>
+                        <span>Proforma Invoice • Consolidated Final Amount</span>
                       </div>
 
                       <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100">
@@ -674,11 +698,11 @@ TheUnbound Finance & Operations Desk`
                             <div>
                               <span className="font-bold text-slate-800">{srv.description || srv.serviceName || srv.productName || 'Travel Ground Service'}</span>
                               <span className="text-[10px] text-slate-400 block">
-                                {srv.category || 'SERVICE'} • Qty: {srv.quantity || srv.pax || 1} Pax
+                                {srv.category || 'SERVICE'} • Date: {srv.serviceDate || srv.travelDate || 'Scheduled'}
                               </span>
                             </div>
-                            <span className="font-mono font-bold text-slate-900">
-                              {formatCurrency(srv.amount ?? srv.totalPrice ?? srv.unitPrice ?? 0, invoice.currency)}
+                            <span className="font-mono font-bold text-slate-600 text-[11px]">
+                              {srv.pax || srv.quantity || 1} Pax
                             </span>
                           </div>
                         ))}
@@ -885,6 +909,7 @@ TheUnbound Finance & Operations Desk`
       {selectedInvoiceForPreview && (
         <ProformaInvoiceModal
           invoice={selectedInvoiceForPreview}
+          booking={booking}
           onClose={() => setSelectedInvoiceForPreview(null)}
         />
       )}

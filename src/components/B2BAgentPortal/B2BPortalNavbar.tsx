@@ -559,7 +559,8 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
   onOpenCreateQuote
 }) => {
   const { user, logout } = useAuth();
-  const { items, totalSellingPrice, currency, setCurrency, setIsQuoteDrawerOpen } = useQuotation();
+  const { cartItems, isCartVerified, cartTotalSellingPrice, currency, setCurrency, setIsQuoteDrawerOpen } = useQuotation();
+  const verifiedCartItems = isCartVerified ? cartItems : [];
 
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
@@ -719,15 +720,15 @@ export const B2BPortalHeader: React.FC<B2BPortalHeaderProps> = ({
           >
             <div className="relative">
               <ShoppingBag className="w-4 h-4 text-[#00C6A6]" />
-              {items.length > 0 && (
+              {verifiedCartItems.length > 0 && (
                 <span className="absolute -top-1.5 -right-2 w-3.5 h-3.5 rounded-full bg-[#00C6A6] text-slate-950 text-[9px] font-black flex items-center justify-center">
-                  {items.length}
+                  {verifiedCartItems.length}
                 </span>
               )}
             </div>
-            {items.length > 0 && (
+            {verifiedCartItems.length > 0 && (
               <span className="hidden md:inline text-xs font-bold text-slate-900 font-mono pl-1 border-l border-slate-300">
-                {formatCurrency(totalSellingPrice, currency)}
+                {formatCurrency(cartTotalSellingPrice, currency)}
               </span>
             )}
           </button>

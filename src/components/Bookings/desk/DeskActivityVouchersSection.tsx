@@ -3,6 +3,7 @@ import { Booking, BookingVoucher, User } from '../../../types';
 import { AppDatabase } from '../../../services/db';
 import { isInternalStaff } from '../../../services/permissionEngine';
 import { VoucherDocumentView } from '../VoucherDocumentView';
+import { generateActivityVoucherPDF } from '../../../services/bookingDocumentPdfService';
 import { 
   FileText, 
   Plus, 
@@ -472,6 +473,17 @@ TheUnbound Operations Team`
                       <Eye className="w-3.5 h-3.5" />
                     </button>
 
+                    <button
+                      onClick={() => {
+                        const pdfRes = generateActivityVoucherPDF(voucher, booking, db.getCentralCompanyProfile());
+                        pdfRes.download();
+                      }}
+                      className="p-2 rounded-xl bg-teal-50 hover:bg-teal-100 text-[#008972] transition-colors cursor-pointer"
+                      title="Download Activity Voucher PDF"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                    </button>
+
                     {isInternal && !isCancelled && (
                       <button
                         onClick={() => openEditModal(voucher)}
@@ -856,6 +868,8 @@ TheUnbound Operations Team`
           <div className="max-w-4xl w-full my-8">
             <VoucherDocumentView
               voucher={selectedVoucherForPreview}
+              booking={booking}
+              isOutdated={selectedVoucherForPreview.isOutdated}
               onClose={() => setSelectedVoucherForPreview(null)}
               onRegenerate={() => {
                 handleReissue(selectedVoucherForPreview.id);

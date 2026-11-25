@@ -872,13 +872,48 @@ export interface SupplierAllocationRecord {
   serviceName: string;
   customerName?: string;
   serviceDate?: string;
-  status: 'ALLOCATED' | 'CONFIRMED' | 'REJECTED' | 'CHANGED' | 'REMOVED';
+  status: 'ALLOCATED' | 'CONFIRMED' | 'REJECTED' | 'CHANGED' | 'REMOVED' | 'AMENDMENT_REQUIRED' | 'SENT_TO_SUPPLIER' | 'AWAITING_CONFIRMATION' | 'COMPLETED';
   allocatedBy: string;
   allocatedByName: string;
   allocatedAt: string;
   previousSupplierId?: string;
   previousSupplierName?: string;
   changeReason?: string;
+  serviceDescription?: string;
+  serviceTime?: string;
+  totalPax?: number;
+  adults?: number;
+  children?: number;
+  infants?: number;
+  vehicleType?: string;
+  ticketDate?: string;
+  ticketEntryTime?: string;
+  supplierConfirmationRef?: string;
+  allocationStatusLabel?: string;
+}
+
+export interface SupplierAllocationHistoryEntry {
+  timestamp: string;
+  actorId: string;
+  actorName: string;
+  action:
+    | 'ALLOCATED'
+    | 'SUPPLIER_CHANGED'
+    | 'STATUS_UPDATED'
+    | 'CONFIRMED'
+    | 'AMENDMENT_REQUIRED'
+    | 'UNALLOCATED'
+    | 'SERVICE_AMENDED';
+  previousSupplierId?: string;
+  previousSupplierName?: string;
+  newSupplierId?: string;
+  newSupplierName?: string;
+  previousConfirmationRef?: string;
+  newConfirmationRef?: string;
+  previousStatus?: string;
+  newStatus?: string;
+  changedFields?: string[];
+  reason?: string;
 }
 
 export interface SupplierPriceRecord {
@@ -2311,6 +2346,18 @@ export interface QuoteItem {
   agentAdditionalMarkupValue?: number;
   agentAdditionalMarkupAmount?: number;
   finalCustomerSellingPrice?: number;
+
+  // Strict User-Scoped Cart Ownership & Provenance Metadata (Immutable ownerUid)
+  ownerUid?: string;
+  agencyId?: string | null;
+  addedByUid?: string;
+  addedByRole?: CartAddedByRole;
+  addedByName?: string;
+  addedByEmail?: string;
+  adminCartNote?: string;
+  addedAt?: string;
+  updatedAt?: string;
+  cartSchemaVersion?: number;
 }
 
 export type QuoteStatus = 
@@ -3351,19 +3398,32 @@ export type SupplierPriceType =
 
 export type SupplierAllocationStatus = 
   | 'Not Allocated'
+  | 'Pending Allocation'
   | 'Allocation Pending'
+  | 'Supplier Selected'
   | 'Allocated'
+  | 'Sent to Supplier'
+  | 'Awaiting Supplier Confirmation'
+  | 'Supplier Confirmed'
   | 'Supplier Changed'
+  | 'Amendment Required'
   | 'Supplier Reconfirmation Required'
-  | 'Supplier Cancelled';
+  | 'Rejected by Supplier'
+  | 'Supplier Cancelled'
+  | 'Cancelled'
+  | 'Completed';
 
 export type ServiceItemConfirmationStatus = 
   | 'Not Confirmed'
   | 'Confirmation Requested'
   | 'Confirmation Pending'
+  | 'Awaiting Supplier Confirmation'
   | 'Confirmed'
+  | 'Amendment Required'
   | 'Reconfirmation Required'
+  | 'Rejected by Supplier'
   | 'Cancelled'
+  | 'Completed'
   | 'Not Processed'
   | 'Supplier Not Allocated'
   | 'Price Pending'
@@ -3613,6 +3673,47 @@ export interface BookingItem {
   confirmedByName?: string;
   reconfirmationReason?: string;
 
+  // Authoritative Synchronised Operational & Voucher Details
+  serviceDescription?: string;
+  serviceOverview?: string;
+  inclusions?: string[];
+  exclusions?: string[];
+  meetingPoint?: string;
+  address?: string;
+  googleMapsUrl?: string;
+  importantInstructions?: string;
+  startTime?: string;
+  endTime?: string;
+  reportingTime?: string;
+  ticketDate?: string;
+  ticketEntryTime?: string;
+  pickupDate?: string;
+  pickupTime?: string;
+  returnTime?: string;
+  timeZone?: string;
+  timingInstructions?: string;
+  passengerBreakdown?: string;
+  ageTicketCategories?: string;
+  // Transport / Vehicle Configuration (applicable strictly to transport/transfer/chauffeur/charter services)
+  vehicleType?: string;
+  vehicleCategory?: string;
+  vehicleSeaterCapacity?: number;
+  vehicleCount?: number;
+  passengerCapacity?: number;
+  luggageCapacity?: string;
+  routeDetails?: string;
+  vehicleSpecialInstructions?: string;
+  // Financial & Allocation Traceability
+  pricingSnapshotId?: string;
+  pricingSnapshotVersion?: number;
+  allocationDocumentUrl?: string;
+  allocationDocumentName?: string;
+  allocationHistory?: SupplierAllocationHistoryEntry[];
+  serviceVersion?: number;
+  lastAmendedAt?: string;
+  lastAmendedBy?: string;
+  amendmentRequiredReason?: string;
+
   accommodationType?: AccommodationType;
   productType?: string;
   service_type?: string;
@@ -3689,8 +3790,6 @@ export interface BookingItem {
     duration?: string;
     voucherCode?: string;
   };
-  inclusions?: string[];
-  exclusions?: string[];
   visaSnapshot?: QuoteVisaSnapshot;
   contentSnapshot?: QuoteItemContentSnapshot;
 }
@@ -4909,6 +5008,9 @@ export type AuditAction =
   | 'ACCOUNT_MANAGER_REASSIGNED'
   | 'USER_DELETED'
   | 'USER_ARCHIVED'
+  | 'ADMIN_ADDED_CART_ITEM'
+  | 'ADMIN_REMOVED_AGENT_CART_ITEM'
+  | 'ADMIN_ARCHIVED_QUARANTINED_CART_ITEM'
   | 'BOOKING_DELETED'
   | 'TRANSFER_ROUTE_DELETED'
   // CMS Actions
@@ -7183,6 +7285,20 @@ export interface BookingInvoice {
   items?: InvoiceServiceItem[] | any[];
   paidAmount?: number;
   taxAmount?: number;
+  // Authoritative Proforma Presentation & Snapshot Linkage
+  sourcePricingSnapshotId?: string;
+  sourcePricingSnapshotVersion?: number;
+  proformaFinalBookingAmount?: number;
+  idempotencyKey?: string;
+  hideTaxAndServiceFeeBreakdown?: boolean;
+  documentNotice?: string;
+  bookingDescription?: string;
+  companyEmail?: string;
+  companyPhone?: string;
+  companyWebsite?: string;
+  companyRegistrationNumber?: string;
+  agencyAddress?: string;
+  agencyContactName?: string;
 }
 
 export interface BookingVoucher {
@@ -7277,6 +7393,31 @@ export interface BookingVoucher {
     amendmentReason?: string;
     status: string;
   }[];
+  // Authoritative Voucher Operational & Versioning Fields
+  serviceDescription?: string;
+  serviceOverview?: string;
+  ticketDate?: string;
+  ticketEntryTime?: string;
+  pickupDate?: string;
+  pickupTime?: string;
+  returnTime?: string;
+  timeZone?: string;
+  address?: string;
+  googleMapsUrl?: string;
+  importantInstructions?: string;
+  vehicleType?: string;
+  vehicleCategory?: string;
+  vehicleSeaterCapacity?: number;
+  vehicleCount?: number;
+  luggageCapacity?: string;
+  routeDetails?: string;
+  sourceBookingVersion?: number;
+  idempotencyKey?: string;
+  completenessWarnings?: string[];
+  includedServiceCount?: number;
+  pendingServiceCount?: number;
+  isTransportService?: boolean;
+  isTicketedActivity?: boolean;
 }
 
 export interface FinancialTransaction {
@@ -9483,6 +9624,77 @@ export interface CashbackNotificationEvent {
   isRead: boolean;
   createdAt: string;
 }
+
+// ============================================================================
+// STRICT USER-SCOPED CART OWNERSHIP & LEGACY QUARANTINE TYPES (SCHEMA V2)
+// ============================================================================
+
+export type CartAddedByRole = 'B2B_AGENT' | 'ADMIN';
+
+export type UserCartItemStatus = 'ACTIVE' | 'CONVERTED' | 'REMOVED';
+
+export interface UserCartPassengerConfig {
+  adults: number;
+  children: number;
+  infants: number;
+  childAges?: number[];
+}
+
+export interface UserCartItemDocument {
+  cartItemId: string;
+  ownerUid: string; // Primary immutable Firebase Auth UID owner (NEVER agencyId)
+  agencyId?: string | null; // Secondary reference only
+  productId: string;
+  productName: string;
+  productCategory: string;
+  destinationId: string;
+  hubId?: string | null;
+  selectedServiceDate: string;
+  quantity: number;
+  passengerConfig: UserCartPassengerConfig;
+  selectedOptions?: Record<string, any>;
+  notes?: string;
+  itemPayload: QuoteItem; // Compacted QuoteItem snapshot for Quote Builder & Direct Booking compatibility
+  addedByUid: string;
+  addedByRole: CartAddedByRole;
+  addedByName?: string;
+  addedByEmail?: string;
+  adminNote?: string;
+  addedAt: string;
+  updatedAt: string;
+  status: UserCartItemStatus;
+  schemaVersion: number;
+}
+
+export type QuarantinedLegacyCartStatus = 'QUARANTINED' | 'ASSIGNED' | 'ARCHIVED';
+
+export interface QuarantinedLegacyCartItem {
+  id: string;
+  legacyItemId: string;
+  sourceStorage: 'LOCAL_STORAGE' | 'SESSION_STORAGE' | 'LEGACY_FIRESTORE';
+  quarantineReason:
+    | 'MISSING_OWNER_UID'
+    | 'AMBIGUOUS_SHARED_STORAGE'
+    | 'AGENCY_ONLY_OWNERSHIP'
+    | 'UNVERIFIED_OWNER_UID';
+  status: QuarantinedLegacyCartStatus;
+  productId: string;
+  productName: string;
+  productCategory: string;
+  destinationId?: string;
+  rawItemPayload: Record<string, any>;
+  discoveredByUid?: string;
+  discoveredAt: string;
+  assignedToUid?: string;
+  assignedToName?: string;
+  assignedByUid?: string;
+  assignedAt?: string;
+  archivedByUid?: string;
+  archivedAt?: string;
+  adminNotes?: string;
+  schemaVersion: number;
+}
+
 
 
 

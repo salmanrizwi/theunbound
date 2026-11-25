@@ -6,6 +6,7 @@ import {
   AssignedAgentOperationalSummary
 } from '../../services/accountManagerService';
 import { formatCurrency } from '../../services/pricingEngine';
+import { getLeadStatusLabel } from '../../services/crmOperationsEngine';
 import {
   Users,
   Building2,
@@ -367,7 +368,7 @@ export const MyAssignedAgentsView: React.FC<MyAssignedAgentsViewProps> = ({
                               {lead.leadNumber}
                             </span>
                             <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-bold">
-                              {lead.status}
+                              {getLeadStatusLabel(lead.status)}
                             </span>
                           </div>
                           <div className="text-xs font-bold text-slate-800 truncate">

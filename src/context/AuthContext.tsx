@@ -8,6 +8,7 @@ import {
   normalizeEmail 
 } from '../services/authService';
 import { resolvePostLoginDestination, navigateTo, clearIntendedPath } from '../services/portalRouter';
+import { clearAllUidCartCachesFromDevice } from '../services/userCartService';
 
 export type { AuthState, AuthResult, RegisterProfileData };
 
@@ -76,6 +77,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } else if (state === 'UNAUTHENTICATED') {
         setUser(null);
+        clearAllUidCartCachesFromDevice();
         try {
           localStorage.removeItem(STORAGE_KEY_AUTH);
         } catch (e) {
@@ -187,6 +189,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
    * Universal Logout Handler
    */
   const logout = useCallback(async (): Promise<void> => {
+    // Immediately clear all temporary device cart caches BEFORE signing out
+    clearAllUidCartCachesFromDevice();
     await authService.logout('USER_INITIATED');
     setUser(null);
     pendingCallbackRef.current = null;

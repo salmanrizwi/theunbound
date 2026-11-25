@@ -42,6 +42,7 @@ import {
 } from 'lucide-react';
 import { TravelLead, B2BCustomer, User, GroupedLeadQuotationVersions } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { getLeadStatusLabel, normalizeLeadStatus } from '../../services/crmOperationsEngine';
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { QuotationVersionHistoryModal } from '../Quotations/QuotationVersionHistoryModal';
@@ -143,11 +144,11 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
     let list = [...leads];
 
     if (statusFilter === 'ASSIGNED') {
-      list = list.filter(l => l.status === 'NEW' || l.leadVisibilityStatus === 'ASSIGNED_TO_AGENT' || l.status === 'QUALIFIED' || (!l.quoteNumber && !l.bookingReference));
+      list = list.filter(l => normalizeLeadStatus(l.status) === 'NEW' || l.leadVisibilityStatus === 'ASSIGNED_TO_AGENT' || normalizeLeadStatus(l.status) === 'QUALIFIED' || (!l.quoteNumber && !l.bookingReference));
     } else if (statusFilter === 'QUOTED') {
-      list = list.filter(l => l.status === 'QUOTED' || l.quoteNumber || (l.quoteVersions && l.quoteVersions.length > 0));
+      list = list.filter(l => normalizeLeadStatus(l.status) === 'QUOTED' || l.quoteNumber || (l.quoteVersions && l.quoteVersions.length > 0));
     } else if (statusFilter === 'CONVERTED') {
-      list = list.filter(l => l.status === 'BOOKED' || l.bookingReference || l.bookingId);
+      list = list.filter(l => normalizeLeadStatus(l.status) === 'BOOKED' || l.bookingReference || l.bookingId);
     }
 
     if (searchQuery.trim()) {
@@ -156,6 +157,7 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
         l.contactName?.toLowerCase().includes(q) ||
         l.leadNumber?.toLowerCase().includes(q) ||
         l.destinationName?.toLowerCase().includes(q) ||
+        getLeadStatusLabel(l.status).toLowerCase().includes(q) ||
         l.email?.toLowerCase().includes(q) ||
         l.phone?.toLowerCase().includes(q) ||
         l.companyName?.toLowerCase().includes(q) ||
@@ -324,10 +326,10 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
     },
     {
       id: 'QUALIFIED',
-      label: 'Qualified & In Progress',
+      label: 'Customisation Required',
       color: 'border-sky-500 text-sky-700 bg-sky-50/60',
       badgeColor: 'bg-sky-100 text-sky-800',
-      match: (l: TravelLead) => (l.status === 'QUALIFIED' || l.status === 'CONTACTED' || l.status === 'PROPOSAL_SAVED') && !l.quoteNumber && !l.bookingReference
+      match: (l: TravelLead) => (normalizeLeadStatus(l.status) === 'QUALIFIED' || normalizeLeadStatus(l.status) === 'CONTACTED' || normalizeLeadStatus(l.status) === 'PROPOSAL_SAVED') && !l.quoteNumber && !l.bookingReference
     },
     {
       id: 'QUOTED',
@@ -610,6 +612,10 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                                 <FileText className="w-3 h-3" />
                                 <span>Quoted</span>
                               </span>
+                            ) : normalizeLeadStatus(lead.status) === 'QUALIFIED' ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                {getLeadStatusLabel(lead.status)}
+                              </span>
                             ) : (
                               <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 animate-pulse">
                                 Action Required
@@ -796,6 +802,10 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                                   <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-sky-100 text-sky-800">
                                     Quoted
                                   </span>
+                                ) : normalizeLeadStatus(lead.status) === 'QUALIFIED' ? (
+                                  <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-cyan-100 text-cyan-800 border border-cyan-200">
+                                    {getLeadStatusLabel(lead.status)}
+                                  </span>
                                 ) : (
                                   <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800">
                                     Action Required
@@ -916,15 +926,19 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
                                 }}
                                 className="bg-white p-4 rounded-2xl border border-slate-200 hover:border-teal-400 shadow-xs hover:shadow-md transition-all cursor-pointer space-y-2.5 group"
                               >
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-1.5">
                                   <span className="font-mono text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">
                                     {lead.leadNumber || 'LED-DIRECT'}
                                   </span>
-                                  {lead.destinationName && (
+                                  {normalizeLeadStatus(lead.status) === 'QUALIFIED' ? (
+                                    <span className="text-[9px] font-bold text-cyan-800 bg-cyan-50 border border-cyan-200 px-1.5 py-0.5 rounded truncate max-w-[140px]">
+                                      {getLeadStatusLabel(lead.status)}
+                                    </span>
+                                  ) : lead.destinationName ? (
                                     <span className="text-[10px] text-slate-500 font-medium truncate max-w-[110px]">
                                       {lead.destinationName}
                                     </span>
-                                  )}
+                                  ) : null}
                                 </div>
 
                                 <div>
@@ -1197,11 +1211,18 @@ export const B2BMyLeadsAndClientsCRMView: React.FC<B2BMyLeadsAndClientsCRMViewPr
           <div className="bg-slate-100 w-full max-w-5xl md:max-w-6xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="p-5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                 <span className="font-mono text-xs font-black text-slate-900 bg-white border border-slate-200 px-2 py-0.5 rounded-md shadow-xs">
                   {selectedLead.leadNumber || 'LED-DIRECT'}
                 </span>
                 <span className="text-sm font-black text-slate-900">CRM Workspace: {selectedLead.contactName}</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  normalizeLeadStatus(selectedLead.status) === 'QUALIFIED'
+                    ? 'bg-cyan-50 text-cyan-800 border-cyan-200'
+                    : 'bg-slate-100 text-slate-700 border-slate-200'
+                }`}>
+                  {getLeadStatusLabel(selectedLead.status)}
+                </span>
               </div>
               <button
                 onClick={() => setSelectedLead(null)}

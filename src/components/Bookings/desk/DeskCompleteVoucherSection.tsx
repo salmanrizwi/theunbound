@@ -3,6 +3,12 @@ import { Booking, BookingVoucher, User } from '../../../types';
 import { AppDatabase } from '../../../services/db';
 import { isInternalStaff } from '../../../services/permissionEngine';
 import { VoucherDocumentView } from '../VoucherDocumentView';
+import {
+  hydrateBookingServiceItem,
+  sortBookingItemsChronologically,
+  validateCompleteVoucherReadiness
+} from '../../../services/bookingOperationsSyncService';
+import { generateCompleteVoucherPDF } from '../../../services/bookingDocumentPdfService';
 import { 
   FileCheck, 
   Plus, 
@@ -58,9 +64,26 @@ export const DeskCompleteVoucherSection: React.FC<DeskCompleteVoucherSectionProp
     return (booking.vouchersList || []).find(v => v.isCompleteBookingVoucher && v.status !== 'CANCELLED');
   }, [booking.vouchersList]);
 
-  // Normalized items
-  const items = db.normalizeServiceItems(booking.items || [], booking);
-  const confirmedItems = items.filter(it => it.supplierConfirmationStatus === 'Confirmed');
+  // Hydrated authoritative items + completeness pre-validation
+  const hydratedItems = useMemo(() => {
+    const products = db.getProducts();
+    const productMap = new Map(products.map(p => [p.id, p]));
+    return (booking.items || []).map(it =>
+      hydrateBookingServiceItem(it, booking, it.productId ? productMap.get(it.productId) || null : null)
+    );
+  }, [booking, db]);
+
+  const readiness = useMemo(
+    () => validateCompleteVoucherReadiness(booking, hydratedItems),
+    [booking, hydratedItems]
+  );
+
+  const items = useMemo(
+    () => sortBookingItemsChronologically(hydratedItems.filter(it => !it.isCancelled)),
+    [hydratedItems]
+  );
+  const confirmedItems = readiness.confirmedItems;
+  const pendingItems = readiness.pendingItems;
 
   // Edit fields
   const [editTitle, setEditTitle] = useState('');
@@ -228,10 +251,21 @@ TheUnbound Operations Team`
         </div>
 
         {completeVoucher ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                const pdfRes = generateCompleteVoucherPDF(completeVoucher, booking, db.getCentralCompanyProfile());
+                pdfRes.download();
+              }}
+              className="px-4 py-2 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download Complete PDF</span>
+            </button>
+
             <button
               onClick={() => setIsPreviewOpen(true)}
-              className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
             >
               <Eye className="w-3.5 h-3.5" />
               <span>Preview Master Voucher</span>
@@ -267,15 +301,49 @@ TheUnbound Operations Team`
           isInternal && (
             <button
               onClick={handleGenerateCompleteVoucher}
-              disabled={confirmedItems.length === 0}
+              disabled={!readiness.isReady}
               className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-bold transition-all inline-flex items-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
             >
               <Sparkles className="w-4 h-4" />
-              <span>Generate Master Voucher Now</span>
+              <span>Generate Complete Voucher Now</span>
             </button>
           )
         )}
       </div>
+
+      {/* Pre-Generation Completeness & Operational Readiness Warnings */}
+      {(readiness.warnings.length > 0 || completeVoucher?.isOutdated) && (
+        <div className="p-4 rounded-2xl bg-amber-50/90 border border-amber-200 text-xs text-amber-950 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="font-black text-amber-900 flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600" />
+              <span>
+                {completeVoucher?.isOutdated
+                  ? 'Master Voucher Outdated -- Reissue Required'
+                  : `Operational Completeness Pre-Check (${confirmedItems.length} Confirmed, ${pendingItems.length} Pending)`}
+              </span>
+            </div>
+            {completeVoucher?.isOutdated && isInternal && (
+              <button
+                onClick={handleReissue}
+                className="px-3 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold cursor-pointer"
+              >
+                Reissue Updated Voucher
+              </button>
+            )}
+          </div>
+          {completeVoucher?.isOutdated && completeVoucher.outdatedReason && (
+            <p className="font-semibold text-amber-900">{completeVoucher.outdatedReason}</p>
+          )}
+          {readiness.warnings.length > 0 && (
+            <ul className="list-disc pl-5 space-y-0.5 text-[11px] text-amber-900">
+              {readiness.warnings.slice(0, 6).map((w, idx) => (
+                <li key={idx}>{w}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {completeVoucher ? (
         <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 space-y-6">
@@ -371,38 +439,45 @@ TheUnbound Operations Team`
             </div>
           </div>
 
-          {/* Chronological Service Items Breakdown */}
+          {/* Chronological Service Items Breakdown (Confirmed vs Pending Separated) */}
           <div className="space-y-3">
             <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center justify-between">
-              <span>Included Ground Services ({items.length} Items)</span>
-              <span className="text-[11px] font-normal text-slate-400">Snapshot locked into document</span>
+              <span>Chronological Booking Services ({confirmedItems.length} Confirmed{pendingItems.length > 0 ? ` • ${pendingItems.length} Pending` : ''})</span>
+              <span className="text-[11px] font-normal text-slate-400">Sorted strictly by actual service date &amp; time</span>
             </h4>
 
             <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100">
               {items.map((item, idx) => (
                 <div key={item.id} className="p-3.5 bg-white hover:bg-slate-50 flex items-center justify-between text-xs transition-colors">
                   <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 rounded-lg bg-teal-50 text-teal-800 font-bold text-center flex items-center justify-center shrink-0">
+                    <span className={`w-6 h-6 rounded-lg font-bold text-center flex items-center justify-center shrink-0 ${
+                      item.isConfirmedForVoucher ? 'bg-teal-50 text-teal-800' : 'bg-amber-50 text-amber-800'
+                    }`}>
                       {idx + 1}
                     </span>
                     <div>
                       <h5 className="font-bold text-slate-900">{item.productName}</h5>
-                      <p className="text-[11px] text-slate-400">
-                        {item.category} • Date: {item.serviceDate || item.travelDate || 'TBD'} • {item.city || booking.destinationName}
+                      <p className="text-[11px] text-slate-500">
+                        {item.category} • Date: <strong>{item.resolvedServiceDate || 'Pending'}</strong>
+                        {(item.resolvedTicketEntryTime || item.resolvedPickupTime || item.resolvedStartTime) && (
+                          <> • Time: <strong>{item.resolvedTicketEntryTime || item.resolvedPickupTime || item.resolvedStartTime}</strong></>
+                        )}
+                        {' '}• {item.resolvedPassengerBreakdown}
+                        {item.isTransportService && item.vehicleType ? ` • Vehicle: ${item.vehicleType}` : ''}
                       </p>
                     </div>
                   </div>
 
                   <div className="text-right">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                      item.supplierConfirmationStatus === 'Confirmed'
+                      item.isConfirmedForVoucher
                         ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                         : 'bg-amber-50 text-amber-800 border-amber-200'
                     }`}>
-                      {item.supplierConfirmationStatus || 'Pending Confirmation'}
+                      {item.resolvedCanonicalAllocationStatus}
                     </span>
-                    {item.supplierConfirmationRef && (
-                      <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                    {item.isConfirmedForVoucher && item.supplierConfirmationRef && (
+                      <span className="text-[10px] font-mono text-slate-500 block mt-0.5">
                         Ref: {item.supplierConfirmationRef}
                       </span>
                     )}
@@ -472,6 +547,8 @@ TheUnbound Operations Team`
           <div className="max-w-4xl w-full my-8">
             <VoucherDocumentView
               voucher={completeVoucher}
+              booking={booking}
+              isOutdated={completeVoucher.isOutdated}
               onClose={() => setIsPreviewOpen(false)}
               onRegenerate={() => {
                 handleReissue();

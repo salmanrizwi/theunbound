@@ -209,7 +209,10 @@ import {
   CUSTOMER_PROGRESS_STAGES,
   calculateTransparentLeadScore,
   calculateBookingProfitability,
-  generateOperationsCalendarEvents
+  generateOperationsCalendarEvents,
+  normalizeLeadStatus,
+  getLeadStatusLabel,
+  formatLeadStageDisplayName
 } from './crmOperationsEngine';
 import {
   DEFAULT_GLOBAL_SEO_DEFAULTS,
@@ -233,6 +236,18 @@ import { performanceMonitor } from './performanceMonitor';
 import { calculateEligibleBookingComponents } from './cashbackEngine';
 import { withBoundedTimeout } from './quotationOperationsService';
 import { displayCurrencyService } from './displayCurrencyService';
+import {
+  CanonicalAllocationStatus,
+  buildDocumentIdempotencyKey,
+  detectConfirmedServiceAmendment,
+  formatPassengerBreakdown,
+  hydrateBookingServiceItem,
+  mapCanonicalAllocationStatusToItemFields,
+  resolveAuthoritativeProformaAmount,
+  resolveCanonicalAllocationStatus,
+  sortBookingItemsChronologically,
+  validateCompleteVoucherReadiness
+} from './bookingOperationsSyncService';
 import {
   buildInitialBookingPricingSnapshot,
   getLatestBookingPricingSnapshot
@@ -3313,18 +3328,19 @@ export class AppDatabase {
             entityId: lead.id,
             summary: isNew 
               ? `New Lead Captured: [${lead.leadNumber || lead.id}] ${lead.contactName} - ${lead.destinationName || 'Multi-Destination'} (${paxTotal} Pax)`
-              : `Lead ${lead.status}: [${lead.leadNumber || lead.id}] ${lead.contactName} (${lead.destinationName || 'General'})`,
+              : `Lead ${getLeadStatusLabel(lead.status)}: [${lead.leadNumber || lead.id}] ${lead.contactName} (${lead.destinationName || 'General'})`,
             details: {
               customerName: lead.contactName,
               destinationName: lead.destinationName,
               travelDates: lead.travelDates,
               leadNumber: lead.leadNumber,
               status: lead.status,
+              statusLabel: getLeadStatusLabel(lead.status),
               actionNeeded: isNew ? 'Assign travel specialist & begin quotation proposal' : undefined
             },
             severity: isNew ? 'WARNING' : 'INFO',
             actionRequired: isNew,
-            actionLabel: isNew ? 'Assign & Qualify' : 'View Lead',
+            actionLabel: isNew ? 'Assign & Review' : 'View Lead',
             read: !isNew,
             targetSection: 'LEAD_MANAGEMENT',
             targetSubTab: 'LEADS',
@@ -13537,9 +13553,13 @@ export class AppDatabase {
     return matching.map(b => this.sanitizeBookingForExternalUser(b));
   }
 
-  public getBookingById(bookingId: string, user?: User | null): Booking | null {
+  private findBookingInternal(bookingId: string): Booking | null {
     const all = this.getAllBookings();
-    const found = all.find(b => b.id === bookingId || b.bookingReference === bookingId) || null;
+    return all.find(b => b.id === bookingId || b.bookingReference === bookingId) || null;
+  }
+
+  public getBookingById(bookingId: string, user?: User | null): Booking | null {
+    const found = this.findBookingInternal(bookingId);
     if (!found) return null;
     if (!user) return null; // Logged-out users cannot access bookings
     
@@ -14851,42 +14871,53 @@ export class AppDatabase {
    * Authoritative Service Item normalization to ensure real operational fields exist
    */
   public normalizeServiceItems(items: BookingItem[], booking: Booking): BookingItem[] {
-    return (items || []).map((item) => {
-      const isConfirmed = item.supplierConfirmationStatus === 'Confirmed' || item.supplierStatus === 'CONFIRMED_BY_SUPPLIER';
-      const hasSupplier = Boolean(item.supplierId || item.supplierName);
-      const hasPrice = typeof item.supplierPrice === 'number' && item.supplierPrice >= 0;
+    const products = this.getProducts();
+    const productMap = new Map<string, Product>();
+    for (const p of products) {
+      if (p?.id) productMap.set(p.id, p);
+    }
 
-      let confirmationStatus: ServiceItemConfirmationStatus = item.supplierConfirmationStatus || 'Not Processed';
-      if (!item.supplierConfirmationStatus) {
-        if (isConfirmed) confirmationStatus = 'Confirmed';
+    return (items || []).map((rawItem) => {
+      const linkedProduct = rawItem.productId ? productMap.get(rawItem.productId) || null : null;
+      const hydrated = hydrateBookingServiceItem(rawItem, booking, linkedProduct);
+      const canonicalStatus = hydrated.resolvedCanonicalAllocationStatus;
+      const hasSupplier = Boolean(hydrated.supplierId || hydrated.supplierName);
+      const hasPrice = typeof hydrated.supplierPrice === 'number' && hydrated.supplierPrice >= 0;
+
+      let confirmationStatus: ServiceItemConfirmationStatus = hydrated.supplierConfirmationStatus || 'Not Processed';
+      if (!hydrated.supplierConfirmationStatus) {
+        if (canonicalStatus === 'Supplier Confirmed' || canonicalStatus === 'Completed') confirmationStatus = 'Confirmed';
+        else if (canonicalStatus === 'Amendment Required') confirmationStatus = 'Supplier Reconfirmation Required';
         else if (hasSupplier && hasPrice) confirmationStatus = 'Confirmation Pending';
         else if (hasSupplier && !hasPrice) confirmationStatus = 'Price Pending';
         else confirmationStatus = 'Supplier Not Allocated';
       }
 
-      let operationalStatus: ServiceItemOperationalStatus = item.operationalStatus || 'Not Started';
-      if (!item.operationalStatus) {
+      let operationalStatus: ServiceItemOperationalStatus = hydrated.operationalStatus || 'Not Started';
+      if (!hydrated.operationalStatus) {
         if (confirmationStatus === 'Confirmed') operationalStatus = 'Confirmed';
+        else if (confirmationStatus === 'Supplier Reconfirmation Required') operationalStatus = 'Supplier Reconfirmation Required';
         else if (!hasSupplier) operationalStatus = 'Allocation Pending';
         else if (!hasPrice) operationalStatus = 'Price Pending';
         else operationalStatus = 'Confirmation Pending';
       }
 
       return {
-        ...item,
-        bookingId: item.bookingId || booking.id,
-        destination: item.destination || item.destinationName || booking.destinationName || 'Destination',
-        hub: item.hub || item.city || 'Central Hub',
-        passengerDetails: item.passengerDetails || `${item.adults || 2} Adults${item.children ? `, ${item.children} Children` : ''}`,
-        assignedTeamMember: item.assignedTeamMember || booking.assignedTeamMemberName || 'Operations DMC Desk',
-        supplierPrice: hasPrice ? item.supplierPrice : (item.unitNetPrice ? Math.round(item.unitNetPrice * item.totalPax) : Math.round(item.totalPrice * 0.82)),
-        supplierCurrency: item.supplierCurrency || item.currency || booking.currency || 'USD',
-        supplierPriceType: item.supplierPriceType || 'Total Service Price',
-        supplierPriceVersion: item.supplierPriceVersion || 1,
+        ...hydrated,
+        bookingId: hydrated.bookingId || booking.id,
+        destination: hydrated.destination || hydrated.destinationName || booking.destinationName || booking.destination || '',
+        hub: hydrated.hub || hydrated.city || '',
+        passengerDetails: hydrated.passengerDetails || hydrated.resolvedPassengerBreakdown,
+        assignedTeamMember: hydrated.assignedTeamMember || booking.assignedTeamMemberName || 'Operations DMC Desk',
+        supplierPrice: hasPrice ? hydrated.supplierPrice : (hydrated.unitNetPrice ? Math.round(hydrated.unitNetPrice * Math.max(1, hydrated.totalPax || 1)) : undefined),
+        supplierCurrency: hydrated.supplierCurrency || hydrated.currency || booking.currency || 'USD',
+        supplierPriceType: hydrated.supplierPriceType || 'Total Service Price',
+        supplierPriceVersion: hydrated.supplierPriceVersion || 1,
         supplierConfirmationStatus: confirmationStatus,
+        supplierAllocationStatus: hydrated.supplierAllocationStatus || canonicalStatus,
         operationalStatus,
-        voucherStatus: item.voucherStatus || (confirmationStatus === 'Confirmed' ? 'Ready to Generate' : 'Not Ready'),
-        invoiceStatus: item.invoiceStatus || 'Not Uploaded'
+        voucherStatus: hydrated.voucherStatus || (confirmationStatus === 'Confirmed' ? 'Ready to Generate' : 'Not Ready'),
+        invoiceStatus: hydrated.invoiceStatus || 'Not Uploaded'
       };
     });
   }
@@ -14918,13 +14949,13 @@ export class AppDatabase {
   }
 
   public getBookingActivities(bookingId: string): BookingActivityTimelineEvent[] {
-    const b = this.getBookingById(bookingId);
+    const b = this.findBookingInternal(bookingId);
     if (!b) return [];
     return b.serviceItemActivities || [];
   }
 
   /**
-   * Dedicated Supplier Allocation
+   * Dedicated Supplier Allocation (Synchronised with Authoritative Service Item — No Duplicate Records)
    */
   public allocateServiceItemSupplier(
     bookingId: string,
@@ -14943,6 +14974,10 @@ export class AppDatabase {
       serviceTimezone?: string;
       supplierNotes?: string;
       internalNotes?: string;
+      allocationStatus?: CanonicalAllocationStatus;
+      allocationDocumentUrl?: string;
+      allocationDocumentName?: string;
+      changeReason?: string;
     } | null,
     user: User | null
   ): { success: boolean; item?: BookingItem; error?: string } {
@@ -14955,13 +14990,56 @@ export class AppDatabase {
 
     const currentItem = b.items[itemIdx];
     const previousSupplier = currentItem.supplierName;
+    const previousStatus = resolveCanonicalAllocationStatus(currentItem);
     const isUnallocating = !allocation || (!allocation.supplierId && !allocation.supplierName);
     const allocData = allocation || {};
     const isReallocation = Boolean(!isUnallocating && previousSupplier && previousSupplier !== allocData.supplierName);
     const now = new Date().toISOString();
+    const actorName = user?.displayName || user?.name || user?.email || 'Operations Lead';
+
+    // Determine target canonical allocation status without silently erasing prior confirmation traceability
+    let targetCanonicalStatus: CanonicalAllocationStatus;
+    if (isUnallocating) {
+      targetCanonicalStatus = 'Pending Allocation';
+    } else if (allocData.allocationStatus) {
+      targetCanonicalStatus = allocData.allocationStatus;
+    } else if (previousStatus === 'Supplier Confirmed' && isReallocation) {
+      targetCanonicalStatus = 'Amendment Required';
+    } else if (previousStatus === 'Supplier Confirmed' && !isReallocation) {
+      targetCanonicalStatus = 'Supplier Confirmed';
+    } else {
+      targetCanonicalStatus = allocData.supplierConfirmationRef?.trim()
+        ? 'Supplier Confirmed'
+        : 'Sent to Supplier';
+    }
+
+    const mappedStatuses = mapCanonicalAllocationStatusToItemFields(targetCanonicalStatus);
+
+    const historyEntry = {
+      timestamp: now,
+      actorId: user?.id || 'admin',
+      actorName,
+      action: isUnallocating
+        ? ('UNALLOCATED' as const)
+        : isReallocation
+        ? ('SUPPLIER_CHANGED' as const)
+        : targetCanonicalStatus === 'Supplier Confirmed'
+        ? ('CONFIRMED' as const)
+        : ('ALLOCATED' as const),
+      previousSupplierId: currentItem.supplierId,
+      previousSupplierName: previousSupplier,
+      newSupplierId: isUnallocating ? undefined : allocData.supplierId,
+      newSupplierName: isUnallocating ? undefined : allocData.supplierName,
+      previousConfirmationRef: currentItem.supplierConfirmationRef,
+      newConfirmationRef: isUnallocating ? undefined : (allocData.supplierConfirmationRef ?? currentItem.supplierConfirmationRef),
+      previousStatus,
+      newStatus: targetCanonicalStatus,
+      reason: allocData.changeReason || (isReallocation ? `Reallocated from ${previousSupplier}` : undefined)
+    };
 
     const updatedItem: BookingItem = {
       ...currentItem,
+      // Strictly preserve original service description, overview, passenger breakdown, and category config
       supplierId: isUnallocating ? undefined : allocData.supplierId,
       supplierName: isUnallocating ? undefined : allocData.supplierName,
       supplierNameSnapshot: isUnallocating ? undefined : allocData.supplierName,
@@ -14969,40 +15047,49 @@ export class AppDatabase {
       supplierContact: isUnallocating ? undefined : (allocData.supplierContact || `${allocData.supplierPhone || ''} ${allocData.supplierEmail || ''}`.trim()),
       supplierPhone: isUnallocating ? undefined : allocData.supplierPhone,
       supplierEmail: isUnallocating ? undefined : allocData.supplierEmail,
-      supplierConfirmationRef: isUnallocating ? undefined : allocData.supplierConfirmationRef,
-      supplierAllocationStatus: isUnallocating ? 'Not Allocated' : 'Allocated',
+      supplierConfirmationRef: isUnallocating ? undefined : (allocData.supplierConfirmationRef !== undefined ? allocData.supplierConfirmationRef : currentItem.supplierConfirmationRef),
+      supplierAllocationStatus: mappedStatuses.supplierAllocationStatus,
       supplierAllocatedAt: isUnallocating ? undefined : now,
-      supplierAllocatedBy: isUnallocating ? undefined : (user?.displayName || user?.name || user?.email || 'Operations Lead'),
-      paymentCutoffDate: isUnallocating ? undefined : allocData.paymentCutoffDate,
+      supplierAllocatedBy: isUnallocating ? undefined : actorName,
+      paymentCutoffDate: isUnallocating ? undefined : (allocData.paymentCutoffDate !== undefined ? allocData.paymentCutoffDate : currentItem.paymentCutoffDate),
       serviceDate: allocData.serviceDate || currentItem.serviceDate || currentItem.travelDate,
-      serviceTime: allocData.serviceTime || currentItem.serviceTime,
-      serviceTimezone: allocData.serviceTimezone || currentItem.serviceTimezone,
-      supplierNotes: isUnallocating ? undefined : allocData.supplierNotes,
+      travelDate: allocData.serviceDate || currentItem.travelDate || currentItem.serviceDate,
+      serviceTime: allocData.serviceTime !== undefined ? allocData.serviceTime : currentItem.serviceTime,
+      serviceTimezone: allocData.serviceTimezone !== undefined ? allocData.serviceTimezone : currentItem.serviceTimezone,
+      supplierNotes: isUnallocating ? undefined : (allocData.supplierNotes !== undefined ? allocData.supplierNotes : currentItem.supplierNotes),
       internalNotes: allocData.internalNotes !== undefined ? allocData.internalNotes : currentItem.internalNotes,
-      supplierStatus: isUnallocating ? 'PENDING_DISPATCH' : 'SENT_TO_SUPPLIER',
-      supplierConfirmationStatus: isUnallocating 
-        ? 'Not Confirmed' 
-        : (currentItem.supplierConfirmationStatus === 'Confirmed' 
-          ? 'Supplier Reconfirmation Required' 
-          : (currentItem.supplierPrice !== undefined ? 'Confirmation Pending' : 'Price Pending')),
-      operationalStatus: isUnallocating 
-        ? 'Supplier Not Allocated' 
-        : (currentItem.supplierPrice !== undefined ? 'Confirmation Pending' : 'Price Pending')
+      allocationDocumentUrl: isUnallocating ? undefined : (allocData.allocationDocumentUrl !== undefined ? allocData.allocationDocumentUrl : currentItem.allocationDocumentUrl),
+      allocationDocumentName: isUnallocating ? undefined : (allocData.allocationDocumentName !== undefined ? allocData.allocationDocumentName : currentItem.allocationDocumentName),
+      supplierStatus: mappedStatuses.supplierStatus,
+      supplierConfirmationStatus: mappedStatuses.supplierConfirmationStatus,
+      operationalStatus: mappedStatuses.operationalStatus,
+      confirmedAt: targetCanonicalStatus === 'Supplier Confirmed' ? (currentItem.confirmedAt || now) : currentItem.confirmedAt,
+      confirmedBy: targetCanonicalStatus === 'Supplier Confirmed' ? (user?.id || currentItem.confirmedBy || 'admin') : currentItem.confirmedBy,
+      confirmedByName: targetCanonicalStatus === 'Supplier Confirmed' ? actorName : currentItem.confirmedByName,
+      voucherStatus: targetCanonicalStatus === 'Supplier Confirmed' ? (currentItem.voucherStatus === 'Generated' ? 'Outdated' : 'Ready to Generate') : 'Not Ready',
+      allocationHistory: [historyEntry, ...(currentItem.allocationHistory || [])],
+      serviceVersion: (currentItem.serviceVersion || 1) + 1,
+      lastAmendedAt: now,
+      lastAmendedBy: actorName
     };
 
     b.items[itemIdx] = updatedItem;
     b.updatedAt = now;
     b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
 
-    // If a voucher was previously issued for this booking, mark it as outdated due to supplier change
+    // Flag affected vouchers as outdated when supplier allocation/status/confirmation changes
     if (b.vouchersList && b.vouchersList.length > 0) {
-      b.vouchersList = b.vouchersList.map(v => ({
-        ...v,
-        isOutdated: true,
-        outdatedReason: isUnallocating 
-          ? `Supplier removed on Service Item: "${updatedItem.productName}". Re-generation required.`
-          : `Supplier changed on Service Item: "${updatedItem.productName}". Re-generation required.`
-      }));
+      b.vouchersList = b.vouchersList.map(v => {
+        const affectsThisVoucher = v.isCompleteBookingVoucher || v.serviceItemId === updatedItem.id;
+        if (!affectsThisVoucher || v.status === 'CANCELLED' || v.status === 'OUTDATED') return v;
+        return {
+          ...v,
+          isOutdated: true,
+          outdatedReason: isUnallocating
+            ? `Supplier removed on Service Item "${updatedItem.productName}". Reissue voucher before dispatch.`
+            : `Supplier allocation updated on "${updatedItem.productName}" (${targetCanonicalStatus}). Reissue voucher before dispatch.`
+        };
+      });
     }
 
     const eventId = `act-${Date.now()}-${Math.floor(Math.random()*1000)}`;
@@ -15013,18 +15100,18 @@ export class AppDatabase {
       serviceItemName: updatedItem.productName,
       supplierId: isUnallocating ? undefined : allocData.supplierId,
       supplierName: isUnallocating ? undefined : allocData.supplierName,
-      eventType: isUnallocating ? 'SUPPLIER_CHANGED' : (isReallocation ? 'SUPPLIER_CHANGED' : 'SUPPLIER_ALLOCATED'),
-      previousValue: previousSupplier || 'Unallocated',
-      newValue: isUnallocating ? 'Unallocated' : allocData.supplierName,
+      eventType: isUnallocating ? 'SUPPLIER_CHANGED' : (isReallocation ? 'SUPPLIER_CHANGED' : (targetCanonicalStatus === 'Supplier Confirmed' ? 'SERVICE_ITEM_CONFIRMED' : 'SUPPLIER_ALLOCATED')),
+      previousValue: `${previousSupplier || 'Unallocated'} (${previousStatus})`,
+      newValue: isUnallocating ? 'Unallocated' : `${allocData.supplierName} (${targetCanonicalStatus})`,
       actorId: user?.id || 'admin',
       actorRole: user?.role || 'TEAM_MEMBER',
-      actorName: user?.displayName || user?.name || 'Operations Lead',
+      actorName,
       timestamp: now,
       description: isUnallocating
         ? `Supplier De-allocated: Removed "${previousSupplier}" from ${updatedItem.productName}`
-        : (isReallocation 
-          ? `Supplier Reallocated: Changed from "${previousSupplier}" to "${allocData.supplierName}" for ${updatedItem.productName}`
-          : `Supplier Allocated: "${allocData.supplierName}" assigned to ${updatedItem.productName}`)
+        : (isReallocation
+          ? `Supplier Reallocated: Changed from "${previousSupplier}" to "${allocData.supplierName}" for ${updatedItem.productName} [${targetCanonicalStatus}]`
+          : `Supplier Allocation Updated: "${allocData.supplierName}" on ${updatedItem.productName} [${targetCanonicalStatus}]`)
     }, user);
 
     if (!isUnallocating && allocData.supplierId) {
@@ -15036,14 +15123,33 @@ export class AppDatabase {
         bookingReference: b.bookingReference,
         serviceItemId: updatedItem.id,
         serviceName: updatedItem.productName,
+        serviceDescription: updatedItem.serviceDescription,
         customerName: (b as any).customerName || b.customer?.name || (b as any).buyerName || 'Valued Guest',
         serviceDate: updatedItem.serviceDate || updatedItem.travelDate,
-        status: isReallocation ? 'CHANGED' : 'ALLOCATED',
+        serviceTime: updatedItem.startTime || updatedItem.serviceTime || updatedItem.pickupTime || updatedItem.ticketEntryTime,
+        totalPax: updatedItem.totalPax,
+        adults: updatedItem.adults,
+        children: updatedItem.children,
+        infants: updatedItem.infants,
+        vehicleType: updatedItem.vehicleType || updatedItem.vehicle,
+        ticketDate: updatedItem.ticketDate,
+        ticketEntryTime: updatedItem.ticketEntryTime,
+        supplierConfirmationRef: updatedItem.supplierConfirmationRef,
+        allocationStatusLabel: targetCanonicalStatus,
+        status: targetCanonicalStatus === 'Supplier Confirmed'
+          ? 'CONFIRMED'
+          : targetCanonicalStatus === 'Amendment Required'
+          ? 'AMENDMENT_REQUIRED'
+          : targetCanonicalStatus === 'Rejected by Supplier'
+          ? 'REJECTED'
+          : isReallocation
+          ? 'CHANGED'
+          : 'ALLOCATED',
         allocatedBy: user?.id || 'system',
-        allocatedByName: user?.displayName || user?.name || 'Operations Lead',
+        allocatedByName: actorName,
         previousSupplierId: currentItem.supplierId,
         previousSupplierName: previousSupplier,
-        changeReason: isReallocation ? `Reallocated from ${previousSupplier}` : undefined
+        changeReason: allocData.changeReason || (isReallocation ? `Reallocated from ${previousSupplier}` : undefined)
       }, user);
     }
 
@@ -15530,9 +15636,37 @@ export class AppDatabase {
       }
     }
 
-    // Confirmation impact: If previously confirmed, supplier reallocation or material price change triggers reconfirmation
-    const wasConfirmed = currentItem.supplierConfirmationStatus === 'Confirmed';
-    const triggersReconfirmation = wasConfirmed && (isSupplierChanged || isMaterialPriceChange || isUnallocatingSupplier) && !updates.forceAfterConfirmation;
+    // Confirmation impact: detect ANY operational amendment (date, time, ticket time, PAX, vehicle, supplier, price) on a confirmed item
+    const amendmentCheck = detectConfirmedServiceAmendment(currentItem, updates);
+    const wasConfirmed =
+      currentItem.supplierConfirmationStatus === 'Confirmed' ||
+      currentItem.supplierStatus === 'CONFIRMED_BY_SUPPLIER' ||
+      currentItem.supplierAllocationStatus === 'Supplier Confirmed';
+    const triggersReconfirmation =
+      wasConfirmed &&
+      (amendmentCheck.requiresReconfirmation || isSupplierChanged || isMaterialPriceChange || isUnallocatingSupplier) &&
+      !updates.forceAfterConfirmation;
+
+    // Preserve previous supplier confirmation traceability in allocationHistory when a confirmed service is amended
+    const updatedAllocationHistory = [...(currentItem.allocationHistory || [])];
+    if (triggersReconfirmation) {
+      updatedAllocationHistory.unshift({
+        timestamp: now,
+        actorId: user?.id || 'admin',
+        actorName,
+        action: 'AMENDMENT_REQUIRED',
+        previousSupplierId: currentItem.supplierId,
+        previousSupplierName: currentItem.supplierName,
+        newSupplierId: isUnallocatingSupplier ? undefined : (targetSupplierId || currentItem.supplierId),
+        newSupplierName: isUnallocatingSupplier ? undefined : (targetSupplierName || currentItem.supplierName),
+        previousConfirmationRef: currentItem.supplierConfirmationRef,
+        newConfirmationRef: updates.supplierConfirmationRef ?? currentItem.supplierConfirmationRef,
+        previousStatus: resolveCanonicalAllocationStatus(currentItem),
+        newStatus: 'Amendment Required',
+        changedFields: amendmentCheck.changedFields,
+        reason: amendmentCheck.reason || updates.changeReason || 'Confirmed service amended; reconfirmation required.'
+      });
+    }
 
     // Quantity and Cost Calculations
     const targetQty = updates.supplierQuantity !== undefined 
@@ -15546,7 +15680,16 @@ export class AppDatabase {
       ? Number(updates.supplierTotalCost) 
       : ((targetUnitPrice * targetQty) + targetTax + targetFees - targetDisc);
 
-    // Build the consolidated updated item
+    const nextAdults = updates.adults !== undefined ? Math.max(0, Number(updates.adults)) : (currentItem.adults ?? 0);
+    const nextChildren = updates.children !== undefined ? Math.max(0, Number(updates.children)) : (currentItem.children ?? 0);
+    const nextInfants = updates.infants !== undefined ? Math.max(0, Number(updates.infants)) : (currentItem.infants ?? 0);
+    const computedPax = nextAdults + nextChildren + nextInfants;
+    const nextTotalPax =
+      updates.adults !== undefined || updates.children !== undefined || updates.infants !== undefined
+        ? (computedPax > 0 ? computedPax : Math.max(1, Number(updates.totalPax ?? currentItem.totalPax ?? 1)))
+        : (updates.totalPax !== undefined ? Math.max(1, Number(updates.totalPax)) : currentItem.totalPax);
+
+    // Build the consolidated updated item (Single Authoritative Service Record)
     const updatedItem: BookingItem = {
       ...currentItem,
       // Operational & descriptive attributes
@@ -15554,16 +15697,51 @@ export class AppDatabase {
       category: updates.category !== undefined ? updates.category : currentItem.category,
       destination: updates.destination !== undefined ? updates.destination : currentItem.destination,
       hub: updates.hub !== undefined ? updates.hub : currentItem.hub,
+      serviceDescription: updates.serviceDescription !== undefined ? updates.serviceDescription : currentItem.serviceDescription,
+      serviceOverview: updates.serviceOverview !== undefined ? updates.serviceOverview : currentItem.serviceOverview,
+      inclusions: updates.inclusions !== undefined ? updates.inclusions : currentItem.inclusions,
+      exclusions: updates.exclusions !== undefined ? updates.exclusions : currentItem.exclusions,
+      meetingPoint: updates.meetingPoint !== undefined ? updates.meetingPoint : currentItem.meetingPoint,
+      address: updates.address !== undefined ? updates.address : currentItem.address,
+      googleMapsUrl: updates.googleMapsUrl !== undefined ? updates.googleMapsUrl : currentItem.googleMapsUrl,
+      pickupLocation: updates.pickupLocation !== undefined ? updates.pickupLocation : currentItem.pickupLocation,
+      dropoffLocation: updates.dropoffLocation !== undefined ? updates.dropoffLocation : currentItem.dropoffLocation,
+      importantInstructions: updates.importantInstructions !== undefined ? updates.importantInstructions : currentItem.importantInstructions,
+      // Category-specific timing fields
       serviceDate: updates.serviceDate !== undefined ? updates.serviceDate : currentItem.serviceDate,
       travelDate: updates.serviceDate !== undefined ? updates.serviceDate : currentItem.travelDate,
-      serviceTime: updates.serviceTime !== undefined ? updates.serviceTime : currentItem.serviceTime,
+      serviceTime: updates.serviceTime !== undefined ? updates.serviceTime : (updates.startTime !== undefined ? updates.startTime : currentItem.serviceTime),
+      startTime: updates.startTime !== undefined ? updates.startTime : (updates.serviceTime !== undefined ? updates.serviceTime : currentItem.startTime),
+      endTime: updates.endTime !== undefined ? updates.endTime : currentItem.endTime,
+      reportingTime: updates.reportingTime !== undefined ? updates.reportingTime : currentItem.reportingTime,
+      ticketDate: updates.ticketDate !== undefined ? updates.ticketDate : currentItem.ticketDate,
+      ticketEntryTime: updates.ticketEntryTime !== undefined ? updates.ticketEntryTime : currentItem.ticketEntryTime,
+      pickupDate: updates.pickupDate !== undefined ? updates.pickupDate : currentItem.pickupDate,
+      pickupTime: updates.pickupTime !== undefined ? updates.pickupTime : currentItem.pickupTime,
+      returnTime: updates.returnTime !== undefined ? updates.returnTime : currentItem.returnTime,
+      timeZone: updates.timeZone !== undefined ? updates.timeZone : (updates.serviceTimezone !== undefined ? updates.serviceTimezone : currentItem.timeZone),
+      serviceTimezone: updates.serviceTimezone !== undefined ? updates.serviceTimezone : (updates.timeZone !== undefined ? updates.timeZone : currentItem.serviceTimezone),
+      timingInstructions: updates.timingInstructions !== undefined ? updates.timingInstructions : currentItem.timingInstructions,
       serviceEndDate: updates.serviceEndDate !== undefined ? updates.serviceEndDate : currentItem.serviceEndDate,
       duration: updates.duration !== undefined ? updates.duration : currentItem.duration,
-      adults: updates.adults !== undefined ? Number(updates.adults) : currentItem.adults,
-      children: updates.children !== undefined ? Number(updates.children) : currentItem.children,
-      infants: updates.infants !== undefined ? Number(updates.infants) : currentItem.infants,
-      totalPax: updates.totalPax !== undefined ? Number(updates.totalPax) : currentItem.totalPax,
+      // Passengers
+      adults: nextAdults,
+      children: nextChildren,
+      infants: nextInfants,
+      totalPax: nextTotalPax,
+      passengerBreakdown: updates.passengerBreakdown !== undefined ? updates.passengerBreakdown : currentItem.passengerBreakdown,
+      ageTicketCategories: updates.ageTicketCategories !== undefined ? updates.ageTicketCategories : currentItem.ageTicketCategories,
       passengerAssignment: updates.passengerAssignment !== undefined ? updates.passengerAssignment : currentItem.passengerAssignment,
+      // Transport / Vehicle configuration (preserved when provided)
+      vehicle: updates.vehicle !== undefined ? updates.vehicle : (updates.vehicleType !== undefined ? updates.vehicleType : currentItem.vehicle),
+      vehicleType: updates.vehicleType !== undefined ? updates.vehicleType : currentItem.vehicleType,
+      vehicleCategory: updates.vehicleCategory !== undefined ? updates.vehicleCategory : currentItem.vehicleCategory,
+      vehicleSeaterCapacity: updates.vehicleSeaterCapacity !== undefined ? updates.vehicleSeaterCapacity : currentItem.vehicleSeaterCapacity,
+      vehicleCount: updates.vehicleCount !== undefined ? updates.vehicleCount : currentItem.vehicleCount,
+      passengerCapacity: updates.passengerCapacity !== undefined ? updates.passengerCapacity : currentItem.passengerCapacity,
+      luggageCapacity: updates.luggageCapacity !== undefined ? updates.luggageCapacity : currentItem.luggageCapacity,
+      routeDetails: updates.routeDetails !== undefined ? updates.routeDetails : currentItem.routeDetails,
+      vehicleSpecialInstructions: updates.vehicleSpecialInstructions !== undefined ? updates.vehicleSpecialInstructions : currentItem.vehicleSpecialInstructions,
       customerFacingNotes: updates.customerFacingNotes !== undefined ? updates.customerFacingNotes : currentItem.customerFacingNotes,
       operationalInstructions: updates.operationalInstructions !== undefined ? updates.operationalInstructions : currentItem.operationalInstructions,
       internalNotes: updates.internalNotes !== undefined ? updates.internalNotes : currentItem.internalNotes,
@@ -15574,7 +15752,7 @@ export class AppDatabase {
       totalPrice: updates.totalPrice !== undefined ? Number(updates.totalPrice) : currentItem.totalPrice,
       currency: updates.currency || currentItem.currency,
 
-      // Authoritative Allocated Supplier
+      // Authoritative Allocated Supplier (never silently erases prior confirmation ref on operational edits)
       supplierId: isUnallocatingSupplier ? undefined : (updates.supplierId !== undefined ? updates.supplierId : currentItem.supplierId),
       supplierName: isUnallocatingSupplier ? undefined : (updates.supplierName !== undefined ? updates.supplierName : currentItem.supplierName),
       supplierNameSnapshot: isUnallocatingSupplier ? undefined : (updates.supplierNameSnapshot || updates.supplierName || currentItem.supplierNameSnapshot || currentItem.supplierName),
@@ -15583,14 +15761,26 @@ export class AppDatabase {
       supplierPhone: isUnallocatingSupplier ? undefined : (updates.supplierPhone !== undefined ? updates.supplierPhone : currentItem.supplierPhone),
       supplierEmail: isUnallocatingSupplier ? undefined : (updates.supplierEmail !== undefined ? updates.supplierEmail : currentItem.supplierEmail),
       supplierConfirmationRef: isUnallocatingSupplier ? undefined : (updates.supplierConfirmationRef !== undefined ? updates.supplierConfirmationRef : currentItem.supplierConfirmationRef),
-      supplierAllocationStatus: isUnallocatingSupplier 
-        ? 'Not Allocated' 
-        : (targetSupplierId || targetSupplierName ? 'Allocated' : currentItem.supplierAllocationStatus || 'Not Allocated'),
+      supplierAllocationStatus: triggersReconfirmation
+        ? 'Amendment Required'
+        : isUnallocatingSupplier 
+        ? 'Pending Allocation' 
+        : (updates.supplierAllocationStatus || (targetSupplierId || targetSupplierName ? (currentItem.supplierAllocationStatus || 'Supplier Selected') : 'Pending Allocation')),
       supplierAllocatedAt: isUnallocatingSupplier ? undefined : (hasSupplierAllocationUpdate ? now : currentItem.supplierAllocatedAt),
       supplierAllocatedBy: isUnallocatingSupplier ? undefined : (hasSupplierAllocationUpdate ? actorName : currentItem.supplierAllocatedBy),
       paymentCutoffDate: isUnallocatingSupplier ? undefined : (updates.paymentCutoffDate !== undefined ? updates.paymentCutoffDate : currentItem.paymentCutoffDate),
       supplierNotes: isUnallocatingSupplier ? undefined : (updates.supplierNotes !== undefined ? updates.supplierNotes : currentItem.supplierNotes),
-      supplierStatus: isUnallocatingSupplier ? 'PENDING_DISPATCH' : (updates.supplierStatus || currentItem.supplierStatus || 'SENT_TO_SUPPLIER'),
+      supplierStatus: triggersReconfirmation
+        ? 'AMENDMENT_REQUESTED'
+        : isUnallocatingSupplier
+        ? 'PENDING_DISPATCH'
+        : (updates.supplierStatus || currentItem.supplierStatus || (targetSupplierId ? 'SENT_TO_SUPPLIER' : 'PENDING_DISPATCH')),
+      allocationHistory: updatedAllocationHistory,
+      amendmentRequiredReason: triggersReconfirmation ? amendmentCheck.reason : (updates.amendmentRequiredReason !== undefined ? updates.amendmentRequiredReason : currentItem.amendmentRequiredReason),
+      reconfirmationReason: triggersReconfirmation ? amendmentCheck.reason : currentItem.reconfirmationReason,
+      serviceVersion: (currentItem.serviceVersion || 1) + 1,
+      lastAmendedAt: now,
+      lastAmendedBy: actorName,
 
       // Authoritative Supplier Commercial Price
       supplierPrice: hasPriceUpdate ? Math.round(Number(updates.supplierPrice) * 100) / 100 : currentItem.supplierPrice,
@@ -15620,11 +15810,15 @@ export class AppDatabase {
           ? 'Not Confirmed' 
           : (updates.supplierConfirmationStatus || currentItem.supplierConfirmationStatus)),
       operationalStatus: triggersReconfirmation
-        ? 'Confirmation Pending'
+        ? 'Supplier Reconfirmation Required'
         : (isUnallocatingSupplier 
           ? 'Supplier Not Allocated' 
           : (updates.operationalStatus || currentItem.operationalStatus || (targetSupplierId ? 'Confirmation Pending' : 'Supplier Not Allocated'))),
-      voucherStatus: (triggersReconfirmation || isUnallocatingSupplier) ? 'Not Ready' : (updates.voucherStatus || currentItem.voucherStatus),
+      voucherStatus: (triggersReconfirmation || isUnallocatingSupplier)
+        ? 'Outdated'
+        : (amendmentCheck.affectsVouchers && currentItem.voucherStatus === 'Generated'
+          ? 'Outdated'
+          : (updates.voucherStatus || currentItem.voucherStatus)),
       assignedTeamMember: updates.assignedTeamMember !== undefined ? updates.assignedTeamMember : currentItem.assignedTeamMember,
       assignedTeamMemberId: updates.assignedTeamMemberId !== undefined ? updates.assignedTeamMemberId : currentItem.assignedTeamMemberId,
       workflowStage: updates.workflowStage !== undefined ? updates.workflowStage : currentItem.workflowStage,
@@ -15638,13 +15832,39 @@ export class AppDatabase {
     b.updatedAt = now;
     b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
 
-    // If vouchers exist and item became reconfirmation required, mark them outdated
-    if (triggersReconfirmation && b.vouchersList && b.vouchersList.length > 0) {
-      b.vouchersList = b.vouchersList.map(v => ({
-        ...v,
-        isOutdated: true,
-        outdatedReason: `Service item "${updatedItem.productName}" updated (Supplier or Commercial Price modified). Re-generation required.`
-      }));
+    // If vouchers exist and operational details or confirmation status changed, mark affected vouchers outdated
+    if ((triggersReconfirmation || amendmentCheck.affectsVouchers) && b.vouchersList && b.vouchersList.length > 0) {
+      b.vouchersList = b.vouchersList.map(v => {
+        const affectsThisVoucher = v.isCompleteBookingVoucher || v.serviceItemId === updatedItem.id;
+        if (!affectsThisVoucher || v.status === 'CANCELLED' || v.status === 'OUTDATED') return v;
+        return {
+          ...v,
+          isOutdated: true,
+          outdatedReason:
+            amendmentCheck.reason ||
+            `Service item "${updatedItem.productName}" was updated. Reissue voucher to reflect latest operational details.`
+        };
+      });
+    }
+
+    if (triggersReconfirmation) {
+      this.recordBookingActivity({
+        eventId: `act-reconf-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+        bookingId: b.id,
+        bookingItemId: updatedItem.id,
+        serviceItemName: updatedItem.productName,
+        supplierId: updatedItem.supplierId,
+        supplierName: updatedItem.supplierName,
+        eventType: 'SERVICE_ITEM_RECONFIRMATION_REQUIRED',
+        previousValue: 'Supplier Confirmed',
+        newValue: 'Amendment Required / Supplier Reconfirmation Required',
+        actorId: user?.id || 'admin',
+        actorRole: user?.role || 'TEAM_MEMBER',
+        actorName,
+        timestamp: now,
+        metadata: { changedFields: amendmentCheck.changedFields, previousConfirmationRef: currentItem.supplierConfirmationRef },
+        description: amendmentCheck.reason
+      }, user);
     }
 
     // Activity Logging for Supplier Allocation changes
@@ -16417,62 +16637,120 @@ export class AppDatabase {
     bookingId: string,
     user: User | null,
     forceRegenerate: boolean = false
-  ): { success: boolean; voucher?: BookingVoucher; error?: string } {
+  ): { success: boolean; voucher?: BookingVoucher; error?: string; warnings?: string[] } {
     const all = this.getAllBookings();
     const b = all.find(item => item.id === bookingId || item.bookingReference === bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
+
+    const products = this.getProducts();
+    const productMap = new Map<string, Product>();
+    for (const p of products) {
+      if (p?.id) productMap.set(p.id, p);
+    }
+
+    const hydratedAll = (b.items || []).map(it =>
+      hydrateBookingServiceItem(it, b, it.productId ? productMap.get(it.productId) || null : null)
+    );
+    const readiness = validateCompleteVoucherReadiness(b, hydratedAll);
+    if (!readiness.isReady) {
+      return { success: false, error: readiness.errors.join(' ') };
+    }
 
     const eligibility = this.checkBookingVoucherEligibility(b);
     if (!eligibility.isEligible && !forceRegenerate) {
       return {
         success: false,
-        error: `Voucher cannot be generated: ${eligibility.pendingItems} service item(s) are pending confirmation.`
+        error: `Complete Voucher cannot be generated: ${eligibility.pendingItems} service item(s) are pending supplier confirmation. Confirm all items or regenerate with pending-service separation.`
       };
     }
 
-    const existingVouchers = b.vouchersList || [];
-    const newVersion = existingVouchers.length + 1;
+    const existingCompleteVouchers = (b.vouchersList || []).filter(v => v.isCompleteBookingVoucher);
+    const newVersion = existingCompleteVouchers.length + 1;
     const now = new Date().toISOString();
-    const voucherNumber = `TUB-VOU-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+    const voucherNumber = `TUB-CVOU-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const confirmedItems = (b.items || []).filter(it => it.supplierConfirmationStatus === 'Confirmed' || forceRegenerate);
-    const primaryItem = confirmedItems[0] || b.items?.[0];
+    // Strictly chronological confirmed services (never creation order, never duplicate items)
+    const confirmedItems = sortBookingItemsChronologically(readiness.confirmedItems);
+    const pendingItems = sortBookingItemsChronologically(readiness.pendingItems);
+    const activeOrderedItems = sortBookingItemsChronologically([...confirmedItems, ...pendingItems]);
+    const primaryItem = confirmedItems[0] || activeOrderedItems[0];
 
-    // Build authoritative customer/partner snapshot WITHOUT internal costs or markups
+    const bTravelers = (b as any).travelers;
+    const totalAdults = bTravelers?.adults ?? b.customer?.totalAdults ?? 0;
+    const totalChildren = bTravelers?.children ?? b.customer?.totalChildren ?? 0;
+    const totalInfants = bTravelers?.infants ?? b.customer?.totalInfants ?? 0;
+    const totalPax = totalAdults + totalChildren + totalInfants || primaryItem?.totalPax || 0;
+
+    // Build authoritative customer/partner snapshot WITHOUT internal supplier nett costs or margins
     const bookingSnapshot = {
       bookingId: b.id,
       bookingReference: b.bookingReference,
-      customerName: b.customer?.leadTravelerName || 'Guest',
+      customerName: b.customer?.leadTravelerName || b.customer?.name || 'Guest',
       email: b.customer?.email,
       phone: b.customer?.phone,
-      totalAdults: b.customer?.totalAdults || 1,
-      totalChildren: b.customer?.totalChildren || 0,
-      totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0),
+      totalAdults,
+      totalChildren,
+      totalInfants,
+      totalPax,
       travelStartDate: b.travelStartDate,
       travelEndDate: b.travelEndDate,
-      destinationName: b.destinationName,
+      destinationName: b.destinationName || b.destination,
       pickupLocation: b.customer?.pickupLocation,
       dropoffLocation: b.customer?.dropoffLocation,
-      specialRequests: b.customer?.specialRequests,
+      specialRequests: (b as any).specialRequests || b.customer?.specialRequests,
       generatedAt: now
     };
 
-    const serviceItemsSnapshot = confirmedItems.map(it => ({
+    const serviceItemsSnapshot = activeOrderedItems.map(it => ({
       itemId: it.id,
+      id: it.id,
+      productId: it.productId,
       productName: it.productName,
       category: it.category,
       destination: it.destination || it.destinationName,
-      city: it.city,
-      serviceDate: it.serviceDate || it.travelDate,
-      serviceTime: it.serviceTime || '09:00 AM',
+      hub: it.hub,
+      city: it.city || it.hub,
+      serviceDescription: it.resolvedDescription,
+      serviceOverview: it.resolvedOverview,
+      inclusions: it.resolvedInclusions,
+      exclusions: it.resolvedExclusions,
+      serviceDate: it.resolvedServiceDate,
+      serviceTime: it.resolvedStartTime,
+      startTime: it.resolvedStartTime,
+      endTime: it.resolvedEndTime,
+      reportingTime: it.resolvedReportingTime,
+      ticketDate: it.isTicketedActivity ? it.resolvedTicketDate : undefined,
+      ticketEntryTime: it.isTicketedActivity ? it.resolvedTicketEntryTime : undefined,
+      pickupDate: it.isTransportService ? it.resolvedPickupDate : undefined,
+      pickupTime: it.isTransportService ? it.resolvedPickupTime : undefined,
+      returnTime: it.isTransportService ? it.resolvedReturnTime : undefined,
+      timeZone: it.resolvedTimeZone,
+      meetingPoint: it.resolvedMeetingPoint,
+      address: it.resolvedAddress,
+      googleMapsUrl: it.resolvedGoogleMapsUrl,
+      pickupLocation: it.isTransportService ? it.resolvedPickupLocation : undefined,
+      dropoffLocation: it.isTransportService ? it.resolvedDropoffLocation : undefined,
+      vehicleType: it.isTransportService ? it.vehicleType : undefined,
+      vehicleCategory: it.isTransportService ? it.vehicleCategory : undefined,
+      vehicleSeaterCapacity: it.isTransportService ? it.vehicleSeaterCapacity : undefined,
+      vehicleCount: it.isTransportService ? it.vehicleCount : undefined,
+      luggageCapacity: it.isTransportService ? it.luggageCapacity : undefined,
+      routeDetails: it.isTransportService ? it.routeDetails : undefined,
+      serviceHotelDetails: it.isAccommodationService ? it.serviceHotelDetails : undefined,
+      importantInstructions: it.resolvedImportantInstructions,
       supplierName: it.supplierName,
       supplierContact: it.supplierContact || it.supplierPhone,
-      supplierConfirmationRef: it.supplierConfirmationRef || 'Ground Locked',
+      supplierConfirmationRef: it.isConfirmedForVoucher ? it.supplierConfirmationRef : undefined,
+      supplierConfirmationStatus: it.supplierConfirmationStatus,
+      supplierAllocationStatus: it.resolvedCanonicalAllocationStatus,
+      isConfirmedForVoucher: it.isConfirmedForVoucher,
+      isTransportService: it.isTransportService,
+      isTicketedActivity: it.isTicketedActivity,
       adults: it.adults,
       children: it.children,
+      infants: it.infants,
       totalPax: it.totalPax,
-      passengerDetails: it.passengerDetails,
-      meetingPoint: (it as any).meetingPoint || b.customer?.pickupLocation || 'Hotel Lobby / Terminal Arrival Point'
+      passengerBreakdown: it.resolvedPassengerBreakdown
     }));
 
     const supplierAllocationSnapshot = confirmedItems.map(it => ({
@@ -16482,9 +16760,10 @@ export class AppDatabase {
       supplierType: it.supplierType,
       supplierContact: it.supplierContact,
       supplierConfirmationRef: it.supplierConfirmationRef,
-      paymentCutoffDate: it.paymentCutoffDate
+      allocationStatus: it.resolvedCanonicalAllocationStatus
     }));
 
+    const companyProfile = this.getCentralCompanyProfile();
     const newVoucher: BookingVoucher = {
       id: `vch-${Date.now()}-${Math.floor(Math.random()*1000)}`,
       voucherId: `vch-${Date.now()}`,
@@ -16494,46 +16773,67 @@ export class AppDatabase {
       bookingReference: b.bookingReference,
       leadId: b.leadId || b.linkedLeadId,
       isCompleteBookingVoucher: true,
+      voucherTitle: 'COMPLETE BOOKING VOUCHER',
       responsibleAgentId: b.submittingAgentId || b.agentId,
       assignedTeamMemberId: b.assignedTeamMemberId,
       serviceItemId: primaryItem?.id || 'all-services',
-      customerName: b.customer?.leadTravelerName || 'Guest',
-      leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
-      totalPax: bookingSnapshot.totalPax,
-      destination: b.destinationName || 'Destination',
-      city: primaryItem?.city || 'Tokyo / Kyoto',
-      serviceName: confirmedItems.length > 1 ? `${confirmedItems.length} Confirmed Ground Services Package` : (primaryItem?.productName || 'Ground Travel Service'),
-      serviceDate: b.travelStartDate || primaryItem?.serviceDate || primaryItem?.travelDate || now.split('T')[0],
-      serviceTime: primaryItem?.serviceTime || '09:00 AM',
-      supplierName: confirmedItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'TheUnbound Authorized Ground Network',
-      supplierContact: '+91 9811654959 (TheUnbound 24/7 Dispatch)',
-      supplierConfirmationRef: confirmedItems.map(i => i.supplierConfirmationRef).filter(Boolean).join(', ') || 'GROUND-OPS-OK',
-      meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby or Arrival Airport Terminal',
-      pickupInfo: b.customer?.pickupLocation ? `Pick up at ${b.customer.pickupLocation}. Please be ready 15 mins prior.` : 'Check individual service itinerary instructions.',
-      dropoffInfo: b.customer?.dropoffLocation,
-      emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Operations Desk',
-      passengerBreakdown: `${b.customer?.totalAdults || 1} Adults${b.customer?.totalChildren ? `, ${b.customer.totalChildren} Children` : ''}`,
-      specialInstructions: 'Present this digital or printed voucher upon boarding or hotel check-in. Valid government photo identification matching passport name is required.',
-      termsAndConditions: 'Voucher issued by TheUnbound DMC. Non-transferable. Valid only for specified dates and confirmed services.',
+      customerName: b.customer?.leadTravelerName || b.customer?.name || 'Guest',
+      leadPaxName: b.customer?.leadTravelerName || b.customer?.name || 'Lead Traveller',
+      adults: totalAdults,
+      children: totalChildren,
+      infants: totalInfants,
+      totalPax,
+      destination: b.destinationName || b.destination || primaryItem?.destination || '',
+      city: primaryItem?.hub || primaryItem?.city || '',
+      serviceName: `${confirmedItems.length} Confirmed Service${confirmedItems.length === 1 ? '' : 's'} Complete Itinerary`,
+      serviceDate: b.travelStartDate || primaryItem?.resolvedServiceDate || '',
+      serviceTime: primaryItem?.resolvedStartTime || primaryItem?.resolvedPickupTime || primaryItem?.resolvedTicketEntryTime || '',
+      supplierName: Array.from(new Set(confirmedItems.map(i => i.supplierName).filter(Boolean))).join(', ') || 'TheUnbound Operations Network',
+      supplierContact: companyProfile.phone || '+91 9811654959',
+      supplierConfirmationRef: confirmedItems.map(i => i.supplierConfirmationRef).filter(Boolean).join(', ') || undefined,
+      meetingPoint: primaryItem?.resolvedMeetingPoint || b.customer?.pickupLocation || '',
+      pickupInfo: primaryItem?.resolvedPickupLocation || b.customer?.pickupLocation || '',
+      dropoffInfo: primaryItem?.resolvedDropoffLocation || b.customer?.dropoffLocation || '',
+      emergencyContact: `${companyProfile.phone || '+91 9811654959'} (TheUnbound 24/7 Emergency Operations Desk)`,
+      passengerBreakdown: `${totalAdults} Adult${totalAdults === 1 ? '' : 's'}${totalChildren ? `, ${totalChildren} Child${totalChildren === 1 ? '' : 'ren'}` : ''}${totalInfants ? `, ${totalInfants} Infant${totalInfants === 1 ? '' : 's'}` : ''}`,
+      specialInstructions: (b as any).specialRequests || b.customer?.specialRequests || 'Present this digital or printed voucher at each service check-in along with valid government photo identification matching the booking manifest.',
+      termsAndConditions: 'Complete Booking Voucher issued by TheUnbound DMC. Non-transferable. Valid strictly for the confirmed services, dates, and passenger counts specified.',
       status: 'ISSUED',
       generatedAt: now,
       generatedBy: user?.id || 'admin',
       generatedByName: user?.name || 'Operations Lead',
-      templateVersion: 'v2.4-Authoritative-DMC',
+      templateVersion: 'v3.0-Authoritative-PDF',
       bookingSnapshot,
       serviceItemsSnapshot,
       supplierAllocationSnapshot,
-      confirmationSnapshot: { confirmedCount: confirmedItems.length, timestamp: now },
+      confirmationSnapshot: { confirmedCount: confirmedItems.length, pendingCount: pendingItems.length, timestamp: now },
+      includedServiceCount: confirmedItems.length,
+      pendingServiceCount: pendingItems.length,
+      completenessWarnings: readiness.warnings,
+      idempotencyKey: buildDocumentIdempotencyKey('COMPLETE_VOUCHER', b.id, `v${newVersion}`),
       isOutdated: false,
+      previousVoucherId: existingCompleteVouchers[0]?.id,
       issuedAt: now
     };
 
-    // Update parent booking
+    // Preserve historical complete vouchers as OUTDATED (append-only, never deleted)
     if (!b.vouchersList) b.vouchersList = [];
+    b.vouchersList = b.vouchersList.map(v => {
+      if (v.isCompleteBookingVoucher && v.status !== 'CANCELLED' && v.status !== 'OUTDATED') {
+        return {
+          ...v,
+          status: 'OUTDATED' as const,
+          isOutdated: true,
+          outdatedReason: `Superseded by Complete Booking Voucher v${newVersion} (#${voucherNumber})`
+        };
+      }
+      return v;
+    });
     b.vouchersList.unshift(newVoucher);
     if (!b.voucherIds) b.voucherIds = [];
     b.voucherIds = Array.from(new Set([...b.voucherIds, newVoucher.id]));
     b.completeVoucherId = newVoucher.id;
+    (b as any).completeBookingVoucherId = newVoucher.id;
     b.voucherUrl = `/vouchers/${newVoucher.id}`;
     b.updatedAt = now;
 
@@ -16557,32 +16857,31 @@ export class AppDatabase {
       }
     }
 
-    // Also persist in global vouchers collection for audit
     this.saveVoucher(newVoucher, user);
 
     this.recordBookingActivity({
       eventId: `act-vou-${Date.now()}-${Math.floor(Math.random()*1000)}`,
       bookingId: b.id,
-      eventType: existingVouchers.length > 0 ? 'VOUCHER_REGENERATED' : 'VOUCHER_GENERATED',
-      previousValue: existingVouchers.length > 0 ? `Version ${existingVouchers[0].version || 1}` : 'None',
+      eventType: existingCompleteVouchers.length > 0 ? 'VOUCHER_REGENERATED' : 'VOUCHER_GENERATED',
+      previousValue: existingCompleteVouchers.length > 0 ? `Version ${existingCompleteVouchers[0].version || 1}` : 'None',
       newValue: `Version ${newVersion} (${voucherNumber})`,
       actorId: user?.id || 'admin',
       actorRole: user?.role || 'TEAM_MEMBER',
       actorName: user?.name || 'Operations Lead',
       timestamp: now,
       relatedVoucherId: newVoucher.id,
-      metadata: { voucherNumber, version: newVersion, itemsCount: confirmedItems.length },
-      description: existingVouchers.length > 0 
-        ? `Service Voucher RE-GENERATED: Version ${newVersion} (#${voucherNumber}) with ${confirmedItems.length} confirmed services.`
-        : `Service Voucher GENERATED: Version ${newVersion} (#${voucherNumber}) with ${confirmedItems.length} confirmed services.`
+      metadata: { voucherNumber, version: newVersion, confirmedCount: confirmedItems.length, pendingCount: pendingItems.length },
+      description: existingCompleteVouchers.length > 0
+        ? `Complete Booking Voucher RE-GENERATED: Version ${newVersion} (#${voucherNumber}) with ${confirmedItems.length} confirmed service(s).`
+        : `Complete Booking Voucher GENERATED: Version ${newVersion} (#${voucherNumber}) with ${confirmedItems.length} confirmed service(s).`
     }, user);
 
     this.saveBooking(b, user);
-    return { success: true, voucher: newVoucher };
+    return { success: true, voucher: newVoucher, warnings: readiness.warnings };
   }
 
   public getBookingVouchers(bookingId: string): BookingVoucher[] {
-    const b = this.getBookingById(bookingId);
+    const b = this.findBookingInternal(bookingId);
     if (!b) return [];
     return b.vouchersList || [];
   }
@@ -16639,7 +16938,7 @@ export class AppDatabase {
     user: User | null,
     forceRegenerate: boolean = false
   ): { success: boolean; voucher?: BookingVoucher; error?: string } {
-    const b = this.getBookingById(bookingId);
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
 
     const item = (b.items || []).find(it => it.id === serviceItemId);
@@ -16652,120 +16951,104 @@ export class AppDatabase {
       };
     }
 
-    const isConfirmed = item.supplierConfirmationStatus === 'Confirmed' || item.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate;
+    const linkedProduct = item.productId ? this.getProducts().find(p => p.id === item.productId) || null : null;
+    const hydrated = hydrateBookingServiceItem(item, b, linkedProduct);
+
+    const isConfirmed = hydrated.isConfirmedForVoucher || forceRegenerate;
     if (!isConfirmed) {
-      return { 
-        success: false, 
-        error: `Activity voucher cannot be generated: "${item.productName}" is ${item.supplierConfirmationStatus || 'Pending'}. Supplier confirmation is required.` 
+      return {
+        success: false,
+        error: `Activity voucher cannot be generated: "${hydrated.productName}" is ${hydrated.resolvedCanonicalAllocationStatus}. Supplier confirmation is required.`
       };
     }
 
-    const serviceDate = item.serviceDate || item.travelDate || b.travelStartDate;
+    const serviceDate = hydrated.resolvedServiceDate;
     if (!serviceDate) {
       return {
         success: false,
-        error: `Cannot generate voucher for "${item.productName}": Travel / service date is missing.`
+        error: `Cannot generate voucher for "${hydrated.productName}": Travel / service date is missing.`
       };
     }
 
-    // Idempotency: Check if an active voucher already exists for this booking + service item
+    // Idempotency: Return active non-outdated voucher unless explicit regeneration requested
     const existingVouchers = b.vouchersList || [];
     const existingVoucher = existingVouchers.find(
-      v => v.serviceItemId === item.id && !v.isCompleteBookingVoucher && v.status !== 'CANCELLED'
+      v => v.serviceItemId === item.id && !v.isCompleteBookingVoucher && v.status !== 'CANCELLED' && v.status !== 'OUTDATED'
     );
-    if (existingVoucher && !forceRegenerate) {
+    if (existingVoucher && !forceRegenerate && !existingVoucher.isOutdated) {
       return { success: true, voucher: existingVoucher };
     }
 
     const now = new Date().toISOString();
-    let newVersion = 1;
-    let previousVoucherId: string | undefined = undefined;
+    const priorForItem = existingVouchers.filter(v => v.serviceItemId === item.id && !v.isCompleteBookingVoucher);
+    const newVersion = priorForItem.length + 1;
+    let previousVoucherId: string | undefined = existingVoucher?.id;
 
-    if (existingVoucher && forceRegenerate) {
-      newVersion = (existingVoucher.version || 1) + 1;
-      previousVoucherId = existingVoucher.id;
+    if (existingVoucher) {
       existingVoucher.status = 'OUTDATED';
+      existingVoucher.isOutdated = true;
       existingVoucher.outdatedReason = `Superseded by reissued activity voucher (v${newVersion})`;
     }
 
     const voucherNumber = `TUB-ACTV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
     const voucherId = `vou-actv-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
-    // Calculate passenger totals and breakdown
-    const adults = item.adults ?? (item as any).adultCount ?? b.customer?.totalAdults ?? 1;
-    const children = item.children ?? (item as any).childCount ?? b.customer?.totalChildren ?? 0;
-    const infants = (item as any).infants ?? (item as any).infantCount ?? 0;
-    const totalPax = item.totalPax ?? (adults + children + infants);
-    const passengerBreakdown = `${adults} Adults${children ? `, ${children} Children` : ''}${infants ? `, ${infants} Infants` : ''}`;
-    const leadPaxName = b.customer?.leadTravelerName || 'Lead Traveler';
+    const leadPaxName = b.customer?.leadTravelerName || b.customer?.name || 'Lead Traveller';
+    const companyProfile = this.getCentralCompanyProfile();
 
-    // Retrieve historical configuration snapshot
-    const configSnap = (item as any).configurationSnapshot || {};
-    const vehicle = item.vehicle || (item as any).vehicleType || (item as any).vehicleName || configSnap.vehicle || configSnap.vehicleType;
-    const capacityTier = (item as any).capacityTier || configSnap.capacityTier;
-    const guide = (item as any).guide || (item as any).guideLanguage || configSnap.guide || configSnap.guideLanguage;
-    const guideLanguage = (item as any).guideLanguage || configSnap.guideLanguage;
-    const ticketType = (item as any).ticketType || configSnap.ticketType;
-    const meal = (item as any).meal || (item as any).mealPlan || configSnap.meal || configSnap.mealPlan;
-    const selectedOptions = (item as any).selectedOptions || (item as any).selectedUpsells || configSnap.selectedOptions || [];
-
-    // Retrieve historical booked price snapshot (Customer-facing only, strictly NO internal nett or margin)
-    const bookedPrice = item.totalPrice ?? (item as any).finalPrice ?? (item as any).sellingPrice ?? (item as any).price ?? 0;
-    const currency = item.currency || b.currency || 'JPY';
-    const pricingSnapshot = {
-      customerPrice: bookedPrice,
-      currency
-    };
-
-    // Operational and supplier details
-    const serviceName = item.productName || 'Activity Service';
-    const destination = item.destination || item.destinationName || b.destinationName || 'Japan';
-    const city = item.city || item.hub || 'Local Area';
-    const serviceTime = item.serviceTime || (item as any).startTime || '09:00 AM';
-    const startTime = (item as any).startTime || serviceTime;
-    const endTime = (item as any).endTime;
-    const reportingTime = (item as any).reportingTime;
-    const supplierName = item.supplierName || 'TheUnbound Authorized Ground Partner';
-    const supplierContact = item.supplierContact || (item as any).supplierPhone || '+91 9811654959 (TheUnbound Operations)';
-    const supplierConfirmationRef = item.supplierConfirmationRef || (item as any).confirmationReference || (item as any).supplierRef || 'CONFIRMED';
-    const meetingPoint = (item as any).meetingPoint || (item as any).pickupPoint || b.customer?.pickupLocation || 'Designated Meeting Point / Hotel Lobby';
-    const pickupInfo = (item as any).pickupInfo || (item as any).pickupLocation || (b.customer?.pickupLocation ? `Pickup at ${b.customer.pickupLocation}. Please be ready 15 mins prior.` : 'Please arrive at the designated meeting point at least 15 minutes prior to scheduled departure.');
-    const dropoffInfo = (item as any).dropoffInfo || (item as any).dropoffLocation || b.customer?.dropoffLocation;
-    const specialInstructions = (item as any).specialInstructions || (item as any).operationalInstructions || (item as any).importantInformation || 'Please show this activity voucher (digital or printed) to your local guide or driver upon pickup. Valid photo identification matching passport name is required.';
-    const inclusions = Array.isArray((item as any).inclusions) ? (item as any).inclusions : (Array.isArray((item as any).includedServices) ? (item as any).includedServices : ['Confirmed Activity Admission / Service', 'Authorized DMC Ground Dispatch Coordination']);
-    const exclusions = Array.isArray((item as any).exclusions) ? (item as any).exclusions : ['Personal expenses and gratuities', 'Services not explicitly specified in voucher inclusions'];
+    // Transport vehicle details strictly gated by isTransportService (NEVER leaked onto ticketed activities)
+    const vehicle = hydrated.isTransportService ? hydrated.vehicleType : undefined;
+    const serviceName = hydrated.productName || 'Activity Service';
+    const destination = hydrated.destination || b.destinationName || b.destination || '';
+    const city = hydrated.hub || hydrated.city || '';
+    const serviceTime = hydrated.resolvedTicketEntryTime || hydrated.resolvedStartTime || hydrated.resolvedPickupTime || '';
 
     const singleItemSnapshot = [{
-      itemId: item.id,
-      productId: item.productId,
-      productSku: item.sku,
+      itemId: hydrated.id,
+      id: hydrated.id,
+      productId: hydrated.productId,
+      productSku: hydrated.sku,
       productName: serviceName,
-      category: item.category || 'Activity',
+      category: hydrated.category || 'Activity',
       destination,
       city,
+      hub: city,
+      serviceDescription: hydrated.resolvedDescription,
+      serviceOverview: hydrated.resolvedOverview,
       serviceDate,
       serviceTime,
-      startTime,
-      endTime,
-      supplierName,
-      supplierContact,
-      supplierConfirmationRef,
-      adults,
-      children,
-      infants,
-      totalPax,
-      meetingPoint,
-      pickupInfo,
-      dropoffInfo,
-      vehicle,
-      capacityTier,
-      guide,
-      guideLanguage,
-      ticketType,
-      meal,
-      selectedOptions,
-      bookedPrice,
-      currency
+      startTime: hydrated.resolvedStartTime,
+      endTime: hydrated.resolvedEndTime,
+      reportingTime: hydrated.resolvedReportingTime,
+      ticketDate: hydrated.resolvedTicketDate,
+      ticketEntryTime: hydrated.resolvedTicketEntryTime,
+      pickupDate: hydrated.isTransportService ? hydrated.resolvedPickupDate : undefined,
+      pickupTime: hydrated.isTransportService ? hydrated.resolvedPickupTime : undefined,
+      returnTime: hydrated.isTransportService ? hydrated.resolvedReturnTime : undefined,
+      timeZone: hydrated.resolvedTimeZone,
+      supplierName: hydrated.supplierName || '',
+      supplierContact: hydrated.supplierContact || hydrated.supplierPhone || '',
+      supplierConfirmationRef: hydrated.isConfirmedForVoucher ? hydrated.supplierConfirmationRef : undefined,
+      adults: hydrated.adults,
+      children: hydrated.children,
+      infants: hydrated.infants,
+      totalPax: hydrated.totalPax,
+      passengerBreakdown: hydrated.resolvedPassengerBreakdown,
+      meetingPoint: hydrated.resolvedMeetingPoint,
+      address: hydrated.resolvedAddress,
+      googleMapsUrl: hydrated.resolvedGoogleMapsUrl,
+      pickupLocation: hydrated.isTransportService ? hydrated.resolvedPickupLocation : undefined,
+      dropoffLocation: hydrated.isTransportService ? hydrated.resolvedDropoffLocation : undefined,
+      vehicleType: vehicle,
+      vehicleCategory: hydrated.isTransportService ? hydrated.vehicleCategory : undefined,
+      vehicleSeaterCapacity: hydrated.isTransportService ? hydrated.vehicleSeaterCapacity : undefined,
+      vehicleCount: hydrated.isTransportService ? hydrated.vehicleCount : undefined,
+      luggageCapacity: hydrated.isTransportService ? hydrated.luggageCapacity : undefined,
+      inclusions: hydrated.resolvedInclusions,
+      exclusions: hydrated.resolvedExclusions,
+      importantInstructions: hydrated.resolvedImportantInstructions,
+      isTransportService: hydrated.isTransportService,
+      isTicketedActivity: hydrated.isTicketedActivity
     }];
 
     const newVoucher: BookingVoucher = {
@@ -16777,66 +17060,73 @@ export class AppDatabase {
       bookingReference: b.bookingReference,
       leadId: b.leadId || b.linkedLeadId,
       isCompleteBookingVoucher: false,
+      voucherTitle: 'ACTIVITY VOUCHER',
       responsibleAgentId: b.submittingAgentId || b.agentId,
       assignedTeamMemberId: b.assignedTeamMemberId,
-      serviceItemId: item.id,
-      productId: item.productId,
-      productSku: item.sku,
-      category: item.category || 'Activity',
+      serviceItemId: hydrated.id,
+      productId: hydrated.productId,
+      productSku: hydrated.sku,
+      category: hydrated.category || 'Activity',
       destination,
       city,
       hub: city,
-      customerName: b.customer?.leadTravelerName || 'Guest',
+      customerName: leadPaxName,
       leadPaxName,
-      adults,
-      children,
-      infants,
-      totalPax,
-      passengerBreakdown,
+      adults: hydrated.adults,
+      children: hydrated.children,
+      infants: hydrated.infants,
+      totalPax: hydrated.totalPax,
+      passengerBreakdown: hydrated.resolvedPassengerBreakdown,
+      passengerNames: hydrated.passengerAssignment,
       serviceName,
+      serviceDescription: hydrated.resolvedDescription,
+      activityDescription: hydrated.resolvedDescription,
+      serviceOverview: hydrated.resolvedOverview,
       serviceDate,
       serviceTime,
-      startTime,
-      endTime,
-      reportingTime,
-      supplierName,
-      supplierContact,
-      supplierConfirmationRef,
-      meetingPoint,
-      pickupInfo,
-      dropoffInfo,
-      emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Operations Desk',
-      specialInstructions,
-      operationalInstructions: specialInstructions,
-      inclusions,
-      exclusions,
-      termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for confirmed date and designated passenger(s). Non-transferable.',
+      startTime: hydrated.resolvedStartTime,
+      endTime: hydrated.resolvedEndTime,
+      reportingTime: hydrated.resolvedReportingTime,
+      ticketDate: hydrated.resolvedTicketDate,
+      ticketEntryTime: hydrated.resolvedTicketEntryTime,
+      pickupDate: hydrated.isTransportService ? hydrated.resolvedPickupDate : undefined,
+      pickupTime: hydrated.isTransportService ? hydrated.resolvedPickupTime : undefined,
+      returnTime: hydrated.isTransportService ? hydrated.resolvedReturnTime : undefined,
+      timeZone: hydrated.resolvedTimeZone,
+      supplierName: hydrated.supplierName || 'TheUnbound Ground Operations',
+      supplierContact: hydrated.supplierContact || hydrated.supplierPhone || companyProfile.phone || '',
+      supplierConfirmationRef: hydrated.isConfirmedForVoucher ? hydrated.supplierConfirmationRef : undefined,
+      meetingPoint: hydrated.resolvedMeetingPoint,
+      address: hydrated.resolvedAddress,
+      googleMapsUrl: hydrated.resolvedGoogleMapsUrl,
+      pickupInfo: hydrated.isTransportService ? hydrated.resolvedPickupLocation : '',
+      dropoffInfo: hydrated.isTransportService ? hydrated.resolvedDropoffLocation : '',
+      emergencyContact: `${companyProfile.phone || '+91 9811654959'} (TheUnbound 24/7 Operations Desk)`,
+      specialInstructions: hydrated.resolvedImportantInstructions,
+      importantInstructions: hydrated.resolvedImportantInstructions,
+      operationalInstructions: hydrated.resolvedImportantInstructions,
+      inclusions: hydrated.resolvedInclusions,
+      exclusions: hydrated.resolvedExclusions,
+      termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for the confirmed date, entry time, and designated passenger(s). Non-transferable.',
       status: 'ISSUED',
       generatedAt: now,
       issuedAt: now,
       generatedBy: user?.id || 'admin',
       generatedByName: user?.name || 'Operations Desk',
-      templateVersion: 'v2.4-Activity-Voucher',
+      templateVersion: 'v3.0-Activity-Voucher-PDF',
       serviceItemsSnapshot: singleItemSnapshot,
-      bookedPrice,
-      currency,
-      pricingSnapshot,
-      configurationSnapshot: {
-        vehicle,
-        capacityTier,
-        guide,
-        guideLanguage,
-        ticketType,
-        meal,
-        selectedOptions
-      },
       vehicle,
-      capacityTier,
-      guide,
-      guideLanguage,
-      ticketType,
-      meal,
-      selectedOptions,
+      vehicleType: vehicle,
+      vehicleCategory: hydrated.isTransportService ? hydrated.vehicleCategory : undefined,
+      vehicleSeaterCapacity: hydrated.isTransportService ? hydrated.vehicleSeaterCapacity : undefined,
+      vehicleCount: hydrated.isTransportService ? hydrated.vehicleCount : undefined,
+      luggageCapacity: hydrated.isTransportService ? hydrated.luggageCapacity : undefined,
+      routeDetails: hydrated.isTransportService ? hydrated.routeDetails : undefined,
+      isTransportService: hydrated.isTransportService,
+      isTicketedActivity: hydrated.isTicketedActivity,
+      ticketType: hydrated.ageTicketCategories || undefined,
+      sourceBookingVersion: hydrated.serviceVersion || 1,
+      idempotencyKey: buildDocumentIdempotencyKey('ACTIVITY_VOUCHER', b.id, `${hydrated.id}-v${newVersion}`),
       isOutdated: false,
       previousVoucherId
     };
@@ -16849,7 +17139,6 @@ export class AppDatabase {
     b.activityVoucherIds = Array.from(new Set([...b.activityVoucherIds, newVoucher.id]));
     b.updatedAt = now;
 
-    // Update item's voucher status
     item.voucherStatus = 'Generated';
     (item as any).voucherId = newVoucher.id;
     (item as any).voucherCode = newVoucher.voucherNumber;
@@ -16880,6 +17169,8 @@ export class AppDatabase {
     this.recordBookingActivity({
       eventId: `act-vou-actv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       bookingId: b.id,
+      bookingItemId: item.id,
+      serviceItemName: item.productName,
       eventType: previousVoucherId ? 'VOUCHER_REGENERATED' : 'VOUCHER_GENERATED',
       previousValue: previousVoucherId ? `Previous v${newVersion - 1}` : 'None',
       newValue: `v${newVersion} (${voucherNumber})`,
@@ -16914,7 +17205,7 @@ export class AppDatabase {
     user: User | null,
     amendmentReason?: string
   ): { success: boolean; voucher?: BookingVoucher; error?: string } {
-    const b = this.getBookingById(bookingId);
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
 
     const now = new Date().toISOString();
@@ -16996,7 +17287,7 @@ export class AppDatabase {
     errors: { itemId: string; productName?: string; reason: string }[];
     error?: string;
   } {
-    const b = this.getBookingById(bookingId);
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
     if (!b) {
       return {
         success: false,
@@ -17030,9 +17321,20 @@ export class AppDatabase {
     const generatedVouchers: BookingVoucher[] = [];
     const itemErrors: { itemId: string; productName?: string; reason: string }[] = [];
 
+    const companyProfile = this.getCentralCompanyProfile();
+    const allProducts = this.getProducts();
+    const hydrateForGroup = (it: BookingItem) => {
+      const productRecord = it.productId ? allProducts.find(p => p.id === it.productId) : null;
+      return hydrateBookingServiceItem(it, b, productRecord);
+    };
+
     if (groupingType === 'combined') {
-      const confirmedItems = candidateItems.filter(it => it.supplierConfirmationStatus === 'Confirmed' || it.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate);
-      if (confirmedItems.length === 0) {
+      const hydratedConfirmed = sortBookingItemsChronologically(
+        candidateItems
+          .filter(it => it.supplierConfirmationStatus === 'Confirmed' || it.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate)
+          .map(hydrateForGroup)
+      );
+      if (hydratedConfirmed.length === 0) {
         return {
           success: false,
           total: candidateItems.length,
@@ -17047,7 +17349,7 @@ export class AppDatabase {
           error: 'No confirmed activity items available for combined voucher.'
         };
       }
-
+      const confirmedItems = hydratedConfirmed;
       const voucherNumber = `TUB-ACTV-COMB-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
       const voucherId = `vou-actv-comb-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
@@ -17063,42 +17365,71 @@ export class AppDatabase {
         assignedTeamMemberId: b.assignedTeamMemberId,
         customerName: b.customer?.leadTravelerName || 'Guest',
         leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
-        totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0),
+        adults: b.customer?.totalAdults ?? (b as any).adults ?? 1,
+        children: b.customer?.totalChildren ?? (b as any).children ?? 0,
+        infants: b.customer?.totalInfants ?? 0,
+        totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0) + (b.customer?.totalInfants || 0),
         destination: b.destinationName || 'Destination',
-        city: confirmedItems[0]?.city || 'Local Area',
-        serviceName: `${confirmedItems.length} Activities & Excursions Combined Voucher`,
-        serviceDate: b.travelStartDate || confirmedItems[0]?.serviceDate || now.split('T')[0],
-        serviceTime: 'As per itinerary schedule',
-        supplierName: confirmedItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Authorized Ground Partners',
-        supplierContact: '+91 9811654959 (TheUnbound 24/7 Ground Dispatch)',
-        meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby / Scheduled Meeting Points',
-        pickupInfo: 'Please refer to individual day timings and meeting locations.',
-        emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Operations Desk',
-        passengerBreakdown: `${b.customer?.totalAdults || 1} Adults${b.customer?.totalChildren ? `, ${b.customer.totalChildren} Children` : ''}`,
-        specialInstructions: 'Combined activity pass. Present to local guide or representative at each scheduled activity.',
-        termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for specified services and dates.',
+        city: hydratedConfirmed[0]?.city || '',
+        serviceName: `${hydratedConfirmed.length} Activities & Excursions Combined Voucher`,
+        serviceDate: hydratedConfirmed[0]?.resolvedServiceDate || b.travelStartDate || '',
+        serviceTime: '',
+        supplierName: Array.from(new Set(hydratedConfirmed.map(i => i.supplierName).filter(Boolean))).join(', ') || 'TheUnbound Ground Operations',
+        supplierContact: companyProfile.phone || '+91 9811654959',
+        meetingPoint: '',
+        pickupInfo: '',
+        emergencyContact: `${companyProfile.phone || '+91 9811654959'} (TheUnbound 24/7 Operations Desk)`,
+        passengerBreakdown: formatPassengerBreakdown(
+          b.customer?.totalAdults ?? (b as any).adults ?? 1,
+          b.customer?.totalChildren ?? (b as any).children ?? 0,
+          b.customer?.totalInfants ?? 0
+        ),
+        specialInstructions: 'Combined activity pass. Please refer to each individual service entry below for confirmed timing, entry window, and meeting point.',
+        termsAndConditions: 'Activity voucher issued by TheUnbound DMC. Valid strictly for specified confirmed services and dates.',
         status: 'ISSUED',
         generatedAt: now,
         issuedAt: now,
         generatedBy: user?.id || 'admin',
         generatedByName: user?.name || 'Operations Desk',
-        templateVersion: 'v2.4-Combined-Activity',
+        templateVersion: 'v3.0-Combined-Activity-PDF',
         groupingType: 'combined',
-        serviceItemsSnapshot: confirmedItems.map(it => ({
-          itemId: it.id,
-          productId: it.productId,
-          productSku: it.sku,
-          productName: it.productName,
-          category: it.category,
-          serviceDate: it.serviceDate || it.travelDate,
-          serviceTime: it.serviceTime || '09:00 AM',
-          supplierName: it.supplierName,
-          supplierConfirmationRef: it.supplierConfirmationRef,
-          totalPax: it.totalPax || 1,
-          meetingPoint: (it as any).meetingPoint,
-          pickupInfo: (it as any).pickupInfo,
-          bookedPrice: it.totalPrice || 0,
-          currency: it.currency || b.currency || 'JPY'
+        serviceItemsSnapshot: hydratedConfirmed.map(h => ({
+          itemId: h.id,
+          productId: h.productId,
+          productSku: h.sku,
+          productName: h.productName,
+          category: h.category,
+          serviceDate: h.resolvedServiceDate,
+          serviceTime: h.resolvedStartTime || h.resolvedTicketEntryTime || '',
+          startTime: h.resolvedStartTime,
+          endTime: h.resolvedEndTime,
+          reportingTime: h.resolvedReportingTime,
+          ticketDate: h.resolvedTicketDate,
+          ticketEntryTime: h.resolvedTicketEntryTime,
+          serviceDescription: h.resolvedDescription,
+          serviceOverview: h.resolvedOverview,
+          inclusions: h.resolvedInclusions,
+          exclusions: h.resolvedExclusions,
+          importantInstructions: h.resolvedImportantInstructions,
+          meetingPoint: h.resolvedMeetingPoint,
+          address: h.resolvedAddress,
+          googleMapsUrl: h.resolvedGoogleMapsUrl,
+          pickupInfo: h.isTransportService ? h.resolvedPickupLocation : undefined,
+          dropoffInfo: h.isTransportService ? h.resolvedDropoffLocation : undefined,
+          vehicleType: h.isTransportService ? h.vehicleType : undefined,
+          vehicleSeaterCapacity: h.isTransportService ? h.vehicleSeaterCapacity : undefined,
+          vehicleCount: h.isTransportService ? h.vehicleCount : undefined,
+          isTransportService: h.isTransportService,
+          isTicketedActivity: h.isTicketedActivity,
+          supplierName: h.supplierName,
+          supplierContact: h.supplierContact || h.supplierPhone,
+          supplierConfirmationRef: h.isConfirmedForVoucher ? h.supplierConfirmationRef : undefined,
+          allocationStatus: h.resolvedCanonicalAllocationStatus,
+          adults: h.adults,
+          children: h.children,
+          infants: h.infants,
+          totalPax: h.totalPax,
+          passengerBreakdown: h.resolvedPassengerBreakdown
         })),
         isOutdated: false
       };
@@ -17113,9 +17444,12 @@ export class AppDatabase {
       b.updatedAt = now;
 
       confirmedItems.forEach(it => {
-        it.voucherStatus = 'Generated';
-        (it as any).voucherId = vch.id;
-        (it as any).voucherCode = vch.voucherNumber;
+        const orig = (b.items || []).find(item => item.id === it.id);
+        if (orig) {
+          orig.voucherStatus = 'Generated';
+          (orig as any).voucherId = vch.id;
+          (orig as any).voucherCode = vch.voucherNumber;
+        }
       });
 
       this.saveVoucher(vch, user);
@@ -17130,7 +17464,11 @@ export class AppDatabase {
         errors: []
       };
     } else if (groupingType === 'category') {
-      const confirmedItems = candidateItems.filter(it => it.supplierConfirmationStatus === 'Confirmed' || it.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate);
+      const confirmedItems = sortBookingItemsChronologically(
+        candidateItems
+          .filter(it => it.supplierConfirmationStatus === 'Confirmed' || it.supplierStatus === 'CONFIRMED_BY_SUPPLIER' || forceRegenerate)
+          .map(hydrateForGroup)
+      );
       const byCategory: Record<string, typeof confirmedItems> = {};
       confirmedItems.forEach(it => {
         const cat = it.category || 'ACTIVITIES';
@@ -17138,7 +17476,7 @@ export class AppDatabase {
         byCategory[cat].push(it);
       });
 
-      Object.entries(byCategory).forEach(([cat, catItems]) => {
+      Object.entries(byCategory).forEach(([cat, hydratedCat]) => {
         const voucherNumber = `TUB-VOU-${cat.substring(0, 4).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
         const voucherId = `vou-cat-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
 
@@ -17154,35 +17492,68 @@ export class AppDatabase {
           groupingType: 'category',
           customerName: b.customer?.leadTravelerName || 'Guest',
           leadPaxName: b.customer?.leadTravelerName || 'Lead Traveler',
-          totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0),
+          adults: b.customer?.totalAdults ?? (b as any).adults ?? 1,
+          children: b.customer?.totalChildren ?? (b as any).children ?? 0,
+          infants: b.customer?.totalInfants ?? 0,
+          totalPax: (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0) + (b.customer?.totalInfants || 0),
           destination: b.destinationName || 'Destination',
-          city: catItems[0]?.city || 'City',
-          serviceName: `${cat} Services Voucher (${catItems.length} items)`,
-          serviceDate: catItems[0]?.serviceDate || b.travelStartDate || now.split('T')[0],
-          serviceTime: catItems[0]?.serviceTime || '09:00 AM',
-          supplierName: catItems.map(i => i.supplierName).filter(Boolean).join(', ') || 'Authorized Ground Partners',
-          supplierContact: '+91 9811654959',
-          meetingPoint: b.customer?.pickupLocation || 'Hotel Lobby',
-          pickupInfo: 'Present to designated representative.',
-          emergencyContact: '+91 9811654959 / 24-Hour Emergency Ground Desk',
-          passengerBreakdown: `${b.customer?.totalAdults || 1} Adults`,
-          specialInstructions: `Valid for all ${cat} services listed on this voucher.`,
+          city: hydratedCat[0]?.city || '',
+          serviceName: `${cat} Services Voucher (${hydratedCat.length} items)`,
+          serviceDate: hydratedCat[0]?.resolvedServiceDate || b.travelStartDate || '',
+          serviceTime: hydratedCat[0]?.resolvedStartTime || hydratedCat[0]?.resolvedTicketEntryTime || '',
+          supplierName: Array.from(new Set(hydratedCat.map(i => i.supplierName).filter(Boolean))).join(', ') || 'TheUnbound Ground Operations',
+          supplierContact: companyProfile.phone || '+91 9811654959',
+          meetingPoint: hydratedCat[0]?.resolvedMeetingPoint || '',
+          pickupInfo: hydratedCat[0]?.isTransportService ? hydratedCat[0]?.resolvedPickupLocation : '',
+          emergencyContact: `${companyProfile.phone || '+91 9811654959'} (TheUnbound 24/7 Operations Desk)`,
+          passengerBreakdown: formatPassengerBreakdown(
+            b.customer?.totalAdults ?? (b as any).adults ?? 1,
+            b.customer?.totalChildren ?? (b as any).children ?? 0,
+            b.customer?.totalInfants ?? 0
+          ),
+          specialInstructions: `Valid for all confirmed ${cat} services listed on this voucher.`,
           status: 'ISSUED',
           generatedAt: now,
           issuedAt: now,
           generatedBy: user?.id || 'admin',
           generatedByName: user?.name || 'Operations Desk',
-          serviceItemsSnapshot: catItems.map(it => ({
-            itemId: it.id,
-            productName: it.productName,
-            category: it.category,
-            serviceDate: it.serviceDate || it.travelDate,
-            serviceTime: it.serviceTime || '09:00 AM',
-            supplierName: it.supplierName,
-            supplierConfirmationRef: it.supplierConfirmationRef,
-            totalPax: it.totalPax || 1,
-            bookedPrice: it.totalPrice || 0,
-            currency: it.currency || b.currency || 'JPY'
+          templateVersion: 'v3.0-Category-Activity-PDF',
+          serviceItemsSnapshot: hydratedCat.map(h => ({
+            itemId: h.id,
+            productId: h.productId,
+            productName: h.productName,
+            category: h.category,
+            serviceDate: h.resolvedServiceDate,
+            serviceTime: h.resolvedStartTime || h.resolvedTicketEntryTime || '',
+            startTime: h.resolvedStartTime,
+            endTime: h.resolvedEndTime,
+            reportingTime: h.resolvedReportingTime,
+            ticketDate: h.resolvedTicketDate,
+            ticketEntryTime: h.resolvedTicketEntryTime,
+            serviceDescription: h.resolvedDescription,
+            serviceOverview: h.resolvedOverview,
+            inclusions: h.resolvedInclusions,
+            exclusions: h.resolvedExclusions,
+            importantInstructions: h.resolvedImportantInstructions,
+            meetingPoint: h.resolvedMeetingPoint,
+            address: h.resolvedAddress,
+            googleMapsUrl: h.resolvedGoogleMapsUrl,
+            pickupInfo: h.isTransportService ? h.resolvedPickupLocation : undefined,
+            dropoffInfo: h.isTransportService ? h.resolvedDropoffLocation : undefined,
+            vehicleType: h.isTransportService ? h.vehicleType : undefined,
+            vehicleSeaterCapacity: h.isTransportService ? h.vehicleSeaterCapacity : undefined,
+            vehicleCount: h.isTransportService ? h.vehicleCount : undefined,
+            isTransportService: h.isTransportService,
+            isTicketedActivity: h.isTicketedActivity,
+            supplierName: h.supplierName,
+            supplierContact: h.supplierContact || h.supplierPhone,
+            supplierConfirmationRef: h.isConfirmedForVoucher ? h.supplierConfirmationRef : undefined,
+            allocationStatus: h.resolvedCanonicalAllocationStatus,
+            adults: h.adults,
+            children: h.children,
+            infants: h.infants,
+            totalPax: h.totalPax,
+            passengerBreakdown: h.resolvedPassengerBreakdown
           })),
           isOutdated: false
         };
@@ -17195,10 +17566,13 @@ export class AppDatabase {
         if (!b.activityVoucherIds) b.activityVoucherIds = [];
         b.activityVoucherIds = Array.from(new Set([...b.activityVoucherIds, vch.id]));
 
-        catItems.forEach(it => {
-          it.voucherStatus = 'Generated';
-          (it as any).voucherId = vch.id;
-          (it as any).voucherCode = vch.voucherNumber;
+        hydratedCat.forEach(it => {
+          const orig = (b.items || []).find(item => item.id === it.id);
+          if (orig) {
+            orig.voucherStatus = 'Generated';
+            (orig as any).voucherId = vch.id;
+            (orig as any).voucherCode = vch.voucherNumber;
+          }
         });
 
         this.saveVoucher(vch, user);
@@ -17255,11 +17629,40 @@ export class AppDatabase {
     user: User | null,
     reason?: string
   ): { success: boolean; voucher?: BookingVoucher; error?: string } {
-    const b = this.getBookingById(bookingId);
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
 
     const target = (b.vouchersList || []).find(v => v.id === voucherId);
     if (!target) return { success: false, error: 'Voucher not found' };
+
+    // Refresh from authoritative booking / service item state while preserving historical voucher version
+    if (target.isCompleteBookingVoucher) {
+      const regen = this.generateBookingVoucher(bookingId, user, true);
+      if (regen.success && regen.voucher) {
+        regen.voucher.status = 'REISSUED';
+        regen.voucher.amendmentReason = reason || 'Reissued from latest authoritative booking services';
+        regen.voucher.amendedBy = user?.id || 'admin';
+        regen.voucher.amendedByName = user?.name || 'Operations Lead';
+        regen.voucher.amendedAt = new Date().toISOString();
+        this.saveVoucher(regen.voucher, user);
+        this.saveBooking(b, user);
+      }
+      return regen;
+    }
+
+    if (target.serviceItemId) {
+      const regen = this.generateActivityVoucher(bookingId, target.serviceItemId, user, true);
+      if (regen.success && regen.voucher) {
+        regen.voucher.status = 'REISSUED';
+        regen.voucher.amendmentReason = reason || 'Reissued from latest authoritative service item';
+        regen.voucher.amendedBy = user?.id || 'admin';
+        regen.voucher.amendedByName = user?.name || 'Operations Lead';
+        regen.voucher.amendedAt = new Date().toISOString();
+        this.saveVoucher(regen.voucher, user);
+        this.saveBooking(b, user);
+      }
+      return regen;
+    }
 
     const now = new Date().toISOString();
     const newVersion = (target.version || 1) + 1;
@@ -17271,6 +17674,7 @@ export class AppDatabase {
       voucherNumber: newNumber,
       version: newVersion,
       status: 'REISSUED',
+      isOutdated: false,
       previousVoucherId: target.id,
       amendmentReason: reason || 'Reissued with updated operational parameters',
       amendedBy: user?.id || 'admin',
@@ -17279,8 +17683,8 @@ export class AppDatabase {
       issuedAt: now
     };
 
-    // Mark previous as cancelled/outdated
     target.status = 'OUTDATED';
+    target.isOutdated = true;
     target.outdatedReason = `Superseded by reissued voucher #${newNumber}`;
 
     b.vouchersList.unshift(reissued);
@@ -17300,7 +17704,7 @@ export class AppDatabase {
     user: User | null,
     reason?: string
   ): { success: boolean; error?: string } {
-    const b = this.getBookingById(bookingId);
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
 
     const target = (b.vouchersList || []).find(v => v.id === voucherId);
@@ -17335,73 +17739,55 @@ export class AppDatabase {
       return { success: true, invoice: existingInvoices[0] };
     }
 
-    const latestSnapshot = getLatestBookingPricingSnapshot(b);
+    const authoritative = resolveAuthoritativeProformaAmount(b);
+    const companyProfile = this.getCentralCompanyProfile();
     const nextInvoiceVersion = existingInvoices.length + 1;
 
     const now = new Date().toISOString();
     const issueDateStr = now.split('T')[0];
-    const invoiceNumber = `TUB-PINV-2026-${Math.floor(1000 + Math.random() * 9000)}${nextInvoiceVersion > 1 ? `-R${nextInvoiceVersion}` : ''}`;
+    const invoiceNumber = `TUB-PINV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}${nextInvoiceVersion > 1 ? `-R${nextInvoiceVersion}` : ''}`;
 
     const customerName = b.customer?.leadTravelerName || b.customer?.bookerName || b.customer?.name || (b as any).guestName || (b as any).leadName || 'Valued Client';
     const customerEmail = b.customer?.email || (b as any).guestEmail || (b as any).leadEmail || 'client@theunbound.com';
     const agencyName = b.agentAgency || b.customer?.agencyName || (b as any).agencyName || 'TheUnbound Partner Network';
     const agentName = b.agentName || (b as any).submittingAgentName || user?.name || 'Authorized Operations Desk';
-    const totalPax = typeof (b as any).totalPax === 'number' ? (b as any).totalPax : (typeof (b as any).pax === 'number' ? (b as any).pax : 1);
+    const travelersObj = (b as any).travelers;
+    const totalPax =
+      travelersObj
+        ? (travelersObj.adults || 0) + (travelersObj.children || 0) + (travelersObj.infants || 0)
+        : typeof (b as any).totalPax === 'number'
+        ? (b as any).totalPax
+        : (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0) + (b.customer?.totalInfants || 0);
     const destination = b.destination || (b as any).primaryDestination || 'Ground Destination';
     const travelDates = b.travelStartDate ? `${b.travelStartDate}${b.travelEndDate ? ' - ' + b.travelEndDate : ''}` : 'Scheduled';
 
-    let mappedItems: any[] = (b.items || []).map((it, idx) => ({
+    const mappedItems: any[] = sortBookingItemsChronologically(
+      (b.items || [])
+        .filter(it => !it.isCancelled && it.operationalStatus !== 'Cancelled')
+        .map(it => hydrateBookingServiceItem(it, b))
+    ).map((it, idx) => ({
       id: it.id || `inv-item-${idx}`,
-      productName: it.productName || (it as any).title || 'Travel Ground Service',
-      serviceName: it.productName || (it as any).title || 'Travel Ground Service',
-      description: it.productName || (it as any).title || (it as any).description || 'Travel Ground Service',
+      productName: it.productName || 'Travel Ground Service',
+      serviceName: it.productName || 'Travel Ground Service',
+      description: it.productName || 'Travel Ground Service',
       category: it.category || 'SERVICE',
-      serviceDate: it.serviceDate || it.travelDate || b.travelStartDate || 'Scheduled',
-      travelDate: it.travelDate || it.serviceDate || b.travelStartDate || 'Scheduled',
-      pax: typeof (it as any).pax === 'number' ? (it as any).pax : totalPax,
+      serviceDate: it.resolvedServiceDate || b.travelStartDate || 'Scheduled',
+      travelDate: it.resolvedServiceDate || b.travelStartDate || 'Scheduled',
+      pax: it.totalPax || totalPax,
       quantity: 1,
-      unitPrice: it.totalPrice || it.unitSellingPrice || 0,
+      unitPrice: 0,
       taxAmount: 0,
-      totalPrice: it.totalPrice || (it.unitSellingPrice ? it.unitSellingPrice : 0),
-      amount: it.totalPrice || (it.unitSellingPrice ? it.unitSellingPrice : 0),
-      currency: b.currency || 'USD'
+      totalPrice: 0,
+      amount: 0,
+      currency: authoritative.currency
     }));
 
-    const itemsTotalSum = mappedItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
-    // Authoritative customer-facing total from the latest committed BookingPricingSnapshot
-    // Never exposes internal margin, supplier nett cost, or internal funding source.
-    const subtotal =
-      latestSnapshot.revisedCustomerSellingPrice > 0
-        ? latestSnapshot.revisedCustomerSellingPrice
-        : (b.totalAmount && b.totalAmount > 0)
-          ? b.totalAmount
-          : ((b as any).pricing?.totalPrice && (b as any).pricing.totalPrice > 0)
-            ? (b as any).pricing.totalPrice
-            : (itemsTotalSum > 0 ? itemsTotalSum : 0);
-
-    if (mappedItems.length === 0 && subtotal > 0) {
-      const bTitle = (b as any).title || (b as any).packageName || (b as any).destination || `Ground Itinerary Arrangements & VIP Concierge (${destination})`;
-      mappedItems = [{
-        id: `inv-item-0`,
-        productName: bTitle,
-        serviceName: bTitle,
-        description: bTitle,
-        category: 'PACKAGE',
-        serviceDate: b.travelStartDate || 'Scheduled',
-        travelDate: b.travelStartDate || 'Scheduled',
-        pax: totalPax,
-        quantity: 1,
-        unitPrice: subtotal,
-        taxAmount: 0,
-        totalPrice: subtotal,
-        amount: subtotal,
-        currency: b.currency || 'USD'
-      }];
-    }
-
-    const amountPaid = (b as any).paidAmount || (b.paymentStatus === 'PAID' ? subtotal : 0);
-    const balanceDue = Math.max(0, subtotal - amountPaid);
-    const paymentStatus: InvoicePaymentStatus = balanceDue === 0 && subtotal > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+    // Authoritative customer-facing Final Booking Amount strictly from the latest committed BookingPricingSnapshot.
+    // Underlying tax/service fee remain preserved in booking financial records — NEVER rendered separately on Proforma.
+    const finalBookingAmount = authoritative.finalBookingAmount;
+    const amountPaid = authoritative.amountPaid;
+    const balanceDue = authoritative.balanceDue;
+    const paymentStatus: InvoicePaymentStatus = balanceDue === 0 && finalBookingAmount > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
 
     const dueDate = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
 
@@ -17413,7 +17799,18 @@ export class AppDatabase {
       leadId: b.leadId || b.linkedLeadId,
       sourceQuoteId: b.sourceQuoteId || b.quoteId,
       invoiceVersion: nextInvoiceVersion,
+      previousInvoiceId: existingInvoices[0]?.id,
       isProforma: true,
+      hideTaxAndServiceFeeBreakdown: true,
+      sourcePricingSnapshotId: authoritative.sourcePricingSnapshotId,
+      sourcePricingSnapshotVersion: authoritative.sourcePricingSnapshotVersion,
+      proformaFinalBookingAmount: finalBookingAmount,
+      documentNotice:
+        'This document is a Proforma Invoice issued solely for booking confirmation and payment remittance purposes. It is not a statutory or final fiscal invoice.',
+      bookingDescription:
+        (b as any).title ||
+        (b as any).packageName ||
+        `Consolidated Ground Services Booking (${destination}${travelDates ? ` | ${travelDates}` : ''})`,
       responsibleAgentId: b.submittingAgentId || b.agentId,
       assignedTeamMemberId: b.assignedTeamMemberId,
       customerName,
@@ -17434,27 +17831,29 @@ export class AppDatabase {
       totalPax,
       destination,
       travelDates,
-      subtotal,
+      subtotal: finalBookingAmount,
       taxTotal: 0,
       taxAmount: 0,
       serviceFeeTotal: 0,
       discountTotal: 0,
-      totalAmount: subtotal,
+      totalAmount: finalBookingAmount,
       amountPaid,
       paidAmount: amountPaid,
       balanceDue,
-      currency: b.currency || 'USD',
+      currency: authoritative.currency,
       paymentStatus,
       paymentMethod: 'BANK_WIRE_TRANSFER',
-      companyName: 'Unbound Experiences India Pvt Ltd',
-      companyAddress: this.getCentralCompanyProfile().registeredAddress,
-      companyRegisteredAddress: this.getCentralCompanyProfile().registeredAddress,
-      companyCurrentAddress: this.getCentralCompanyProfile().currentAddress,
-      companyTaxNumber: this.getCentralCompanyProfile().gstin || '27AABCT1234F1Z5',
+      companyName: companyProfile.companyName || 'Unbound Experiences India Pvt Ltd',
+      companyAddress: companyProfile.registeredAddress,
+      companyRegisteredAddress: companyProfile.registeredAddress,
+      companyCurrentAddress: companyProfile.currentAddress,
+      companyEmail: companyProfile.email,
+      companyPhone: companyProfile.phone,
+      companyTaxNumber: companyProfile.gstin || '',
       notes: nextInvoiceVersion > 1
-        ? `Revised Proforma Invoice (Version ${nextInvoiceVersion}, Pricing Snapshot v${latestSnapshot.version}) for Booking Reference ${b.bookingReference}. Supersedes prior proforma for payment purposes; historical issued documents remain preserved.`
+        ? `Revised Proforma Invoice (Version ${nextInvoiceVersion}, Pricing Snapshot v${authoritative.sourcePricingSnapshotVersion}) for Booking Reference ${b.bookingReference}. Supersedes prior proforma for payment purposes; historical issued documents remain preserved.`
         : `Proforma invoice issued for Booking Reference ${b.bookingReference}. Please quote the booking reference during wire transfer.`,
-      terms: 'Payment due within 7 days of invoice issuance or 14 days prior to travel departure, whichever is earlier. Wire transfer fees to be borne by remitter.',
+      terms: 'Payment due within 7 days of proforma issuance or 14 days prior to travel departure, whichever is earlier. Wire transfer fees to be borne by remitter.',
       createdAt: now,
       updatedAt: now
     };
@@ -17514,7 +17913,7 @@ export class AppDatabase {
     user: User | null,
     amendmentReason?: string
   ): { success: boolean; invoice?: BookingInvoice; error?: string } {
-    const b = this.getBookingById(bookingId);
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
 
     const now = new Date().toISOString();
@@ -17580,16 +17979,18 @@ export class AppDatabase {
     user: User | null,
     reason?: string
   ): { success: boolean; invoice?: BookingInvoice; error?: string } {
-    const b = this.getBookingById(bookingId);
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
     if (!b) return { success: false, error: 'Booking not found' };
 
     const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
     const target = allInvoices.find(inv => inv.id === invoiceId);
     if (!target) return { success: false, error: 'Invoice not found' };
 
+    // Re-resolve authoritative Final Booking Amount from the latest committed BookingPricingSnapshot
+    const authoritative = resolveAuthoritativeProformaAmount(b);
     const now = new Date().toISOString();
     const newVersion = (target.invoiceVersion || 1) + 1;
-    const newInvoiceNumber = `TUB-PINV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const newInvoiceNumber = `TUB-PINV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}-R${newVersion}`;
 
     const reissued: BookingInvoice = {
       ...target,
@@ -17597,7 +17998,21 @@ export class AppDatabase {
       invoiceNumber: newInvoiceNumber,
       invoiceVersion: newVersion,
       previousInvoiceId: target.id,
-      amendmentReason: reason || 'Reissued with updated billing terms',
+      hideTaxAndServiceFeeBreakdown: true,
+      sourcePricingSnapshotId: authoritative.sourcePricingSnapshotId,
+      sourcePricingSnapshotVersion: authoritative.sourcePricingSnapshotVersion,
+      proformaFinalBookingAmount: authoritative.finalBookingAmount,
+      subtotal: authoritative.finalBookingAmount,
+      taxTotal: 0,
+      taxAmount: 0,
+      serviceFeeTotal: 0,
+      discountTotal: 0,
+      totalAmount: authoritative.finalBookingAmount,
+      amountPaid: authoritative.amountPaid,
+      paidAmount: authoritative.amountPaid,
+      balanceDue: authoritative.balanceDue,
+      currency: authoritative.currency,
+      amendmentReason: reason || 'Reissued with latest committed booking pricing snapshot',
       amendedBy: user?.id || 'admin',
       amendedByName: user?.name || 'Operations Lead',
       amendedAt: now,
@@ -17613,6 +18028,7 @@ export class AppDatabase {
     b.proformaInvoiceIds = Array.from(new Set([...b.proformaInvoiceIds, reissued.id]));
     b.activeProformaInvoiceId = reissued.id;
     b.proformaInvoiceUrl = `/invoices/${reissued.id}`;
+    b.hasRevisedPricingAfterInvoice = false;
     b.updatedAt = now;
     this.saveBooking(b, user);
 
@@ -17640,7 +18056,7 @@ export class AppDatabase {
 
     // Deduplication check: check if booking already exists for this quote
     if (quote.bookingId) {
-      const existingB = this.getBookingById(quote.bookingId);
+      const existingB = this.findBookingInternal(quote.bookingId);
       if (existingB) {
         return existingB;
       }
@@ -17792,7 +18208,7 @@ export class AppDatabase {
   public getBookingInvoices(bookingId?: string): BookingInvoice[] {
     const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
     if (!bookingId) return allInvoices;
-    const booking = this.getBookingById(bookingId);
+    const booking = this.findBookingInternal(bookingId);
     const invoiceIds = booking?.proformaInvoiceIds || [];
     const bRef = booking?.bookingReference;
 
@@ -18779,7 +19195,7 @@ export class AppDatabase {
     this.syncFirestoreDoc('uploaded_invoices', invoice.id, invoice);
 
     // Link to booking
-    const b = this.getBookingById(invoice.bookingId);
+    const b = this.findBookingInternal(invoice.bookingId);
     if (b) {
       if (!b.uploadedInvoices) b.uploadedInvoices = [];
       const bIdx = b.uploadedInvoices.findIndex(i => i.id === invoice.id);
@@ -19977,6 +20393,8 @@ export class AppDatabase {
         travelRequirements: sanitizedTravelRequirements || 'Standard VIP ground arrangements requested.',
         specialRequests: sanitizedSpecialRequests,
         priority: l.priority || 'NORMAL',
+        status: normalizeLeadStatus(l.status),
+        stageName: l.stageName ? formatLeadStageDisplayName(l.stageName) : l.stageName,
         notes: sanitizedNotes,
         timeline: sanitizedTimeline,
         followUps: l.followUps || [],
@@ -21531,6 +21949,11 @@ export class AppDatabase {
       }
     }
 
+    savedLead.status = normalizeLeadStatus(savedLead.status);
+    if (savedLead.stageName) {
+      savedLead.stageName = formatLeadStageDisplayName(savedLead.stageName);
+    }
+
     this.setItem('leads', leads);
     this.syncFirestoreDoc('leads', savedLead.id, savedLead);
 
@@ -21538,6 +21961,7 @@ export class AppDatabase {
     try {
       const isNew = index < 0;
       const paxTotal = ((savedLead.paxAdults || 0) + (savedLead.paxChildren || 0)) || 2;
+      const savedStatusLabel = getLeadStatusLabel(savedLead.status);
       this.recordAdminActivity({
         category: 'LEAD',
         activityType: isNew ? 'LEAD_CREATED' : 'LEAD_STATUS_CHANGED',
@@ -21545,16 +21969,17 @@ export class AppDatabase {
         actorType: user?.role === 'ADMIN' ? 'ADMIN' : user?.role === 'TEAM_MEMBER' ? 'TEAM_MEMBER' : 'SYSTEM',
         severity: savedLead.status === 'NEW' ? 'WARNING' : 'INFO',
         actionRequired: savedLead.status === 'NEW',
-        actionLabel: savedLead.status === 'NEW' ? 'Assign & Qualify' : 'View Lead',
+        actionLabel: savedLead.status === 'NEW' ? 'Assign & Review' : 'View Lead',
         summary: isNew 
           ? `New Lead Captured: [${savedLead.leadNumber}] ${savedLead.contactName} - ${savedLead.destinationName || 'Destination'} (${paxTotal} Pax)`
-          : `Lead Profile Updated: [${savedLead.leadNumber}] ${savedLead.contactName} (${savedLead.status})`,
+          : `Lead Profile Updated: [${savedLead.leadNumber}] ${savedLead.contactName} (${savedStatusLabel})`,
         details: {
           customerName: savedLead.contactName,
           destinationName: savedLead.destinationName,
           travelDates: savedLead.travelDates,
           leadNumber: savedLead.leadNumber,
           status: savedLead.status,
+          statusLabel: savedStatusLabel,
           actionNeeded: savedLead.status === 'NEW' ? 'Assign travel specialist & begin quotation proposal' : undefined
         },
         targetSection: 'LEAD_MANAGEMENT',
@@ -21595,18 +22020,22 @@ export class AppDatabase {
     if (index === -1) return null;
 
     const timestamp = new Date().toISOString();
-    const prevStatus = leads[index].status;
-    leads[index].status = status;
+    const canonicalStatus = normalizeLeadStatus(status);
+    const prevCanonicalStatus = normalizeLeadStatus(leads[index].status);
+    const statusLabel = getLeadStatusLabel(canonicalStatus);
+    const prevStatusLabel = getLeadStatusLabel(prevCanonicalStatus);
+
+    leads[index].status = canonicalStatus;
     leads[index].updatedAt = timestamp;
     leads[index].lastActivityAt = timestamp;
-    leads[index].lastActivitySummary = `Status updated to ${status}`;
+    leads[index].lastActivitySummary = `Status updated to ${statusLabel}`;
 
     // Timeline event
     const newTimelineEvent: LeadTimelineEvent = {
       id: `tl-${Date.now()}`,
       type: 'STATUS_CHANGED',
-      title: `Status Changed to ${status}`,
-      description: noteText ? `Status changed from ${prevStatus} to ${status}: ${noteText}` : `Status transitioned from ${prevStatus} to ${status}`,
+      title: `Status Changed to ${statusLabel}`,
+      description: noteText ? `Status changed from ${prevStatusLabel} to ${statusLabel}: ${noteText}` : `Status transitioned from ${prevStatusLabel} to ${statusLabel}`,
       timestamp,
       performedBy: user?.name || 'CRM Engine',
       performedByUserType: user?.role || 'DMC_STAFF'
@@ -21620,7 +22049,7 @@ export class AppDatabase {
           authorId: user?.id,
           authorName: user?.name || 'Staff',
           authorRole: user?.role || 'DMC_STAFF',
-          text: `[Status Change: ${status}] ${noteText}`,
+          text: `[Status Change: ${statusLabel}] ${noteText}`,
           timestamp,
           isInternal: true
         },
@@ -21638,17 +22067,18 @@ export class AppDatabase {
         activityType: 'LEAD_STATUS_CHANGED',
         actorName: user?.name || 'CRM Specialist',
         actorType: user?.role === 'ADMIN' ? 'ADMIN' : 'TEAM_MEMBER',
-        severity: status === 'WON' ? 'INFO' : 'INFO',
-        actionRequired: status === 'NEW',
+        severity: canonicalStatus === 'WON' ? 'INFO' : 'INFO',
+        actionRequired: canonicalStatus === 'NEW',
         actionLabel: 'View Lead Details',
-        summary: `Lead Status Changed: [${leads[index].leadNumber}] ${leads[index].contactName} (${prevStatus} ➔ ${status})`,
+        summary: `Lead Status Changed: [${leads[index].leadNumber}] ${leads[index].contactName} (${prevStatusLabel} ➔ ${statusLabel})`,
         details: {
           customerName: leads[index].contactName,
           destinationName: leads[index].destinationName,
           leadNumber: leads[index].leadNumber,
-          previousValue: prevStatus,
-          newValue: status,
-          status: status
+          previousValue: prevStatusLabel,
+          newValue: statusLabel,
+          status: canonicalStatus,
+          statusLabel
         },
         targetSection: 'LEAD_MANAGEMENT',
         targetSubTab: 'LEADS',
@@ -21660,11 +22090,11 @@ export class AppDatabase {
     } catch {
       // Non-blocking
     }
-    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Updated status to ${status} for ${leads[index].leadNumber} (${leads[index].contactName})`);
+    this.logAudit(user, 'SETTINGS_UPDATED', 'TravelLead', leads[index].id, `Updated status to ${statusLabel} for ${leads[index].leadNumber} (${leads[index].contactName})`);
 
     if (this.actionCenterHooks?.onLeadStatusChanged) {
       try {
-        this.actionCenterHooks.onLeadStatusChanged(leads[index].id, leads[index].leadNumber, status, user);
+        this.actionCenterHooks.onLeadStatusChanged(leads[index].id, leads[index].leadNumber, canonicalStatus, user);
       } catch (err) {
         console.warn('Action center lead hook error:', err);
       }
@@ -21690,14 +22120,14 @@ export class AppDatabase {
     const timestamp = new Date().toISOString();
     const prevStageId = leads[index].stageId || leads[index].status;
     const prevStageObj = stages.find(s => s.id === prevStageId);
-    const prevStageName = leads[index].stageName || prevStageObj?.name || prevStageId;
+    const prevStageName = formatLeadStageDisplayName(leads[index].stageName || prevStageObj?.name || getLeadStatusLabel(prevStageId));
 
     leads[index].stageId = targetStage.id;
-    leads[index].stageName = targetStage.name;
+    leads[index].stageName = formatLeadStageDisplayName(targetStage.name);
     const prevStatus = leads[index].status;
     
     if (targetStage.defaultLeadStatus) {
-      leads[index].status = targetStage.defaultLeadStatus;
+      leads[index].status = normalizeLeadStatus(targetStage.defaultLeadStatus);
     }
     if (targetStage.isWon) {
       leads[index].status = 'WON';
@@ -28517,7 +28947,17 @@ export class AppDatabase {
   public getLeadStages(): LeadStageConfig[] {
     const custom = this.getItem<LeadStageConfig[]>('lead_stages', []);
     if (custom && custom.length > 0) {
-      return custom.sort((a, b) => a.order - b.order);
+      return custom
+        .map(stage => ({
+          ...stage,
+          name:
+            stage.id === 'REQUIREMENTS_COLLECTED' &&
+            (stage.name === 'Requirements Pending' || /^qualified$/i.test((stage.name || '').trim()))
+              ? 'Customisation Required'
+              : formatLeadStageDisplayName(stage.name),
+          defaultLeadStatus: normalizeLeadStatus(stage.defaultLeadStatus)
+        }))
+        .sort((a, b) => a.order - b.order);
     }
     return DEFAULT_LEAD_STAGES;
   }

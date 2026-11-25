@@ -1,4 +1,5 @@
 import { AppDatabase } from './db';
+import { getLeadStatusLabel, normalizeLeadStatus } from './crmOperationsEngine';
 import { 
   CalendarTask, 
   ActionCenterEntityType, 
@@ -1209,7 +1210,8 @@ class ActionCenterReminderService {
     newStatus: string, 
     user?: User | null
   ) {
-    if (!['WON', 'LOST', 'CONTACTED', 'CONVERTED'].includes(newStatus)) return;
+    const canonicalStatus = normalizeLeadStatus(newStatus);
+    if (!['WON', 'LOST', 'CONTACTED', 'CONVERTED'].includes(canonicalStatus)) return;
 
     const normId = this.normalizeId(leadId);
     const normNum = this.normalizeId(leadNumber);
@@ -1221,11 +1223,12 @@ class ActionCenterReminderService {
       return (lId && lId === normId) || (lNum && lNum === normNum);
     });
 
+    const displayStatus = getLeadStatusLabel(canonicalStatus);
     for (const t of relatedTasks) {
       this.completeTask(
         t.id, 
         user?.name || 'CRM Lead Workflow Trigger', 
-        `Auto-resolved upon CRM lead update to ${newStatus}`
+        `Auto-resolved upon CRM lead update to ${displayStatus}`
       );
     }
   }

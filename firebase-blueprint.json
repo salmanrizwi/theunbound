@@ -1543,6 +1543,59 @@
         "appliedAt": { "type": "string", "required": true, "maxLength": 64 },
         "immutable": { "type": "boolean", "required": true }
       }
+    },
+    "UserCartItem": {
+      "collection": "users/{userId}/cart",
+      "fields": {
+        "cartItemId": { "type": "string", "required": true, "maxLength": 128 },
+        "ownerUid": { "type": "string", "required": true, "maxLength": 128 },
+        "agencyId": { "type": "string", "required": false, "maxLength": 128 },
+        "productId": { "type": "string", "required": true, "maxLength": 128 },
+        "productName": { "type": "string", "required": true, "maxLength": 240 },
+        "productCategory": { "type": "string", "required": true, "maxLength": 80 },
+        "destinationId": { "type": "string", "required": true, "maxLength": 128 },
+        "hubId": { "type": "string", "required": false, "maxLength": 128 },
+        "selectedServiceDate": { "type": "string", "required": true, "maxLength": 32 },
+        "quantity": { "type": "number", "required": true },
+        "passengerConfig": { "type": "object", "required": true },
+        "selectedOptions": { "type": "object", "required": false },
+        "notes": { "type": "string", "required": false, "maxLength": 2000 },
+        "itemPayload": { "type": "object", "required": true },
+        "addedByUid": { "type": "string", "required": true, "maxLength": 128 },
+        "addedByRole": { "type": "string", "required": true, "enum": ["B2B_AGENT", "ADMIN"] },
+        "addedByName": { "type": "string", "required": false, "maxLength": 160 },
+        "addedByEmail": { "type": "string", "required": false, "maxLength": 160 },
+        "adminNote": { "type": "string", "required": false, "maxLength": 1000 },
+        "addedAt": { "type": "string", "required": true, "maxLength": 64 },
+        "updatedAt": { "type": "string", "required": true, "maxLength": 64 },
+        "status": { "type": "string", "required": true, "enum": ["ACTIVE", "CONVERTED", "REMOVED"] },
+        "schemaVersion": { "type": "number", "required": true }
+      }
+    },
+    "QuarantinedLegacyCartItem": {
+      "collection": "quarantined_legacy_cart_items",
+      "fields": {
+        "id": { "type": "string", "required": true, "maxLength": 128 },
+        "legacyItemId": { "type": "string", "required": true, "maxLength": 128 },
+        "sourceStorage": { "type": "string", "required": true, "enum": ["LOCAL_STORAGE", "SESSION_STORAGE", "LEGACY_FIRESTORE"] },
+        "quarantineReason": { "type": "string", "required": true, "enum": ["MISSING_OWNER_UID", "AMBIGUOUS_SHARED_STORAGE", "AGENCY_ONLY_OWNERSHIP", "UNVERIFIED_OWNER_UID"] },
+        "status": { "type": "string", "required": true, "enum": ["QUARANTINED", "ASSIGNED", "ARCHIVED"] },
+        "productId": { "type": "string", "required": true, "maxLength": 128 },
+        "productName": { "type": "string", "required": true, "maxLength": 240 },
+        "productCategory": { "type": "string", "required": true, "maxLength": 80 },
+        "destinationId": { "type": "string", "required": false, "maxLength": 128 },
+        "rawItemPayload": { "type": "object", "required": true },
+        "discoveredByUid": { "type": "string", "required": true, "maxLength": 128 },
+        "discoveredAt": { "type": "string", "required": true, "maxLength": 64 },
+        "assignedToUid": { "type": "string", "required": false, "maxLength": 128 },
+        "assignedToName": { "type": "string", "required": false, "maxLength": 160 },
+        "assignedByUid": { "type": "string", "required": false, "maxLength": 128 },
+        "assignedAt": { "type": "string", "required": false, "maxLength": 64 },
+        "archivedByUid": { "type": "string", "required": false, "maxLength": 128 },
+        "archivedAt": { "type": "string", "required": false, "maxLength": 64 },
+        "adminNotes": { "type": "string", "required": false, "maxLength": 1000 },
+        "schemaVersion": { "type": "number", "required": true }
+      }
     }
   }
 }

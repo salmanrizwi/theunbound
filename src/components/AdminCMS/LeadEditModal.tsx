@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TravelLead, LeadStatus, LeadPriority, LeadSource } from '../../types';
 import { AppDatabase } from '../../services/db';
+import { LEAD_STATUS_OPTIONS, normalizeLeadStatus } from '../../services/crmOperationsEngine';
 import { useAuth } from '../../context/AuthContext';
 import { X, Save, User, Mail, Phone, Building, MapPin, Calendar, DollarSign, Plus, UserCheck, ShieldCheck, AlertTriangle } from 'lucide-react';
 
@@ -85,7 +86,7 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
       b2bAgentId: formData.responsibleAgentId || formData.b2bAgentId,
       source: formData.source || 'WEBSITE',
       campaignName: formData.campaignName,
-      status: formData.status || 'NEW',
+      status: normalizeLeadStatus(formData.status || 'NEW'),
       priority: formData.priority || 'NORMAL',
 
       // Commercial B2B Agent (authoritative)
@@ -250,6 +251,22 @@ export const LeadEditModal: React.FC<LeadEditModalProps> = ({
                   <option value="NORMAL">Normal</option>
                   <option value="HIGH">High Priority</option>
                   <option value="URGENT">Urgent SLA</option>
+                </select>
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="font-semibold text-slate-700 block mb-1">Stage / Status</label>
+                <select
+                  id="lead-edit-status-select"
+                  value={normalizeLeadStatus(formData.status || 'NEW')}
+                  onChange={e => setFormData({ ...formData, status: e.target.value as LeadStatus })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 font-semibold focus:bg-white focus:outline-none focus:border-[#00C6A6]"
+                >
+                  {LEAD_STATUS_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

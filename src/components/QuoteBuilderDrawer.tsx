@@ -52,17 +52,22 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   onNavigateToCatalog 
 }) => {
   const {
-    items,
+    items: workspaceItems,
+    cartItems,
+    isCartVerified,
+    cartTotalSellingPrice,
     currency,
     setCurrency,
     isQuoteDrawerOpen,
     setIsQuoteDrawerOpen,
     removeProductFromQuote,
+    removeFromCart,
     updateItemPax,
     updateItemTravelDate,
     clearQuote,
+    clearCart,
     totalNetCost,
-    totalSellingPrice,
+    totalSellingPrice: workspaceTotalSellingPrice,
     travelStartDate,
     travelEndDate,
     draftDestinationReview
@@ -85,6 +90,12 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     typeof document !== 'undefined' &&
     (Boolean(document.getElementById('quote-builder-shell')) ||
       (typeof window !== 'undefined' && (window.location?.pathname || '').toLowerCase().includes('quote-builder')));
+
+  // Outside Quote Builder, strictly display ONLY verified UID-owned cartItems (never unverified or cross-user items)
+  const items = isInsideQuoteBuilder ? workspaceItems : (isCartVerified ? cartItems : []);
+  const totalSellingPrice = isInsideQuoteBuilder ? workspaceTotalSellingPrice : cartTotalSellingPrice;
+  const handleClearActiveCart = isInsideQuoteBuilder ? clearQuote : clearCart;
+  const handleRemoveActiveItem = isInsideQuoteBuilder ? removeProductFromQuote : removeFromCart;
 
   // Lock body scroll when drawer is open
   useEffect(() => {
@@ -367,9 +378,9 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
                 {items.length > 0 && (
                   <button
-                    onClick={clearQuote}
+                    onClick={handleClearActiveCart}
                     className="text-xs text-slate-400 hover:text-rose-400 px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-colors flex items-center space-x-1 font-bold cursor-pointer"
-                    title="Clear all items in cart"
+                    title="Clear all items in your personal cart"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">Clear</span>
@@ -616,6 +627,15 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                                   <span className="text-[11px] text-slate-500 font-medium">
                                     {item.product.city || item.product.destinationName}
                                   </span>
+                                  {item.addedByRole === 'ADMIN' && (
+                                    <span
+                                      className="inline-flex items-center space-x-1 text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded"
+                                      title={item.adminCartNote || `Added on your behalf by Admin${item.addedByName ? ` (${item.addedByName})` : ''}`}
+                                    >
+                                      <ShieldCheck className="w-3 h-3 text-indigo-600" />
+                                      <span>Added by Admin{item.addedByName ? ` • ${item.addedByName}` : ''}</span>
+                                    </span>
+                                  )}
                                   {isOutsideQuoteDates && (
                                     <span className="inline-flex items-center space-x-1 text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded">
                                       <Clock className="w-3 h-3 text-amber-700" />
@@ -672,9 +692,9 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                               )}
                               <button
                                 type="button"
-                                onClick={() => removeProductFromQuote(item.id)}
+                                onClick={() => handleRemoveActiveItem(item.id)}
                                 className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
-                                title="Remove from cart"
+                                title="Remove from your cart"
                                 aria-label={`Remove ${item.customTitle || item.title || item.product.name} from cart`}
                               >
                                 <Trash2 className="w-4 h-4" />

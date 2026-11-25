@@ -1,6 +1,7 @@
 import { 
   LeadStageConfig, 
   LeadPipelineStageId, 
+  LeadStatus,
   TravelLead, 
   LeadScoreFactor, 
   Booking, 
@@ -12,6 +13,112 @@ import {
   SupplierRequest
 } from '../types';
 import { getLatestBookingPricingSnapshot, roundMoney } from './bookingManualDiscountEngine';
+
+/**
+ * Canonical display labels for LeadStatus identifiers.
+ * Note: Canonical identifier 'QUALIFIED' is preserved for backward compatibility
+ * with existing Firestore records, saved queries, and audit references, while its
+ * authoritative user-facing label is 'Customisation Required'.
+ */
+export const LEAD_STATUS_LABELS: Record<LeadStatus, string> = {
+  NEW: 'New',
+  CONTACTED: 'Contacted',
+  QUALIFIED: 'Customisation Required',
+  QUOTE_CREATED: 'Quote Created',
+  PROPOSAL_SAVED: 'Proposal Saved',
+  QUOTED: 'Quoted',
+  QUOTE_DOWNLOADED: 'Quote Downloaded',
+  FOLLOW_UP: 'Follow-Up',
+  BOOKING_SUBMITTED: 'Booking Submitted',
+  BOOKED: 'Booked',
+  CONFIRMED: 'Confirmed',
+  COMPLETED: 'Completed',
+  WON: 'Won (Converted)',
+  LOST: 'Lost',
+  ARCHIVED: 'Archived'
+};
+
+/**
+ * Standard selectable status options for Lead Management forms, dropdowns, and filters.
+ * No duplicate or extra stages; 'QUALIFIED' maps cleanly to 'Customisation Required'.
+ */
+export const LEAD_STATUS_OPTIONS: Array<{ value: LeadStatus; label: string }> = [
+  { value: 'NEW', label: 'New' },
+  { value: 'CONTACTED', label: 'Contacted' },
+  { value: 'PROPOSAL_SAVED', label: 'Proposal Saved' },
+  { value: 'QUOTE_DOWNLOADED', label: 'Quote Downloaded' },
+  { value: 'QUALIFIED', label: 'Customisation Required' },
+  { value: 'QUOTED', label: 'Quoted' },
+  { value: 'BOOKING_SUBMITTED', label: 'Booking Submitted' },
+  { value: 'WON', label: 'Won (Converted)' },
+  { value: 'LOST', label: 'Lost' }
+];
+
+const VALID_LEAD_STATUS_SET = new Set<string>(Object.keys(LEAD_STATUS_LABELS));
+
+/**
+ * Normalizes any raw, legacy, or user-facing lead status value to its canonical LeadStatus identifier.
+ * Backward compatible with legacy 'Qualified', 'CUSTOMISATION_REQUIRED', 'Customisation Required',
+ * and 'BOOKING_SUBMISSION' values.
+ */
+export function normalizeLeadStatus(status?: string | null): LeadStatus {
+  if (!status || typeof status !== 'string') return 'NEW';
+  const trimmed = status.trim();
+  if (!trimmed) return 'NEW';
+
+  const upperKey = trimmed.toUpperCase().replace(/[\s-]+/g, '_');
+  if (
+    upperKey === 'QUALIFIED' ||
+    upperKey === 'CUSTOMISATION_REQUIRED' ||
+    upperKey === 'CUSTOMIZATION_REQUIRED'
+  ) {
+    return 'QUALIFIED';
+  }
+  if (upperKey === 'BOOKING_SUBMISSION') {
+    return 'BOOKING_SUBMITTED';
+  }
+  if (VALID_LEAD_STATUS_SET.has(upperKey)) {
+    return upperKey as LeadStatus;
+  }
+  return trimmed as LeadStatus;
+}
+
+/**
+ * Returns the authoritative user-facing display label for any LeadStatus.
+ * Guarantees 'QUALIFIED' / 'Qualified' / 'CUSTOMISATION_REQUIRED' always display as 'Customisation Required'.
+ */
+export function getLeadStatusLabel(status?: string | null): string {
+  const normalized = normalizeLeadStatus(status);
+  if (normalized in LEAD_STATUS_LABELS) {
+    return LEAD_STATUS_LABELS[normalized];
+  }
+  const fallback = String(status || 'NEW').replace(/_/g, ' ').trim();
+  if (/^qualified$/i.test(fallback)) {
+    return 'Customisation Required';
+  }
+  return fallback || 'New';
+}
+
+/**
+ * Ensures saved/historical Kanban stage names never surface the retired 'Qualified' label.
+ */
+export function formatLeadStageDisplayName(stageName?: string | null): string {
+  if (!stageName || typeof stageName !== 'string') return '';
+  const trimmed = stageName.trim();
+  if (/^qualified$/i.test(trimmed) || /^qualified\s*&\s*in\s*progress$/i.test(trimmed)) {
+    return 'Customisation Required';
+  }
+  return trimmed.replace(/\bQualified\b/gi, 'Customisation Required');
+}
+
+/**
+ * Safely replaces legacy 'QUALIFIED' / 'Qualified' status tokens in historical timeline/activity strings
+ * for clean display without mutating immutable historical records.
+ */
+export function replaceLegacyQualifiedStatusText(text?: string | null): string {
+  if (!text || typeof text !== 'string') return '';
+  return text.replace(/\bQUALIFIED\b/g, 'Customisation Required').replace(/\bQualified\b/g, 'Customisation Required');
+}
 
 /**
  * 15 Odoo-Style CRM Pipeline Stages with SLA hours, win probabilities, and default statuses
@@ -45,8 +152,8 @@ export const DEFAULT_LEAD_STAGES: LeadStageConfig[] = [
   },
   {
     id: 'REQUIREMENTS_COLLECTED',
-    name: 'Requirements Pending',
-    description: 'Detailed itinerary preferences, passenger counts, and travel dates required',
+    name: 'Customisation Required',
+    description: 'Tailored itinerary customisation, passenger preferences, and travel dates required',
     order: 3,
     color: '#8B5CF6', // Purple
     probability: 35,

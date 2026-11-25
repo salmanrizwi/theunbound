@@ -4,6 +4,7 @@ import { TravelLead, LeadStatus, LeadPriority, LeadSource, LeadStageConfig } fro
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { resolveUserAccountManager } from '../../services/accountManagerService';
+import { getLeadStatusLabel, normalizeLeadStatus } from '../../services/crmOperationsEngine';
 import { 
   Users, 
   Plus, 
@@ -208,7 +209,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
     const query = (debouncedSearchQuery || '').toLowerCase().trim();
     return leads.filter(l => {
       const matchesStage = stageFilter === 'all' || l.stageId === stageFilter;
-      const matchesStatus = statusFilter === 'all' || l.status === statusFilter;
+      const matchesStatus = statusFilter === 'all' || normalizeLeadStatus(l.status) === normalizeLeadStatus(statusFilter);
       const matchesPriority = priorityFilter === 'all' || l.priority === priorityFilter;
       const matchesSource = sourceFilter === 'all' || l.source === sourceFilter;
       
@@ -235,10 +236,14 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
         matchesTeamMember = assignedMemberId === teamMemberFilter;
       }
 
+      const statusLabelLower = getLeadStatusLabel(l.status).toLowerCase();
+      const stageNameLower = (l.stageName || '').toLowerCase();
       const matchesSearch = !query || 
         (l.contactName || '').toLowerCase().includes(query) ||
         (l.email || '').toLowerCase().includes(query) ||
         (l.leadNumber || '').toLowerCase().includes(query) ||
+        statusLabelLower.includes(query) ||
+        stageNameLower.includes(query) ||
         (l.agencyName && l.agencyName.toLowerCase().includes(query)) ||
         (l.destinationName && l.destinationName.toLowerCase().includes(query)) ||
         (l.responsibleAgentNameSnapshot && l.responsibleAgentNameSnapshot.toLowerCase().includes(query)) ||
@@ -399,7 +404,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
   };
 
   const getStatusColor = (status: LeadStatus) => {
-    switch (status) {
+    switch (normalizeLeadStatus(status)) {
       case 'NEW': return 'bg-blue-50 text-blue-800 border-blue-200';
       case 'PROPOSAL_SAVED': return 'bg-purple-50 text-purple-800 border-purple-200';
       case 'QUOTE_DOWNLOADED': return 'bg-amber-50 text-amber-800 border-amber-200';
@@ -673,9 +678,9 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
               <option value="NEW">New Inquiries</option>
               <option value="PROPOSAL_SAVED">Proposal Saved</option>
               <option value="QUOTE_DOWNLOADED">Quote Downloaded</option>
-              <option value="BOOKING_SUBMISSION">Booking Submitted</option>
+              <option value="BOOKING_SUBMITTED">Booking Submitted</option>
               <option value="CONTACTED">Contacted</option>
-              <option value="QUALIFIED">Qualified</option>
+              <option value="QUALIFIED">Customisation Required</option>
               <option value="QUOTED">Quoted</option>
               <option value="WON">Won (Converted)</option>
               <option value="LOST">Lost</option>
@@ -985,7 +990,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                                 </span>
                               )}
                               <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${getStatusColor(lead.status)}`}>
-                                {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
+                                {getLeadStatusLabel(lead.status)}
                               </span>
                             </div>
                           </div>
@@ -1283,7 +1288,7 @@ export const LeadManager: React.FC<LeadManagerProps> = ({
                         <div className="flex items-center gap-1.5 shrink-0">
                           {getPriorityBadge(lead.priority)}
                           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${getStatusColor(lead.status)}`}>
-                            {lead.status ? lead.status.replace(/_/g, ' ') : 'NEW'}
+                            {getLeadStatusLabel(lead.status)}
                           </span>
                         </div>
                       </div>

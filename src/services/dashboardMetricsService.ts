@@ -13,6 +13,7 @@ import { CurrencyEngine } from './currencyEngine';
 import { displayCurrencyService, roundAmountForCurrency } from './displayCurrencyService';
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { IntegrationsHubService } from './integrationsHubService';
+import { normalizeLeadStatus } from './crmOperationsEngine';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 export type DateRangeOption = 
@@ -53,6 +54,8 @@ export interface KeyBusinessMetrics {
     percentChange: number;
     newCount: number;
     openCount: number;
+    customisationRequiredCount: number;
+    /** @deprecated Backward-compatible alias for customisationRequiredCount */
     qualifiedCount: number;
     convertedCount: number;
     lostCount: number;
@@ -463,11 +466,11 @@ export class DashboardMetricsService {
       ? Math.round(((currentLeads.length - previousLeads.length) / previousLeads.length) * 100)
       : (currentLeads.length > 0 ? 100 : 0);
 
-    const newLeadsCount = currentLeads.filter(l => l.status === 'NEW').length;
-    const openLeadsCount = currentLeads.filter(l => (l.status as string) === 'OPEN' || (l.status as string) === 'IN_PROGRESS' || l.status === 'CONTACTED').length;
-    const qualifiedLeadsCount = currentLeads.filter(l => l.status === 'QUALIFIED').length;
-    const convertedLeadsCount = currentLeads.filter(l => (l.status as string) === 'CONVERTED' || l.status === 'WON' || l.status === 'BOOKED' || l.status === 'CONFIRMED').length;
-    const lostLeadsCount = currentLeads.filter(l => l.status === 'LOST' || (l.status as string) === 'CLOSED' || l.status === 'ARCHIVED').length;
+    const newLeadsCount = currentLeads.filter(l => normalizeLeadStatus(l.status) === 'NEW').length;
+    const openLeadsCount = currentLeads.filter(l => (l.status as string) === 'OPEN' || (l.status as string) === 'IN_PROGRESS' || normalizeLeadStatus(l.status) === 'CONTACTED').length;
+    const customisationRequiredLeadsCount = currentLeads.filter(l => normalizeLeadStatus(l.status) === 'QUALIFIED').length;
+    const convertedLeadsCount = currentLeads.filter(l => (l.status as string) === 'CONVERTED' || normalizeLeadStatus(l.status) === 'WON' || normalizeLeadStatus(l.status) === 'BOOKED' || normalizeLeadStatus(l.status) === 'CONFIRMED').length;
+    const lostLeadsCount = currentLeads.filter(l => normalizeLeadStatus(l.status) === 'LOST' || (l.status as string) === 'CLOSED' || normalizeLeadStatus(l.status) === 'ARCHIVED').length;
 
     // 3. Total Quotes
     const currentQuotes = quotes.filter(q => this.isDateInRange(q.createdAt, currentRange));
@@ -608,7 +611,8 @@ export class DashboardMetricsService {
         percentChange: leadsPercentChange,
         newCount: newLeadsCount,
         openCount: openLeadsCount,
-        qualifiedCount: qualifiedLeadsCount,
+        customisationRequiredCount: customisationRequiredLeadsCount,
+        qualifiedCount: customisationRequiredLeadsCount,
         convertedCount: convertedLeadsCount,
         lostCount: lostLeadsCount,
         source: 'authoritative_leads'

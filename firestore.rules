@@ -2157,5 +2157,169 @@ service cloud.firestore {
           (isMasterAdmin() || canAccessCMSContent() || isResourceAdminOwned());
       }
     }
+
+    // =========================================================================
+    // STRICT UID-SCOPED USER CART ISOLATION & LEGACY CART QUARANTINE
+    // Path: users/{userId}/cart/{cartItemId}
+    // Primary Owner Identifier: Firebase Authentication UID (NEVER agencyId)
+    // =========================================================================
+
+    function isAuthorisedCartAdmin() {
+      return isAuthenticated() && (
+        isMasterAdmin() ||
+        (hasUserDoc(request.auth.uid) &&
+          isApprovedUser() &&
+          (currentUserData().role == 'ADMIN' || currentUserData().role == 'SUPER_ADMIN'))
+      );
+    }
+
+    function isValidUserCartItem(data, expectedOwnerUid, expectedCartItemId) {
+      return data != null &&
+        data.keys().hasAll([
+          'cartItemId', 'ownerUid', 'productId', 'productName', 'productCategory',
+          'destinationId', 'selectedServiceDate', 'quantity', 'passengerConfig',
+          'itemPayload', 'addedByUid', 'addedByRole', 'addedAt', 'updatedAt',
+          'status', 'schemaVersion'
+        ]) &&
+        data.keys().hasOnly([
+          'cartItemId', 'ownerUid', 'agencyId', 'productId', 'productName', 'productCategory',
+          'destinationId', 'hubId', 'selectedServiceDate', 'quantity', 'passengerConfig',
+          'selectedOptions', 'notes', 'itemPayload', 'addedByUid', 'addedByRole',
+          'addedByName', 'addedByEmail', 'adminNote', 'addedAt', 'updatedAt',
+          'status', 'schemaVersion'
+        ]) &&
+        data.cartItemId is string && data.cartItemId == expectedCartItemId &&
+        data.ownerUid is string && data.ownerUid == expectedOwnerUid &&
+        (!('agencyId' in data) || data.agencyId == null || (data.agencyId is string && data.agencyId.size() <= 128)) &&
+        data.productId is string && data.productId.size() > 0 && data.productId.size() <= 128 &&
+        data.productName is string && data.productName.size() > 0 && data.productName.size() <= 240 &&
+        data.productCategory is string && data.productCategory.size() > 0 && data.productCategory.size() <= 80 &&
+        data.destinationId is string && data.destinationId.size() > 0 && data.destinationId.size() <= 128 &&
+        (!('hubId' in data) || data.hubId == null || (data.hubId is string && data.hubId.size() <= 128)) &&
+        data.selectedServiceDate is string && data.selectedServiceDate.size() <= 32 &&
+        (data.quantity is int || data.quantity is float) && data.quantity >= 1 && data.quantity <= 999 &&
+        data.passengerConfig is map &&
+        (!('selectedOptions' in data) || data.selectedOptions is map) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 2000)) &&
+        data.itemPayload is map &&
+        data.addedByUid is string && isValidId(data.addedByUid) &&
+        data.addedByRole in ['B2B_AGENT', 'ADMIN'] &&
+        (!('addedByName' in data) || (data.addedByName is string && data.addedByName.size() <= 160)) &&
+        (!('addedByEmail' in data) || (data.addedByEmail is string && data.addedByEmail.size() <= 160)) &&
+        (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 1000)) &&
+        data.addedAt is string && data.addedAt.size() > 0 && data.addedAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 64 &&
+        data.status in ['ACTIVE', 'CONVERTED', 'REMOVED'] &&
+        data.schemaVersion == 2;
+    }
+
+    function isValidQuarantinedLegacyCartItem(data, expectedRecordId) {
+      return data != null &&
+        data.keys().hasAll([
+          'id', 'legacyItemId', 'sourceStorage', 'quarantineReason', 'status',
+          'productId', 'productName', 'productCategory', 'rawItemPayload',
+          'discoveredByUid', 'discoveredAt', 'schemaVersion'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'legacyItemId', 'sourceStorage', 'quarantineReason', 'status',
+          'productId', 'productName', 'productCategory', 'destinationId', 'rawItemPayload',
+          'discoveredByUid', 'discoveredAt', 'assignedToUid', 'assignedToName',
+          'assignedByUid', 'assignedAt', 'archivedByUid', 'archivedAt',
+          'adminNotes', 'schemaVersion'
+        ]) &&
+        data.id is string && data.id == expectedRecordId &&
+        data.legacyItemId is string && data.legacyItemId.size() > 0 && data.legacyItemId.size() <= 128 &&
+        data.sourceStorage in ['LOCAL_STORAGE', 'SESSION_STORAGE', 'LEGACY_FIRESTORE'] &&
+        data.quarantineReason in [
+          'MISSING_OWNER_UID', 'AMBIGUOUS_SHARED_STORAGE', 'AGENCY_ONLY_OWNERSHIP', 'UNVERIFIED_OWNER_UID'
+        ] &&
+        data.status in ['QUARANTINED', 'ASSIGNED', 'ARCHIVED'] &&
+        data.productId is string && data.productId.size() > 0 && data.productId.size() <= 128 &&
+        data.productName is string && data.productName.size() > 0 && data.productName.size() <= 240 &&
+        data.productCategory is string && data.productCategory.size() > 0 && data.productCategory.size() <= 80 &&
+        (!('destinationId' in data) || (data.destinationId is string && data.destinationId.size() <= 128)) &&
+        data.rawItemPayload is map &&
+        data.discoveredByUid is string && data.discoveredByUid.size() > 0 && data.discoveredByUid.size() <= 128 &&
+        data.discoveredAt is string && data.discoveredAt.size() > 0 && data.discoveredAt.size() <= 64 &&
+        (!('assignedToUid' in data) || (data.assignedToUid is string && data.assignedToUid.size() <= 128)) &&
+        (!('assignedToName' in data) || (data.assignedToName is string && data.assignedToName.size() <= 160)) &&
+        (!('assignedByUid' in data) || (data.assignedByUid is string && data.assignedByUid.size() <= 128)) &&
+        (!('assignedAt' in data) || (data.assignedAt is string && data.assignedAt.size() <= 64)) &&
+        (!('archivedByUid' in data) || (data.archivedByUid is string && data.archivedByUid.size() <= 128)) &&
+        (!('archivedAt' in data) || (data.archivedAt is string && data.archivedAt.size() <= 64)) &&
+        (!('adminNotes' in data) || (data.adminNotes is string && data.adminNotes.size() <= 1000)) &&
+        data.schemaVersion == 2;
+    }
+
+    match /users/{userId}/cart/{cartItemId} {
+      // Strictly isolated by Firebase Auth UID (ownerUid == userId).
+      // Agency ID is NEVER used to grant access across users.
+      allow get: if isAuthenticated() && isValidId(userId) && isValidId(cartItemId) && isNotBuyer() && (
+        (request.auth.uid == userId && isApprovedUser() && (resource == null || resource.data.ownerUid == request.auth.uid)) ||
+        isAuthorisedCartAdmin()
+      );
+
+      allow list: if isAuthenticated() && isValidId(userId) && isNotBuyer() && (
+        (request.auth.uid == userId && isApprovedUser() && resource.data.ownerUid == request.auth.uid) ||
+        isAuthorisedCartAdmin()
+      );
+
+      allow create: if isAuthenticated() && isValidId(userId) && isValidId(cartItemId) && isNotBuyer() &&
+        isValidUserCartItem(request.resource.data, userId, cartItemId) && (
+          (
+            isApprovedUser() &&
+            request.auth.uid == userId &&
+            request.resource.data.ownerUid == request.auth.uid &&
+            request.resource.data.addedByUid == request.auth.uid &&
+            request.resource.data.addedByRole == 'B2B_AGENT'
+          ) ||
+          (
+            isAuthorisedCartAdmin() &&
+            request.resource.data.ownerUid == userId &&
+            request.resource.data.addedByUid == request.auth.uid &&
+            request.resource.data.addedByRole == 'ADMIN' &&
+            exists(/databases/$(database)/documents/users/$(userId))
+          )
+        );
+
+      allow update: if isAuthenticated() && isValidId(userId) && isValidId(cartItemId) && isNotBuyer() &&
+        isValidUserCartItem(request.resource.data, userId, cartItemId) &&
+        request.resource.data.cartItemId == resource.data.cartItemId &&
+        request.resource.data.ownerUid == resource.data.ownerUid &&
+        request.resource.data.ownerUid == userId &&
+        request.resource.data.addedByUid == resource.data.addedByUid &&
+        request.resource.data.addedByRole == resource.data.addedByRole &&
+        request.resource.data.addedAt == resource.data.addedAt &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'quantity', 'selectedServiceDate', 'passengerConfig', 'selectedOptions',
+          'itemPayload', 'notes', 'status', 'updatedAt', 'hubId', 'destinationId',
+          'productCategory', 'productName', 'adminNote'
+        ]) && (
+          (isApprovedUser() && request.auth.uid == userId && resource.data.ownerUid == request.auth.uid) ||
+          isAuthorisedCartAdmin()
+        );
+
+      allow delete: if isAuthenticated() && isValidId(userId) && isValidId(cartItemId) && isNotBuyer() && (
+        (isApprovedUser() && request.auth.uid == userId && resource.data.ownerUid == request.auth.uid) ||
+        isAuthorisedCartAdmin()
+      );
+    }
+
+    match /quarantined_legacy_cart_items/{recordId} {
+      // Only authorised Admins may read, list, update (assign/archive), or delete quarantined records.
+      allow get: if isValidId(recordId) && isAuthorisedCartAdmin();
+      allow list: if isAuthorisedCartAdmin();
+      // Authenticated approved users may create initial QUARANTINED records during safe legacy purge;
+      // they cannot read, modify, or delete quarantined items.
+      allow create: if isAuthenticated() && isValidId(recordId) && isApprovedUser() &&
+        isValidQuarantinedLegacyCartItem(request.resource.data, recordId) &&
+        request.resource.data.status == 'QUARANTINED' &&
+        (request.resource.data.discoveredByUid == request.auth.uid || isAuthorisedCartAdmin());
+      allow update: if isValidId(recordId) && isAuthorisedCartAdmin() &&
+        isValidQuarantinedLegacyCartItem(request.resource.data, recordId) &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.discoveredAt == resource.data.discoveredAt;
+      allow delete: if isValidId(recordId) && isAuthorisedCartAdmin();
+    }
   }
 }

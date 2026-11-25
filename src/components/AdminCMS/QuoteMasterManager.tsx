@@ -5,6 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../services/pricingEngine';
 import { resolveUserAccountManager } from '../../services/accountManagerService';
+import { getLeadStatusLabel } from '../../services/crmOperationsEngine';
 import { googleCalendarAutomation } from '../../services/googleCalendarAutomationService';
 import { 
   FileSpreadsheet, 
@@ -1561,7 +1562,7 @@ export const QuoteMasterManager: React.FC<QuoteMasterManagerProps> = ({
                 ) : (
                   allLeads.map((l, idx) => (
                     <option key={l.id ? `${l.id}-${idx}` : `modal-lead-${idx}`} value={l.id}>
-                      {l.leadNumber} — {l.contactName} ({l.destinationName} • {l.status})
+                      {l.leadNumber} — {l.contactName} ({l.destinationName} • {getLeadStatusLabel(l.status)})
                     </option>
                   ))
                 )}

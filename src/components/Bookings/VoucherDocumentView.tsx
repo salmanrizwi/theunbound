@@ -1,25 +1,41 @@
-import React, { useRef } from 'react';
-import { BookingVoucher } from '../../types';
-import { 
-  Printer, 
-  Download, 
-  CheckCircle2, 
-  MapPin, 
-  Calendar, 
-  Clock, 
-  Users, 
-  Phone, 
-  FileText, 
-  ShieldCheck, 
+import React, { useMemo, useRef, useState } from 'react';
+import { Booking, BookingItem, BookingVoucher } from '../../types';
+import {
+  Printer,
+  Download,
+  CheckCircle2,
+  MapPin,
+  Calendar,
+  Clock,
+  Users,
+  Phone,
+  ShieldCheck,
   AlertTriangle,
+  ExternalLink,
+  Car,
+  Ticket,
   Building2,
-  Share2,
+  Loader2,
   X
 } from 'lucide-react';
 import { AppDatabase } from '../../services/db';
+import {
+  formatPassengerBreakdown,
+  formatReadableDate,
+  groupBookingItemsByDay,
+  hydrateBookingServiceItem,
+  HydratedBookingServiceItem,
+  sanitizeVerifiedGoogleMapsUrl,
+  sortBookingItemsChronologically
+} from '../../services/bookingOperationsSyncService';
+import {
+  generateActivityVoucherPDF,
+  generateCompleteVoucherPDF
+} from '../../services/bookingDocumentPdfService';
 
 interface VoucherDocumentViewProps {
   voucher: BookingVoucher;
+  booking?: Booking | null;
   onClose?: () => void;
   onRegenerate?: () => void;
   isOutdated?: boolean;
@@ -27,376 +43,532 @@ interface VoucherDocumentViewProps {
 
 export const VoucherDocumentView: React.FC<VoucherDocumentViewProps> = ({
   voucher,
+  booking: propBooking,
   onClose,
   onRegenerate,
   isOutdated = false
 }) => {
   const printRef = useRef<HTMLDivElement>(null);
-  const companyProfile = AppDatabase.getInstance().getCentralCompanyProfile();
+  const db = AppDatabase.getInstance();
+  const companyProfile = db.getCentralCompanyProfile();
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+
+  const resolvedBooking = useMemo(() => {
+    if (propBooking) return propBooking;
+    if (voucher.bookingId) {
+      return db.getBookingById(voucher.bookingId, db.getCurrentUser()) || null;
+    }
+    return null;
+  }, [propBooking, voucher.bookingId, db]);
+
+  const effectiveOutdated = isOutdated || Boolean(voucher.isOutdated);
+
+  // Hydrate authoritative services for Complete Voucher or single Activity Voucher
+  const { confirmedItems, pendingItems, singleHydratedItem } = useMemo(() => {
+    if (voucher.isCompleteBookingVoucher) {
+      const rawList: BookingItem[] =
+        resolvedBooking?.items && resolvedBooking.items.length > 0
+          ? resolvedBooking.items
+          : ((voucher.serviceItemsSnapshot || []) as BookingItem[]);
+      const hydrated = rawList
+        .filter(it => !it.isCancelled && it.operationalStatus !== 'Cancelled')
+        .map(it => hydrateBookingServiceItem(it, resolvedBooking));
+      return {
+        confirmedItems: sortBookingItemsChronologically(hydrated.filter(it => it.isConfirmedForVoucher)),
+        pendingItems: sortBookingItemsChronologically(hydrated.filter(it => !it.isConfirmedForVoucher)),
+        singleHydratedItem: null as HydratedBookingServiceItem | null
+      };
+    }
+
+    const rawItem = resolvedBooking?.items?.find(it => it.id === voucher.serviceItemId);
+    if (rawItem) {
+      const h = hydrateBookingServiceItem(rawItem, resolvedBooking);
+      return {
+        confirmedItems: [h],
+        pendingItems: [] as HydratedBookingServiceItem[],
+        singleHydratedItem: h
+      };
+    }
+    return {
+      confirmedItems: [] as HydratedBookingServiceItem[],
+      pendingItems: [] as HydratedBookingServiceItem[],
+      singleHydratedItem: null as HydratedBookingServiceItem | null
+    };
+  }, [voucher, resolvedBooking]);
+
+  const dayGroups = useMemo(() => {
+    if (!voucher.isCompleteBookingVoucher) return [];
+    return groupBookingItemsByDay(confirmedItems, resolvedBooking?.travelStartDate);
+  }, [voucher.isCompleteBookingVoucher, confirmedItems, resolvedBooking?.travelStartDate]);
+
+  const handleDownloadPdf = async () => {
+    if (isDownloadingPdf) return;
+    setIsDownloadingPdf(true);
+    try {
+      if (voucher.isCompleteBookingVoucher && resolvedBooking) {
+        const res = generateCompleteVoucherPDF(voucher, resolvedBooking, companyProfile);
+        res.download();
+      } else {
+        const res = generateActivityVoucherPDF(voucher, resolvedBooking, companyProfile);
+        res.download();
+      }
+    } finally {
+      setIsDownloadingPdf(false);
+    }
+  };
 
   const handlePrint = () => {
     window.print();
   };
 
-  const serviceItems = voucher.serviceItemsSnapshot || [
-    {
-      itemId: voucher.serviceItemId || 'srv-1',
-      productName: voucher.serviceName,
-      category: 'GROUND_SERVICE',
-      destination: voucher.destination,
-      city: voucher.city,
-      serviceDate: voucher.serviceDate,
-      serviceTime: voucher.serviceTime,
-      supplierName: voucher.supplierName,
-      supplierConfirmationRef: voucher.supplierConfirmationRef || 'CONFIRMED',
-      adults: voucher.totalPax,
-      totalPax: voucher.totalPax,
-      meetingPoint: voucher.meetingPoint
-    }
-  ];
+  const verifiedMapsUrl = sanitizeVerifiedGoogleMapsUrl(
+    singleHydratedItem?.resolvedGoogleMapsUrl || voucher.googleMapsUrl
+  );
 
-  return (
-    <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden print:shadow-none print:border-none">
-      {/* Top Action Bar */}
-      <div className="bg-white text-slate-800 px-6 py-4 flex items-center justify-between border-b border-slate-200 print:hidden">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-teal-50 text-[#008972] border border-teal-200 flex items-center justify-center font-black text-xs">
-            TUB
-          </div>
+  const renderServiceDetailCard = (item: HydratedBookingServiceItem, idxLabel: string, isPending: boolean) => {
+    const itemMaps = sanitizeVerifiedGoogleMapsUrl(item.resolvedGoogleMapsUrl);
+    return (
+      <div
+        key={item.id || idxLabel}
+        className={`rounded-2xl border p-4 space-y-3 ${
+          isPending ? 'bg-amber-50/40 border-amber-200' : 'bg-white border-slate-200'
+        }`}
+      >
+        {/* Header */}
+        <div className="flex flex-wrap items-start justify-between gap-2 pb-2.5 border-b border-slate-100">
           <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-slate-900">
-                {voucher.isCompleteBookingVoucher ? 'Official Master Booking Voucher' : 'Official Activity Service Voucher'}
-              </h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-50 text-[#008972] border border-teal-200">
-                v{voucher.version || 1}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[10px] font-black font-mono">
+                {idxLabel}
               </span>
-              {isOutdated && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3 text-amber-600" /> Potentially Outdated
-                </span>
-              )}
-            </div>
-            <p className="text-[11px] text-slate-500">
-              Voucher No: <strong className="font-mono text-slate-700">{voucher.voucherNumber}</strong> • Ref: <strong className="text-slate-700">{voucher.bookingReference}</strong>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {isOutdated && onRegenerate && (
-            <button
-              onClick={onRegenerate}
-              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs"
-            >
-              Regenerate Voucher
-            </button>
-          )}
-          <button
-            onClick={handlePrint}
-            className="px-3.5 py-1.5 rounded-xl bg-[#00C6A6] hover:bg-[#00b094] text-slate-950 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-          >
-            <Printer className="w-3.5 h-3.5" /> Print / PDF
-          </button>
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-all cursor-pointer"
-              title="Close"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {isOutdated && (
-        <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center justify-between text-xs text-amber-900 print:hidden">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>
-              <strong>Attention:</strong> One or more service items or supplier pricing details were modified after this voucher was generated. Please regenerate to guarantee operational accuracy.
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Printable Document Body */}
-      <div ref={printRef} className="p-8 space-y-8 print:p-0 print:space-y-6">
-        {/* Document Header */}
-        <div className="border-b-2 border-slate-900 pb-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-black tracking-tight text-slate-950 font-serif">TheUnbound</span>
-              <span className="text-xs px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-bold uppercase tracking-wider">
-                DMC & Ground Logistics
+              <h4 className="text-sm font-black text-slate-900">{item.productName}</h4>
+              <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-bold">
+                {item.category}
               </span>
             </div>
-            <p className="text-xs text-slate-700 font-semibold">
-              Unbound Experiences India Pvt Ltd • Authorized Destination Management Network
-            </p>
-            <div className="text-[11px] text-slate-500 space-y-0.5">
-              <p><strong>Registered Office:</strong> {companyProfile.registeredAddress}</p>
-              <p><strong>Current Office:</strong> {companyProfile.currentAddress}</p>
-            </div>
-            <p className="text-[11px] text-slate-400">
-              Emergency Dispatch 24/7: +91 9811654959 • operations@theunbound.in
-            </p>
-          </div>
-
-          <div className="text-left md:text-right bg-slate-50 md:bg-transparent p-4 md:p-0 rounded-2xl md:rounded-none border md:border-none border-slate-200">
-            <span className="text-[10px] font-black uppercase tracking-widest text-teal-700 bg-teal-50 border border-teal-200 px-2.5 py-1 rounded-full">
-              CONFIRMED GROUND VOUCHER
-            </span>
-            <div className="mt-2 text-lg font-black text-slate-900 tracking-tight">
-              {voucher.voucherNumber}
-            </div>
-            <p className="text-xs text-slate-600 font-medium">
-              Booking Ref: <strong className="text-slate-900">{voucher.bookingReference}</strong>
-            </p>
-            <p className="text-[11px] text-slate-400">
-              Issued Date: {new Date(voucher.issuedAt || voucher.generatedAt || Date.now()).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
-            </p>
-          </div>
-        </div>
-
-        {/* Lead Passenger & Booking Details Bento */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-              <Users className="w-3.5 h-3.5 text-teal-600" />
-              Lead Traveler & Party
-            </div>
-            <div className="text-sm font-black text-slate-900">
-              {voucher.leadPaxName || voucher.customerName || 'Primary Guest'}
-            </div>
-            <p className="text-xs text-slate-600 mt-1">
-              Total Party: <strong>{voucher.totalPax} Traveler(s)</strong>
-            </p>
-            {voucher.passengerBreakdown && (
+            {(item.destination || item.hub) && (
               <p className="text-[11px] text-slate-500 mt-0.5">
-                {voucher.passengerBreakdown}
+                {[item.destination, item.hub].filter(Boolean).join(' • ')}
               </p>
             )}
           </div>
-
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-              <Calendar className="w-3.5 h-3.5 text-teal-600" />
-              Travel Itinerary & Dates
-            </div>
-            <div className="text-sm font-black text-slate-900">
-              {voucher.destination || 'Destination Ground Package'}
-            </div>
-            <p className="text-xs text-slate-600 mt-1">
-              Service Date: <strong>{voucher.serviceDate}</strong>
-            </p>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Scheduled Time: {voucher.serviceTime || '09:00 AM (Check individual service)'}
-            </p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-teal-50/50 border border-teal-200">
-            <div className="flex items-center gap-2 text-xs font-bold text-teal-800 uppercase tracking-wider mb-2">
-              <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
-              Confirmation Status
-            </div>
-            <div className="text-sm font-black text-teal-950 flex items-center gap-1.5">
-              <CheckCircle2 className="w-4 h-4 text-teal-600 shrink-0" />
-              Operational Lock Active
-            </div>
-            <p className="text-xs text-teal-900/80 mt-1">
-              Supplier Ref: <strong>{voucher.supplierConfirmationRef || 'Direct Ground Allocation'}</strong>
-            </p>
-            <p className="text-[10px] text-teal-700/80 mt-0.5">
-              Present this voucher upon check-in or chauffeur meetup.
-            </p>
-          </div>
-        </div>
-
-        {/* Confirmed Services Breakdown Table */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-teal-600" />
-              Confirmed Service Items ({serviceItems.length})
-            </h4>
-            <span className="text-[11px] text-slate-500 font-medium">
-              Verified ground arrangements
+          <div className="text-right">
+            <span
+              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                isPending
+                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              }`}
+            >
+              {isPending ? <AlertTriangle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+              {isPending ? item.resolvedCanonicalAllocationStatus : 'Supplier Confirmed'}
             </span>
-          </div>
-
-          <div className="overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-100/70 border-b border-slate-200 text-slate-700 uppercase font-black tracking-wider text-[10px]">
-                <tr>
-                  <th className="px-4 py-3">#</th>
-                  <th className="px-4 py-3">Service & Details</th>
-                  <th className="px-4 py-3">Date & Time</th>
-                  <th className="px-4 py-3">Location / Hub</th>
-                  <th className="px-4 py-3">Supplier & Confirmation Ref</th>
-                  <th className="px-4 py-3">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {serviceItems.map((item: any, idx: number) => (
-                  <tr key={item.itemId || idx} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3.5 font-black text-slate-400 text-xs">
-                      {idx + 1}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="font-bold text-slate-900">{item.productName || item.serviceName}</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5 flex items-center gap-2">
-                        <span>Category: {item.category || 'Ground Service'}</span>
-                        <span>•</span>
-                        <span>Party: {item.totalPax || voucher.totalPax} Pax</span>
-                      </div>
-                      {item.meetingPoint && (
-                        <div className="text-[11px] text-teal-800 mt-1 flex items-start gap-1">
-                          <MapPin className="w-3 h-3 text-teal-600 shrink-0 mt-0.5" />
-                          <span>Meeting / Pickup: {item.meetingPoint}</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      <div className="font-bold text-slate-900">{item.serviceDate || voucher.serviceDate}</div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
-                        <Clock className="w-3 h-3 text-slate-400" />
-                        {item.serviceTime || '09:00 AM'}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="font-medium text-slate-800">{item.city || item.destination || voucher.destination}</div>
-                      <div className="text-[11px] text-slate-400">{voucher.destination}</div>
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="font-bold text-slate-900">{item.supplierName || voucher.supplierName}</div>
-                      <div className="text-[11px] font-mono text-teal-700 font-bold mt-0.5">
-                        Ref: {item.supplierConfirmationRef || voucher.supplierConfirmationRef || 'CONFIRMED'}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5 whitespace-nowrap">
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                        <CheckCircle2 className="w-3 h-3" /> Confirmed
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {!isPending && item.supplierConfirmationRef && (
+              <div className="text-[10px] font-mono font-bold text-[#008972] mt-0.5">
+                Ref: {item.supplierConfirmationRef}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Operational & Activity Specifications (when configured) */}
-        {(voucher.vehicle || voucher.guide || voucher.ticketType || voucher.meal || voucher.capacityTier || (voucher.selectedOptions && voucher.selectedOptions.length > 0) || (voucher.bookedPrice !== undefined && voucher.bookedPrice > 0)) && (
-          <div className="p-4 rounded-2xl bg-[#F8FAFA] border border-slate-200/90 space-y-3">
-            <h5 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00C6A6]" />
-              Confirmed Operational Specifications & Configuration
-            </h5>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 text-xs">
-              {voucher.vehicle && (
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Vehicle Allocation</span>
-                  <span className="font-bold text-slate-800">{voucher.vehicle}</span>
-                  {voucher.capacityTier && (
-                    <span className="text-[10px] text-slate-500 block">Tier: {voucher.capacityTier}</span>
-                  )}
-                </div>
+        {/* Schedule & Passengers */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+            <div className="text-[10px] font-bold uppercase text-slate-400">Service Date</div>
+            <div className="font-bold text-slate-900 mt-0.5">
+              {item.resolvedServiceDate ? formatReadableDate(item.resolvedServiceDate) : 'Pending'}
+            </div>
+          </div>
+
+          {item.isTicketedActivity ? (
+            <div className="p-2.5 rounded-xl bg-teal-50/70 border border-teal-100">
+              <div className="text-[10px] font-bold uppercase text-teal-700 flex items-center gap-1">
+                <Ticket className="w-3 h-3" /> Ticket Entry Time
+              </div>
+              <div className="font-black text-teal-950 mt-0.5">
+                {item.resolvedTicketEntryTime || item.resolvedStartTime || 'To Be Confirmed'}
+                {item.resolvedTimeZone ? ` (${item.resolvedTimeZone})` : ''}
+              </div>
+            </div>
+          ) : item.isTransportService ? (
+            <div className="p-2.5 rounded-xl bg-teal-50/70 border border-teal-100">
+              <div className="text-[10px] font-bold uppercase text-teal-700 flex items-center gap-1">
+                <Clock className="w-3 h-3" /> Pickup Time
+              </div>
+              <div className="font-black text-teal-950 mt-0.5">
+                {item.resolvedPickupTime || item.resolvedStartTime || 'To Be Confirmed'}
+              </div>
+            </div>
+          ) : (
+            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+              <div className="text-[10px] font-bold uppercase text-slate-400">Start Time</div>
+              <div className="font-bold text-slate-900 mt-0.5">
+                {item.resolvedStartTime || 'As Scheduled'}
+              </div>
+            </div>
+          )}
+
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+            <div className="text-[10px] font-bold uppercase text-slate-400">Passengers</div>
+            <div className="font-bold text-slate-900 mt-0.5">{item.resolvedPassengerBreakdown}</div>
+          </div>
+
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+            <div className="text-[10px] font-bold uppercase text-slate-400">Operating Partner</div>
+            <div className="font-bold text-slate-900 mt-0.5">{item.supplierName || 'Pending Allocation'}</div>
+          </div>
+        </div>
+
+        {/* Description & Overview */}
+        {item.resolvedDescription && (
+          <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-100 text-xs text-slate-700 leading-relaxed">
+            <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Service Description</span>
+            {item.resolvedDescription}
+          </div>
+        )}
+        {item.resolvedOverview && item.resolvedOverview !== item.resolvedDescription && (
+          <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-100 text-xs text-slate-700 leading-relaxed">
+            <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Operational Overview</span>
+            {item.resolvedOverview}
+          </div>
+        )}
+
+        {/* TRANSPORT ONLY BLOCK */}
+        {item.isTransportService && (item.vehicleType || item.resolvedPickupLocation || item.resolvedDropoffLocation) && (
+          <div className="p-3 rounded-xl bg-teal-50/40 border border-teal-200/70 space-y-2 text-xs">
+            <div className="text-[10px] font-black uppercase text-teal-800 flex items-center gap-1.5">
+              <Car className="w-3.5 h-3.5" /> Vehicle &amp; Transfer Details
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-slate-800">
+              {item.vehicleType && (
+                <div><span className="text-slate-500">Vehicle:</span> <strong>{item.vehicleType}</strong></div>
               )}
-              {voucher.guide && (
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Guide & Language</span>
-                  <span className="font-bold text-slate-800">{voucher.guide}</span>
-                  {voucher.guideLanguage && (
-                    <span className="text-[10px] text-slate-500 block">Lang: {voucher.guideLanguage}</span>
-                  )}
-                </div>
+              {item.vehicleSeaterCapacity && (
+                <div><span className="text-slate-500">Capacity:</span> <strong>{item.vehicleSeaterCapacity} Seats</strong></div>
               )}
-              {voucher.ticketType && (
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Ticket Category</span>
-                  <span className="font-bold text-slate-800">{voucher.ticketType}</span>
-                </div>
+              {item.luggageCapacity && (
+                <div><span className="text-slate-500">Luggage:</span> <strong>{item.luggageCapacity}</strong></div>
               )}
-              {voucher.meal && (
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Dining / Meal Plan</span>
-                  <span className="font-bold text-slate-800">{voucher.meal}</span>
-                </div>
+              {item.resolvedPickupLocation && (
+                <div className="col-span-2 sm:col-span-1"><span className="text-slate-500">Pickup:</span> <strong>{item.resolvedPickupLocation}</strong></div>
               )}
-              {voucher.bookedPrice !== undefined && voucher.bookedPrice > 0 && (
-                <div className="bg-white p-2.5 rounded-xl border border-teal-200">
-                  <span className="text-[10px] uppercase font-bold text-[#008972] block">Authorized Booked Rate</span>
-                  <span className="font-black text-slate-900">
-                    {voucher.currency || 'JPY'} {voucher.bookedPrice.toLocaleString()}
-                  </span>
-                </div>
+              {item.resolvedDropoffLocation && (
+                <div className="col-span-2 sm:col-span-1"><span className="text-slate-500">Drop-off:</span> <strong>{item.resolvedDropoffLocation}</strong></div>
+              )}
+              {item.routeDetails && (
+                <div className="col-span-2 sm:col-span-3"><span className="text-slate-500">Route:</span> <strong>{item.routeDetails}</strong></div>
               )}
             </div>
-            {voucher.selectedOptions && voucher.selectedOptions.length > 0 && (
-              <div className="pt-2 border-t border-slate-200/60 flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">Selected Options:</span>
-                {voucher.selectedOptions.map((opt, i) => (
-                  <span key={i} className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-[11px] font-medium text-slate-700">
-                    {opt}
-                  </span>
-                ))}
+          </div>
+        )}
+
+        {/* Meeting Point / Venue Address / Maps Link */}
+        {!item.isTransportService && (item.resolvedMeetingPoint || item.resolvedAddress || itemMaps) && (
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs space-y-1.5">
+            {item.resolvedMeetingPoint && (
+              <div><strong className="text-slate-900">Meeting Point:</strong> {item.resolvedMeetingPoint}</div>
+            )}
+            {item.resolvedAddress && (
+              <div><strong className="text-slate-900">Address:</strong> {item.resolvedAddress}</div>
+            )}
+            {itemMaps && (
+              <a
+                href={itemMaps}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[#008972] hover:underline font-bold"
+              >
+                <MapPin className="w-3.5 h-3.5" /> Open Verified Google Maps Location <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Inclusions & Exclusions */}
+        {(item.resolvedInclusions.length > 0 || item.resolvedExclusions.length > 0) && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            {item.resolvedInclusions.length > 0 && (
+              <div className="p-3 rounded-xl bg-emerald-50/40 border border-emerald-100">
+                <div className="text-[10px] font-black uppercase text-emerald-800 mb-1">Inclusions</div>
+                <ul className="list-disc pl-4 space-y-0.5 text-slate-700">
+                  {item.resolvedInclusions.map((inc, i) => <li key={i}>{inc}</li>)}
+                </ul>
+              </div>
+            )}
+            {item.resolvedExclusions.length > 0 && (
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70">
+                <div className="text-[10px] font-black uppercase text-slate-600 mb-1">Exclusions</div>
+                <ul className="list-disc pl-4 space-y-0.5 text-slate-600">
+                  {item.resolvedExclusions.map((exc, i) => <li key={i}>{exc}</li>)}
+                </ul>
               </div>
             )}
           </div>
         )}
 
-        {/* Meeting, Pickup & Ground Instructions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-            <h5 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-              <MapPin className="w-3.5 h-3.5 text-teal-600" />
-              Meeting Point & Pick-up Instructions
-            </h5>
-            <p className="text-xs text-slate-700 leading-relaxed">
-              {voucher.pickupInfo || voucher.meetingPoint || 'Representative / Chauffeur will hold digital name board with lead passenger surname at arrival terminal or hotel reception.'}
+        {item.resolvedImportantInstructions && (
+          <div className="p-3 rounded-xl bg-teal-50/50 border border-teal-200/70 text-xs text-teal-950">
+            <strong className="text-[10px] uppercase tracking-wider block text-[#008972] mb-0.5">Important Instructions</strong>
+            {item.resolvedImportantInstructions}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden print:shadow-none print:border-none">
+      {/* Top Action Bar */}
+      <div className="bg-white text-slate-800 px-6 py-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 print:hidden">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-slate-900 text-[#00C6A6] flex items-center justify-center font-black text-xs">
+            TUB
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-black text-slate-900">
+                {voucher.isCompleteBookingVoucher ? 'COMPLETE BOOKING VOUCHER' : 'ACTIVITY VOUCHER'}
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-teal-50 text-[#008972] border border-teal-200">
+                v{voucher.version || 1}
+              </span>
+              {effectiveOutdated && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3 text-amber-600" /> Outdated -- Reissue Required
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] text-slate-500">
+              Voucher No: <strong className="font-mono text-slate-700">{voucher.voucherNumber}</strong> • Booking Ref:{' '}
+              <strong className="text-slate-700">{voucher.bookingReference}</strong>
             </p>
-            {voucher.dropoffInfo && (
-              <p className="text-xs text-slate-600">
-                <strong>Drop-off Location:</strong> {voucher.dropoffInfo}
-              </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {effectiveOutdated && onRegenerate && (
+            <button
+              onClick={onRegenerate}
+              className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              Regenerate Voucher
+            </button>
+          )}
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isDownloadingPdf}
+            className="px-4 py-1.5 rounded-xl bg-[#008972] hover:bg-[#007360] text-white text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-60"
+          >
+            {isDownloadingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            <span>Download Official PDF</span>
+          </button>
+          <button
+            onClick={handlePrint}
+            className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+          >
+            <Printer className="w-3.5 h-3.5" /> Print
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+              aria-label="Close Voucher Preview"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Voucher Body */}
+      <div ref={printRef} className="p-6 sm:p-8 space-y-6 bg-white text-slate-900">
+        {/* Brand Header */}
+        <div className="rounded-2xl bg-[#0B1F2A] text-white p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-4 border-[#008972]">
+          <div>
+            <div className="text-xl font-black tracking-tight flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-[#00C6A6]" />
+              <span>{companyProfile.companyName || 'TheUnbound'}</span>
+            </div>
+            <p className="text-xs text-teal-200 mt-1">
+              {voucher.isCompleteBookingVoucher
+                ? 'Consolidated Multi-Service Travel Operations Voucher'
+                : 'Official Activity & Experience Operational Voucher'}
+            </p>
+            <p className="text-[11px] text-slate-300 mt-2">
+              Booking Ref: <strong className="font-mono text-white">#{voucher.bookingReference}</strong> • Issued:{' '}
+              {formatReadableDate((voucher.issuedAt || '').slice(0, 10))}
+            </p>
+          </div>
+          <div className="text-left sm:text-right space-y-1">
+            <div className="text-xs font-black tracking-widest text-[#00C6A6] uppercase">
+              {voucher.isCompleteBookingVoucher ? 'COMPLETE BOOKING VOUCHER' : 'ACTIVITY VOUCHER'}
+            </div>
+            <div className="text-sm font-black font-mono">
+              {voucher.voucherNumber} (v{voucher.version || 1})
+            </div>
+            <div className="text-[11px] text-slate-300 uppercase">
+              Status: {effectiveOutdated ? 'OUTDATED' : voucher.status}
+            </div>
+          </div>
+        </div>
+
+        {effectiveOutdated && (
+          <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-950 text-xs flex items-start gap-2.5">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <strong className="block">Voucher Outdated</strong>
+              <span>{voucher.outdatedReason || 'Booking service details changed after this voucher was issued. Reissue before customer dispatch.'}</span>
+            </div>
+          </div>
+        )}
+
+        {/* COMPLETE BOOKING VOUCHER VIEW */}
+        {voucher.isCompleteBookingVoucher ? (
+          <div className="space-y-6">
+            {/* Booking Overview */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-[10px] font-bold uppercase text-slate-400 block">Lead Traveller</span>
+                <strong className="text-slate-900 text-sm">{voucher.leadPaxName}</strong>
+              </div>
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-[10px] font-bold uppercase text-slate-400 block">Travel Dates</span>
+                <strong className="text-slate-900">
+                  {resolvedBooking?.travelStartDate
+                    ? `${formatReadableDate(resolvedBooking.travelStartDate)} - ${formatReadableDate(resolvedBooking.travelEndDate)}`
+                    : formatReadableDate(voucher.serviceDate)}
+                </strong>
+              </div>
+              <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                <span className="text-[10px] font-bold uppercase text-slate-400 block">Passengers</span>
+                <strong className="text-slate-900">
+                  {resolvedBooking?.travelers
+                    ? formatPassengerBreakdown(
+                        resolvedBooking.travelers.adults || 0,
+                        resolvedBooking.travelers.children || 0,
+                        resolvedBooking.travelers.infants || 0
+                      )
+                    : voucher.passengerBreakdown}
+                </strong>
+              </div>
+            </div>
+
+            {pendingItems.length > 0 && (
+              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-950 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong>{pendingItems.length} Service(s) Pending Supplier Confirmation:</strong> Listed separately below. Confirmed services are grouped chronologically by actual travel date.
+                </div>
+              </div>
+            )}
+
+            {/* Day-Wise Chronological Confirmed Itinerary */}
+            <div className="space-y-5">
+              {dayGroups.map(grp => (
+                <div key={grp.dayKey} className="space-y-3">
+                  <div className="px-4 py-2 rounded-xl bg-[#0B1F2A] text-white flex items-center justify-between text-xs">
+                    <span className="font-black text-[#00C6A6] uppercase tracking-wider">
+                      {grp.dayNumber !== null ? `DAY ${grp.dayNumber}` : 'UNSCHEDULED DATE'}
+                    </span>
+                    <span className="font-semibold flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-teal-300" />
+                      {grp.displayDateLabel}
+                    </span>
+                  </div>
+                  <div className="space-y-3">
+                    {grp.items.map((it, idx) => renderServiceDetailCard(it, `D${grp.dayNumber ?? '?'}-${idx + 1}`, false))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Separate Pending Services Section */}
+            {pendingItems.length > 0 && (
+              <div className="space-y-3 pt-4 border-t border-amber-200">
+                <h4 className="text-xs font-black uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4" /> Services Pending Supplier Confirmation (Not Yet Confirmed)
+                </h4>
+                <div className="space-y-3">
+                  {pendingItems.map((it, idx) => renderServiceDetailCard(it, `P${idx + 1}`, true))}
+                </div>
+              </div>
             )}
           </div>
+        ) : (
+          /* INDIVIDUAL ACTIVITY VOUCHER VIEW */
+          <div className="space-y-5">
+            {singleHydratedItem ? (
+              renderServiceDetailCard(singleHydratedItem, 'ACTIVITY', !singleHydratedItem.isConfirmedForVoucher)
+            ) : (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 rounded-2xl bg-teal-50/70 border border-teal-200">
+                    <span className="text-[10px] font-bold uppercase text-teal-700 block">Service Date</span>
+                    <strong className="text-slate-900">{formatReadableDate(voucher.serviceDate)}</strong>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-teal-50/70 border border-teal-200">
+                    <span className="text-[10px] font-bold uppercase text-teal-700 block">Entry / Start Time</span>
+                    <strong className="text-slate-900">{voucher.ticketEntryTime || voucher.startTime || voucher.serviceTime || 'TBD'}</strong>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Passengers</span>
+                    <strong className="text-slate-900">{voucher.passengerBreakdown}</strong>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">Confirmation Ref</span>
+                    <strong className="font-mono text-[#008972]">{voucher.supplierConfirmationRef || 'Pending'}</strong>
+                  </div>
+                </div>
 
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-            <h5 className="text-xs font-black uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
-              <Phone className="w-3.5 h-3.5 text-teal-600" />
-              Emergency & On-Ground Support
-            </h5>
-            <p className="text-xs text-slate-700 leading-relaxed">
-              24/7 Operations Hotline: <strong>{voucher.emergencyContact || '+91 9811654959'}</strong>
-            </p>
-            <p className="text-[11px] text-slate-500">
-              For any schedule adjustments, flight delays, or immediate driver assistance, contact our emergency desk immediately with Booking Reference <strong>{voucher.bookingReference}</strong>.
-            </p>
+                {(voucher.serviceDescription || voucher.activityDescription) && (
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs text-slate-700 leading-relaxed">
+                    <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Service Description</span>
+                    {voucher.serviceDescription || voucher.activityDescription}
+                  </div>
+                )}
+
+                {(voucher.meetingPoint || voucher.address || verifiedMapsUrl) && (
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                    {voucher.meetingPoint && <div><strong>Meeting Point:</strong> {voucher.meetingPoint}</div>}
+                    {voucher.address && <div><strong>Venue Address:</strong> {voucher.address}</div>}
+                    {verifiedMapsUrl && (
+                      <a href={verifiedMapsUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[#008972] font-bold hover:underline">
+                        <MapPin className="w-3.5 h-3.5" /> Open Verified Google Maps Link <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Operational Support & Footer */}
+        <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+          <div className="flex items-start gap-2">
+            <Phone className="w-4 h-4 text-[#008972] shrink-0 mt-0.5" />
+            <div>
+              <div className="text-[10px] font-black uppercase text-slate-400">24/7 Emergency Support</div>
+              <div className="font-bold text-slate-900">{voucher.emergencyContact || companyProfile.phone}</div>
+            </div>
+          </div>
+          <div className="flex items-start gap-2">
+            <ShieldCheck className="w-4 h-4 text-[#008972] shrink-0 mt-0.5" />
+            <div>
+              <div className="text-[10px] font-black uppercase text-slate-400">Lead Traveller &amp; Manifest</div>
+              <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-slate-500" />
+                {voucher.leadPaxName} ({voucher.totalPax} Guest{voucher.totalPax === 1 ? '' : 's'})
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Special Instructions & Terms */}
-        <div className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200 text-slate-600 text-[11px] space-y-1.5">
-          <div className="font-bold text-slate-800 uppercase tracking-wider text-[10px]">
-            Terms of Ground Service & Passenger Identification
-          </div>
-          <p>
-            {voucher.specialInstructions || 'Passengers must carry valid government photo identification. Please arrive at the designated meeting point at least 15 minutes prior to scheduled departure.'}
+        {voucher.termsAndConditions && (
+          <p className="text-[11px] text-slate-500 leading-relaxed pt-2 border-t border-slate-100">
+            <strong className="text-slate-700">Terms:</strong> {voucher.termsAndConditions}
           </p>
-          <p className="text-slate-400">
-            {voucher.termsAndConditions || 'This voucher constitutes official proof of reservation issued by TheUnbound DMC. Valid only for the passenger(s) and confirmed dates stated above. Non-transferable.'}
-          </p>
-        </div>
-
-        {/* Document Footer */}
-        <div className="pt-4 border-t border-slate-200 flex flex-col md:flex-row items-center justify-between text-[11px] text-slate-400 gap-2">
-          <span>System Version: {voucher.templateVersion || 'v2.4-Authoritative-DMC'}</span>
-          <span>Generated By: {voucher.generatedByName || 'TheUnbound Operations Hub'}</span>
-          <span>Verification Hash: {voucher.id}</span>
-        </div>
+        )}
       </div>
     </div>
   );
