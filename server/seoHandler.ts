@@ -111,10 +111,17 @@ export function getAllAuditItemsForServer(): SEOAuditItem[] {
   return items;
 }
 
+function resolveCanonicalOrigin(req: Request): string {
+  const host = (req.get('host') || 'theunbound.in').trim();
+  const forwardedProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase();
+  const isLocalhost = host.startsWith('localhost') || host.startsWith('127.0.0.1');
+  const proto = isLocalhost ? (forwardedProto || req.protocol || 'http') : 'https';
+  return `${proto}://${host}`;
+}
+
 export function handleSitemapXml(req: Request, res: Response) {
   try {
-    const host = req.get('host') || 'theunbound.luxury';
-    const canonicalDomain = `${req.protocol}://${host}`;
+    const canonicalDomain = resolveCanonicalOrigin(req);
     const dynamicDefaults = {
       ...DEFAULT_GLOBAL_SEO_DEFAULTS,
       canonicalDomain
@@ -134,8 +141,7 @@ export function handleSitemapXml(req: Request, res: Response) {
 
 export function handleRobotsTxt(req: Request, res: Response) {
   try {
-    const host = req.get('host') || 'theunbound.luxury';
-    const canonicalDomain = `${req.protocol}://${host}`;
+    const canonicalDomain = resolveCanonicalOrigin(req);
     const dynamicDefaults = {
       ...DEFAULT_GLOBAL_SEO_DEFAULTS,
       canonicalDomain

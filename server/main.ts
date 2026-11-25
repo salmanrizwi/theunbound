@@ -38,7 +38,21 @@ export async function startServer() {
   serverPromise = new Promise(async (resolve, reject) => {
     try {
       const app = express();
+      app.set('trust proxy', true);
       app.disable('x-powered-by');
+
+      // Production HTTPS & browser transport security headers (preserves iframe compatibility)
+      app.use((req, res, next) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+        const forwardedProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim().toLowerCase();
+        const hostHeader = (req.get('host') || '').toLowerCase();
+        const isLocalhost = hostHeader.startsWith('localhost') || hostHeader.startsWith('127.0.0.1');
+        if (!isLocalhost && (req.secure || forwardedProto === 'https')) {
+          res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+        }
+        next();
+      });
 
       // Transparent HTTP Brotli / Gzip compression for JS, CSS, HTML & JSON responses
       app.use(createCompressionMiddleware());
@@ -148,7 +162,7 @@ export async function startServer() {
             const templatePath = path.resolve(process.cwd(), "index.html");
             let template = fs.readFileSync(templatePath, "utf-8");
             template = await vite.transformIndexHtml(url, template);
-            const htmlWithSEO = injectSEOIntoHtml(template, url, req.get("host") || "theunbound.luxury");
+            const htmlWithSEO = injectSEOIntoHtml(template, url, req.get("host") || "theunbound.in");
             res.status(200).set({ "Content-Type": "text/html" }).end(htmlWithSEO);
           } catch (e: any) {
             try {
@@ -198,7 +212,7 @@ export async function startServer() {
           try {
             if (fs.existsSync(prodIndexPath)) {
               const rawHtml = fs.readFileSync(prodIndexPath, "utf-8");
-              const htmlWithSEO = injectSEOIntoHtml(rawHtml, req.originalUrl, req.get("host") || "theunbound.luxury");
+              const htmlWithSEO = injectSEOIntoHtml(rawHtml, req.originalUrl, req.get("host") || "theunbound.in");
               return res.status(200).set({ "Content-Type": "text/html" }).send(htmlWithSEO);
             }
             return res.sendFile(prodIndexPath);
