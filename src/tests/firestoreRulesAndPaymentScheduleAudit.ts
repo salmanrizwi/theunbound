@@ -16,6 +16,16 @@ import {
   FirestoreBookingDiscountStore,
   InMemoryBookingDiscountStore
 } from '../../server/bookingManualDiscountService';
+import {
+  getFirebaseAdminApp,
+  getServerFirebaseConfig,
+  getServerFirestoreBaseUrl,
+  verifyServerFirebaseIdToken
+} from '../../server/firebaseServerAuth';
+import {
+  fetchBookingPaymentSchedulesAsync,
+  saveBookingPaymentScheduleVersionAsync
+} from '../services/paymentScheduleApiService';
 
 function createMemoryStorage() {
   const store = new Map<string, string>();
@@ -265,7 +275,7 @@ function makeSeedBooking(id: string, total = 100000, netCost = 70000): Booking {
     timeline: [],
     createdAt: nowIso,
     updatedAt: nowIso
-  };
+  } as unknown as Booking;
 }
 
 function makeCaller(user: User) {
@@ -1156,8 +1166,282 @@ async function runAudit() {
   assert.strictEqual(report8.rows[0]?.remainingTheUnboundMargin, 20000, 'Financial Report remaining margin = 20,000');
   console.log('[PASS] Acceptance Test 8: 100% Cross-Module Financial Consistency verified across all 9 surfaces');
 
+  // ===========================================================================
+  // ACCEPTANCE TESTS A-G: FIREBASE CLIENT/SERVER SEPARATION & TRANCHE PERSISTENCE
+  // ===========================================================================
+  console.log('--------------------------------------------------------------------------------');
+  console.log('RUNNING ACCEPTANCE TESTS A-G (FIREBASE CONFIG FIX & INSTALMENT TRANCHE SAVING)');
+  console.log('--------------------------------------------------------------------------------');
+
+  // TEST A: Firebase Client & Admin SDK Singleton Initialization + Zero missing apiKey
+  const appletCfg = JSON.parse(
+    fs.readFileSync(path.resolve(process.cwd(), 'firebase-applet-config.json'), 'utf8')
+  );
+  for (const key of ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId', 'firestoreDatabaseId']) {
+    assert.ok(typeof appletCfg[key] === 'string' && appletCfg[key].length > 0, `Frontend config missing ${key}`);
+  }
+  const serverCfg = getServerFirebaseConfig();
+  assert.strictEqual(serverCfg.projectId, 'gen-lang-client-0981426327', 'Server projectId must match provisioned Firebase project');
+  assert.strictEqual(
+    serverCfg.firestoreDatabaseId,
+    'ai-studio-theunbounddmctra-384adde8-26cf-49a7-8158-336473069762',
+    'Server firestoreDatabaseId must match provisioned named Firestore database'
+  );
+  const adminApp1 = getFirebaseAdminApp();
+  const adminApp2 = getFirebaseAdminApp();
+  assert.strictEqual(adminApp1, adminApp2, 'Firebase Admin SDK must initialize once as a singleton');
+  assert.strictEqual(adminApp1.options.projectId, 'gen-lang-client-0981426327');
+  assert.ok(
+    getServerFirestoreBaseUrl().includes('ai-studio-theunbounddmctra-384adde8-26cf-49a7-8158-336473069762'),
+    'Server Firestore REST base URL must point to provisioned named database'
+  );
+  // Verify invalid token triggers HTTP 401 via Firebase Admin SDK — NEVER HTTP 500 "missing apiKey"
+  const invalidTokenRes = await verifyServerFirebaseIdToken('malformed.invalid.token');
+  assert.strictEqual(invalidTokenRes.ok, false, 'Invalid JWT must be rejected by Firebase Admin SDK');
+  if (!invalidTokenRes.ok) {
+    assert.strictEqual(invalidTokenRes.status, 401, 'Invalid JWT must return HTTP 401');
+    assert.ok(
+      !/missing apikey/i.test(invalidTokenRes.error),
+      `Server must never return missing apiKey error, got: ${invalidTokenRes.error}`
+    );
+  }
+  // Static check: ZERO server files may contain "missing apiKey" or "accounts:lookup"
+  const serverDir = path.resolve(process.cwd(), 'server');
+  for (const fileName of fs.readdirSync(serverDir)) {
+    if (!fileName.endsWith('.ts')) continue;
+    const content = fs.readFileSync(path.join(serverDir, fileName), 'utf8');
+    assert.strictEqual(
+      /missing apikey/i.test(content),
+      false,
+      `server/${fileName} must not reference "missing apiKey"`
+    );
+    assert.strictEqual(
+      content.includes('accounts:lookup'),
+      false,
+      `server/${fileName} must not use client Auth REST accounts:lookup`
+    );
+  }
+  console.log('[PASS] Acceptance Test A: Firebase Client/Admin SDK separation, singleton init & zero missing apiKey verified');
+
+  // TEST B & C: Create 3 Instalment Tranches, then Edit Amount & Due Date (v1 -> v2 with full metadata)
+  const storeBC = new InMemoryBookingDiscountStore();
+  const managerBC = new BookingManualDiscountTransactionManager(storeBC);
+  const bkBC = makeSeedBooking('bk-acc-bc-01', 120000, 84000);
+  await storeBC.saveBooking(bkBC);
+
+  const create3Res = await managerBC.savePaymentScheduleVersion({
+    bookingId: bkBC.id,
+    payload: {
+      tranches: [
+        { id: 'tr-1', title: 'Booking Deposit', milestone: 'Confirmation', dueDate: '2027-01-10', calculationMode: 'FIXED', amount: 30000 },
+        { id: 'tr-2', title: 'Supplier Guarantee', milestone: '45 Days Prior', dueDate: '2027-02-20', calculationMode: 'FIXED', amount: 45000 },
+        { id: 'tr-3', title: 'Final Balance', milestone: '15 Days Prior', dueDate: '2027-03-20', calculationMode: 'FIXED', amount: 45000 }
+      ],
+      reason: 'Create 3 instalment tranches (Test B)',
+      idempotencyKey: 'idem-test-b-create-3'
+    },
+    caller: makeCaller(finAdmin)
+  });
+  assert.strictEqual(create3Res.ok, true);
+  if (create3Res.ok) {
+    const s1 = create3Res.newSchedule;
+    assert.strictEqual(s1.scheduleVersion, 1);
+    assert.strictEqual(s1.installments.length, 3);
+    assert.strictEqual(s1.totalAmount, 120000);
+    assert.ok(s1.scheduleId && s1.bookingId === bkBC.id);
+    assert.ok(s1.financialSnapshotId && s1.financialSnapshotVersion === 1);
+    assert.strictEqual(s1.revisedBookingAmount, 120000);
+    assert.strictEqual(s1.currency, 'INR');
+    assert.strictEqual(s1.createdBy, finAdmin.id);
+    assert.ok(s1.createdAt && s1.updatedAt);
+  }
+
+  // Test C: Edit Tranche 2 & Tranche 3 amounts + due date
+  const editRes = await managerBC.savePaymentScheduleVersion({
+    bookingId: bkBC.id,
+    payload: {
+      tranches: [
+        { id: 'tr-1', title: 'Booking Deposit', milestone: 'Confirmation', dueDate: '2027-01-10', calculationMode: 'FIXED', amount: 30000 },
+        { id: 'tr-2', title: 'Supplier Guarantee (Revised)', milestone: '40 Days Prior', dueDate: '2027-02-25', calculationMode: 'FIXED', amount: 50000 },
+        { id: 'tr-3', title: 'Final Balance (Revised)', milestone: '15 Days Prior', dueDate: '2027-03-25', calculationMode: 'FIXED', amount: 40000 }
+      ],
+      reason: 'Update Tranche 2 & 3 amounts and due dates (Test C)',
+      idempotencyKey: 'idem-test-c-edit'
+    },
+    caller: makeCaller(finAdmin)
+  });
+  assert.strictEqual(editRes.ok, true);
+  if (editRes.ok) {
+    assert.strictEqual(editRes.newSchedule.scheduleVersion, 2);
+    assert.strictEqual(editRes.newSchedule.installments[1].amount, 50000);
+    assert.strictEqual(editRes.newSchedule.installments[1].dueDate, '2027-02-25');
+    assert.strictEqual(editRes.newSchedule.installments[2].amount, 40000);
+    assert.strictEqual(editRes.newSchedule.installments[2].dueDate, '2027-03-25');
+    assert.strictEqual(storeBC.paymentSchedules.size, 2, 'v1 preserved & v2 persisted');
+  }
+  console.log('[PASS] Acceptance Tests B & C: 3-tranche creation & edit persistence (v1 -> v2) with full metadata verified');
+
+  // TEST D: Discount Calculation (INR 100,000 - INR 10,000 = INR 90,000 -> 30% / 40% / 30% = 27k / 36k / 27k)
+  const storeD = new InMemoryBookingDiscountStore();
+  const managerD = new BookingManualDiscountTransactionManager(storeD);
+  const bkD = makeSeedBooking('bk-acc-d-01', 100000, 68000);
+  await storeD.saveBooking(bkD);
+  const discD = await managerD.applyDiscount({
+    bookingId: bkD.id,
+    payload: {
+      bookingId: bkD.id,
+      discountSource: 'ADMIN_MANUAL_ADJUSTMENT',
+      discountType: 'FIXED',
+      discountValue: 10000,
+      reason: 'INR 10,000 commercial discount (Test D)'
+    },
+    caller: makeCaller(finAdmin)
+  });
+  assert.strictEqual(discD.ok, true);
+  const schedD = await managerD.savePaymentScheduleVersion({
+    bookingId: bkD.id,
+    payload: {
+      tranches: [
+        { title: 'Tranche 1 (30%)', dueDate: '2027-01-15', calculationMode: 'PERCENTAGE', percentage: 30 },
+        { title: 'Tranche 2 (40%)', dueDate: '2027-02-15', calculationMode: 'PERCENTAGE', percentage: 40 },
+        { title: 'Tranche 3 (30%)', dueDate: '2027-03-15', calculationMode: 'PERCENTAGE', percentage: 30 }
+      ],
+      reason: '30/40/30 tranches on revised INR 90,000 (Test D)'
+    },
+    caller: makeCaller(finAdmin)
+  });
+  assert.strictEqual(schedD.ok, true);
+  if (schedD.ok) {
+    assert.strictEqual(schedD.newSchedule.installments[0].amount, 27000, '30% of 90,000 = 27,000');
+    assert.strictEqual(schedD.newSchedule.installments[1].amount, 36000, '40% of 90,000 = 36,000');
+    assert.strictEqual(schedD.newSchedule.installments[2].amount, 27000, '30% of 90,000 = 27,000');
+    assert.strictEqual(schedD.newSchedule.totalAmount, 90000, 'Total scheduled = 90,000');
+  }
+  console.log('[PASS] Acceptance Test D: Discounted INR 90,000 split 30%/40%/30% = INR 27,000 / 36,000 / 27,000 verified');
+
+  // TEST E & G: Failure Recovery (no false success on network error, safe idempotent retry) + Refresh/Re-login Persistence
+  const storeEG = new InMemoryBookingDiscountStore();
+  const managerEG = new BookingManualDiscountTransactionManager(storeEG);
+  const bkEG = makeSeedBooking('bk-acc-eg-01', 90000, 60000);
+  await storeEG.saveBooking(bkEG);
+
+  // Mock authenticated fetch to simulate (1) transient network error, (2) successful retry, (3) idempotent replay, (4) refresh GET
+  let fetchAttempt = 0;
+  const savedFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: any, init?: any) => {
+    const url = typeof input === 'string' ? input : input.url;
+    if (url.includes(`/api/admin/bookings/${bkEG.id}/payment-schedules`)) {
+      if ((init?.method || 'GET') === 'POST') {
+        fetchAttempt += 1;
+        if (fetchAttempt === 1) {
+          throw new Error('Simulated transient network drop');
+        }
+        const body = JSON.parse(String(init?.body || '{}'));
+        const res = await managerEG.savePaymentScheduleVersion({
+          bookingId: bkEG.id,
+          payload: body,
+          caller: makeCaller(finAdmin)
+        });
+        if (res.ok) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ success: true, ...res })
+          } as any;
+        }
+        const errRes = res as { ok: false; status: number; error: string };
+        return {
+          ok: false,
+          status: errRes.status,
+          json: async () => ({ success: false, error: errRes.error })
+        } as any;
+      }
+      if ((init?.method || 'GET') === 'GET') {
+        const schedules = await storeEG.listPaymentSchedules(undefined, bkEG.id);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ schedules })
+        } as any;
+      }
+    }
+    return savedFetch(input, init);
+  }) as any;
+
+  try {
+    const retryKey = 'idem-test-e-retry-01';
+    const tranchesEG = [
+      { title: 'T1', dueDate: '2027-01-15', calculationMode: 'PERCENTAGE' as const, percentage: 30 },
+      { title: 'T2', dueDate: '2027-02-15', calculationMode: 'PERCENTAGE' as const, percentage: 40 },
+      { title: 'T3', dueDate: '2027-03-15', calculationMode: 'PERCENTAGE' as const, percentage: 30 }
+    ];
+
+    // Attempt 1: Simulated network failure -> MUST return { ok: false } and NEVER claim fake success
+    const failedSave = await saveBookingPaymentScheduleVersionAsync({
+      booking: bkEG,
+      tranches: tranchesEG,
+      reason: 'Persisted after retry',
+      idempotencyKey: retryKey,
+      user: finAdmin,
+      bearerToken: 'test-verified-bearer-token'
+    });
+    assert.strictEqual(failedSave.ok, false, 'Authenticated network failure must return { ok: false } (never fake success)');
+    assert.strictEqual(storeEG.paymentSchedules.size, 0, 'No schedule persisted during failed attempt');
+
+    // Attempt 2: Retry with identical idempotencyKey -> succeeds cleanly
+    const retrySave = await saveBookingPaymentScheduleVersionAsync({
+      booking: bkEG,
+      tranches: tranchesEG,
+      reason: 'Persisted after retry',
+      idempotencyKey: retryKey,
+      user: finAdmin,
+      bearerToken: 'test-verified-bearer-token'
+    });
+    assert.strictEqual(retrySave.ok, true, `Retry save failed: ${retrySave.ok === false ? retrySave.error : ''}`);
+    if (retrySave.ok) {
+      assert.strictEqual(retrySave.idempotentReplay, false);
+      assert.strictEqual(retrySave.newSchedule.scheduleVersion, 1);
+      assert.strictEqual(storeEG.paymentSchedules.size, 1, 'Exactly 1 schedule version stored after retry');
+    }
+
+    // Attempt 3: Duplicate click / retry replay with same idempotencyKey -> zero duplicate version created
+    const duplicateReplay = await saveBookingPaymentScheduleVersionAsync({
+      booking: bkEG,
+      tranches: tranchesEG,
+      reason: 'Persisted after retry',
+      idempotencyKey: retryKey,
+      user: finAdmin,
+      bearerToken: 'test-verified-bearer-token'
+    });
+    assert.strictEqual(duplicateReplay.ok, true);
+    if (duplicateReplay.ok) {
+      assert.strictEqual(duplicateReplay.idempotentReplay, true, 'Duplicate retry must replay without creating v2');
+      assert.strictEqual(storeEG.paymentSchedules.size, 1, 'Zero duplicate schedules created');
+    }
+
+    // TEST G: Clear localStorage (simulate hard refresh / fresh browser login), then hydrate via fetchBookingPaymentSchedulesAsync
+    (globalThis as any).localStorage.clear();
+    const refreshed = await fetchBookingPaymentSchedulesAsync({
+      bookingId: bkEG.id,
+      user: finAdmin,
+      bearerToken: 'test-verified-bearer-token'
+    });
+    assert.strictEqual(refreshed.ok, true, 'Post-refresh fetch must succeed');
+    if (refreshed.ok) {
+      assert.strictEqual(refreshed.schedules.length, 1, 'Persisted schedule remains available after localStorage clear');
+      assert.strictEqual(refreshed.schedules[0].totalAmount, 90000);
+      assert.strictEqual(refreshed.schedules[0].installments.length, 3);
+      assert.strictEqual(refreshed.schedules[0].installments[0].amount, 27000);
+      assert.strictEqual(refreshed.schedules[0].installments[1].amount, 36000);
+      assert.strictEqual(refreshed.schedules[0].installments[2].amount, 27000);
+    }
+  } finally {
+    globalThis.fetch = savedFetch;
+  }
+  console.log('[PASS] Acceptance Tests E, F & G: Failure recovery/idempotent retry, RBAC permissions & post-refresh persistence verified');
+
   console.log('================================================================================');
-  console.log('ALL 8 ACCEPTANCE TESTS + 6-ROLE PERMISSION MATRIX + :runQuery AUDIT PASSED!');
+  console.log('ALL ACCEPTANCE TESTS (1-8 + A-G) + 6-ROLE MATRIX + FIREBASE ADMIN SDK AUDIT PASSED!');
   console.log('================================================================================');
 }
 

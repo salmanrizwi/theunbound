@@ -1,6 +1,4 @@
 import { Router, Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
 import {
   buildDestinationVisibilityIndex,
   isDestinationActive,
@@ -15,6 +13,7 @@ import {
 } from '../src/services/destinationVisibility';
 import { fromFirestoreDocument } from './marginGovernanceService';
 import { recordServerCacheHit, recordServerCacheMiss } from './performanceMiddleware';
+import { getServerFirestoreBaseUrl } from './firebaseServerAuth';
 
 export interface B2BCatalogSnapshot {
   destinations: any[];
@@ -26,31 +25,8 @@ export interface B2BCatalogSnapshot {
   tombstones?: any[];
 }
 
-function getFirebaseConfig(): {
-  projectId: string;
-  firestoreDatabaseId: string;
-} {
-  try {
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(configPath)) {
-      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      return {
-        projectId: parsed.projectId || 'gen-lang-client-0981426327',
-        firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)'
-      };
-    }
-  } catch (err) {
-    console.warn('[B2B-VISIBILITY] Could not read firebase-applet-config.json:', err);
-  }
-  return {
-    projectId: 'gen-lang-client-0981426327',
-    firestoreDatabaseId: '(default)'
-  };
-}
-
 function getFirestoreBaseUrl(): string {
-  const cfg = getFirebaseConfig();
-  return `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/${cfg.firestoreDatabaseId}/documents`;
+  return getServerFirestoreBaseUrl();
 }
 
 async function firestoreListCollection(

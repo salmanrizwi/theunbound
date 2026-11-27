@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction, Router } from 'express';
 import zlib from 'zlib';
-import fs from 'fs';
-import path from 'path';
+import {
+  extractBearerToken,
+  getServerFirestoreBaseUrl,
+  verifyServerFirebaseIdToken
+} from './firebaseServerAuth';
 
 interface RouteStatBucket {
   count: number;
@@ -384,65 +387,26 @@ const AUTHORIZED_ADMIN_EMAILS = new Set([
   'marcus@theunbound.in'
 ]);
 
-function readFirebaseConfig(): { projectId: string; apiKey: string; firestoreDatabaseId: string } {
-  try {
-    const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(cfgPath)) {
-      const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-      return {
-        projectId: parsed.projectId || '',
-        apiKey: parsed.apiKey || '',
-        firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)'
-      };
-    }
-  } catch {
-    // ignore
-  }
-  return { projectId: '', apiKey: '', firestoreDatabaseId: '(default)' };
-}
-
 export async function verifyAdminBearerToken(req: Request): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
-  const authHeader = String(req.headers.authorization || '');
-  if (!authHeader.startsWith('Bearer ')) {
-    return { ok: false, status: 401, error: 'Authentication required.' };
+  const bearer = extractBearerToken(req);
+  if (!bearer.ok) {
+    return bearer;
   }
-  const idToken = authHeader.slice(7).trim();
-  if (!idToken) {
-    return { ok: false, status: 401, error: 'Invalid Bearer token.' };
-  }
+  const idToken = bearer.idToken;
 
-  const cfg = readFirebaseConfig();
-  if (!cfg.apiKey || !cfg.projectId) {
-    return { ok: false, status: 500, error: 'Server authentication configuration unavailable.' };
+  const verified = await verifyServerFirebaseIdToken(idToken);
+  if (!verified.ok) {
+    return verified;
   }
+  const { uid, email } = verified.token;
 
   try {
-    const lookupRes = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(cfg.apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-        signal: AbortSignal.timeout(5000)
-      }
-    );
-    if (!lookupRes.ok) {
-      return { ok: false, status: 401, error: 'Session token could not be verified.' };
-    }
-    const lookupJson: any = await lookupRes.json();
-    const account = Array.isArray(lookupJson?.users) ? lookupJson.users[0] : null;
-    const uid = String(account?.localId || '').trim();
-    const email = String(account?.email || '').trim().toLowerCase();
-    if (!uid) {
-      return { ok: false, status: 401, error: 'Unverified session.' };
-    }
-
     if (AUTHORIZED_ADMIN_EMAILS.has(email)) {
       return { ok: true };
     }
 
     // Verify internal staff/admin role from Firestore user record
-    const userDocUrl = `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/${cfg.firestoreDatabaseId}/documents/users/${encodeURIComponent(uid)}`;
+    const userDocUrl = `${getServerFirestoreBaseUrl()}/users/${encodeURIComponent(uid)}`;
     const userRes = await fetch(userDocUrl, {
       headers: { Authorization: `Bearer ${idToken}` },
       signal: AbortSignal.timeout(5000)

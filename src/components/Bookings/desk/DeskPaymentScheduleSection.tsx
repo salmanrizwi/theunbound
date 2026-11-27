@@ -15,6 +15,7 @@ import {
   roundMoney
 } from '../../../services/bookingManualDiscountEngine';
 import {
+  fetchBookingPaymentSchedulesAsync,
   previewBookingPaymentScheduleRecalculationAsync,
   saveBookingPaymentScheduleVersionAsync
 } from '../../../services/paymentScheduleApiService';
@@ -111,6 +112,29 @@ export const DeskPaymentScheduleSection: React.FC<DeskPaymentScheduleSectionProp
     }
     return db.subscribeToCollections(collections, () => setLocalRevision(prev => prev + 1));
   }, [db, permissions.canViewInternalMargin, permissions.canManagePaymentSchedule]);
+
+  // Hydrate persisted Firestore payment schedule versions on mount, refresh, or re-login
+  useEffect(() => {
+    if (!booking?.id || !currentUser || (!canManageSchedule && !permissions.canViewInternalMargin)) {
+      return;
+    }
+    let cancelled = false;
+    fetchBookingPaymentSchedulesAsync({
+      bookingId: booking.id,
+      user: currentUser
+    })
+      .then(res => {
+        if (!cancelled && res.ok && res.schedules.length > 0) {
+          setLocalRevision(prev => prev + 1);
+        }
+      })
+      .catch(() => {
+        // Non-blocking hydration fallback; local synced collection remains visible
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [booking.id, currentUser?.id, canManageSchedule, permissions.canViewInternalMargin]);
 
   const snapshots = useMemo(
     () => db.getBookingPricingSnapshots(booking.id),
@@ -1010,9 +1034,16 @@ export const DeskPaymentScheduleSection: React.FC<DeskPaymentScheduleSectionProp
           </div>
 
           {formError && (
-            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-              <span>{formError}</span>
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold flex items-start justify-between gap-3">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p>{formError}</p>
+                  <p className="text-[11px] font-normal text-rose-700">
+                    Your unsaved tranche edits have been preserved. Fix any issue or click Save again to retry safely without creating duplicate versions.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 

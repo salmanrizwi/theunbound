@@ -64,7 +64,7 @@ try {
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    external: ['vite'],
+    external: ['vite', 'firebase-admin', 'firebase-admin/*'],
     minify: true,
     outfile: serverOutFile,
     logLevel: 'info',

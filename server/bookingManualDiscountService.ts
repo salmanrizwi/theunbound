@@ -1,7 +1,4 @@
 import { Router, Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import {
   AdminManualDiscountApplyPayload,
   AdminManualDiscountReversePayload,
@@ -30,47 +27,18 @@ import {
 } from '../src/services/bookingManualDiscountEngine';
 import { findPromotionByCode, normalizePromotionCode } from '../src/services/promotionEngine';
 import { fromFirestoreDocument, toFirestoreFields } from './marginGovernanceService';
+import {
+  extractBearerToken,
+  getServerFirestoreBaseUrl,
+  verifyServerFirebaseIdToken
+} from './firebaseServerAuth';
 
 // ============================================================================
-// FIREBASE / FIRESTORE REST CONFIGURATION
+// FIREBASE / FIRESTORE REST CONFIGURATION (SERVER ADMIN AUTH — NO CLIENT API KEY)
 // ============================================================================
-
-const DEFAULT_PROJECT_ID = 'gen-lang-client-0981426327';
-const DEFAULT_DATABASE_ID = 'ai-studio-theunbounddmctra-384adde8-26cf-49a7-8158-336473069762';
-
-function getFirebaseConfig(): {
-  projectId: string;
-  apiKey: string;
-  firestoreDatabaseId: string;
-} {
-  try {
-    const candidatePaths = [
-      path.resolve(process.cwd(), 'firebase-applet-config.json'),
-      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'firebase-applet-config.json')
-    ];
-    for (const configPath of candidatePaths) {
-      if (fs.existsSync(configPath)) {
-        const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        return {
-          projectId: parsed.projectId || DEFAULT_PROJECT_ID,
-          apiKey: parsed.apiKey || '',
-          firestoreDatabaseId: parsed.firestoreDatabaseId || DEFAULT_DATABASE_ID
-        };
-      }
-    }
-  } catch (err) {
-    console.warn('[MANUAL-DISCOUNT-SVC] Could not read firebase-applet-config.json:', err);
-  }
-  return {
-    projectId: DEFAULT_PROJECT_ID,
-    apiKey: '',
-    firestoreDatabaseId: DEFAULT_DATABASE_ID
-  };
-}
 
 function getFirestoreBaseUrl(): string {
-  const cfg = getFirebaseConfig();
-  return `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/${cfg.firestoreDatabaseId}/documents`;
+  return getServerFirestoreBaseUrl();
 }
 
 const MASTER_ADMIN_EMAILS = new Set([
@@ -94,60 +62,17 @@ async function verifyAdminCaller(
 ): Promise<
   { ok: true; caller: VerifiedAdminCaller } | { ok: false; status: number; error: string }
 > {
-  const authHeader = req.headers.authorization || '';
-  if (!authHeader.startsWith('Bearer ')) {
-    return {
-      ok: false,
-      status: 401,
-      error: 'Authentication required: missing Bearer Firebase ID token.'
-    };
+  const bearer = extractBearerToken(req);
+  if (!bearer.ok) {
+    return bearer;
   }
-  const idToken = authHeader.slice(7).trim();
-  if (!idToken) {
-    return {
-      ok: false,
-      status: 401,
-      error: 'Authentication required: empty Firebase ID token.'
-    };
-  }
+  const idToken = bearer.idToken;
 
-  const cfg = getFirebaseConfig();
-  if (!cfg.apiKey) {
-    return { ok: false, status: 500, error: 'Server Firebase configuration missing apiKey.' };
+  const verified = await verifyServerFirebaseIdToken(idToken);
+  if (!verified.ok) {
+    return verified;
   }
-
-  let uid = '';
-  let email = '';
-  let displayName = '';
-
-  try {
-    const lookupRes = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(cfg.apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-        signal: AbortSignal.timeout(5000)
-      }
-    );
-    if (!lookupRes.ok) {
-      return { ok: false, status: 401, error: 'Invalid or expired Firebase authentication token.' };
-    }
-    const lookupJson = (await lookupRes.json()) as any;
-    const fbUser = Array.isArray(lookupJson.users) ? lookupJson.users[0] : null;
-    if (!fbUser || !fbUser.localId || fbUser.disabled) {
-      return { ok: false, status: 401, error: 'Authenticated user account not found or disabled.' };
-    }
-    uid = fbUser.localId;
-    email = (fbUser.email || '').trim().toLowerCase();
-    displayName = fbUser.displayName || '';
-  } catch (err: any) {
-    return {
-      ok: false,
-      status: 503,
-      error: `Unable to verify authentication token: ${err?.message || 'network error'}`
-    };
-  }
+  const { uid, email, displayName } = verified.token;
 
   let userDoc: Record<string, any> | null = null;
   try {

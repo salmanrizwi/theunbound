@@ -1,6 +1,4 @@
 import { Router, Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
 import crypto from 'crypto';
 import {
   AppliedPromotionSnapshot,
@@ -19,39 +17,14 @@ import {
   PromotionEvaluationItem
 } from '../src/services/promotionEngine';
 import { fromFirestoreDocument, toFirestoreFields } from './marginGovernanceService';
-
-// ============================================================================
-// FIREBASE / FIRESTORE REST CONFIGURATION
-// ============================================================================
-
-function getFirebaseConfig(): {
-  projectId: string;
-  apiKey: string;
-  firestoreDatabaseId: string;
-} {
-  try {
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(configPath)) {
-      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      return {
-        projectId: parsed.projectId || 'gen-lang-client-0981426327',
-        apiKey: parsed.apiKey || '',
-        firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)'
-      };
-    }
-  } catch (err) {
-    console.warn('[PROMO-SVC] Could not read firebase-applet-config.json:', err);
-  }
-  return {
-    projectId: 'gen-lang-client-0981426327',
-    apiKey: '',
-    firestoreDatabaseId: '(default)'
-  };
-}
+import {
+  extractBearerToken,
+  getServerFirestoreBaseUrl,
+  verifyServerFirebaseIdToken
+} from './firebaseServerAuth';
 
 function getFirestoreBaseUrl(): string {
-  const cfg = getFirebaseConfig();
-  return `https://firestore.googleapis.com/v1/projects/${cfg.projectId}/databases/${cfg.firestoreDatabaseId}/documents`;
+  return getServerFirestoreBaseUrl();
 }
 
 const MASTER_ADMIN_EMAILS = new Set([
@@ -106,60 +79,17 @@ async function verifyAuthenticatedCaller(
 ): Promise<
   { ok: true; caller: VerifiedPromotionCaller } | { ok: false; status: number; error: string }
 > {
-  const authHeader = req.headers.authorization || '';
-  if (!authHeader.startsWith('Bearer ')) {
-    return {
-      ok: false,
-      status: 401,
-      error: 'Authentication required: missing Bearer Firebase ID token.'
-    };
+  const bearer = extractBearerToken(req);
+  if (!bearer.ok) {
+    return bearer;
   }
-  const idToken = authHeader.slice(7).trim();
-  if (!idToken) {
-    return {
-      ok: false,
-      status: 401,
-      error: 'Authentication required: empty Firebase ID token.'
-    };
-  }
+  const idToken = bearer.idToken;
 
-  const cfg = getFirebaseConfig();
-  if (!cfg.apiKey) {
-    return { ok: false, status: 500, error: 'Server Firebase configuration missing apiKey.' };
+  const verified = await verifyServerFirebaseIdToken(idToken);
+  if (!verified.ok) {
+    return verified;
   }
-
-  let uid = '';
-  let email = '';
-  let displayName = '';
-
-  try {
-    const lookupRes = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(cfg.apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
-        signal: AbortSignal.timeout(5000)
-      }
-    );
-    if (!lookupRes.ok) {
-      return { ok: false, status: 401, error: 'Invalid or expired Firebase authentication token.' };
-    }
-    const lookupJson = (await lookupRes.json()) as any;
-    const fbUser = Array.isArray(lookupJson.users) ? lookupJson.users[0] : null;
-    if (!fbUser || !fbUser.localId || fbUser.disabled) {
-      return { ok: false, status: 401, error: 'Authenticated user account not found or disabled.' };
-    }
-    uid = fbUser.localId;
-    email = (fbUser.email || '').trim().toLowerCase();
-    displayName = fbUser.displayName || '';
-  } catch (err: any) {
-    return {
-      ok: false,
-      status: 503,
-      error: `Unable to verify authentication token: ${err?.message || 'network error'}`
-    };
-  }
+  const { uid, email, displayName } = verified.token;
 
   let userDoc: Record<string, any> | null = null;
   try {

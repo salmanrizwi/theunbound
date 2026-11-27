@@ -1,22 +1,8 @@
 import { Router, Request, Response } from 'express';
-import fs from 'fs';
-import path from 'path';
+import { getServerFirebaseConfig } from './firebaseServerAuth';
 
 export function createAdminUserRouter(): Router {
   const router = Router();
-
-  // Helper to load firebase-applet-config.json
-  const getFirebaseConfig = () => {
-    try {
-      const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-      if (fs.existsSync(configPath)) {
-        return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      }
-    } catch (e) {
-      console.warn('[SERVER-USER-ADMIN] Could not read firebase-applet-config.json:', e);
-    }
-    return null;
-  };
 
   /**
    * POST /api/admin/users/:userId/delete
@@ -81,9 +67,7 @@ export function createAdminUserRouter(): Router {
     }
 
     // 4. Authoritative Firebase / Firestore Deletion & Deactivation
-    const config = getFirebaseConfig();
-    const projectId = config?.projectId || 'gen-lang-client-0981426327';
-    const databaseId = config?.firestoreDatabaseId || '(default)';
+    const { projectId } = getServerFirebaseConfig();
 
     console.log(`[SERVER-USER-ADMIN] Executing authoritative deletion for user ${userId} in project ${projectId}`);
 
