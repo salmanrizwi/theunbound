@@ -1,0 +1,68 @@
+rules_version = '2';
+
+// Firebase Storage Security Rules for TheUnbound Portal
+// Protects private passenger compliance documents and persisted Proforma Invoice PDFs.
+// Zero public unauthenticated access; enforces file type & size ceilings.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isValidPassengerDocMime() {
+      return request.resource.contentType in [
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+        'image/webp'
+      ];
+    }
+
+    // Private Passenger Compliance Documents:
+    // Path: bookings/{bookingId}/passengers/{passengerId}/documents/{docId}/{fileName}
+    match /bookings/{bookingId}/passengers/{passengerId}/documents/{docId}/{fileName} {
+      // Authenticated access only; fine-grained booking ownership is additionally enforced
+      // by Firestore metadata rules (`booking_passenger_documents/{docId}`) and service layer.
+      allow read: if isAuthenticated();
+
+      // Upload / Replace: authenticated user, valid MIME type, max 15 MB, uploader UID matches auth token
+      allow create, update: if isAuthenticated()
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 15 * 1024 * 1024
+        && isValidPassengerDocMime()
+        && request.resource.metadata != null
+        && request.resource.metadata.bookingId == bookingId
+        && request.resource.metadata.passengerId == passengerId
+        && request.resource.metadata.documentId == docId
+        && request.resource.metadata.uploadedByUid == request.auth.uid;
+
+      // Authorized deletion (service layer additionally checks shared-path references)
+      allow delete: if isAuthenticated();
+    }
+
+    // Persisted Proforma Invoice PDFs:
+    // Path: bookings/{bookingId}/proforma-invoices/{invoiceId}/{fileName}
+    match /bookings/{bookingId}/proforma-invoices/{invoiceId}/{fileName} {
+      allow read: if isAuthenticated();
+
+      allow create, update: if isAuthenticated()
+        && request.resource != null
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType == 'application/pdf'
+        && request.resource.metadata != null
+        && request.resource.metadata.bookingId == bookingId
+        && request.resource.metadata.invoiceId == invoiceId;
+
+      allow delete: if false; // Issued Proforma PDFs are immutable for audit compliance
+    }
+
+    // Default deny for all other storage paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

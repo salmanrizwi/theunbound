@@ -92,6 +92,10 @@ export const AddServiceItemModal: React.FC<AddServiceItemModalProps> = ({
   const [operationalInstructions, setOperationalInstructions] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
   const [customerFacingNotes, setCustomerFacingNotes] = useState('');
+  const [serviceDescription, setServiceDescription] = useState('');
+  const [serviceNarrative, setServiceNarrative] = useState('');
+  const [serviceOverview, setServiceOverview] = useState('');
+  const [netPrice, setNetPrice] = useState<string>('');
 
   // Initial Supplier Allocation (Optional)
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
@@ -123,8 +127,13 @@ export const AddServiceItemModal: React.FC<AddServiceItemModalProps> = ({
     setProductId(p.id);
     setProductName(p.name);
     if (p.category) setCategory(p.category);
-    if (p.destination) setDestination(p.destination);
-    if (p.price) setUnitSellingPrice(p.price);
+    if (p.destination || p.destinationName) setDestination(p.destination || p.destinationName);
+    if (p.price || p.sellingPriceStartingFrom) setUnitSellingPrice(p.price || p.sellingPriceStartingFrom);
+    setServiceDescription(p.description || '');
+    setServiceNarrative(p.narrative || '');
+    setServiceOverview(p.overview || '');
+    const adultNet = Number(p.adultNetPrice ?? p.adultNettCost ?? 0);
+    if (adultNet > 0) setNetPrice(String(adultNet * Math.max(1, totalPax || 1)));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -141,6 +150,9 @@ export const AddServiceItemModal: React.FC<AddServiceItemModalProps> = ({
       isManualServiceItem: sourceMode === 'MANUAL_ITEM',
       destination,
       hub,
+      serviceDescription: serviceDescription.trim() || undefined,
+      serviceNarrative: serviceNarrative.trim() || undefined,
+      serviceOverview: serviceOverview.trim() || undefined,
       serviceDate: serviceDate || booking.travelStartDate,
       serviceTime,
       serviceEndDate: serviceEndDate || undefined,
@@ -148,7 +160,9 @@ export const AddServiceItemModal: React.FC<AddServiceItemModalProps> = ({
       totalPax,
       adults,
       children,
+      netPrice: netPrice ? parseFloat(netPrice) : undefined,
       unitSellingPrice,
+      sellingPrice: unitSellingPrice * totalPax,
       totalPrice: unitSellingPrice * totalPax,
       currency,
       operationalInstructions,
@@ -493,6 +507,7 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
   const [destination, setDestination] = useState(item.destination || booking.destination || '');
   const [hub, setHub] = useState(item.hub || '');
   const [serviceDescription, setServiceDescription] = useState(item.serviceDescription || '');
+  const [serviceNarrative, setServiceNarrative] = useState(item.serviceNarrative || '');
   const [serviceOverview, setServiceOverview] = useState(item.serviceOverview || '');
   const [serviceDate, setServiceDate] = useState(item.serviceDate || item.travelDate || '');
   const [serviceTime, setServiceTime] = useState(item.startTime || item.serviceTime || '');
@@ -595,6 +610,7 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
     setDestination(item.destination || booking.destination || '');
     setHub(item.hub || '');
     setServiceDescription(item.serviceDescription || '');
+    setServiceNarrative(item.serviceNarrative || '');
     setServiceOverview(item.serviceOverview || '');
     setServiceDate(item.serviceDate || item.travelDate || '');
     setServiceTime(item.startTime || item.serviceTime || '');
@@ -787,6 +803,7 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
         destination: destination.trim(),
         hub: hub.trim(),
         serviceDescription: serviceDescription.trim() || undefined,
+        serviceNarrative: serviceNarrative.trim() || undefined,
         serviceOverview: serviceOverview.trim() || undefined,
         serviceDate,
         travelDate: serviceDate,
@@ -1048,9 +1065,9 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[10px] font-bold uppercase text-slate-500">Service Description (Appears on Vouchers)</label>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Service Description (Optional • Vouchers)</label>
                   <textarea
                     rows={2}
                     value={serviceDescription}
@@ -1060,7 +1077,17 @@ export const EditServiceItemModal: React.FC<EditServiceItemModalProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold uppercase text-slate-500">Operational Overview / Highlights</label>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Itinerary Narrative (Optional • Vouchers)</label>
+                  <textarea
+                    rows={2}
+                    value={serviceNarrative}
+                    onChange={e => setServiceNarrative(e.target.value)}
+                    placeholder="Experience narrative or curated story..."
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs mt-1 focus:outline-none focus:border-[#008972]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-slate-500">Operational Overview (Optional • Vouchers)</label>
                   <textarea
                     rows={2}
                     value={serviceOverview}

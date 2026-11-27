@@ -3,6 +3,7 @@ import { Booking, User, BookingStatus } from '../../../types';
 import { AppDatabase } from '../../../services/db';
 import { formatCurrency } from '../../../services/pricingEngine';
 import { isInternalStaff, isExternalUser, canEditSubmittedBooking } from '../../../services/permissionEngine';
+import { resolveAuthoritativeBookingFinancials } from '../../../services/bookingManualDiscountEngine';
 import { 
   Calendar, 
   Users, 
@@ -47,10 +48,11 @@ export const DeskOverviewSection: React.FC<DeskOverviewSectionProps> = ({
   const isExternal = isExternalUser(currentUser);
   const isSubmitted = booking.status !== 'DRAFT';
 
-  // Calculation helpers
+  // Calculation helpers (Single Authoritative Pricing Snapshot Source)
+  const authoritativeFinancials = resolveAuthoritativeBookingFinancials(booking);
   const paymentSummary = db.calculateBookingPaymentSummary(booking);
-  const percentagePaid = paymentSummary.totalAmount > 0 
-    ? (paymentSummary.paidAmount / paymentSummary.totalAmount) * 100 
+  const percentagePaid = authoritativeFinancials.revisedBookingAmount > 0
+    ? Math.min(100, (authoritativeFinancials.verifiedPaidAmount / authoritativeFinancials.revisedBookingAmount) * 100)
     : 0;
   const readiness = db.checkBookingConfirmationReadiness(booking);
   const bookingTasks = db.getTasksForBooking(booking.id);
@@ -868,42 +870,52 @@ export const DeskOverviewSection: React.FC<DeskOverviewSectionProps> = ({
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
-              <span className="text-[10px] font-black uppercase text-slate-400 block">Total Customer Price</span>
-              <span className="text-lg font-black text-slate-900 mt-1 block">
-                {formatCurrency(booking.totalAmount || 0, booking.currency)}
+              <span className="text-[10px] font-black uppercase text-slate-400 block">
+                {authoritativeFinancials.hasManualDiscount ? 'Revised Customer Price' : 'Total Customer Price'}
               </span>
-              <span className="text-[10px] text-slate-500 font-bold block mt-0.5">Authoritative Selling</span>
+              <span className="text-lg font-black text-slate-900 mt-1 block font-mono">
+                {formatCurrency(authoritativeFinancials.revisedBookingAmount, authoritativeFinancials.currency)}
+              </span>
+              {authoritativeFinancials.hasManualDiscount ? (
+                <span className="text-[10px] text-indigo-700 font-bold block mt-0.5">
+                  Orig {formatCurrency(authoritativeFinancials.originalBookingAmount, authoritativeFinancials.currency)} • Disc -{formatCurrency(authoritativeFinancials.adminManualDiscountTotal, authoritativeFinancials.currency)}
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-500 font-bold block mt-0.5">
+                  Authoritative Selling (Snap v{authoritativeFinancials.latestSnapshotVersion})
+                </span>
+              )}
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
               <span className="text-[10px] font-black uppercase text-slate-400 block">Total Supplier Cost</span>
-              <span className="text-lg font-black text-slate-800 mt-1 block">
-                {formatCurrency(
-                  booking.items?.reduce((sum, it) => sum + (it.supplierTotalCost || it.supplierPrice || 0), 0) || 0,
-                  booking.currency
-                )}
+              <span className="text-lg font-black text-slate-800 mt-1 block font-mono">
+                {formatCurrency(authoritativeFinancials.supplierNettCost, authoritativeFinancials.currency)}
               </span>
-              <span className="text-[10px] text-slate-500 font-bold block mt-0.5">Commercial Buy Total</span>
+              <span className="text-[10px] text-slate-500 font-bold block mt-0.5">Protected Commercial Buy</span>
             </div>
 
-            <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-100">
-              <span className="text-[10px] font-black uppercase text-emerald-800 block">Gross Profit</span>
-              <span className="text-lg font-black text-emerald-800 mt-1 block">
-                {formatCurrency(
-                  (booking.totalAmount || 0) - (booking.items?.reduce((sum, it) => sum + (it.supplierTotalCost || it.supplierPrice || 0), 0) || 0),
-                  booking.currency
-                )}
+            <div className={`p-4 rounded-2xl border ${authoritativeFinancials.isLossMaking ? 'bg-rose-50/60 border-rose-200' : 'bg-emerald-50/60 border-emerald-100'}`}>
+              <span className={`text-[10px] font-black uppercase block ${authoritativeFinancials.isLossMaking ? 'text-rose-800' : 'text-emerald-800'}`}>
+                Remaining Margin
               </span>
-              <span className="text-[10px] text-emerald-700 font-bold block mt-0.5">Net Margin</span>
+              <span className={`text-lg font-black mt-1 block font-mono ${authoritativeFinancials.isLossMaking ? 'text-rose-800' : 'text-emerald-800'}`}>
+                {formatCurrency(authoritativeFinancials.remainingTheUnboundMargin, authoritativeFinancials.currency)}
+              </span>
+              <span className={`text-[10px] font-bold block mt-0.5 ${authoritativeFinancials.isLossMaking ? 'text-rose-700' : 'text-emerald-700'}`}>
+                {authoritativeFinancials.grossMarginPercent.toFixed(1)}% Margin
+              </span>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
               <span className="text-[10px] font-black uppercase text-slate-400 block">Verified Collections</span>
-              <span className="text-lg font-black text-[#008f77] mt-1 block">
-                {formatCurrency(paymentSummary.paidAmount, booking.currency)}
+              <span className="text-lg font-black text-[#008f77] mt-1 block font-mono">
+                {formatCurrency(authoritativeFinancials.verifiedPaidAmount, authoritativeFinancials.currency)}
               </span>
               <span className="text-[10px] text-slate-500 font-bold block mt-0.5">
-                {percentagePaid.toFixed(0)}% Collected
+                {authoritativeFinancials.isOverpaid
+                  ? `Credit ${formatCurrency(authoritativeFinancials.creditBalance, authoritativeFinancials.currency)}`
+                  : `Balance ${formatCurrency(authoritativeFinancials.outstandingBalance, authoritativeFinancials.currency)} (${percentagePaid.toFixed(0)}%)`}
               </span>
             </div>
           </div>

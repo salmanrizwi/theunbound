@@ -16,12 +16,15 @@ import {
   getLatestBookingPricingSnapshot,
   getReversedAdjustmentIdSet,
   isBookingEligibleForManualDiscount,
-  resolveAdminManualDiscountPermissions
+  resolveAdminManualDiscountPermissions,
+  resolveAuthoritativeBookingFinancials
 } from '../../services/bookingManualDiscountEngine';
 import {
   applyBookingManualDiscountAsync,
   reverseBookingManualDiscountAsync
 } from '../../services/bookingManualDiscountApiService';
+import { evaluateProformaInvoiceFreshness } from '../../services/bookingOperationsSyncService';
+import { generateAndPersistProformaInvoice } from '../../services/proformaInvoiceService';
 import { resolveEffectivePromotionStatus } from '../../services/promotionEngine';
 import {
   AlertTriangle,
@@ -32,6 +35,7 @@ import {
   Lock,
   Percent,
   Receipt,
+  RefreshCw,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -83,9 +87,14 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
     );
   }, [db, booking]);
   const reversedIds = useMemo(() => getReversedAdjustmentIdSet(adjustments), [adjustments]);
-  const existingInvoicesCount = useMemo(
-    () => db.getBookingInvoices(booking.id).length,
-    [db, booking.id, booking.proformaInvoiceIds?.length]
+  const bookingInvoices = useMemo(
+    () => db.getBookingInvoices(booking.id),
+    [db, booking.id, booking.updatedAt, booking.proformaInvoiceIds?.length, booking.activeProformaInvoiceId]
+  );
+  const existingInvoicesCount = bookingInvoices.length;
+  const authoritativeFinancials = useMemo(
+    () => resolveAuthoritativeBookingFinancials(booking, snapshots),
+    [booking, snapshots]
   );
 
   // Admin Manual Coupons configured in existing Promotion Management Engine
@@ -109,14 +118,33 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
   const [discountValue, setDiscountValue] = useState<string>('');
   const [discountCurrency, setDiscountCurrency] = useState<CurrencyCode>(bookingCurrency);
   const [reason, setReason] = useState<string>('');
+  const [internalReference, setInternalReference] = useState<string>('');
   const [internalNotes, setInternalNotes] = useState<string>('');
   const [approvalReference, setApprovalReference] = useState<string>('');
   const [allowMarginOverride, setAllowMarginOverride] = useState<boolean>(false);
   const [marginOverrideReason, setMarginOverrideReason] = useState<string>('');
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isGeneratingRevisedInvoice, setIsGeneratingRevisedInvoice] = useState<boolean>(false);
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [feedbackSuccess, setFeedbackSuccess] = useState<string | null>(null);
+  const [lastCommitDetails, setLastCommitDetails] = useState<{
+    snapshotId: string;
+    snapshotVersion: number;
+    revisedAmount: number;
+    discountApplied: number;
+    outstandingBalance: number;
+    creditBalance: number;
+    outdatedInvoiceNumbers: string[];
+    autoIssuedInvoice?: {
+      invoiceNumber: string;
+      invoiceVersion: number;
+      amount: number;
+      currency: CurrencyCode;
+    };
+    supersededInvoiceNumbers?: string[];
+  } | null>(null);
+  const [pendingSubmitKey, setPendingSubmitKey] = useState<string | null>(null);
 
   // Reversal state
   const [reversingAdjustmentId, setReversingAdjustmentId] = useState<string | null>(null);
@@ -190,6 +218,13 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
       return;
     }
 
+    const attemptKey =
+      pendingSubmitKey ||
+      `bmd-ui-${booking.id}-v${latestSnapshot.version}-${preview.discountType}-${preview.discountValue}-${Date.now()}`;
+    if (!pendingSubmitKey) {
+      setPendingSubmitKey(attemptKey);
+    }
+
     setIsSubmitting(true);
     try {
       const result = await applyBookingManualDiscountAsync({
@@ -204,34 +239,107 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
           couponId: selectedCoupon?.id,
           couponCode: selectedCoupon?.promoCode,
           reason: reason.trim(),
+          internalReference: internalReference.trim() || undefined,
           internalNotes: internalNotes.trim() || undefined,
           allowMarginOverride,
           marginOverrideReason: allowMarginOverride ? marginOverrideReason.trim() : undefined,
           approvalReference: approvalReference.trim() || undefined,
-          expectedSnapshotVersion: latestSnapshot.version
+          expectedSnapshotVersion: latestSnapshot.version,
+          idempotencyKey: attemptKey
         }
       });
 
       if (!result.ok) {
         setFeedbackError(result.error);
+        setPendingSubmitKey(null);
         return;
       }
 
-      setFeedbackSuccess(
-        `Applied ${formatCurrency(result.adjustment.discountAmountInBookingCurrency, bookingCurrency)} manual discount (Snapshot v${result.newSnapshot.version}). Revised Selling Price: ${formatCurrency(result.newSnapshot.revisedCustomerSellingPrice, bookingCurrency)}.`
+      const updatedInvoices = db.getBookingInvoices(booking.id);
+      const outdatedInvoiceNumbers = updatedInvoices
+        .filter(inv => {
+          const freshness = evaluateProformaInvoiceFreshness(inv, result.updatedBooking, updatedInvoices);
+          return freshness.isOutdated && !freshness.isSupersededByNewerVersion;
+        })
+        .map(inv => `#${inv.invoiceNumber} (v${inv.invoiceVersion || 1})`);
+      const postFin = resolveAuthoritativeBookingFinancials(result.updatedBooking);
+      const supersededNums = (result.supersededInvoices || []).map(
+        inv => `#${inv.invoiceNumber} (v${inv.invoiceVersion || 1})`
       );
+
+      setLastCommitDetails({
+        snapshotId: result.newSnapshot.snapshotId,
+        snapshotVersion: result.newSnapshot.version,
+        revisedAmount: result.newSnapshot.revisedCustomerSellingPrice,
+        discountApplied: result.adjustment.discountAmountInBookingCurrency,
+        outstandingBalance: postFin.outstandingBalance,
+        creditBalance: postFin.creditBalance,
+        outdatedInvoiceNumbers,
+        autoIssuedInvoice: result.revisedInvoice
+          ? {
+              invoiceNumber: result.revisedInvoice.invoiceNumber,
+              invoiceVersion: result.revisedInvoice.invoiceVersion || 1,
+              amount: result.revisedInvoice.proformaFinalBookingAmount ?? result.revisedInvoice.totalAmount,
+              currency: result.revisedInvoice.currency
+            }
+          : undefined,
+        supersededInvoiceNumbers: supersededNums
+      });
+      setFeedbackSuccess(
+        `Applied ${formatCurrency(result.adjustment.discountAmountInBookingCurrency, bookingCurrency)} manual discount (Snapshot ${result.newSnapshot.snapshotId} / v${result.newSnapshot.version}). Revised Booking Amount: ${formatCurrency(result.newSnapshot.revisedCustomerSellingPrice, bookingCurrency)}.${
+          result.revisedInvoice
+            ? ` Auto-issued Revised Proforma Invoice #${result.revisedInvoice.invoiceNumber} (v${result.revisedInvoice.invoiceVersion || 1}).`
+            : ''
+        }`
+      );
+      setPendingSubmitKey(null);
       setDiscountValue('');
       setSelectedCouponId('');
       setReason('');
+      setInternalReference('');
       setInternalNotes('');
       setApprovalReference('');
       setAllowMarginOverride(false);
       setMarginOverrideReason('');
       onRefresh();
     } catch (err: any) {
+      setPendingSubmitKey(null);
       setFeedbackError(err?.message || 'Unexpected error applying manual discount.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGenerateRevisedProformaInline = async () => {
+    if (isGeneratingRevisedInvoice) return;
+    setIsGeneratingRevisedInvoice(true);
+    setFeedbackError(null);
+    try {
+      const res = await generateAndPersistProformaInvoice(booking.id, currentUser, {
+        forceRegenerate: true,
+        reason: `Revised Proforma Invoice issued after Manual Discount Adjustment (Snapshot v${lastCommitDetails?.snapshotVersion || latestSnapshot.version})`
+      });
+      if (res.success && res.invoice) {
+        setLastCommitDetails(prev =>
+          prev ? { ...prev, outdatedInvoiceNumbers: [] } : null
+        );
+        setFeedbackSuccess(
+          `Generated Revised Proforma Invoice #${res.invoice.invoiceNumber} (v${res.invoice.invoiceVersion || 1}) locked to Snapshot v${res.invoice.sourcePricingSnapshotVersion || latestSnapshot.version} for ${formatCurrency(res.invoice.proformaFinalBookingAmount ?? res.invoice.totalAmount, res.invoice.currency)}.`
+        );
+        onRefresh();
+      } else {
+        setFeedbackError(
+          res.error?.message ||
+            'The discount adjustment remains safely committed, but generating the revised Proforma Invoice failed. Please retry from Proforma Invoices.'
+        );
+      }
+    } catch (err: any) {
+      setFeedbackError(
+        err?.message ||
+          'The discount adjustment remains safely committed, but generating the revised Proforma Invoice failed.'
+      );
+    } finally {
+      setIsGeneratingRevisedInvoice(false);
     }
   };
 
@@ -263,7 +371,11 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
       }
 
       setFeedbackSuccess(
-        `Reversed manual discount (${formatCurrency(adj.discountAmountInBookingCurrency, bookingCurrency)}). Snapshot v${result.newSnapshot.version} committed; Revised Selling Price restored to ${formatCurrency(result.newSnapshot.revisedCustomerSellingPrice, bookingCurrency)}.`
+        `Reversed manual discount (${formatCurrency(adj.discountAmountInBookingCurrency, bookingCurrency)}). Snapshot v${result.newSnapshot.version} committed; Revised Selling Price restored to ${formatCurrency(result.newSnapshot.revisedCustomerSellingPrice, bookingCurrency)}.${
+          result.revisedInvoice
+            ? ` Auto-issued Revised Proforma Invoice #${result.revisedInvoice.invoiceNumber} (v${result.revisedInvoice.invoiceVersion || 1}).`
+            : ''
+        }`
       );
       setReversingAdjustmentId(null);
       setReversalReason('');
@@ -417,13 +529,13 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
 
           <div className="p-3.5 rounded-2xl bg-slate-900 text-white border border-slate-800">
             <span className="text-[10px] font-bold text-slate-300 uppercase block">
-              Revised Selling Price
+              Current Selling Price
             </span>
             <span className="text-sm font-black font-mono mt-1 block text-teal-300">
               {formatCurrency(latestSnapshot.revisedCustomerSellingPrice, bookingCurrency)}
             </span>
             <span className="text-[10px] text-slate-400 block mt-0.5">
-              Orig: {formatCurrency(baselineSnapshot.originalCustomerSellingPrice, bookingCurrency)}
+              Original (Immutable): {formatCurrency(baselineSnapshot.originalCustomerSellingPrice, bookingCurrency)}
             </span>
           </div>
         </div>
@@ -436,9 +548,88 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
           </div>
         )}
         {feedbackSuccess && (
-          <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-            <span>{feedbackSuccess}</span>
+          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs space-y-2.5">
+            <div className="flex items-start gap-2 font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <span>{feedbackSuccess}</span>
+            </div>
+            {lastCommitDetails && (
+              <div className="pl-6 space-y-2">
+                <div className="flex flex-wrap gap-3 text-[11px] font-mono text-emerald-900">
+                  <span>
+                    Snapshot: <strong>{lastCommitDetails.snapshotId} (v{lastCommitDetails.snapshotVersion})</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Current Selling Price: <strong>{formatCurrency(lastCommitDetails.revisedAmount, bookingCurrency)}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    {lastCommitDetails.creditBalance > 0
+                      ? `Credit/Overpayment: ${formatCurrency(lastCommitDetails.creditBalance, bookingCurrency)}`
+                      : `Balance Outstanding: ${formatCurrency(lastCommitDetails.outstandingBalance, bookingCurrency)}`}
+                  </span>
+                </div>
+                {lastCommitDetails.autoIssuedInvoice && (
+                  <div className="p-3 rounded-xl bg-white border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-emerald-950">
+                    <div className="text-[11px]">
+                      <p className="font-bold">
+                        Revised Proforma Invoice Auto-Issued: #{lastCommitDetails.autoIssuedInvoice.invoiceNumber} (v{lastCommitDetails.autoIssuedInvoice.invoiceVersion}) —{' '}
+                        <span className="font-mono">
+                          {formatCurrency(lastCommitDetails.autoIssuedInvoice.amount, lastCommitDetails.autoIssuedInvoice.currency)}
+                        </span>
+                      </p>
+                      {lastCommitDetails.supersededInvoiceNumbers && lastCommitDetails.supersededInvoiceNumbers.length > 0 && (
+                        <p className="text-emerald-800 mt-0.5">
+                          Prior version(s) marked Superseded (historical records preserved immutably): {lastCommitDetails.supersededInvoiceNumbers.join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    {onNavigateToInvoices && (
+                      <button
+                        type="button"
+                        onClick={onNavigateToInvoices}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-[11px] font-bold cursor-pointer shrink-0"
+                      >
+                        Open Proforma Invoices
+                      </button>
+                    )}
+                  </div>
+                )}
+                {lastCommitDetails.outdatedInvoiceNumbers.length > 0 && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-amber-950">
+                    <div className="text-[11px]">
+                      <p className="font-bold">
+                        {lastCommitDetails.outdatedInvoiceNumbers.length} Existing Proforma Invoice{lastCommitDetails.outdatedInvoiceNumbers.length > 1 ? 's' : ''} Now Marked Outdated:
+                      </p>
+                      <p className="text-amber-800 mt-0.5">
+                        {lastCommitDetails.outdatedInvoiceNumbers.join(', ')} (preserved immutably). Generate a revised version to reflect the updated amount.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={isGeneratingRevisedInvoice}
+                        onClick={handleGenerateRevisedProformaInline}
+                        className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingRevisedInvoice ? 'animate-spin' : ''}`} />
+                        <span>{isGeneratingRevisedInvoice ? 'Generating...' : 'Generate Revised Proforma'}</span>
+                      </button>
+                      {onNavigateToInvoices && (
+                        <button
+                          type="button"
+                          onClick={onNavigateToInvoices}
+                          className="px-3 py-1.5 rounded-xl bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 text-[11px] font-bold cursor-pointer"
+                        >
+                          View Invoices
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -594,8 +785,8 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
               </div>
             )}
 
-            {/* Reason & Internal Notes */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Reason, Internal Reference & Notes */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="text-[11px] font-bold text-slate-700 block mb-1">
                   Mandatory Internal Reason *
@@ -611,64 +802,126 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
               </div>
               <div>
                 <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                  Internal Reference (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={internalReference}
+                  onChange={e => setInternalReference(e.target.value)}
+                  placeholder="e.g. DISC-APR-2026-014 or Ticket ID"
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 block mb-1">
                   Internal Audit Notes (Admin Only)
                 </label>
                 <input
                   type="text"
                   value={internalNotes}
                   onChange={e => setInternalNotes(e.target.value)}
-                  placeholder="Optional reference ticket, email approval date, or commercial context"
+                  placeholder="Optional commercial approval context"
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-indigo-500"
                 />
               </div>
             </div>
 
-            {/* Live Central Engine Calculation Preview */}
+            {/* Live Central Engine Calculation Preview (Complete Section 8 Breakdown) */}
             {numericValue > 0 && (
               <div className="p-4 rounded-2xl bg-white border border-slate-200 space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[11px] font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
                     <ShieldCheck className="w-4 h-4 text-teal-600" />
-                    Central Pricing Engine Live Preview
+                    Central Pricing Engine Live Preview ({preview.discountType === 'PERCENTAGE' ? `${preview.discountValue}% Percentage` : `Fixed ${formatCurrency(preview.discountValue, preview.discountCurrency)}`})
                   </span>
-                  {preview.fxRateApplied !== 1 && (
-                    <span className="text-[10px] font-mono text-slate-500">
-                      FX Rate: 1 {preview.discountCurrency} = {preview.fxRateApplied} {bookingCurrency}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500">
+                    <span>Current Snapshot: v{preview.latestSnapshotVersion} → Next: v{preview.latestSnapshotVersion + 1}</span>
+                    {preview.fxRateApplied !== 1 && (
+                      <span>
+                        | FX: 1 {preview.discountCurrency} = {preview.fxRateApplied} {bookingCurrency}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                   <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Requested Discount</span>
-                    <span className="font-mono font-black text-indigo-700">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Original Booking Amount</span>
+                    <span className="font-mono font-black text-slate-900 block mt-0.5">
+                      {formatCurrency(preview.originalCustomerSellingPrice, bookingCurrency)}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block">
+                      Prior Active: {formatCurrency(preview.previousCustomerSellingPrice, bookingCurrency)}
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200/80">
+                    <span className="text-[10px] font-bold text-indigo-700 uppercase block">
+                      Calculated Discount ({preview.discountType})
+                    </span>
+                    <span className="font-mono font-black text-indigo-800 block mt-0.5">
                       -{formatCurrency(preview.requestedDiscountAmount, bookingCurrency)}
                     </span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Supplier Nett Cost</span>
-                    <span className="font-mono font-black text-slate-800">
-                      {formatCurrency(preview.supplierNettCost, bookingCurrency)}
-                    </span>
-                    <span className="text-[10px] text-emerald-600 block">Unchanged</span>
-                  </div>
-                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Remaining Margin</span>
-                    <span
-                      className={`font-mono font-black ${
-                        preview.remainingTheUnboundMarginAfter < 0 ? 'text-rose-700' : 'text-emerald-700'
-                      }`}
-                    >
-                      {formatCurrency(preview.availableMarginBeforeDiscount, bookingCurrency)} →{' '}
-                      {formatCurrency(preview.remainingTheUnboundMarginAfter, bookingCurrency)}
+                    <span className="text-[10px] text-indigo-700 block">
+                      Cumulative: -{formatCurrency(preview.cumulativeAdminManualDiscountAfter, bookingCurrency)}
                     </span>
                   </div>
-                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase block">Revised Selling Price</span>
-                    <span className="font-mono font-black text-slate-900">
-                      {formatCurrency(preview.previousCustomerSellingPrice, bookingCurrency)} →{' '}
+                  <div className="p-2.5 rounded-xl bg-slate-900 text-white border border-slate-800">
+                    <span className="text-[10px] font-bold text-teal-300 uppercase block">Revised Booking Amount</span>
+                    <span className="font-mono font-black text-white block mt-0.5">
                       {formatCurrency(preview.revisedCustomerSellingPrice, bookingCurrency)}
                     </span>
+                    <span className="text-[10px] text-slate-300 block">
+                      Authoritative Snapshot v{preview.latestSnapshotVersion + 1}
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase block">
+                      {preview.isOverpaidAfterDiscount ? 'Revised Balance / Credit' : 'Revised Outstanding Balance'}
+                    </span>
+                    <span
+                      className={`font-mono font-black block mt-0.5 ${
+                        preview.isOverpaidAfterDiscount
+                          ? 'text-indigo-700'
+                          : (preview.revisedOutstandingBalance ?? 0) > 0
+                            ? 'text-amber-700'
+                            : 'text-emerald-700'
+                      }`}
+                    >
+                      {preview.isOverpaidAfterDiscount
+                        ? `Credit ${formatCurrency(preview.revisedCreditBalance ?? 0, bookingCurrency)}`
+                        : formatCurrency(preview.revisedOutstandingBalance ?? preview.revisedCustomerSellingPrice, bookingCurrency)}
+                    </span>
+                    <span className="text-[10px] text-slate-500 block">
+                      Paid: {formatCurrency(preview.amountAlreadyPaid ?? authoritativeFinancials.verifiedPaidAmount, bookingCurrency)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Supplier Nett Cost (Protected)</span>
+                      <span className="font-mono font-black text-slate-800">
+                        {formatCurrency(preview.supplierNettCost, bookingCurrency)}
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold">
+                      Unchanged
+                    </span>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-slate-400 uppercase block">Remaining Internal Margin</span>
+                      <span
+                        className={`font-mono font-black ${
+                          preview.remainingTheUnboundMarginAfter < 0 ? 'text-rose-700' : 'text-emerald-700'
+                        }`}
+                      >
+                        {formatCurrency(preview.availableMarginBeforeDiscount, bookingCurrency)} →{' '}
+                        {formatCurrency(preview.remainingTheUnboundMarginAfter, bookingCurrency)}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-semibold text-slate-500">Funded from Margin</span>
                   </div>
                 </div>
 
@@ -820,32 +1073,122 @@ export const BookingManualDiscountPanel: React.FC<BookingManualDiscountPanelProp
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-slate-600 bg-slate-50/80 p-2.5 rounded-xl">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-[11px] text-slate-600 bg-slate-50/80 p-2.5 rounded-xl">
                       <div>
-                        <span className="text-slate-400">Selling Price: </span>
+                        <span className="text-slate-400 block text-[10px] uppercase">Original Booking Amount</span>
+                        <strong className="font-mono text-slate-800">
+                          {formatCurrency(
+                            adj.originalBookingAmount ?? baselineSnapshot.originalCustomerSellingPrice,
+                            adj.bookingCurrency
+                          )}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase">
+                          Selling Price ({adj.discountType === 'PERCENTAGE' ? `${adj.discountValue}%` : 'Fixed'})
+                        </span>
                         <strong className="font-mono text-slate-900">
                           {formatCurrency(adj.sellingPriceBefore, adj.bookingCurrency)} →{' '}
                           {formatCurrency(adj.sellingPriceAfter, adj.bookingCurrency)}
                         </strong>
                       </div>
                       <div>
-                        <span className="text-slate-400">TheUnbound Margin: </span>
+                        <span className="text-slate-400 block text-[10px] uppercase">TheUnbound Margin</span>
                         <strong className="font-mono text-slate-900">
                           {formatCurrency(adj.marginBefore, adj.bookingCurrency)} →{' '}
                           {formatCurrency(adj.marginAfter, adj.bookingCurrency)}
                         </strong>
                       </div>
                       <div>
-                        <span className="text-slate-400">Supplier Nett (Locked): </span>
+                        <span className="text-slate-400 block text-[10px] uppercase">Supplier Nett (Locked)</span>
                         <strong className="font-mono text-slate-900">
                           {formatCurrency(adj.supplierNettCostSnapshot, adj.bookingCurrency)}
                         </strong>
                       </div>
                     </div>
 
+                    {/* Previous vs. Revised Payment Schedule Snapshot */}
+                    {(adj.previousPaymentSchedule || adj.revisedPaymentSchedule) && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] bg-slate-50/60 border border-slate-200/70 p-2.5 rounded-xl">
+                        {adj.previousPaymentSchedule && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-slate-500 block">
+                              Previous Payment Schedule (Total:{' '}
+                              <span className="font-mono">
+                                {formatCurrency(adj.previousPaymentSchedule.totalAmount, adj.bookingCurrency)}
+                              </span>
+                              )
+                            </span>
+                            <div className="space-y-0.5 text-slate-600">
+                              {(adj.previousPaymentSchedule.installments || []).map(inst => (
+                                <div key={inst.id} className="flex items-center justify-between font-mono text-[10px]">
+                                  <span className="font-sans truncate pr-2">
+                                    #{inst.installmentNumber} {inst.title}
+                                  </span>
+                                  <span>
+                                    {formatCurrency(inst.amount, adj.bookingCurrency)} ({inst.status})
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {adj.revisedPaymentSchedule && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase text-indigo-700 block">
+                              Revised Payment Schedule (Total:{' '}
+                              <span className="font-mono">
+                                {formatCurrency(adj.revisedPaymentSchedule.totalAmount, adj.bookingCurrency)}
+                              </span>
+                              )
+                            </span>
+                            <div className="space-y-0.5 text-slate-800">
+                              {(adj.revisedPaymentSchedule.installments || []).map(inst => (
+                                <div key={inst.id} className="flex items-center justify-between font-mono text-[10px]">
+                                  <span className="font-sans font-semibold truncate pr-2">
+                                    #{inst.installmentNumber} {inst.title}
+                                  </span>
+                                  <span className="font-bold text-indigo-900">
+                                    {formatCurrency(inst.amount, adj.bookingCurrency)} ({inst.status})
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Associated Invoice & Document Versions */}
+                    {adj.associatedInvoiceVersions && adj.associatedInvoiceVersions.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] bg-indigo-50/50 border border-indigo-200/70 px-2.5 py-2 rounded-xl">
+                        <span className="font-bold uppercase text-indigo-900 mr-1">
+                          Associated Invoices:
+                        </span>
+                        {adj.associatedInvoiceVersions.map(invVer => (
+                          <span
+                            key={`${invVer.invoiceId}-${invVer.status}`}
+                            className={`px-2 py-0.5 rounded-md font-mono font-bold border ${
+                              invVer.status === 'ISSUED_REVISED' || invVer.status === 'CURRENT'
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}
+                          >
+                            {invVer.invoiceNumber} v{invVer.invoiceVersion} • {invVer.status.replace(/_/g, ' ')} •{' '}
+                            {formatCurrency(invVer.amount, invVer.currency)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <p className="text-[11px] text-slate-700">
                         <strong className="text-slate-900">Reason:</strong> {adj.reason}
+                        {adj.internalReference && (
+                          <span className="text-slate-500 ml-2 font-mono">
+                            (Ref: {adj.internalReference})
+                          </span>
+                        )}
                         {adj.marginOverrideReason && (
                           <span className="text-rose-700 ml-2">
                             (Override Reason: {adj.marginOverrideReason})

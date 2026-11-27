@@ -1,12 +1,23 @@
 import {
   Booking,
+  BookingInvoice,
   BookingItem,
   CurrencyCode,
+  Hotel,
   Product,
   ServiceItemConfirmationStatus,
   SupplierAllocationStatus
 } from '../types';
-import { getLatestBookingPricingSnapshot, roundMoney } from './bookingManualDiscountEngine';
+import {
+  getLatestBookingPricingSnapshot,
+  resolveAuthoritativeBookingFinancials,
+  roundMoney
+} from './bookingManualDiscountEngine';
+import {
+  CanonicalCategoryId,
+  resolveAuthoritativeCategory,
+  resolveServiceItemFinancials
+} from './supplierAllocationEngine';
 
 // ============================================================================
 // AUTHORITATIVE BOOKING OPERATIONS SYNCHRONISATION & VALIDATION ENGINE
@@ -43,7 +54,16 @@ export const CANONICAL_ALLOCATION_STATUSES: CanonicalAllocationStatus[] = [
 export interface HydratedBookingServiceItem extends BookingItem {
   // Resolved operational convenience fields (strictly authoritative, never fabricated)
   resolvedDescription: string;
+  resolvedNarrative: string;
   resolvedOverview: string;
+  resolvedCategoryId: CanonicalCategoryId;
+  resolvedCategoryLabel: string;
+  resolvedNetPrice: number;
+  resolvedSellingPrice: number;
+  resolvedMarginAmount: number;
+  resolvedMarginPercent: number | null;
+  resolvedHasNetPrice: boolean;
+  resolvedIsLegacyMissingNet: boolean;
   resolvedInclusions: string[];
   resolvedExclusions: string[];
   resolvedServiceDate: string;
@@ -103,9 +123,14 @@ export interface ChronologicalDayGroup {
 
 export interface AuthoritativeProformaFinancials {
   finalBookingAmount: number;
+  originalBookingAmount: number;
+  adminManualDiscountTotal: number;
   currency: CurrencyCode;
   amountPaid: number;
   balanceDue: number;
+  creditBalance: number;
+  isOverpaid: boolean;
+  paymentStatus: Booking['paymentStatus'];
   sourcePricingSnapshotId: string;
   sourcePricingSnapshotVersion: number;
   // Underlying financial components preserved internally (NEVER rendered separately on Proforma PDF)
@@ -113,6 +138,19 @@ export interface AuthoritativeProformaFinancials {
   internalUnderlyingServiceFeeTotal: number;
   internalUnderlyingDiscountTotal: number;
   internalUnderlyingSubtotal: number;
+}
+
+export interface ProformaInvoiceFreshness {
+  isOutdated: boolean;
+  isSupersededByNewerVersion: boolean;
+  statusLabel: 'CURRENT' | 'OUTDATED_PRICING' | 'SUPERSEDED';
+  reason?: string;
+  invoiceSnapshotId: string;
+  invoiceSnapshotVersion: number;
+  latestSnapshotId: string;
+  latestSnapshotVersion: number;
+  invoiceAmount: number;
+  latestBookingAmount: number;
 }
 
 // ----------------------------------------------------------------------------
@@ -423,12 +461,43 @@ export function formatPassengerBreakdown(adults: number, children: number, infan
   return parts.join(', ');
 }
 
+/**
+ * Converts optional rich HTML or plain text into clean, readable multi-paragraph text
+ * preserving line breaks and bullet lists while safely stripping raw HTML tags.
+ */
+export function formatRichContentForDisplay(raw?: string | null): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let text = raw;
+  if (/<[a-z][\s\S]*>/i.test(text)) {
+    text = text
+      .replace(/<\s*br\s*\/?>/gi, '\n')
+      .replace(/<\/\s*(p|div|h1|h2|h3|h4|h5|h6|tr)\s*>/gi, '\n\n')
+      .replace(/<\s*li[^>]*>/gi, '\n- ')
+      .replace(/<\/\s*li\s*>/gi, '')
+      .replace(/<\/\s*(ul|ol)\s*>/gi, '\n')
+      .replace(/<[^>]+>/g, '');
+  }
+  text = text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text;
+}
+
 export function hydrateBookingServiceItem(
   item: BookingItem,
   booking?: Booking | null,
-  productRecord?: Product | null
+  productRecord?: Product | null,
+  hotelRecord?: Hotel | null
 ): HydratedBookingServiceItem {
   const cfg = (item.configuration_snapshot || {}) as Record<string, any>;
+  const contentSnap = (item.contentSnapshot || {}) as Record<string, any>;
   const bookingTravelers = (booking as any)?.travelers || (
     booking?.customer && (booking.customer.totalAdults !== undefined || booking.customer.totalChildren !== undefined)
       ? {
@@ -467,27 +536,54 @@ export function hydrateBookingServiceItem(
     }
   }
 
-  // Category classification
-  const isTransportService = isTransportServiceCategory(item);
-  const isAccommodationService = isAccommodationServiceCategory(item);
-  const isTicketedActivity = isTicketedActivityCategory(item);
+  // Authoritative Category Identity & Financials
+  const resolvedCat = resolveAuthoritativeCategory(item, productRecord, hotelRecord);
+  const financials = resolveServiceItemFinancials(item, booking, productRecord, hotelRecord);
 
-  // Authoritative descriptions & overview (Item overrides -> Product master -> Empty, NEVER fabricated generic text)
-  const resolvedDescription = firstNonEmpty(
-    item.serviceDescription,
-    cfg.serviceDescription,
-    cfg.description,
-    productRecord?.description,
-    productRecord?.shortDescription
+  // Category classification
+  const isTransportService = isTransportServiceCategory(item) || resolvedCat.categoryId === 'TRANSFER';
+  const isAccommodationService = isAccommodationServiceCategory(item) || resolvedCat.categoryId === 'HOTEL';
+  const isTicketedActivity = isTicketedActivityCategory(item) || resolvedCat.categoryId === 'ACTIVITY';
+
+  // Authoritative Description, Narrative & Overview (Historical item snapshot FIRST -> Master Product/Hotel -> Empty, NEVER fabricated)
+  const resolvedDescription = formatRichContentForDisplay(
+    firstNonEmpty(
+      item.serviceDescription,
+      contentSnap.description,
+      cfg.serviceDescription,
+      cfg.description,
+      productRecord?.description,
+      productRecord?.longDescription,
+      hotelRecord?.description
+    )
+  );
+
+  const resolvedNarrative = formatRichContentForDisplay(
+    firstNonEmpty(
+      item.serviceNarrative,
+      contentSnap.narrative,
+      cfg.serviceNarrative,
+      cfg.narrative,
+      productRecord?.narrative,
+      hotelRecord?.narrative
+    )
   );
 
   const productHighlights: string[] | undefined = (productRecord as any)?.highlights;
-  const resolvedOverview = firstNonEmpty(
-    item.serviceOverview,
-    cfg.serviceOverview,
-    cfg.overview,
-    productRecord?.shortDescription,
-    productHighlights?.length ? productHighlights.join(' • ') : ''
+  const resolvedOverview = formatRichContentForDisplay(
+    firstNonEmpty(
+      item.serviceOverview,
+      contentSnap.overview,
+      contentSnap.shortDescription,
+      cfg.serviceOverview,
+      cfg.overview,
+      productRecord?.overview,
+      productRecord?.shortDescription,
+      productRecord?.summary,
+      hotelRecord?.overview,
+      hotelRecord?.shortDescription,
+      productHighlights?.length ? productHighlights.join(' • ') : ''
+    )
   );
 
   const resolvedInclusions = cleanStringList(
@@ -624,10 +720,13 @@ export function hydrateBookingServiceItem(
     children,
     infants,
     totalPax,
+    categoryId: resolvedCat.categoryId,
+    sourceCategoryLabel: resolvedCat.sourceCategoryLabel,
     serviceDate: resolvedServiceDate || item.serviceDate,
     travelDate: resolvedServiceDate || item.travelDate,
     serviceTime: resolvedStartTime || item.serviceTime,
     serviceDescription: resolvedDescription || item.serviceDescription,
+    serviceNarrative: resolvedNarrative || item.serviceNarrative,
     serviceOverview: resolvedOverview || item.serviceOverview,
     inclusions: resolvedInclusions,
     exclusions: resolvedExclusions,
@@ -657,7 +756,16 @@ export function hydrateBookingServiceItem(
     pricingSnapshotVersion,
     // Hydrated helper properties
     resolvedDescription,
+    resolvedNarrative,
     resolvedOverview,
+    resolvedCategoryId: resolvedCat.categoryId,
+    resolvedCategoryLabel: resolvedCat.categoryLabel,
+    resolvedNetPrice: financials.netPrice,
+    resolvedSellingPrice: financials.sellingPrice,
+    resolvedMarginAmount: financials.marginAmount,
+    resolvedMarginPercent: financials.marginPercent,
+    resolvedHasNetPrice: financials.hasNetPrice,
+    resolvedIsLegacyMissingNet: financials.isLegacyMissingNet,
     resolvedInclusions,
     resolvedExclusions,
     resolvedServiceDate,
@@ -1011,21 +1119,8 @@ export function validateCompleteVoucherReadiness(
 // ----------------------------------------------------------------------------
 
 export function resolveAuthoritativeProformaAmount(booking: Booking): AuthoritativeProformaFinancials {
-  const latestSnapshot = getLatestBookingPricingSnapshot(booking);
-  const currency: CurrencyCode = (latestSnapshot.currency || booking.currency || 'USD') as CurrencyCode;
-
-  // Authoritative Final Booking Amount after all committed B2B promos & Admin Manual Discounts
-  const finalBookingAmount = roundMoney(
-    Math.max(
-      0,
-      typeof latestSnapshot.revisedCustomerSellingPrice === 'number' && latestSnapshot.revisedCustomerSellingPrice >= 0
-        ? latestSnapshot.revisedCustomerSellingPrice
-        : booking.finalCustomerSellingPrice ?? booking.totalAmount ?? 0
-    )
-  );
-
-  const amountPaid = roundMoney(Math.max(0, Number((booking as any).paidAmount ?? (booking as any).amountPaid ?? 0)));
-  const balanceDue = roundMoney(Math.max(0, finalBookingAmount - amountPaid));
+  const fin = resolveAuthoritativeBookingFinancials(booking);
+  const latestSnapshot = fin.latestSnapshot;
 
   // Preserve underlying internal components in the database record (never displayed on Proforma PDF)
   const internalUnderlyingTaxTotal = roundMoney(Math.max(0, Number((booking as any).taxAmount || (booking as any).taxTotal || 0)));
@@ -1034,20 +1129,112 @@ export function resolveAuthoritativeProformaAmount(booking: Booking): Authoritat
     Math.max(0, (latestSnapshot.b2bPromotionDiscountAmount || 0) + (latestSnapshot.cumulativeAdminManualDiscount || 0))
   );
   const internalUnderlyingSubtotal = roundMoney(
-    Math.max(0, finalBookingAmount - internalUnderlyingTaxTotal - internalUnderlyingServiceFeeTotal)
+    Math.max(0, fin.revisedBookingAmount - internalUnderlyingTaxTotal - internalUnderlyingServiceFeeTotal)
   );
 
   return {
-    finalBookingAmount,
-    currency,
-    amountPaid,
-    balanceDue,
-    sourcePricingSnapshotId: latestSnapshot.snapshotId || latestSnapshot.id,
-    sourcePricingSnapshotVersion: latestSnapshot.version || 1,
+    finalBookingAmount: fin.revisedBookingAmount,
+    originalBookingAmount: fin.originalBookingAmount,
+    adminManualDiscountTotal: fin.adminManualDiscountTotal,
+    currency: fin.currency,
+    amountPaid: fin.verifiedPaidAmount,
+    balanceDue: fin.outstandingBalance,
+    creditBalance: fin.creditBalance,
+    isOverpaid: fin.isOverpaid,
+    paymentStatus: fin.paymentStatus,
+    sourcePricingSnapshotId: fin.latestSnapshotId,
+    sourcePricingSnapshotVersion: fin.latestSnapshotVersion,
     internalUnderlyingTaxTotal,
     internalUnderlyingServiceFeeTotal,
     internalUnderlyingDiscountTotal,
     internalUnderlyingSubtotal
+  };
+}
+
+/**
+ * Evaluates whether an existing immutable Proforma Invoice reflects the booking's
+ * latest committed BookingPricingSnapshot or is now Outdated / Superseded.
+ * Never mutates the historical invoice record.
+ */
+export function evaluateProformaInvoiceFreshness(
+  invoice: BookingInvoice,
+  booking: Booking | null | undefined,
+  allBookingInvoices?: BookingInvoice[]
+): ProformaInvoiceFreshness {
+  const invoiceAmount = roundMoney(Number(invoice.proformaFinalBookingAmount ?? invoice.totalAmount ?? 0));
+  const invoiceSnapshotVersion = Number(invoice.sourcePricingSnapshotVersion || 1);
+  const invoiceSnapshotId = invoice.sourcePricingSnapshotId || `SNAP-v${invoiceSnapshotVersion}`;
+
+  if (!booking) {
+    return {
+      isOutdated: invoice.status === 'SUPERSEDED',
+      isSupersededByNewerVersion: invoice.status === 'SUPERSEDED',
+      statusLabel: invoice.status === 'SUPERSEDED' ? 'SUPERSEDED' : 'CURRENT',
+      invoiceSnapshotId,
+      invoiceSnapshotVersion,
+      latestSnapshotId: invoiceSnapshotId,
+      latestSnapshotVersion: invoiceSnapshotVersion,
+      invoiceAmount,
+      latestBookingAmount: invoiceAmount
+    };
+  }
+
+  const latest = resolveAuthoritativeBookingFinancials(booking);
+  const latestSnapshotVersion = latest.latestSnapshotVersion;
+  const latestSnapshotId = latest.latestSnapshotId;
+  const latestBookingAmount = latest.revisedBookingAmount;
+
+  const isSupersededByNewerVersion =
+    invoice.status === 'SUPERSEDED' ||
+    Boolean(
+      allBookingInvoices &&
+        allBookingInvoices.some(
+          other =>
+            other.id !== invoice.id &&
+            other.status !== 'VOIDED' &&
+            (Number(other.invoiceVersion || 1) > Number(invoice.invoiceVersion || 1) ||
+              Number(other.sourcePricingSnapshotVersion || 1) > invoiceSnapshotVersion)
+        )
+    ) ||
+    Boolean(
+      booking.activeProformaInvoiceId &&
+        booking.activeProformaInvoiceId !== invoice.id &&
+        allBookingInvoices?.some(other => other.id === booking.activeProformaInvoiceId)
+    );
+
+  const snapshotVersionBehind = invoiceSnapshotVersion < latestSnapshotVersion;
+  const snapshotIdMismatch =
+    Boolean(invoice.sourcePricingSnapshotId) &&
+    Boolean(latestSnapshotId) &&
+    invoice.sourcePricingSnapshotId !== latestSnapshotId;
+  const amountDiffers = Math.abs(invoiceAmount - latestBookingAmount) > 0.01;
+
+  const isOutdated = snapshotVersionBehind || snapshotIdMismatch || amountDiffers;
+
+  let statusLabel: ProformaInvoiceFreshness['statusLabel'] = 'CURRENT';
+  let reason: string | undefined;
+
+  if (isSupersededByNewerVersion) {
+    statusLabel = 'SUPERSEDED';
+    reason = isOutdated
+      ? `Superseded by a newer revised Proforma Invoice (Issued on Snapshot v${invoiceSnapshotVersion} at ${invoice.currency} ${invoiceAmount.toLocaleString()}; current booking is Snapshot v${latestSnapshotVersion} at ${latest.currency} ${latestBookingAmount.toLocaleString()}).`
+      : 'Superseded by a newer Proforma Invoice version.';
+  } else if (isOutdated) {
+    statusLabel = 'OUTDATED_PRICING';
+    reason = `Issued on Pricing Snapshot v${invoiceSnapshotVersion} (${invoice.currency} ${invoiceAmount.toLocaleString()}), before booking was revised to Snapshot v${latestSnapshotVersion} (${latest.currency} ${latestBookingAmount.toLocaleString()}). Generate a Revised Proforma Invoice to reflect the updated amount.`;
+  }
+
+  return {
+    isOutdated,
+    isSupersededByNewerVersion,
+    statusLabel,
+    reason,
+    invoiceSnapshotId,
+    invoiceSnapshotVersion,
+    latestSnapshotId,
+    latestSnapshotVersion,
+    invoiceAmount,
+    latestBookingAmount
   };
 }
 

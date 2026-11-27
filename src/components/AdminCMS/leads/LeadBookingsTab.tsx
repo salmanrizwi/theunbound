@@ -2,6 +2,7 @@ import React from 'react';
 import { TravelLead, Booking, User, BookingItem } from '../../../types';
 import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../../services/pricingEngine';
+import { resolveAuthoritativeBookingFinancials } from '../../../services/bookingManualDiscountEngine';
 import { 
   Briefcase, 
   CheckCircle2, 
@@ -117,11 +118,14 @@ export const LeadBookingsTab: React.FC<LeadBookingsTabProps> = ({
 
                     <div className="flex items-center gap-3 self-start sm:self-auto">
                       <div className="text-right">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Selling</span>
                         {(() => {
-                          const bConv = convertForDisplay(booking.totalAmount || 0, booking.currency || 'USD');
+                          const bFin = resolveAuthoritativeBookingFinancials(booking);
+                          const bConv = convertForDisplay(bFin.current_selling_price, bFin.currency);
                           return (
                             <>
+                              <span className="text-[10px] uppercase font-bold text-slate-400 block">
+                                {bFin.hasManualDiscount ? 'Revised Selling' : 'Total Selling'}
+                              </span>
                               <span className="font-mono text-base font-black text-slate-900 block">
                                 {bConv.formatted}
                               </span>

@@ -8,6 +8,7 @@ import {
   isExternalUser 
 } from '../../services/permissionEngine';
 import { resolveUserAccountManager } from '../../services/accountManagerService';
+import { resolveAuthoritativeBookingFinancials } from '../../services/bookingManualDiscountEngine';
 import { 
   Building2, 
   ArrowLeft, 
@@ -38,25 +39,23 @@ import { DeskFinancialsSection } from './desk/DeskFinancialsSection';
 import { DeskActivityVouchersSection } from './desk/DeskActivityVouchersSection';
 import { DeskCompleteVoucherSection } from './desk/DeskCompleteVoucherSection';
 import { DeskProformaInvoiceSection } from './desk/DeskProformaInvoiceSection';
+import { DeskPaymentScheduleSection } from './desk/DeskPaymentScheduleSection';
 import { DeskTasksSection } from './desk/DeskTasksSection';
 import { DeskPassengersDocsSection } from './desk/DeskPassengersDocsSection';
 import { DeskNotesSection } from './desk/DeskNotesSection';
 import { DeskTimelineSection } from './desk/DeskTimelineSection';
-import { OperationalHorizonDesk } from './OperationalHorizonDesk';
 import { AdminWorkspaceLayout } from '../common/AdminWorkspaceLayout';
-import { Compass } from 'lucide-react';
 
 export type DeskSection = 
   | 'OVERVIEW'
   | 'ASSIGNMENT'
   | 'SERVICES'
-  | 'OPERATIONAL_HORIZON'
   | 'FINANCIALS'
+  | 'PROFORMA_INVOICE'
+  | 'PAYMENTS'
+  | 'PASSENGERS'
   | 'ACTIVITY_VOUCHERS'
   | 'COMPLETE_VOUCHER'
-  | 'PROFORMA_INVOICE'
-  | 'PASSENGERS'
-  | 'PAYMENTS'
   | 'TASKS'
   | 'NOTES'
   | 'TIMELINE';
@@ -104,13 +103,16 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
   useEffect(() => {
     const unsub = db.subscribeToCollections([
       'bookings',
+      'booking_passenger_documents',
       'calendar_tasks',
       'b2b_tasks',
       'invoices',
+      'booking_invoices',
       'uploaded_invoices',
       'vouchers',
       'job_sheets',
       'suppliers',
+      'supplier_allocations',
       'supplier_requests',
       'booking_manual_discounts',
       'booking_pricing_snapshots'
@@ -161,18 +163,36 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
         badgeColor: unallocatedCount > 0 ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'
       },
       {
-        id: 'OPERATIONAL_HORIZON' as DeskSection,
-        label: 'Operational Horizon Desk',
-        icon: Compass,
-        badge: 'Ground Ops',
-        badgeColor: 'bg-teal-100 text-teal-800'
-      },
-      {
         id: 'FINANCIALS' as DeskSection,
         label: 'Pricing, Discounts & Financials',
         icon: CreditCard,
         badge: booking.paymentStatus === 'PAID' ? 'Settled' : 'Pending',
         badgeColor: booking.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+      },
+      {
+        id: 'PROFORMA_INVOICE' as DeskSection,
+        label: 'Proforma Invoices & Commercial Accounts',
+        icon: Receipt,
+        badge: (booking.proformaInvoiceIds?.length || 0) > 0 ? `${booking.proformaInvoiceIds?.length}` : null,
+        badgeColor: 'bg-indigo-100 text-indigo-800'
+      },
+      {
+        id: 'PAYMENTS' as DeskSection,
+        label: 'Payment Schedule & Instalment Tranches',
+        icon: Calendar,
+        badge: booking.paymentSchedule?.requiresAdjustment
+          ? 'Review Flagged'
+          : `${booking.paymentSchedule?.installments?.length || 0} tranches`,
+        badgeColor: booking.paymentSchedule?.requiresAdjustment
+          ? 'bg-rose-100 text-rose-800'
+          : 'bg-teal-100 text-teal-800'
+      },
+      {
+        id: 'PASSENGERS' as DeskSection,
+        label: 'Passenger Manifest & Compliance Documents',
+        icon: Users,
+        badge: missingDocsCount > 0 ? `${missingDocsCount} docs missing` : `${booking.passengers?.length || 0} pax`,
+        badgeColor: missingDocsCount > 0 ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
       },
       {
         id: 'ACTIVITY_VOUCHERS' as DeskSection,
@@ -187,20 +207,6 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
         icon: FileCheck,
         badge: booking.completeBookingVoucherId ? 'Issued' : null,
         badgeColor: 'bg-teal-100 text-teal-800'
-      },
-      {
-        id: 'PROFORMA_INVOICE' as DeskSection,
-        label: 'Proforma Invoice',
-        icon: Receipt,
-        badge: (booking.proformaInvoiceIds?.length || 0) > 0 ? `${booking.proformaInvoiceIds?.length}` : null,
-        badgeColor: 'bg-indigo-100 text-indigo-800'
-      },
-      {
-        id: 'PASSENGERS' as DeskSection,
-        label: 'Passengers & Docs',
-        icon: Users,
-        badge: missingDocsCount > 0 ? `${missingDocsCount} docs missing` : `${booking.passengers?.length || 0} pax`,
-        badgeColor: missingDocsCount > 0 ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-700'
       },
       {
         id: 'TASKS' as DeskSection,
@@ -384,19 +390,41 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
                   })()}
                 </div>
 
-                <div className="pt-2.5 border-t border-slate-200">
-                  <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Payment & Selling Total</span>
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-base font-black text-[#008f77] font-mono">
-                      {formatCurrency(booking.totalAmount || 0, booking.currency)}
-                    </span>
-                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
-                      booking.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
-                    }`}>
-                      {booking.paymentStatus || 'PENDING'}
-                    </span>
-                  </div>
-                </div>
+                {(() => {
+                  const fin = resolveAuthoritativeBookingFinancials(booking);
+                  return (
+                    <div className="pt-2.5 border-t border-slate-200 space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                        Payment &amp; Selling Total
+                      </span>
+                      <div className="flex items-center justify-between mt-1">
+                        <div>
+                          <span className="text-base font-black text-[#008f77] font-mono block">
+                            {formatCurrency(fin.revisedBookingAmount, fin.currency)}
+                          </span>
+                          {fin.hasManualDiscount && (
+                            <span className="text-[10px] font-mono text-indigo-700 font-bold block">
+                              Orig {formatCurrency(fin.originalBookingAmount, fin.currency)} (-{formatCurrency(fin.adminManualDiscountTotal, fin.currency)})
+                            </span>
+                          )}
+                        </div>
+                        <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
+                          fin.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                        }`}>
+                          {fin.paymentStatus || 'PENDING'}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 flex items-center justify-between pt-0.5 font-mono">
+                        <span>Paid: {formatCurrency(fin.verifiedPaidAmount, fin.currency)}</span>
+                        <span className={fin.isOverpaid ? 'text-indigo-700 font-bold' : 'text-amber-700 font-bold'}>
+                          {fin.isOverpaid
+                            ? `Credit: ${formatCurrency(fin.creditBalance, fin.currency)}`
+                            : `Due: ${formatCurrency(fin.outstandingBalance, fin.currency)}`}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -461,23 +489,19 @@ export const BookingOperationsDesk: React.FC<BookingOperationsDeskProps> = ({
               />
             )}
 
-            {isInternal && currentSection === 'OPERATIONAL_HORIZON' && (
-              <OperationalHorizonDesk
-                currentUser={currentUser}
-                initialDate={booking.travelStartDate || undefined}
-                onOpenBooking={(bId) => {
-                  setActiveBookingId(bId);
-                  setActiveSection('OVERVIEW');
-                }}
-                onBackToAllocationDesk={() => setActiveSection('SERVICES')}
-              />
-            )}
-
-            {isInternal && (currentSection === 'FINANCIALS' || currentSection === 'PAYMENTS') && (
+            {isInternal && currentSection === 'FINANCIALS' && (
               <DeskFinancialsSection
                 booking={booking}
                 currentUser={currentUser}
                 onNavigateToSection={handleNavigateSection}
+                onRefresh={handleRefresh}
+              />
+            )}
+
+            {isInternal && currentSection === 'PAYMENTS' && (
+              <DeskPaymentScheduleSection
+                booking={booking}
+                currentUser={currentUser}
                 onRefresh={handleRefresh}
               />
             )}

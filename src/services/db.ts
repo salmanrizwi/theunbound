@@ -20,6 +20,7 @@ import {
   BookingAssignmentHistoryItem,
   BookingPricingSnapshot,
   BookingManualDiscountAdjustment,
+  DiscountAssociatedInvoiceVersion,
   AgentMarginType,
   PricingSnapshot,
   AuditLog, 
@@ -57,6 +58,7 @@ import {
   LeadQuoteVersion,
   CurrencyCode,
   BookingInvoice,
+  BookingInvoiceAuditEntry,
   InvoicePaymentStatus,
   InvoiceServiceItem,
   BookingVoucher,
@@ -94,6 +96,7 @@ import {
   SystemUserJourneyEvent,
   JourneyEventCategory,
   BookingPassenger,
+  PassengerComplianceDocument,
   BookingPaymentProof,
   BookingItem,
   BookingTimelineEvent,
@@ -158,6 +161,8 @@ import {
   BookingProgressStage,
   OperationsCalendarEvent,
   PaymentSchedule,
+  PaymentInstallmentItem,
+  PaymentScheduleAuditEntry,
   BookingFinancialProfitability,
   TravelProtectionPlan,
   VipGroundService,
@@ -173,8 +178,18 @@ import {
   SurchargeProductMapping,
   SurchargeHistoryRecord,
   QuotationSurchargeOverride,
-  SurchargeDashboardMetrics
+  SurchargeDashboardMetrics,
+  ConsolidatedPriceAllocationMethod,
+  ConsolidatedAllocationDocument
 } from '../types';
+import {
+  distributeConsolidatedCommercialPrice,
+  isItemEligibleForNewConsolidatedAllocation,
+  normalizeRawCategoryToCanonicalId,
+  resolveAuthoritativeCategory,
+  roundCurrency,
+  validateSupplierEligibilityForItems
+} from './supplierAllocationEngine';
 import {
   normalizePromotionCode,
   resolveEffectivePromotionStatus,
@@ -250,7 +265,13 @@ import {
 } from './bookingOperationsSyncService';
 import {
   buildInitialBookingPricingSnapshot,
-  getLatestBookingPricingSnapshot
+  getLatestBookingPricingSnapshot,
+  PaymentScheduleTrancheInput,
+  recalculateBookingPaymentSchedule,
+  resolveAdminManualDiscountPermissions,
+  resolveAuthoritativeBookingFinancials,
+  roundMoney,
+  validateAndBuildVersionedPaymentSchedule
 } from './bookingManualDiscountEngine';
 
 let currentAuthUser: User | null = null;
@@ -2407,12 +2428,17 @@ export class AppDatabase {
     if (!user || !fbUser) {
       console.log('[DB] Auth user cleared. Purging private session records from device storage.');
       this.setItem('bookings', [], true);
+      this.setItem('booking_pricing_snapshots', [], true);
+      this.setItem('booking_manual_discounts', [], true);
+      this.setItem('booking_payment_schedules', [], true);
       this.setItem('saved_quotes', [], true);
       this.setItem('leads', [], true);
       this.setItem('b2b_customers', [], true);
       this.setItem('b2b_tasks', [], true);
       this.setItem('calendar_tasks', [], true);
       this.setItem('invoices', [], true);
+      this.setItem('booking_invoices', [], true);
+      this.setItem('booking_passenger_documents', [], true);
       this.setItem('uploaded_invoices', [], true);
       this.setItem('vouchers', [], true);
       this.setItem('job_sheets', [], true);
@@ -2441,13 +2467,16 @@ export class AppDatabase {
         ];
 
         if (isInternal) {
+          const financialPerms = resolveAdminManualDiscountPermissions(user);
           // Internal operations staff: keep core operational collections real-time;
-          // secondary audit/ops/CMS sub-collections use parallel one-shot hydration to cut persistent listeners.
+          // internal financial collections are strictly gated by resolved financial RBAC permissions.
           this.authenticatedUnsubscribers.push(
             this.syncCollectionSafely<User>('users', 'system_users'),
             this.syncCollectionSafely<Company>('companies', 'companies'),
             this.syncCollectionSafely<Quotation>('quotations', 'saved_quotes'),
             this.syncCollectionSafely<Booking>('bookings', 'bookings'),
+            this.syncCollectionSafely<PassengerComplianceDocument>('booking_passenger_documents', 'booking_passenger_documents'),
+            this.syncCollectionSafely<BookingInvoice>('invoices', 'invoices'),
             this.syncCollectionSafely<TravelLead>('leads', 'leads'),
             this.syncCollectionSafely<B2BCustomer>('b2b_customers', 'b2b_customers'),
             this.syncCollectionSafely<B2BTask>('b2b_tasks', 'b2b_tasks'),
@@ -2456,6 +2485,24 @@ export class AppDatabase {
             this.syncCollectionSafely<LeadStageConfig>('lead_stages', 'lead_stages'),
             this.syncCollectionSafely<AccountManagerAssignmentHistory>('account_manager_assignment_history', 'account_manager_assignment_history')
           );
+
+          if (financialPerms.canViewInternalMargin) {
+            this.authenticatedUnsubscribers.push(
+              this.syncCollectionSafely<BookingPricingSnapshot>('booking_pricing_snapshots', 'booking_pricing_snapshots'),
+              this.syncCollectionSafely<BookingManualDiscountAdjustment>('booking_manual_discounts', 'booking_manual_discounts')
+            );
+          } else {
+            this.setItem('booking_pricing_snapshots', [], true);
+            this.setItem('booking_manual_discounts', [], true);
+          }
+
+          if (financialPerms.canViewInternalMargin || financialPerms.canManagePaymentSchedule) {
+            this.authenticatedUnsubscribers.push(
+              this.syncCollectionSafely<PaymentSchedule>('booking_payment_schedules', 'booking_payment_schedules')
+            );
+          } else {
+            this.setItem('booking_payment_schedules', [], true);
+          }
 
           // Hydrate secondary CMS, automation & rate sub-collections via parallel one-shot getDocs (Admin/Staff only)
           void this.hydrateCollectionsOneShot([
@@ -2541,9 +2588,29 @@ export class AppDatabase {
             where('userId', '==', uid)
           );
 
+          const scopedPassengerDocsQuery = query(
+            collection(firestoreDb, 'booking_passenger_documents'),
+            or(
+              where('agentId', '==', uid),
+              where('submittedByUserId', '==', uid),
+              where('assignedAgentId', '==', uid)
+            )
+          );
+
+          const scopedInvoicesQuery = query(
+            collection(firestoreDb, 'invoices'),
+            or(
+              where('agentId', '==', uid),
+              where('responsibleAgentId', '==', uid),
+              where('buyerId', '==', uid)
+            )
+          );
+
           this.authenticatedUnsubscribers.push(
             this.syncQuerySafely<Quotation>(scopedQuotesQuery, 'saved_quotes'),
             this.syncQuerySafely<Booking>(scopedBookingsQuery, 'bookings'),
+            this.syncQuerySafely<PassengerComplianceDocument>(scopedPassengerDocsQuery, 'booking_passenger_documents'),
+            this.syncQuerySafely<BookingInvoice>(scopedInvoicesQuery, 'invoices'),
             this.syncQuerySafely<TravelLead>(scopedLeadsQuery, 'leads'),
             this.syncQuerySafely<B2BCustomer>(scopedCustomersQuery, 'b2b_customers'),
             this.syncQuerySafely<B2BTask>(scopedTasksQuery, 'b2b_tasks'),
@@ -12657,6 +12724,42 @@ export class AppDatabase {
           || (item.calculation as any)?.sellingPriceFinal
           || item.product?.sellingPriceStartingFrom
           || 0;
+        const itemNetCost = roundCurrency(
+          Number(bdItem?.supplierNettCost ?? (item.calculation as any)?.totalNetCost ?? 0)
+        );
+        const masterProduct = item.product?.id
+          ? this.getProducts().find(p => p.id === item.product?.id) || item.product
+          : item.product;
+        const hotelIdRef = (item as any).hotelId || (item.product as any)?.hotelId;
+        const masterHotel = hotelIdRef
+          ? this.getHotels().find(h => h.id === hotelIdRef) || null
+          : null;
+        const isHotelItem = Boolean((item as any).isHotel || (item as any).isManualHotel || item.product?.isManualHotel || masterHotel);
+        const resolvedCat = resolveAuthoritativeCategory(
+          {
+            id: item.id || 'tmp',
+            productId: item.product?.id || '',
+            productName: item.product?.name || '',
+            category: item.product?.category || item.product?.productType,
+            productType: item.product?.productType,
+            hotelId: hotelIdRef,
+            isHotel: isHotelItem,
+            travelDate: item.travelDate || quote.travelStartDate || '',
+            adults: item.pax?.adults ?? 2,
+            children: item.pax?.children ?? 0,
+            infants: item.pax?.infants ?? 0,
+            totalPax: (item.pax?.adults ?? 2) + (item.pax?.children ?? 0) + (item.pax?.infants ?? 0),
+            unitSellingPrice: itemFinalSellingPrice,
+            totalPrice: itemFinalSellingPrice,
+            currency: quote.currency || 'USD',
+            supplierStatus: 'PENDING_DISPATCH'
+          } as BookingItem,
+          masterProduct as Product | null,
+          masterHotel
+        );
+        const descSnap = (item.contentSnapshot as any)?.description || (item.contentSnapshot as any)?.shortDescription || masterProduct?.description || masterHotel?.description;
+        const narrativeSnap = (item.contentSnapshot as any)?.narrative || (masterProduct as any)?.narrative || (masterHotel as any)?.narrative;
+        const overviewSnap = (item.contentSnapshot as any)?.overview || (masterProduct as any)?.overview || (masterHotel as any)?.overview;
         return {
           id: item.id || `bitem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           productId: item.product?.id || 'prod-custom',
@@ -12664,12 +12767,14 @@ export class AppDatabase {
           productSku: item.product?.sku || 'SKU-CUSTOM',
           destinationName: item.product?.destinationName || quote.destination || 'Japan',
           city: item.product?.city || 'Tokyo',
-          category: item.product?.category || item.product?.productType || 'Activity',
+          category: resolvedCat.sourceCategoryLabel || item.product?.category || item.product?.productType || 'Activity',
+          categoryId: resolvedCat.categoryId,
+          sourceCategoryLabel: resolvedCat.sourceCategoryLabel,
           productType: item.product?.productType,
           service_type: (item as any).service_type,
           itemType: (item as any).itemType,
-          hotelId: (item as any).hotelId || (item.product as any)?.hotelId,
-          isHotel: Boolean((item as any).isHotel || (item as any).isManualHotel || item.product?.isManualHotel),
+          hotelId: hotelIdRef,
+          isHotel: isHotelItem,
           isManualHotel: Boolean((item as any).isManualHotel || item.product?.isManualHotel),
           manualHotelDetails: (item as any).manualHotelDetails,
           accommodationType: (item as any).accommodationType || item.product?.accommodationType,
@@ -12679,12 +12784,17 @@ export class AppDatabase {
           infants: item.pax?.infants ?? 0,
           totalPax: (item.pax?.adults ?? 2) + (item.pax?.children ?? 0) + (item.pax?.infants ?? 0),
           selectedAddonNames: [],
-          unitNetPrice: bdItem?.supplierNettCost || (item.calculation as any)?.totalNetCost || 0,
+          unitNetPrice: itemNetCost,
+          netPrice: itemNetCost > 0 ? itemNetCost : undefined,
           unitSellingPrice: itemFinalSellingPrice,
+          sellingPrice: roundCurrency(itemFinalSellingPrice),
           totalPrice: itemFinalSellingPrice,
           currency: quote.currency || 'USD',
           supplierStatus: 'PENDING_DISPATCH' as const,
           supplierNotes: item.notes,
+          serviceDescription: descSnap,
+          serviceNarrative: narrativeSnap,
+          serviceOverview: overviewSnap,
           inclusions: item.contentSnapshot?.inclusions || item.product?.inclusions,
           exclusions: item.contentSnapshot?.exclusions || item.product?.exclusions,
           visaSnapshot: item.visaSnapshot,
@@ -12708,7 +12818,14 @@ export class AppDatabase {
     bookings.unshift(newBookingDraft);
     this.setItem('bookings', bookings);
     this.syncFirestoreDoc('bookings', newBookingDraft.id, newBookingDraft);
-    this.syncFirestoreDoc('booking_pricing_snapshots', baselineSnapshot.snapshotId, baselineSnapshot);
+    const creatorFinPerms = resolveAdminManualDiscountPermissions(user);
+    if (
+      creatorFinPerms.canApplyManualDiscount ||
+      creatorFinPerms.canApplyAdminCoupon ||
+      creatorFinPerms.canReverseManualDiscount
+    ) {
+      this.syncFirestoreDoc('booking_pricing_snapshots', baselineSnapshot.snapshotId, baselineSnapshot);
+    }
 
     // Update Quotation status and bidirectional linkage
     const quotes = this.getAllSavedQuotes();
@@ -13410,10 +13527,37 @@ export class AppDatabase {
     permission: keyof BookingOperationsPermissions
   ): boolean {
     if (!user) return false;
+    if ((user.role as string) === 'SUPER_ADMIN') return true;
+
+    // Delegate sensitive financial, margin, manual-discount, and payment-schedule permissions
+    // to the central financial RBAC resolver so revoked Admins & non-financial Team Members are enforced.
+    const finPerms = resolveAdminManualDiscountPermissions(user);
+    switch (permission) {
+      case 'view_internal_margin':
+      case 'view_internal_financials':
+        return finPerms.canViewInternalMargin;
+      case 'apply_manual_discount':
+        return finPerms.canApplyManualDiscount;
+      case 'apply_admin_coupon':
+        return finPerms.canApplyAdminCoupon;
+      case 'approve_manual_discount':
+        return finPerms.canApproveManualDiscount;
+      case 'reverse_manual_discount':
+        return finPerms.canReverseManualDiscount;
+      case 'override_margin_protection':
+        return finPerms.canOverrideMarginProtection;
+      case 'view_discount_reports':
+        return finPerms.canViewDiscountReports;
+      case 'manage_payment_schedule':
+        return Boolean(finPerms.canManagePaymentSchedule);
+      default:
+        break;
+    }
+
     if (user.role === 'ADMIN') return true;
     if (user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
       const opsPerms = user.permissions?.bookingOperations;
-      if (!opsPerms) return true; // Default allow for internal staff unless configured
+      if (!opsPerms) return true; // Default allow for operational non-financial actions unless configured
       return opsPerms[permission] !== false;
     }
     return false; // Buyers, B2B Agents, external users never have booking operations access
@@ -13430,9 +13574,381 @@ export class AppDatabase {
   }
 
   /**
+   * Builds a versioned Proforma Invoice object from an authoritative Booking record
+   * without mutating storage (used by both generateProformaInvoice and auto-revision on discount).
+   */
+  private buildVersionedProformaInvoiceObject(
+    b: Booking,
+    existingInvoices: BookingInvoice[],
+    user: User | null,
+    options?: { idempotencyKey?: string; reason?: string }
+  ): BookingInvoice {
+    const authoritative = resolveAuthoritativeProformaAmount(b);
+    const companyProfile = this.getCentralCompanyProfile();
+    const maxExistingVersion = existingInvoices.reduce(
+      (max, inv) => Math.max(max, Number(inv.invoiceVersion || 1)),
+      0
+    );
+    const nextInvoiceVersion = maxExistingVersion + 1;
+
+    const now = new Date().toISOString();
+    const issueDateStr = now.split('T')[0];
+    const invoiceNumber = `TUB-PINV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}${nextInvoiceVersion > 1 ? `-R${nextInvoiceVersion}` : ''}`;
+
+    const customerName =
+      b.customer?.leadTravelerName ||
+      b.customer?.bookerName ||
+      b.customer?.name ||
+      (b as any).guestName ||
+      (b as any).leadName ||
+      b.agencyName ||
+      b.agentAgency ||
+      b.agentName ||
+      'Booking Partner';
+    const customerEmail =
+      b.customer?.email ||
+      (b as any).guestEmail ||
+      (b as any).leadEmail ||
+      b.agentEmailSnapshot ||
+      '';
+    const agencyName =
+      b.agentAgency ||
+      b.agencyName ||
+      b.customer?.agencyName ||
+      (b as any).agencyName ||
+      'Direct Partner';
+    const agentName = b.agentName || (b as any).submittingAgentName || user?.name || 'Operations Desk';
+    const travelersObj = (b as any).travelers;
+    const totalPax =
+      travelersObj
+        ? (travelersObj.adults || 0) + (travelersObj.children || 0) + (travelersObj.infants || 0)
+        : typeof (b as any).totalPax === 'number'
+        ? (b as any).totalPax
+        : (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0) + (b.customer?.totalInfants || 0);
+    const destination = b.destination || (b as any).primaryDestination || 'Ground Destination';
+    const travelDates = b.travelStartDate ? `${b.travelStartDate}${b.travelEndDate ? ' - ' + b.travelEndDate : ''}` : 'Scheduled';
+
+    const mappedItems: any[] = sortBookingItemsChronologically(
+      (b.items || [])
+        .filter(it => !it.isCancelled && it.operationalStatus !== 'Cancelled')
+        .map(it => hydrateBookingServiceItem(it, b))
+    ).map((it, idx) => ({
+      id: it.id || `inv-item-${idx}`,
+      productName: it.productName || 'Travel Ground Service',
+      serviceName: it.productName || 'Travel Ground Service',
+      description: it.productName || 'Travel Ground Service',
+      category: it.category || 'SERVICE',
+      serviceDate: it.resolvedServiceDate || b.travelStartDate || 'Scheduled',
+      travelDate: it.resolvedServiceDate || b.travelStartDate || 'Scheduled',
+      pax: it.totalPax || totalPax,
+      quantity: 1,
+      unitPrice: 0,
+      taxAmount: 0,
+      totalPrice: 0,
+      amount: 0,
+      currency: authoritative.currency
+    }));
+
+    const finalBookingAmount = authoritative.finalBookingAmount;
+    const amountPaid = authoritative.amountPaid;
+    const balanceDue = authoritative.balanceDue;
+    const paymentStatus: InvoicePaymentStatus =
+      balanceDue === 0 && finalBookingAmount > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
+
+    const dueDate = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    const ownerAgentId = b.assignedAgentId || b.submittingAgentId || b.agentId || '';
+    const generatedByUid = auth.currentUser?.uid || user?.id || 'system';
+    const invoiceId = `inv-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+
+    return {
+      id: invoiceId,
+      invoiceNumber,
+      bookingId: b.id,
+      bookingReference: b.bookingReference,
+      leadId: b.leadId || b.linkedLeadId,
+      sourceQuoteId: b.sourceQuoteId || b.quoteId,
+      documentType: 'PROFORMA_INVOICE',
+      invoiceVersion: nextInvoiceVersion,
+      previousInvoiceId: existingInvoices[0]?.id,
+      isProforma: true,
+      status: 'ISSUED',
+      isOutdated: false,
+      hideTaxAndServiceFeeBreakdown: true,
+      sourcePricingSnapshotId: authoritative.sourcePricingSnapshotId,
+      sourcePricingSnapshotVersion: authoritative.sourcePricingSnapshotVersion,
+      proformaFinalBookingAmount: finalBookingAmount,
+      originalBookingAmount: authoritative.originalBookingAmount,
+      discountAppliedAmount: authoritative.adminManualDiscountTotal,
+      creditBalance: authoritative.creditBalance,
+      overpaidAmount: authoritative.creditBalance,
+      idempotencyKey:
+        options?.idempotencyKey ||
+        buildDocumentIdempotencyKey('PROFORMA_INVOICE', b.id, `v${nextInvoiceVersion}:${invoiceId}`),
+      documentNotice:
+        'PRELIMINARY COMMERCIAL DOCUMENT: This Proforma Invoice is issued for booking confirmation and payment remittance purposes only. It is not a statutory Tax Invoice.',
+      bookingDescription:
+        (b as any).title ||
+        (b as any).packageName ||
+        `Consolidated Ground Services Booking (${destination}${travelDates ? ` | ${travelDates}` : ''})`,
+      agentId: ownerAgentId,
+      buyerId: b.userId || '',
+      responsibleAgentId: ownerAgentId || b.agentId,
+      assignedTeamMemberId: b.assignedTeamMemberId,
+      generatedBy: generatedByUid,
+      generatedByName: user?.name || user?.email || 'Operations Desk',
+      generatedAt: now,
+      customerName,
+      customerEmail,
+      customerPhone: b.customer?.phone || (b as any).guestPhone,
+      agentName,
+      agencyName,
+      invoiceDate: issueDateStr,
+      issueDate: issueDateStr,
+      dueDate,
+      services: mappedItems as InvoiceServiceItem[],
+      items: mappedItems,
+      billedToAgency: agencyName,
+      billedToName: customerName,
+      billedToEmail: customerEmail,
+      billedToGstin: '',
+      leadTravelerName: customerName,
+      totalPax,
+      destination,
+      travelDates,
+      subtotal: finalBookingAmount,
+      taxTotal: 0,
+      taxAmount: 0,
+      serviceFeeTotal: 0,
+      discountTotal: 0,
+      totalAmount: finalBookingAmount,
+      amountPaid,
+      paidAmount: amountPaid,
+      balanceDue,
+      currency: authoritative.currency,
+      paymentStatus,
+      paymentMethod: 'BANK_WIRE_TRANSFER',
+      bankAccountDetails: companyProfile.bankDetails ? { ...companyProfile.bankDetails } : undefined,
+      companyName: companyProfile.companyName || companyProfile.legalName || 'TheUnbound',
+      companyAddress: companyProfile.registeredAddress,
+      companyRegisteredAddress: companyProfile.registeredAddress,
+      companyCurrentAddress: companyProfile.currentAddress,
+      companyEmail: companyProfile.email,
+      companyPhone: companyProfile.phone,
+      companyWebsite: companyProfile.website,
+      companyTaxNumber: '',
+      notes:
+        options?.reason ||
+        (nextInvoiceVersion > 1
+          ? `Revised Proforma Invoice (Version ${nextInvoiceVersion}, Pricing Snapshot v${authoritative.sourcePricingSnapshotVersion}) for Booking Reference ${b.bookingReference}. Historical issued versions remain preserved.`
+          : `Proforma Invoice issued for Booking Reference ${b.bookingReference}. Please quote the booking reference during payment remittance.`),
+      terms: 'Payment due within 7 days of proforma issuance or 14 days prior to travel departure, whichever is earlier. Bank transfer charges are borne by the remitter.',
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+
+  /**
+   * Synchronizes existing Proforma Invoices whenever an Admin Manual Discount is applied or reversed:
+   *  - If prior active Proforma Invoice(s) exist, marks them SUPERSEDED / isOutdated WITHOUT
+   *    modifying their historical financial amounts or line items.
+   *  - Automatically issues a new versioned Revised Proforma Invoice (v2, v3...) reflecting
+   *    current_selling_price and attaches all associated invoice versions to the adjustment
+   *    BEFORE the append-only adjustment is written to Firestore.
+   */
+  private prepareInvoiceSynchronizationForDiscount(
+    updatedBooking: Booking,
+    newSnapshot: BookingPricingSnapshot,
+    adjustment: BookingManualDiscountAdjustment,
+    actor: User | null
+  ): {
+    finalBooking: Booking;
+    enrichedAdjustment: BookingManualDiscountAdjustment;
+    supersededInvoices: BookingInvoice[];
+    revisedInvoice?: BookingInvoice;
+  } {
+    const existingInvoices = this.getBookingInvoices(updatedBooking.id);
+    const autoIdempotencyKey = buildDocumentIdempotencyKey(
+      'PROFORMA_INVOICE',
+      updatedBooking.id,
+      `auto-rev:${adjustment.adjustmentId}`
+    );
+
+    const alreadyIssuedForAdj = existingInvoices.find(
+      inv => inv.idempotencyKey === autoIdempotencyKey && inv.status !== 'VOIDED'
+    );
+    if (alreadyIssuedForAdj) {
+      return {
+        finalBooking: updatedBooking,
+        enrichedAdjustment: adjustment,
+        supersededInvoices: [],
+        revisedInvoice: alreadyIssuedForAdj
+      };
+    }
+
+    const activePriorInvoices = existingInvoices.filter(
+      inv => inv.status !== 'VOIDED' && inv.status !== 'SUPERSEDED'
+    );
+
+    if (activePriorInvoices.length === 0) {
+      return {
+        finalBooking: updatedBooking,
+        enrichedAdjustment: adjustment,
+        supersededInvoices: []
+      };
+    }
+
+    const nowIso = adjustment.appliedAt || new Date().toISOString();
+    const actionPhrase =
+      adjustment.actionType === 'REVERSE'
+        ? `Manual discount reversal (+${adjustment.bookingCurrency} ${roundMoney(adjustment.discountAmountInBookingCurrency).toLocaleString()})`
+        : `Admin manual discount (-${adjustment.bookingCurrency} ${roundMoney(adjustment.discountAmountInBookingCurrency).toLocaleString()})`;
+
+    const revisedInvoice = this.buildVersionedProformaInvoiceObject(
+      updatedBooking,
+      existingInvoices,
+      actor,
+      {
+        idempotencyKey: autoIdempotencyKey,
+        reason: `Auto-generated Revised Proforma Invoice (v${
+          existingInvoices.reduce((m, i) => Math.max(m, Number(i.invoiceVersion || 1)), 0) + 1
+        }, Pricing Snapshot v${newSnapshot.version}) following ${actionPhrase}. Prior version(s) preserved as Superseded.`
+      }
+    );
+
+    // Mark prior active Proforma Invoices as SUPERSEDED without altering their historical amounts/PDF content
+    const supersededInvoices: BookingInvoice[] = activePriorInvoices.map(prior => ({
+      ...prior,
+      status: 'SUPERSEDED',
+      isOutdated: true,
+      supersededAt: nowIso,
+      supersededByInvoiceId: revisedInvoice.id,
+      supersededBySnapshotId: newSnapshot.snapshotId,
+      supersededReason: `${actionPhrase} revised booking selling price to ${newSnapshot.currency} ${roundMoney(newSnapshot.revisedCustomerSellingPrice).toLocaleString()} (Snapshot v${newSnapshot.version}). Replaced by ${revisedInvoice.invoiceNumber} (v${revisedInvoice.invoiceVersion}).`,
+      updatedAt: nowIso
+    }));
+
+    const associatedInvoiceVersions: DiscountAssociatedInvoiceVersion[] = [
+      ...supersededInvoices.map(inv => ({
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceVersion: Number(inv.invoiceVersion || 1),
+        documentType: (inv.documentType || 'PROFORMA_INVOICE') as 'PROFORMA_INVOICE' | 'TAX_INVOICE',
+        status: 'SUPERSEDED' as const,
+        amount: roundMoney(Number(inv.proformaFinalBookingAmount ?? inv.totalAmount ?? 0)),
+        currency: inv.currency,
+        snapshotVersion: inv.sourcePricingSnapshotVersion,
+        issuedAt: inv.generatedAt || inv.createdAt
+      })),
+      {
+        invoiceId: revisedInvoice.id,
+        invoiceNumber: revisedInvoice.invoiceNumber,
+        invoiceVersion: Number(revisedInvoice.invoiceVersion || 1),
+        documentType: (revisedInvoice.documentType || 'PROFORMA_INVOICE') as 'PROFORMA_INVOICE' | 'TAX_INVOICE',
+        status: 'ISSUED_REVISED' as const,
+        amount: roundMoney(Number(revisedInvoice.proformaFinalBookingAmount ?? revisedInvoice.totalAmount ?? 0)),
+        currency: revisedInvoice.currency,
+        snapshotVersion: revisedInvoice.sourcePricingSnapshotVersion,
+        issuedAt: revisedInvoice.generatedAt || revisedInvoice.createdAt
+      }
+    ];
+
+    const enrichedAdjustment: BookingManualDiscountAdjustment = {
+      ...adjustment,
+      associatedInvoiceVersions
+    };
+
+    const nextAdjustments = (updatedBooking.manualDiscountAdjustments || []).map(a =>
+      a.adjustmentId === adjustment.adjustmentId ? enrichedAdjustment : a
+    );
+
+    const nextTimeline = Array.isArray(updatedBooking.timeline) ? [...updatedBooking.timeline] : [];
+    const docTimelineId = `tl-bmd-inv-${adjustment.adjustmentId}`;
+    if (!nextTimeline.some(ev => ev.id === docTimelineId)) {
+      const supersededList = supersededInvoices
+        .map(inv => `${inv.invoiceNumber} (v${inv.invoiceVersion || 1})`)
+        .join(', ');
+      nextTimeline.unshift({
+        id: docTimelineId,
+        title: `Revised Proforma Invoice Auto-Issued (${revisedInvoice.invoiceNumber} v${revisedInvoice.invoiceVersion})`,
+        description: `Marked prior invoice(s) ${supersededList} as Superseded without modifying historical amounts. Issued ${revisedInvoice.invoiceNumber} (v${revisedInvoice.invoiceVersion}) for revised selling price ${revisedInvoice.currency} ${roundMoney(revisedInvoice.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Snapshot v${newSnapshot.version}).`,
+        timestamp: nowIso,
+        type: 'DOCUMENT',
+        actorName: actor?.name || adjustment.appliedByName || 'Operations Desk'
+      });
+    }
+
+    const finalBooking: Booking = {
+      ...updatedBooking,
+      proformaInvoiceIds: Array.from(
+        new Set([...(updatedBooking.proformaInvoiceIds || []), revisedInvoice.id])
+      ),
+      activeProformaInvoiceId: revisedInvoice.id,
+      proformaInvoiceUrl: `/invoices/${revisedInvoice.id}`,
+      hasRevisedPricingAfterInvoice: false,
+      revisedPricingNotice: `Auto-issued Revised Proforma Invoice ${revisedInvoice.invoiceNumber} (v${revisedInvoice.invoiceVersion}) for Snapshot v${newSnapshot.version} (${revisedInvoice.currency} ${roundMoney(revisedInvoice.totalAmount).toLocaleString()}). Prior version(s) preserved as Superseded.`,
+      manualDiscountAdjustments: nextAdjustments,
+      timeline: nextTimeline,
+      updatedAt: nowIso
+    };
+
+    return {
+      finalBooking,
+      enrichedAdjustment,
+      supersededInvoices,
+      revisedInvoice
+    };
+  }
+
+  private persistAutoRevisedInvoicesLocally(
+    booking: Booking,
+    supersededInvoices: BookingInvoice[],
+    revisedInvoice: BookingInvoice | undefined,
+    syncToFirestore: boolean
+  ): void {
+    if (supersededInvoices.length === 0 && !revisedInvoice) return;
+
+    for (const sup of supersededInvoices) {
+      this.upsertProformaInvoiceLocal(sup);
+      if (syncToFirestore) {
+        this.syncFirestoreDoc('invoices', sup.id, sup);
+      }
+    }
+
+    if (revisedInvoice) {
+      this.upsertProformaInvoiceLocal(revisedInvoice);
+      if (syncToFirestore) {
+        this.syncFirestoreDoc('invoices', revisedInvoice.id, revisedInvoice);
+      }
+
+      const targetLeadId = booking.leadId || booking.linkedLeadId;
+      if (targetLeadId) {
+        const allLeads = this.getLeads();
+        const lIdx = allLeads.findIndex(l => l.id === targetLeadId);
+        if (lIdx >= 0) {
+          const lead = allLeads[lIdx];
+          const now = new Date().toISOString();
+          lead.invoiceIds = Array.from(new Set([...(lead.invoiceIds || []), revisedInvoice.id]));
+          lead.activeInvoiceId = revisedInvoice.id;
+          lead.lastFinancialActivityAt = now;
+          allLeads[lIdx] = lead;
+          this.setItem('leads', allLeads);
+          if (syncToFirestore) {
+            this.syncFirestoreDoc('leads', lead.id, {
+              invoiceIds: lead.invoiceIds,
+              activeInvoiceId: lead.activeInvoiceId,
+              lastFinancialActivityAt: now
+            });
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Commits an authoritative Admin Manual Discount adjustment and immutable versioned
    * BookingPricingSnapshot to local storage (and Firestore when invoked in local fallback mode).
-   * Strictly preserves historical snapshots and never mutates Supplier Nett Cost.
+   * Strictly preserves historical snapshots, supersedes prior Proforma Invoices & issues
+   * a revised version when applicable, and never mutates Supplier Nett Cost.
    */
   public commitBookingManualDiscountSnapshot(
     updatedBooking: Booking,
@@ -13440,14 +13956,34 @@ export class AppDatabase {
     adjustment: BookingManualDiscountAdjustment,
     actor: User | null,
     syncToFirestore: boolean = true,
-    initialSnapshotToPersist?: BookingPricingSnapshot
+    initialSnapshotToPersist?: BookingPricingSnapshot,
+    prePrepared?: {
+      supersededInvoices: BookingInvoice[];
+      revisedInvoice?: BookingInvoice;
+    }
   ): Booking {
+    const syncBundle = prePrepared
+      ? {
+          finalBooking: updatedBooking,
+          enrichedAdjustment: adjustment,
+          supersededInvoices: prePrepared.supersededInvoices,
+          revisedInvoice: prePrepared.revisedInvoice
+        }
+      : this.prepareInvoiceSynchronizationForDiscount(
+          updatedBooking,
+          newSnapshot,
+          adjustment,
+          actor
+        );
+
+    const { finalBooking, enrichedAdjustment, supersededInvoices, revisedInvoice } = syncBundle;
+
     const allBookings = this.getAllBookings();
-    const idx = allBookings.findIndex(b => b.id === updatedBooking.id);
+    const idx = allBookings.findIndex(b => b.id === finalBooking.id);
     if (idx >= 0) {
-      allBookings[idx] = updatedBooking;
+      allBookings[idx] = finalBooking;
     } else {
-      allBookings.unshift(updatedBooking);
+      allBookings.unshift(finalBooking);
     }
     this.setItem('bookings', allBookings);
 
@@ -13463,22 +13999,30 @@ export class AppDatabase {
 
     // Append-only manual discount adjustment ledger in local cache
     const allAdjustments = this.getItem<BookingManualDiscountAdjustment[]>('booking_manual_discounts', []);
-    if (!allAdjustments.some(a => a.adjustmentId === adjustment.adjustmentId)) {
-      allAdjustments.unshift(adjustment);
+    if (!allAdjustments.some(a => a.adjustmentId === enrichedAdjustment.adjustmentId)) {
+      allAdjustments.unshift(enrichedAdjustment);
     }
     this.setItem('booking_manual_discounts', allAdjustments);
+
+    // Persist auto-superseded + auto-issued revised Proforma Invoices locally (and to Firestore if requested)
+    this.persistAutoRevisedInvoicesLocally(
+      finalBooking,
+      supersededInvoices,
+      revisedInvoice,
+      syncToFirestore
+    );
 
     if (syncToFirestore) {
       if (initialSnapshotToPersist) {
         this.syncFirestoreDoc('booking_pricing_snapshots', initialSnapshotToPersist.snapshotId, initialSnapshotToPersist);
       }
-      this.syncFirestoreDoc('booking_manual_discounts', adjustment.adjustmentId, adjustment);
+      this.syncFirestoreDoc('booking_manual_discounts', enrichedAdjustment.adjustmentId, enrichedAdjustment);
       this.syncFirestoreDoc('booking_pricing_snapshots', newSnapshot.snapshotId, newSnapshot);
-      this.syncFirestoreDoc('bookings', updatedBooking.id, updatedBooking);
+      this.syncFirestoreDoc('bookings', finalBooking.id, finalBooking);
     }
 
     const auditAction =
-      adjustment.actionType === 'REVERSE'
+      enrichedAdjustment.actionType === 'REVERSE'
         ? 'BOOKING_MANUAL_DISCOUNT_REVERSED'
         : 'BOOKING_MANUAL_DISCOUNT_APPLIED';
 
@@ -13486,13 +14030,122 @@ export class AppDatabase {
       actor,
       auditAction,
       'Booking',
-      updatedBooking.id,
-      adjustment.actionType === 'REVERSE'
-        ? `Reversed manual discount ${adjustment.reversedAdjustmentId} (${adjustment.bookingCurrency} ${adjustment.discountAmountInBookingCurrency.toLocaleString()}) on ${updatedBooking.bookingReference}. Revised Price: ${newSnapshot.revisedCustomerSellingPrice}. Remaining Margin: ${newSnapshot.remainingTheUnboundMargin}. Reason: ${adjustment.reason}`
-        : `Applied ${adjustment.discountSource}${adjustment.couponCode ? ` (${adjustment.couponCode})` : ''} of ${adjustment.bookingCurrency} ${adjustment.discountAmountInBookingCurrency.toLocaleString()} on ${updatedBooking.bookingReference}. Revised Price: ${newSnapshot.revisedCustomerSellingPrice}. Remaining Margin: ${newSnapshot.remainingTheUnboundMargin}. Reason: ${adjustment.reason}`
+      finalBooking.id,
+      enrichedAdjustment.actionType === 'REVERSE'
+        ? `Reversed manual discount ${enrichedAdjustment.reversedAdjustmentId} (${enrichedAdjustment.bookingCurrency} ${enrichedAdjustment.discountAmountInBookingCurrency.toLocaleString()}) on ${finalBooking.bookingReference}. Revised Price: ${newSnapshot.revisedCustomerSellingPrice}. Remaining Margin: ${newSnapshot.remainingTheUnboundMargin}.${revisedInvoice ? ` Auto-issued Revised Proforma ${revisedInvoice.invoiceNumber} (v${revisedInvoice.invoiceVersion}).` : ''} Reason: ${enrichedAdjustment.reason}`
+        : `Applied ${enrichedAdjustment.discountSource}${enrichedAdjustment.couponCode ? ` (${enrichedAdjustment.couponCode})` : ''} of ${enrichedAdjustment.bookingCurrency} ${enrichedAdjustment.discountAmountInBookingCurrency.toLocaleString()} on ${finalBooking.bookingReference}. Revised Price: ${newSnapshot.revisedCustomerSellingPrice}. Remaining Margin: ${newSnapshot.remainingTheUnboundMargin}.${revisedInvoice ? ` Auto-issued Revised Proforma ${revisedInvoice.invoiceNumber} (v${revisedInvoice.invoiceVersion}).` : ''} Reason: ${enrichedAdjustment.reason}`
     );
 
-    return updatedBooking;
+    return finalBooking;
+  }
+
+  /**
+   * Async variant that awaits Firestore persistence when authenticated, guaranteeing that
+   * UI confirmation is never displayed before authoritative snapshot, adjustment, invoice,
+   * and booking persistence succeeds.
+   */
+  public async commitBookingManualDiscountSnapshotAsync(
+    updatedBooking: Booking,
+    newSnapshot: BookingPricingSnapshot,
+    adjustment: BookingManualDiscountAdjustment,
+    actor: User | null,
+    syncToFirestore: boolean = true,
+    initialSnapshotToPersist?: BookingPricingSnapshot
+  ): Promise<{
+    booking: Booking;
+    adjustment: BookingManualDiscountAdjustment;
+    revisedInvoice?: BookingInvoice;
+    supersededInvoices: BookingInvoice[];
+    firestorePersisted: boolean;
+    error?: string;
+  }> {
+    const { finalBooking, enrichedAdjustment, supersededInvoices, revisedInvoice } =
+      this.prepareInvoiceSynchronizationForDiscount(
+        updatedBooking,
+        newSnapshot,
+        adjustment,
+        actor
+      );
+
+    if (syncToFirestore && auth.currentUser) {
+      try {
+        if (initialSnapshotToPersist) {
+          const okInit = await this.syncFirestoreDocAsync(
+            'booking_pricing_snapshots',
+            initialSnapshotToPersist.snapshotId,
+            initialSnapshotToPersist
+          );
+          if (!okInit) {
+            return {
+              booking: finalBooking,
+              adjustment: enrichedAdjustment,
+              revisedInvoice,
+              supersededInvoices,
+              firestorePersisted: false,
+              error: 'Failed to persist baseline pricing snapshot to Firestore.'
+            };
+          }
+        }
+        // Single append-only create write to booking_manual_discounts (associatedInvoiceVersions already attached!)
+        const okAdj = await this.syncFirestoreDocAsync(
+          'booking_manual_discounts',
+          enrichedAdjustment.adjustmentId,
+          enrichedAdjustment
+        );
+        const okSnap = await this.syncFirestoreDocAsync(
+          'booking_pricing_snapshots',
+          newSnapshot.snapshotId,
+          newSnapshot
+        );
+        for (const sup of supersededInvoices) {
+          await this.syncFirestoreDocAsync('invoices', sup.id, sup);
+        }
+        if (revisedInvoice) {
+          await this.syncFirestoreDocAsync('invoices', revisedInvoice.id, revisedInvoice);
+        }
+        const okBooking = await this.syncFirestoreDocAsync(
+          'bookings',
+          finalBooking.id,
+          finalBooking
+        );
+        if (!okAdj || !okSnap || !okBooking) {
+          return {
+            booking: finalBooking,
+            adjustment: enrichedAdjustment,
+            revisedInvoice,
+            supersededInvoices,
+            firestorePersisted: false,
+            error: 'Failed to persist manual discount snapshot and booking update to Firestore.'
+          };
+        }
+      } catch (err: any) {
+        return {
+          booking: finalBooking,
+          adjustment: enrichedAdjustment,
+          revisedInvoice,
+          supersededInvoices,
+          firestorePersisted: false,
+          error: err?.message || 'Firestore persistence failed while committing manual discount.'
+        };
+      }
+    }
+
+    const saved = this.commitBookingManualDiscountSnapshot(
+      finalBooking,
+      newSnapshot,
+      enrichedAdjustment,
+      actor,
+      false,
+      initialSnapshotToPersist,
+      { supersededInvoices, revisedInvoice }
+    );
+    return {
+      booking: saved,
+      adjustment: enrichedAdjustment,
+      revisedInvoice,
+      supersededInvoices,
+      firestorePersisted: Boolean(syncToFirestore && auth.currentUser)
+    };
   }
 
   public getBookingManualDiscountAdjustments(bookingId?: string): BookingManualDiscountAdjustment[] {
@@ -13518,6 +14171,47 @@ export class AppDatabase {
     return [buildInitialBookingPricingSnapshot(b)];
   }
 
+  public getBookingPaymentSchedules(bookingId: string): PaymentSchedule[] {
+    const stored = this.getItem<PaymentSchedule[]>('booking_payment_schedules', []);
+    const b = this.getAllBookings().find(bk => bk.id === bookingId);
+    const byId = new Map<string, PaymentSchedule>();
+    for (const s of stored.filter(item => item.bookingId === bookingId)) {
+      if (s.scheduleId) byId.set(s.scheduleId, s);
+    }
+    if (b?.paymentScheduleHistory) {
+      for (const s of b.paymentScheduleHistory) {
+        if (s.scheduleId && !byId.has(s.scheduleId)) byId.set(s.scheduleId, s);
+      }
+    }
+    if (b?.paymentSchedule?.scheduleId && !byId.has(b.paymentSchedule.scheduleId)) {
+      byId.set(b.paymentSchedule.scheduleId, b.paymentSchedule);
+    }
+    return Array.from(byId.values()).sort(
+      (a, c) => (c.scheduleVersion || 0) - (a.scheduleVersion || 0)
+    );
+  }
+
+  public commitVersionedPaymentSchedule(
+    updatedBooking: Booking,
+    newSchedule: PaymentSchedule,
+    user: User | null,
+    syncToFirestore = true
+  ): Booking {
+    const allSchedules = this.getItem<PaymentSchedule[]>('booking_payment_schedules', []);
+    const scheduleId = newSchedule.scheduleId || `ps-${updatedBooking.id}-v${newSchedule.scheduleVersion || 1}`;
+    const enriched: PaymentSchedule = { ...newSchedule, scheduleId, immutable: true };
+    if (!allSchedules.some(s => s.scheduleId === scheduleId)) {
+      allSchedules.push(enriched);
+      this.setItem('booking_payment_schedules', allSchedules);
+    }
+    this.saveBooking(updatedBooking, user);
+    if (syncToFirestore) {
+      this.syncFirestoreDoc('booking_payment_schedules', scheduleId, enriched);
+      this.syncFirestoreDoc('bookings', updatedBooking.id, updatedBooking);
+    }
+    return updatedBooking;
+  }
+
   /**
    * Enforces role authorization:
    * - ADMIN / TEAM_MEMBER / DMC_STAFF: can view all bookings across the company
@@ -13528,7 +14222,12 @@ export class AppDatabase {
     const all = this.getAllBookings();
     if (!user) return [];
     // Internal operational staff retain complete visibility
-    if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    if (
+      (user.role as string) === 'SUPER_ADMIN' ||
+      user.role === 'ADMIN' ||
+      user.role === 'TEAM_MEMBER' ||
+      user.role === 'DMC_STAFF'
+    ) {
       return all;
     }
     // B2B Agent visibility: submitted by this agent OR assigned to this agent
@@ -13564,7 +14263,12 @@ export class AppDatabase {
     if (!user) return null; // Logged-out users cannot access bookings
     
     // Internal operational staff retain full visibility
-    if (user.role === 'ADMIN' || user.role === 'TEAM_MEMBER' || user.role === 'DMC_STAFF') {
+    if (
+      (user.role as string) === 'SUPER_ADMIN' ||
+      user.role === 'ADMIN' ||
+      user.role === 'TEAM_MEMBER' ||
+      user.role === 'DMC_STAFF'
+    ) {
       return found;
     }
 
@@ -13612,15 +14316,22 @@ export class AppDatabase {
       }
     }
 
+    const bookingDocs = this.getPassengerComplianceDocuments(booking.id);
+
     passengers.forEach((p, idx) => {
       const pLabel = `Passenger ${p.passengerNumber || idx + 1} (${p.firstName || 'Guest'} ${p.lastName || ''})`.trim();
-      if (!p.passportFrontUrl) {
+      const paxDocs = bookingDocs.filter(d => d.passengerId === p.id && d.status !== 'DELETED');
+      const hasFront = Boolean(p.passportFrontUrl || p.passportFrontStoragePath || paxDocs.some(d => d.category === 'PASSPORT_FRONT'));
+      const hasBack = Boolean(p.passportBackUrl || p.passportBackStoragePath || paxDocs.some(d => d.category === 'PASSPORT_BACK'));
+      const hasPan = Boolean(p.panCardUrl || p.panCardStoragePath || paxDocs.some(d => d.category === 'PAN_CARD'));
+
+      if (!hasFront) {
         missingList.push(`${pLabel} — Passport Front Missing`);
       }
-      if (!p.passportBackUrl) {
+      if (!hasBack) {
         missingList.push(`${pLabel} — Passport Back Missing`);
       }
-      if (p.isLeadPax && !p.panCardUrl && (booking.customer?.nationality === 'Indian' || !booking.customer?.nationality)) {
+      if (p.isLeadPax && !hasPan && (booking.customer?.nationality === 'Indian' || !booking.customer?.nationality)) {
         missingList.push(`${pLabel} (Lead) — PAN Card Missing`);
       }
     });
@@ -13635,41 +14346,32 @@ export class AppDatabase {
 
   public calculateBookingPaymentSummary(booking: Booking): {
     totalAmount: number;
+    originalAmount: number;
+    discountAmount: number;
     paidAmount: number;
     verifiedPaidAmount: number;
     pendingAmount: number;
+    creditBalance: number;
+    isOverpaid: boolean;
     paymentStatus: Booking['paymentStatus'];
     tranchesCount: number;
+    latestSnapshotVersion: number;
+    latestSnapshotId: string;
   } {
-    const totalAmount = booking.totalAmount || 0;
-    const proofs = booking.paymentProofs || [];
-    
-    const verifiedPaidAmount = proofs
-      .filter(p => p.verificationStatus === 'VERIFIED')
-      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-
-    const totalUploadedAmount = proofs
-      .filter(p => p.verificationStatus !== 'REJECTED')
-      .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-
-    const pendingAmount = Math.max(0, totalAmount - verifiedPaidAmount);
-
-    let paymentStatus: Booking['paymentStatus'] = 'PENDING_PAYMENT';
-    if (verifiedPaidAmount >= totalAmount && totalAmount > 0) {
-      paymentStatus = 'PAID';
-    } else if (verifiedPaidAmount > 0 || totalUploadedAmount > 0) {
-      paymentStatus = 'PARTIALLY_PAID';
-    } else {
-      paymentStatus = 'PENDING_PAYMENT';
-    }
-
+    const fin = resolveAuthoritativeBookingFinancials(booking);
     return {
-      totalAmount,
-      paidAmount: totalUploadedAmount,
-      verifiedPaidAmount,
-      pendingAmount,
-      paymentStatus,
-      tranchesCount: proofs.length
+      totalAmount: fin.revisedBookingAmount,
+      originalAmount: fin.originalBookingAmount,
+      discountAmount: fin.adminManualDiscountTotal,
+      paidAmount: fin.totalRecordedPaidAmount,
+      verifiedPaidAmount: fin.verifiedPaidAmount,
+      pendingAmount: fin.outstandingBalance,
+      creditBalance: fin.creditBalance,
+      isOverpaid: fin.isOverpaid,
+      paymentStatus: fin.paymentStatus,
+      tranchesCount: fin.tranchesCount,
+      latestSnapshotVersion: fin.latestSnapshotVersion,
+      latestSnapshotId: fin.latestSnapshotId
     };
   }
 
@@ -14388,9 +15090,59 @@ export class AppDatabase {
     const paySummary = this.calculateBookingPaymentSummary(booking);
     booking.paymentStatus = paySummary.paymentStatus;
 
+    // Preserve immutable internal pricing snapshots, supplier nett cost, and manual discount ledger
+    // (critical when external B2B agents save passenger/document updates from a sanitized DTO)
+    const existingRecord = index >= 0 ? all[index] : undefined;
+    const bookingWithPreservedPricing: Booking = existingRecord
+      ? {
+          ...booking,
+          pricingSnapshotHistory:
+            booking.pricingSnapshotHistory && booking.pricingSnapshotHistory.length > 0
+              ? booking.pricingSnapshotHistory
+              : existingRecord.pricingSnapshotHistory,
+          manualDiscountAdjustments:
+            booking.manualDiscountAdjustments && booking.manualDiscountAdjustments.length > 0
+              ? booking.manualDiscountAdjustments
+              : existingRecord.manualDiscountAdjustments,
+          currentPricingSnapshotId:
+            booking.currentPricingSnapshotId ?? existingRecord.currentPricingSnapshotId,
+          currentPricingSnapshotVersion:
+            booking.currentPricingSnapshotVersion ?? existingRecord.currentPricingSnapshotVersion,
+          adminManualDiscountTotal:
+            booking.adminManualDiscountTotal ?? existingRecord.adminManualDiscountTotal,
+          originalTheUnboundMargin:
+            booking.originalTheUnboundMargin ?? existingRecord.originalTheUnboundMargin,
+          remainingTheUnboundMargin:
+            booking.remainingTheUnboundMargin ?? existingRecord.remainingTheUnboundMargin,
+          totalNetCost: booking.totalNetCost ?? existingRecord.totalNetCost,
+          internalNettCost: booking.internalNettCost ?? existingRecord.internalNettCost,
+          supplierCost: booking.supplierCost ?? existingRecord.supplierCost,
+          supplierTotalCost: booking.supplierTotalCost ?? existingRecord.supplierTotalCost
+        }
+      : booking;
+
+    const authFin = resolveAuthoritativeBookingFinancials(bookingWithPreservedPricing);
+    const immutableOriginalPrice =
+      typeof existingRecord?.original_selling_price === 'number' && existingRecord.original_selling_price > 0
+        ? existingRecord.original_selling_price
+        : authFin.original_selling_price;
+    const nowIso = new Date().toISOString();
+
     const updatedBooking: Booking = {
-      ...booking,
-      updatedAt: new Date().toISOString()
+      ...bookingWithPreservedPricing,
+      original_selling_price: immutableOriginalPrice,
+      originalBookingAmount: bookingWithPreservedPricing.originalBookingAmount ?? immutableOriginalPrice,
+      current_selling_price: authFin.current_selling_price,
+      paymentSchedule: bookingWithPreservedPricing.paymentSchedule
+        ? recalculateBookingPaymentSchedule(
+            bookingWithPreservedPricing,
+            authFin.current_selling_price,
+            authFin.verifiedPaidAmount,
+            authFin.currency,
+            nowIso
+          )
+        : authFin.paymentSchedule,
+      updatedAt: nowIso
     };
 
     if (index >= 0) {
@@ -14570,15 +15322,29 @@ export class AppDatabase {
         passportFrontUrl: updates.passportFrontUrl !== undefined ? updates.passportFrontUrl : existing.passportFrontUrl,
         passportFrontName: updates.passportFrontName !== undefined ? updates.passportFrontName : existing.passportFrontName,
         passportFrontUploadedAt: updates.passportFrontUploadedAt !== undefined ? updates.passportFrontUploadedAt : existing.passportFrontUploadedAt,
+        passportFrontDocId: updates.passportFrontDocId !== undefined ? updates.passportFrontDocId : existing.passportFrontDocId,
+        passportFrontStoragePath: updates.passportFrontStoragePath !== undefined ? updates.passportFrontStoragePath : existing.passportFrontStoragePath,
         passportBackUrl: updates.passportBackUrl !== undefined ? updates.passportBackUrl : existing.passportBackUrl,
         passportBackName: updates.passportBackName !== undefined ? updates.passportBackName : existing.passportBackName,
         passportBackUploadedAt: updates.passportBackUploadedAt !== undefined ? updates.passportBackUploadedAt : existing.passportBackUploadedAt,
+        passportBackDocId: updates.passportBackDocId !== undefined ? updates.passportBackDocId : existing.passportBackDocId,
+        passportBackStoragePath: updates.passportBackStoragePath !== undefined ? updates.passportBackStoragePath : existing.passportBackStoragePath,
         panCardUrl: updates.panCardUrl !== undefined ? updates.panCardUrl : existing.panCardUrl,
         panCardName: updates.panCardName !== undefined ? updates.panCardName : existing.panCardName,
         panCardUploadedAt: updates.panCardUploadedAt !== undefined ? updates.panCardUploadedAt : existing.panCardUploadedAt,
+        panCardDocId: updates.panCardDocId !== undefined ? updates.panCardDocId : existing.panCardDocId,
+        panCardStoragePath: updates.panCardStoragePath !== undefined ? updates.panCardStoragePath : existing.panCardStoragePath,
         panNumber: updates.panNumber !== undefined ? updates.panNumber : existing.panNumber,
+        visaCopyUrl: updates.visaCopyUrl !== undefined ? updates.visaCopyUrl : existing.visaCopyUrl,
+        visaCopyName: updates.visaCopyName !== undefined ? updates.visaCopyName : existing.visaCopyName,
+        visaCopyUploadedAt: updates.visaCopyUploadedAt !== undefined ? updates.visaCopyUploadedAt : existing.visaCopyUploadedAt,
+        visaCopyDocId: updates.visaCopyDocId !== undefined ? updates.visaCopyDocId : existing.visaCopyDocId,
+        visaCopyStoragePath: updates.visaCopyStoragePath !== undefined ? updates.visaCopyStoragePath : existing.visaCopyStoragePath,
+        complianceDocumentIds: updates.complianceDocumentIds !== undefined ? updates.complianceDocumentIds : existing.complianceDocumentIds,
         passportNumber: updates.passportNumber !== undefined ? updates.passportNumber : existing.passportNumber,
+        passportIssueDate: updates.passportIssueDate !== undefined ? updates.passportIssueDate : existing.passportIssueDate,
         passportExpiryDate: updates.passportExpiryDate !== undefined ? updates.passportExpiryDate : existing.passportExpiryDate,
+        passportExpiry: updates.passportExpiry !== undefined ? updates.passportExpiry : existing.passportExpiry,
       };
     }
 
@@ -14647,6 +15413,43 @@ export class AppDatabase {
     this.saveBooking(b, user);
   }
 
+  public getPassengerComplianceDocuments(
+    bookingId?: string,
+    passengerId?: string,
+    includeDeleted: boolean = false
+  ): PassengerComplianceDocument[] {
+    const all = this.getItem<PassengerComplianceDocument[]>('booking_passenger_documents', []);
+    return all
+      .filter(d => {
+        if (bookingId && d.bookingId !== bookingId) return false;
+        if (passengerId && d.passengerId !== passengerId) return false;
+        if (!includeDeleted && d.status === 'DELETED') return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime());
+  }
+
+  public upsertPassengerComplianceDocumentLocal(docRecord: PassengerComplianceDocument): void {
+    const all = this.getItem<PassengerComplianceDocument[]>('booking_passenger_documents', []);
+    const idx = all.findIndex(d => d.id === docRecord.id);
+    if (idx >= 0) {
+      all[idx] = docRecord;
+    } else {
+      all.unshift(docRecord);
+    }
+    this.setItem('booking_passenger_documents', all);
+  }
+
+  public mergePassengerComplianceDocumentsLocal(bookingId: string, remoteDocs: PassengerComplianceDocument[]): void {
+    const existing = this.getItem<PassengerComplianceDocument[]>('booking_passenger_documents', []);
+    const otherBookings = existing.filter(d => d.bookingId !== bookingId);
+    const mergedMap = new Map<string, PassengerComplianceDocument>();
+    remoteDocs.forEach(d => {
+      if (d?.id) mergedMap.set(d.id, d);
+    });
+    this.setItem('booking_passenger_documents', [...Array.from(mergedMap.values()), ...otherBookings], true);
+  }
+
   // ----------------------------------------------------
   // MULTI-TRANCHE PAYMENT MANAGEMENT & VERIFICATION
   // ----------------------------------------------------
@@ -14671,6 +15474,18 @@ export class AppDatabase {
 
     proofs.push(newProof);
     b.paymentProofs = proofs;
+    const finAfterUpload = resolveAuthoritativeBookingFinancials(b);
+    b.amountPaid = finAfterUpload.verifiedPaidAmount;
+    b.paidAmount = finAfterUpload.verifiedPaidAmount;
+    b.balanceDue = finAfterUpload.outstandingBalance;
+    b.pendingPaymentAmount = finAfterUpload.outstandingBalance;
+    b.creditBalance = finAfterUpload.creditBalance;
+    b.overpaidAmount = finAfterUpload.creditBalance;
+    b.excessPaymentAmount = finAfterUpload.creditBalance;
+    b.paymentStatus = finAfterUpload.paymentStatus;
+    b.original_selling_price = b.original_selling_price ?? finAfterUpload.original_selling_price;
+    b.current_selling_price = finAfterUpload.current_selling_price;
+    b.paymentSchedule = finAfterUpload.paymentSchedule;
     b.updatedAt = timestamp;
 
     if (!b.timeline) b.timeline = [];
@@ -14708,6 +15523,18 @@ export class AppDatabase {
     b.paymentProofs[pIdx].verifiedAt = timestamp;
     b.paymentProofs[pIdx].verificationNotes = notes;
 
+    const finAfterVerify = resolveAuthoritativeBookingFinancials(b);
+    b.amountPaid = finAfterVerify.verifiedPaidAmount;
+    b.paidAmount = finAfterVerify.verifiedPaidAmount;
+    b.balanceDue = finAfterVerify.outstandingBalance;
+    b.pendingPaymentAmount = finAfterVerify.outstandingBalance;
+    b.creditBalance = finAfterVerify.creditBalance;
+    b.overpaidAmount = finAfterVerify.creditBalance;
+    b.excessPaymentAmount = finAfterVerify.creditBalance;
+    b.paymentStatus = finAfterVerify.paymentStatus;
+    b.original_selling_price = b.original_selling_price ?? finAfterVerify.original_selling_price;
+    b.current_selling_price = finAfterVerify.current_selling_price;
+    b.paymentSchedule = finAfterVerify.paymentSchedule;
     b.updatedAt = timestamp;
 
     if (!b.timeline) b.timeline = [];
@@ -15508,14 +16335,58 @@ export class AppDatabase {
     const pax = Number(itemData.totalPax) || (b.customer?.totalPax || 1);
     const totalPrice = Number(itemData.totalPrice) || (unitSelling * pax);
 
+    const linkedProduct = itemData.productId
+      ? this.getProducts().find(p => p.id === itemData.productId) || null
+      : null;
+    const linkedHotel = (itemData.hotelId || itemData.productId)
+      ? this.getHotels().find(h => h.id === (itemData.hotelId || itemData.productId)) || null
+      : null;
+    const resolvedCat = resolveAuthoritativeCategory(
+      {
+        ...itemData,
+        id: itemId,
+        productId: itemData.productId || `prod-ops-${Date.now()}`,
+        productName: itemData.productName || 'Service Item',
+        travelDate: itemData.serviceDate || itemData.travelDate || b.travelStartDate,
+        adults: itemData.adults || b.customer?.totalAdults || 1,
+        children: itemData.children || b.customer?.totalChildren || 0,
+        infants: itemData.infants || b.customer?.totalInfants || 0,
+        totalPax: pax,
+        unitSellingPrice: unitSelling,
+        totalPrice,
+        currency: itemData.currency || b.currency || 'USD',
+        supplierStatus: 'PENDING_DISPATCH'
+      } as BookingItem,
+      linkedProduct,
+      linkedHotel
+    );
+
+    const resolvedNetPrice =
+      itemData.netPrice !== undefined
+        ? roundCurrency(Number(itemData.netPrice))
+        : itemData.supplierTotalCost !== undefined
+        ? roundCurrency(Number(itemData.supplierTotalCost))
+        : itemData.supplierPrice !== undefined
+        ? roundCurrency(Number(itemData.supplierPrice))
+        : itemData.unitNetPrice !== undefined
+        ? roundCurrency(Number(itemData.unitNetPrice))
+        : undefined;
+
     const newItem: BookingItem = {
       id: itemId,
       bookingId: b.id,
       productId: itemData.productId || `prod-ops-${Date.now()}`,
+      hotelId: itemData.hotelId || linkedHotel?.id,
+      isHotel: Boolean(itemData.isHotel || linkedHotel || resolvedCat.categoryId === 'HOTEL'),
       productName: itemData.productName || 'Service Item',
       destination: itemData.destination || b.destination || 'Bali',
       hub: itemData.hub,
-      category: itemData.category || 'Other approved travel service',
+      category: itemData.category || resolvedCat.sourceCategoryLabel || 'Other approved travel service',
+      categoryId: itemData.categoryId || resolvedCat.categoryId,
+      sourceCategoryLabel: itemData.sourceCategoryLabel || resolvedCat.sourceCategoryLabel,
+      serviceDescription: itemData.serviceDescription !== undefined ? itemData.serviceDescription : (linkedProduct?.description || linkedHotel?.description),
+      serviceNarrative: itemData.serviceNarrative !== undefined ? itemData.serviceNarrative : (linkedProduct?.narrative || linkedHotel?.narrative),
+      serviceOverview: itemData.serviceOverview !== undefined ? itemData.serviceOverview : (linkedProduct?.overview || linkedHotel?.overview),
       travelDate: itemData.serviceDate || itemData.travelDate || b.travelStartDate,
       serviceDate: itemData.serviceDate || itemData.travelDate || b.travelStartDate,
       serviceTime: itemData.serviceTime || '09:00',
@@ -15526,7 +16397,10 @@ export class AppDatabase {
       infants: itemData.infants || b.customer?.totalInfants || 0,
       totalPax: pax,
       passengerAssignment: itemData.passengerAssignment || [],
+      unitNetPrice: resolvedNetPrice ?? itemData.unitNetPrice,
+      netPrice: resolvedNetPrice,
       unitSellingPrice: unitSelling,
+      sellingPrice: roundCurrency(itemData.sellingPrice !== undefined ? Number(itemData.sellingPrice) : totalPrice),
       totalPrice: totalPrice,
       currency: itemData.currency || b.currency || 'USD',
       isManualServiceItem: isManual,
@@ -15541,8 +16415,8 @@ export class AppDatabase {
       supplierConfirmationRef: itemData.supplierConfirmationRef,
       supplierAllocationStatus: itemData.supplierId ? 'Allocated' : 'Not Allocated',
       supplierPrice: itemData.supplierPrice,
-      supplierCurrency: itemData.supplierCurrency || 'USD',
-      supplierPriceType: itemData.supplierPriceType || 'Per Person',
+      supplierCurrency: itemData.supplierCurrency || itemData.currency || b.currency || 'USD',
+      supplierPriceType: itemData.supplierPriceType || 'Total Service Price',
       supplierConfirmationStatus: itemData.supplierConfirmationStatus || 'Not Confirmed',
       operationalStatus: itemData.operationalStatus || (itemData.supplierId ? 'Confirmation Pending' : 'Supplier Not Allocated'),
       voucherStatus: 'Not Ready',
@@ -15690,14 +16564,23 @@ export class AppDatabase {
         : (updates.totalPax !== undefined ? Math.max(1, Number(updates.totalPax)) : currentItem.totalPax);
 
     // Build the consolidated updated item (Single Authoritative Service Record)
+    const nextCategory = updates.category !== undefined ? updates.category : currentItem.category;
+    const nextCategoryId = updates.categoryId !== undefined
+      ? updates.categoryId
+      : (updates.category !== undefined ? normalizeRawCategoryToCanonicalId(updates.category) : currentItem.categoryId);
     const updatedItem: BookingItem = {
       ...currentItem,
       // Operational & descriptive attributes
       productName: updates.productName !== undefined ? updates.productName : currentItem.productName,
-      category: updates.category !== undefined ? updates.category : currentItem.category,
+      category: nextCategory,
+      categoryId: nextCategoryId,
+      sourceCategoryLabel: updates.sourceCategoryLabel !== undefined
+        ? updates.sourceCategoryLabel
+        : (updates.category !== undefined ? updates.category : currentItem.sourceCategoryLabel),
       destination: updates.destination !== undefined ? updates.destination : currentItem.destination,
       hub: updates.hub !== undefined ? updates.hub : currentItem.hub,
       serviceDescription: updates.serviceDescription !== undefined ? updates.serviceDescription : currentItem.serviceDescription,
+      serviceNarrative: updates.serviceNarrative !== undefined ? updates.serviceNarrative : currentItem.serviceNarrative,
       serviceOverview: updates.serviceOverview !== undefined ? updates.serviceOverview : currentItem.serviceOverview,
       inclusions: updates.inclusions !== undefined ? updates.inclusions : currentItem.inclusions,
       exclusions: updates.exclusions !== undefined ? updates.exclusions : currentItem.exclusions,
@@ -15747,8 +16630,15 @@ export class AppDatabase {
       internalNotes: updates.internalNotes !== undefined ? updates.internalNotes : currentItem.internalNotes,
       internalOpsNotes: updates.internalOpsNotes !== undefined ? updates.internalOpsNotes : currentItem.internalOpsNotes,
       
-      // Customer selling price (strictly preserved or updated with authorized permissions)
+      // Internal Net Price & Customer Selling Price (authoritative selling price never overwritten unless explicitly updated)
+      netPrice: updates.netPrice !== undefined ? roundCurrency(Number(updates.netPrice)) : currentItem.netPrice,
+      unitNetPrice: updates.unitNetPrice !== undefined
+        ? roundCurrency(Number(updates.unitNetPrice))
+        : (updates.netPrice !== undefined ? roundCurrency(Number(updates.netPrice)) : currentItem.unitNetPrice),
       unitSellingPrice: updates.unitSellingPrice !== undefined ? Number(updates.unitSellingPrice) : currentItem.unitSellingPrice,
+      sellingPrice: updates.sellingPrice !== undefined
+        ? roundCurrency(Number(updates.sellingPrice))
+        : (updates.totalPrice !== undefined ? roundCurrency(Number(updates.totalPrice)) : currentItem.sellingPrice),
       totalPrice: updates.totalPrice !== undefined ? Number(updates.totalPrice) : currentItem.totalPrice,
       currency: updates.currency || currentItem.currency,
 
@@ -15831,6 +16721,45 @@ export class AppDatabase {
     b.items[itemIdx] = updatedItem;
     b.updatedAt = now;
     b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    // If this item belongs to a Consolidated Supplier Allocation and triggered reconfirmation,
+    // reflect Amendment Required on that item's allocation entry and record status history.
+    if (triggersReconfirmation && updatedItem.consolidatedAllocationId) {
+      const allAllocations = this.getItem<SupplierAllocationRecord[]>('supplier_allocations', []);
+      const allocIdx = allAllocations.findIndex(a => a.id === updatedItem.consolidatedAllocationId);
+      if (allocIdx >= 0) {
+        const parent = allAllocations[allocIdx];
+        const updatedParent: SupplierAllocationRecord = {
+          ...parent,
+          status: 'AMENDMENT_REQUIRED',
+          updatedAt: now,
+          version: (parent.version || 1) + 1,
+          itemAllocations: (parent.itemAllocations || []).map(ia =>
+            ia.serviceItemId === updatedItem.id
+              ? { ...ia, confirmationStatus: 'Amendment Required' as SupplierAllocationStatus }
+              : ia
+          ),
+          statusHistory: [
+            {
+              timestamp: now,
+              status: 'AMENDMENT_REQUIRED',
+              actorId: user?.id || 'admin',
+              actorName,
+              note: `Service item "${updatedItem.productName}" amended post-confirmation (${amendmentCheck.changedFields.join(', ')}). Reconfirmation required.`
+            },
+            ...(parent.statusHistory || [])
+          ]
+        };
+        allAllocations[allocIdx] = updatedParent;
+        this.setItem('supplier_allocations', allAllocations);
+        this.syncFirestoreDoc('supplier_allocations', updatedParent.id, updatedParent);
+        if (b.consolidatedAllocations) {
+          b.consolidatedAllocations = b.consolidatedAllocations.map(a =>
+            a.id === updatedParent.id ? updatedParent : a
+          );
+        }
+      }
+    }
 
     // If vouchers exist and operational details or confirmation status changed, mark affected vouchers outdated
     if ((triggersReconfirmation || amendmentCheck.affectsVouchers) && b.vouchersList && b.vouchersList.length > 0) {
@@ -16647,9 +17576,19 @@ export class AppDatabase {
     for (const p of products) {
       if (p?.id) productMap.set(p.id, p);
     }
+    const hotels = this.getHotels();
+    const hotelMap = new Map<string, Hotel>();
+    for (const h of hotels) {
+      if (h?.id) hotelMap.set(h.id, h);
+    }
 
     const hydratedAll = (b.items || []).map(it =>
-      hydrateBookingServiceItem(it, b, it.productId ? productMap.get(it.productId) || null : null)
+      hydrateBookingServiceItem(
+        it,
+        b,
+        it.productId ? productMap.get(it.productId) || null : null,
+        (it.hotelId || it.productId) ? hotelMap.get(it.hotelId || it.productId) || null : null
+      )
     );
     const readiness = validateCompleteVoucherReadiness(b, hydratedAll);
     if (!readiness.isReady) {
@@ -16711,6 +17650,7 @@ export class AppDatabase {
       hub: it.hub,
       city: it.city || it.hub,
       serviceDescription: it.resolvedDescription,
+      serviceNarrative: it.resolvedNarrative,
       serviceOverview: it.resolvedOverview,
       inclusions: it.resolvedInclusions,
       exclusions: it.resolvedExclusions,
@@ -16952,7 +17892,10 @@ export class AppDatabase {
     }
 
     const linkedProduct = item.productId ? this.getProducts().find(p => p.id === item.productId) || null : null;
-    const hydrated = hydrateBookingServiceItem(item, b, linkedProduct);
+    const linkedHotel = (item.hotelId || item.productId)
+      ? this.getHotels().find(h => h.id === (item.hotelId || item.productId)) || null
+      : null;
+    const hydrated = hydrateBookingServiceItem(item, b, linkedProduct, linkedHotel);
 
     const isConfirmed = hydrated.isConfirmedForVoucher || forceRegenerate;
     if (!isConfirmed) {
@@ -17014,6 +17957,7 @@ export class AppDatabase {
       city,
       hub: city,
       serviceDescription: hydrated.resolvedDescription,
+      serviceNarrative: hydrated.resolvedNarrative,
       serviceOverview: hydrated.resolvedOverview,
       serviceDate,
       serviceTime,
@@ -17081,6 +18025,7 @@ export class AppDatabase {
       serviceName,
       serviceDescription: hydrated.resolvedDescription,
       activityDescription: hydrated.resolvedDescription,
+      serviceNarrative: hydrated.resolvedNarrative,
       serviceOverview: hydrated.resolvedOverview,
       serviceDate,
       serviceTime,
@@ -17323,9 +18268,13 @@ export class AppDatabase {
 
     const companyProfile = this.getCentralCompanyProfile();
     const allProducts = this.getProducts();
+    const allHotels = this.getHotels();
     const hydrateForGroup = (it: BookingItem) => {
-      const productRecord = it.productId ? allProducts.find(p => p.id === it.productId) : null;
-      return hydrateBookingServiceItem(it, b, productRecord);
+      const productRecord = it.productId ? allProducts.find(p => p.id === it.productId) || null : null;
+      const hotelRecord = (it.hotelId || it.productId)
+        ? allHotels.find(h => h.id === (it.hotelId || it.productId)) || null
+        : null;
+      return hydrateBookingServiceItem(it, b, productRecord, hotelRecord);
     };
 
     if (groupingType === 'combined') {
@@ -17407,6 +18356,7 @@ export class AppDatabase {
           ticketDate: h.resolvedTicketDate,
           ticketEntryTime: h.resolvedTicketEntryTime,
           serviceDescription: h.resolvedDescription,
+          serviceNarrative: h.resolvedNarrative,
           serviceOverview: h.resolvedOverview,
           inclusions: h.resolvedInclusions,
           exclusions: h.resolvedExclusions,
@@ -17531,6 +18481,7 @@ export class AppDatabase {
             ticketDate: h.resolvedTicketDate,
             ticketEntryTime: h.resolvedTicketEntryTime,
             serviceDescription: h.resolvedDescription,
+            serviceNarrative: h.resolvedNarrative,
             serviceOverview: h.resolvedOverview,
             inclusions: h.resolvedInclusions,
             exclusions: h.resolvedExclusions,
@@ -17726,7 +18677,8 @@ export class AppDatabase {
   public generateProformaInvoice(
     bookingId: string,
     user: User | null,
-    forceRegenerate: boolean = false
+    forceRegenerate: boolean = false,
+    options?: { idempotencyKey?: string; reason?: string }
   ): { success: boolean; invoice?: BookingInvoice; error?: string } {
     const b =
       this.getAllBookings().find(bk => bk.id === bookingId || bk.bookingReference === bookingId) ||
@@ -17735,133 +18687,66 @@ export class AppDatabase {
 
     // Server-side idempotency check: Return existing active invoice unless explicit regeneration requested
     const existingInvoices = this.getBookingInvoices(b.id);
+    if (options?.idempotencyKey) {
+      const existingByKey = existingInvoices.find(
+        inv => inv.idempotencyKey === options.idempotencyKey && inv.status !== 'VOIDED'
+      );
+      if (existingByKey) {
+        return { success: true, invoice: existingByKey };
+      }
+    }
     if (existingInvoices.length > 0 && !forceRegenerate) {
       return { success: true, invoice: existingInvoices[0] };
     }
 
-    const authoritative = resolveAuthoritativeProformaAmount(b);
-    const companyProfile = this.getCentralCompanyProfile();
-    const nextInvoiceVersion = existingInvoices.length + 1;
-
-    const now = new Date().toISOString();
-    const issueDateStr = now.split('T')[0];
-    const invoiceNumber = `TUB-PINV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}${nextInvoiceVersion > 1 ? `-R${nextInvoiceVersion}` : ''}`;
-
-    const customerName = b.customer?.leadTravelerName || b.customer?.bookerName || b.customer?.name || (b as any).guestName || (b as any).leadName || 'Valued Client';
-    const customerEmail = b.customer?.email || (b as any).guestEmail || (b as any).leadEmail || 'client@theunbound.com';
-    const agencyName = b.agentAgency || b.customer?.agencyName || (b as any).agencyName || 'TheUnbound Partner Network';
-    const agentName = b.agentName || (b as any).submittingAgentName || user?.name || 'Authorized Operations Desk';
-    const travelersObj = (b as any).travelers;
-    const totalPax =
-      travelersObj
-        ? (travelersObj.adults || 0) + (travelersObj.children || 0) + (travelersObj.infants || 0)
-        : typeof (b as any).totalPax === 'number'
-        ? (b as any).totalPax
-        : (b.customer?.totalAdults || 1) + (b.customer?.totalChildren || 0) + (b.customer?.totalInfants || 0);
-    const destination = b.destination || (b as any).primaryDestination || 'Ground Destination';
-    const travelDates = b.travelStartDate ? `${b.travelStartDate}${b.travelEndDate ? ' - ' + b.travelEndDate : ''}` : 'Scheduled';
-
-    const mappedItems: any[] = sortBookingItemsChronologically(
-      (b.items || [])
-        .filter(it => !it.isCancelled && it.operationalStatus !== 'Cancelled')
-        .map(it => hydrateBookingServiceItem(it, b))
-    ).map((it, idx) => ({
-      id: it.id || `inv-item-${idx}`,
-      productName: it.productName || 'Travel Ground Service',
-      serviceName: it.productName || 'Travel Ground Service',
-      description: it.productName || 'Travel Ground Service',
-      category: it.category || 'SERVICE',
-      serviceDate: it.resolvedServiceDate || b.travelStartDate || 'Scheduled',
-      travelDate: it.resolvedServiceDate || b.travelStartDate || 'Scheduled',
-      pax: it.totalPax || totalPax,
-      quantity: 1,
-      unitPrice: 0,
-      taxAmount: 0,
-      totalPrice: 0,
-      amount: 0,
-      currency: authoritative.currency
-    }));
-
-    // Authoritative customer-facing Final Booking Amount strictly from the latest committed BookingPricingSnapshot.
-    // Underlying tax/service fee remain preserved in booking financial records — NEVER rendered separately on Proforma.
-    const finalBookingAmount = authoritative.finalBookingAmount;
-    const amountPaid = authoritative.amountPaid;
-    const balanceDue = authoritative.balanceDue;
-    const paymentStatus: InvoicePaymentStatus = balanceDue === 0 && finalBookingAmount > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID';
-
-    const dueDate = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
-
-    const invoice: BookingInvoice = {
-      id: `inv-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      invoiceNumber,
-      bookingId: b.id,
-      bookingReference: b.bookingReference,
-      leadId: b.leadId || b.linkedLeadId,
-      sourceQuoteId: b.sourceQuoteId || b.quoteId,
-      invoiceVersion: nextInvoiceVersion,
-      previousInvoiceId: existingInvoices[0]?.id,
-      isProforma: true,
-      hideTaxAndServiceFeeBreakdown: true,
-      sourcePricingSnapshotId: authoritative.sourcePricingSnapshotId,
-      sourcePricingSnapshotVersion: authoritative.sourcePricingSnapshotVersion,
-      proformaFinalBookingAmount: finalBookingAmount,
-      documentNotice:
-        'This document is a Proforma Invoice issued solely for booking confirmation and payment remittance purposes. It is not a statutory or final fiscal invoice.',
-      bookingDescription:
-        (b as any).title ||
-        (b as any).packageName ||
-        `Consolidated Ground Services Booking (${destination}${travelDates ? ` | ${travelDates}` : ''})`,
-      responsibleAgentId: b.submittingAgentId || b.agentId,
-      assignedTeamMemberId: b.assignedTeamMemberId,
-      customerName,
-      customerEmail,
-      customerPhone: b.customer?.phone || (b as any).guestPhone,
-      agentName,
-      agencyName,
-      invoiceDate: issueDateStr,
-      issueDate: issueDateStr,
-      dueDate,
-      services: mappedItems as InvoiceServiceItem[],
-      items: mappedItems,
-      billedToAgency: agencyName,
-      billedToName: customerName,
-      billedToEmail: customerEmail,
-      billedToGstin: (b.customer as any)?.gstin || (b as any).gstin || '',
-      leadTravelerName: customerName,
-      totalPax,
-      destination,
-      travelDates,
-      subtotal: finalBookingAmount,
-      taxTotal: 0,
-      taxAmount: 0,
-      serviceFeeTotal: 0,
-      discountTotal: 0,
-      totalAmount: finalBookingAmount,
-      amountPaid,
-      paidAmount: amountPaid,
-      balanceDue,
-      currency: authoritative.currency,
-      paymentStatus,
-      paymentMethod: 'BANK_WIRE_TRANSFER',
-      companyName: companyProfile.companyName || 'Unbound Experiences India Pvt Ltd',
-      companyAddress: companyProfile.registeredAddress,
-      companyRegisteredAddress: companyProfile.registeredAddress,
-      companyCurrentAddress: companyProfile.currentAddress,
-      companyEmail: companyProfile.email,
-      companyPhone: companyProfile.phone,
-      companyTaxNumber: companyProfile.gstin || '',
-      notes: nextInvoiceVersion > 1
-        ? `Revised Proforma Invoice (Version ${nextInvoiceVersion}, Pricing Snapshot v${authoritative.sourcePricingSnapshotVersion}) for Booking Reference ${b.bookingReference}. Supersedes prior proforma for payment purposes; historical issued documents remain preserved.`
-        : `Proforma invoice issued for Booking Reference ${b.bookingReference}. Please quote the booking reference during wire transfer.`,
-      terms: 'Payment due within 7 days of proforma issuance or 14 days prior to travel departure, whichever is earlier. Wire transfer fees to be borne by remitter.',
-      createdAt: now,
-      updatedAt: now
+    const invoice = this.buildVersionedProformaInvoiceObject(b, existingInvoices, user, options);
+    const now = invoice.createdAt;
+    const invoiceNumber = invoice.invoiceNumber;
+    const nextInvoiceVersion = invoice.invoiceVersion || 1;
+    const resolvedPax = Math.max(1, Number(invoice.totalPax || b.customer?.totalPax || 1));
+    invoice.totalPax = resolvedPax;
+    invoice.perPersonPrice = roundMoney(Number(invoice.proformaFinalBookingAmount ?? invoice.totalAmount ?? 0) / resolvedPax);
+    const createAuditEntry: BookingInvoiceAuditEntry = {
+      id: `inv-aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      action: forceRegenerate ? 'REISSUED' : 'CREATED',
+      actorId: user?.id || 'system',
+      actorName: user?.name || 'Operations Lead',
+      actorRole: user?.role || 'OPERATIONS',
+      timestamp: now,
+      reason: options?.reason || (forceRegenerate ? 'Regenerated Proforma Invoice from latest booking pricing' : 'Generated initial Proforma Invoice'),
+      previousAmount: existingInvoices[0]?.proformaFinalBookingAmount ?? existingInvoices[0]?.totalAmount,
+      newAmount: invoice.proformaFinalBookingAmount ?? invoice.totalAmount,
+      previousPax: existingInvoices[0]?.totalPax,
+      newPax: resolvedPax,
+      currency: invoice.currency
     };
+    invoice.auditHistory = [createAuditEntry, ...(invoice.auditHistory || [])];
 
-    // Persist in global invoices collection (append-only: prior invoices remain strictly immutable)
-    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
-    allInvoices.unshift(invoice);
-    this.setItem('booking_invoices', allInvoices);
+    // If regenerating, mark prior active versions as SUPERSEDED without altering their historical amounts
+    if (forceRegenerate && existingInvoices.length > 0) {
+      const priorActive = existingInvoices.filter(
+        inv => inv.status !== 'VOIDED' && inv.status !== 'SUPERSEDED' && inv.status !== 'DELETED'
+      );
+      for (const prior of priorActive) {
+        const supersededPrior: BookingInvoice = {
+          ...prior,
+          status: 'SUPERSEDED',
+          isOutdated: true,
+          supersededAt: now,
+          supersededByInvoiceId: invoice.id,
+          supersededBySnapshotId: invoice.sourcePricingSnapshotId,
+          supersededReason: `Superseded by revised Proforma Invoice ${invoice.invoiceNumber} (v${nextInvoiceVersion}).`,
+          updatedAt: now
+        };
+        this.upsertProformaInvoiceLocal(supersededPrior);
+        this.syncFirestoreDoc('invoices', supersededPrior.id, supersededPrior);
+      }
+    }
+
+    // Persist in unified local stores (append-only: prior invoices remain strictly immutable)
+    this.upsertProformaInvoiceLocal(invoice);
     this.syncFirestoreDoc('invoices', invoice.id, invoice);
 
     // Update parent booking
@@ -17870,6 +18755,8 @@ export class AppDatabase {
     b.activeProformaInvoiceId = invoice.id;
     b.proformaInvoiceUrl = `/invoices/${invoice.id}`;
     b.hasRevisedPricingAfterInvoice = false;
+    b.revisedPricingNotice = undefined;
+    b.proformaInvoiceAuditHistory = [createAuditEntry, ...(b.proformaInvoiceAuditHistory || [])];
     b.updatedAt = now;
     this.saveBooking(b, user);
 
@@ -17898,10 +18785,44 @@ export class AppDatabase {
       'STATUS_UPDATED',
       'Booking',
       b.id,
-      `Generated Proforma Invoice ${invoiceNumber} for ${b.bookingReference} (${invoice.currency} ${invoice.totalAmount})`
+      `Generated Proforma Invoice ${invoiceNumber} (v${nextInvoiceVersion}) for ${b.bookingReference} (${invoice.currency} ${invoice.totalAmount})`
     );
 
     return { success: true, invoice };
+  }
+
+  private upsertProformaInvoiceLocal(invoice: BookingInvoice): void {
+    const bookingInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    const bIdx = bookingInvoices.findIndex(inv => inv.id === invoice.id);
+    if (bIdx >= 0) bookingInvoices[bIdx] = invoice;
+    else bookingInvoices.unshift(invoice);
+    this.setItem('booking_invoices', bookingInvoices);
+
+    const globalInvoices = this.getItem<BookingInvoice[]>('invoices', []);
+    const gIdx = globalInvoices.findIndex(inv => inv.id === invoice.id);
+    if (gIdx >= 0) globalInvoices[gIdx] = invoice;
+    else globalInvoices.unshift(invoice);
+    this.setItem('invoices', globalInvoices);
+  }
+
+  public async persistProformaInvoiceRecordAsync(
+    invoice: BookingInvoice,
+    booking: Booking,
+    user: User | null
+  ): Promise<boolean> {
+    this.upsertProformaInvoiceLocal(invoice);
+    const invSaved = await this.syncFirestoreDocAsync('invoices', invoice.id, invoice);
+    const bookingCopy: Booking = {
+      ...booking,
+      proformaInvoiceIds: Array.from(new Set([...(booking.proformaInvoiceIds || []), invoice.id])),
+      activeProformaInvoiceId: invoice.id,
+      proformaInvoiceUrl: invoice.storagePath ? `storage://${invoice.storagePath}` : `/invoices/${invoice.id}`,
+      hasRevisedPricingAfterInvoice: false,
+      updatedAt: new Date().toISOString()
+    };
+    this.saveBooking(bookingCopy, user);
+    const bookingSaved = await this.syncFirestoreDocAsync('bookings', bookingCopy.id, bookingCopy);
+    return invSaved && bookingSaved;
   }
 
   /**
@@ -17937,25 +18858,44 @@ export class AppDatabase {
       });
     }
 
+    const prevAmount = Number(prevInvoice?.proformaFinalBookingAmount ?? prevInvoice?.totalAmount ?? 0);
+    const nextAmount = Number(updatedInvoice.proformaFinalBookingAmount ?? updatedInvoice.totalAmount ?? prevAmount);
+    const prevPax = Math.max(1, Number(prevInvoice?.totalPax || b.customer?.totalPax || 1));
+    const nextPax = Math.max(1, Number(updatedInvoice.totalPax || prevPax));
+    const auditEntry: BookingInvoiceAuditEntry = {
+      id: `inv-aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      invoiceId: updatedInvoice.id,
+      invoiceNumber: updatedInvoice.invoiceNumber,
+      action: nextPax !== prevPax ? 'PAX_RECALCULATED' : 'UPDATED',
+      actorId: user?.id || 'admin',
+      actorName: user?.name || 'Operations Lead',
+      actorRole: user?.role || 'OPERATIONS',
+      timestamp: now,
+      reason: amendmentReason || 'Updated Proforma Invoice',
+      previousAmount: prevAmount,
+      newAmount: nextAmount,
+      previousPax: prevPax,
+      newPax: nextPax,
+      currency: updatedInvoice.currency
+    };
+
     const finalizedInvoice: BookingInvoice = {
       ...updatedInvoice,
       invoiceVersion: newVersion,
+      perPersonPrice: updatedInvoice.perPersonPrice ?? roundMoney(nextAmount / nextPax),
       amendedAt: now,
       amendedBy: user?.id || 'admin',
       amendedByName: user?.name || 'Operations Lead',
       amendmentReason: amendmentReason || updatedInvoice.amendmentReason,
       versionHistory: history,
+      auditHistory: [auditEntry, ...(prevInvoice?.auditHistory || updatedInvoice.auditHistory || [])],
       updatedAt: now
     };
 
-    if (idx >= 0) {
-      allInvoices[idx] = finalizedInvoice;
-    } else {
-      allInvoices.unshift(finalizedInvoice);
-    }
-    this.setItem('booking_invoices', allInvoices);
+    this.upsertProformaInvoiceLocal(finalizedInvoice);
     this.syncFirestoreDoc('invoices', finalizedInvoice.id, finalizedInvoice);
 
+    b.proformaInvoiceAuditHistory = [auditEntry, ...(b.proformaInvoiceAuditHistory || [])];
     b.updatedAt = now;
     this.saveBooking(b, user);
 
@@ -17968,6 +18908,715 @@ export class AppDatabase {
     );
 
     return { success: true, invoice: finalizedInvoice };
+  }
+
+  private isAdminRoleUser(user: User | null): boolean {
+    if (!user) return false;
+    return isMasterAdmin(user) || user.role === 'ADMIN' || (user.role as string) === 'SUPER_ADMIN';
+  }
+
+  /**
+   * Admin full-field Proforma Invoice editor with PAX recalculation and authoritative booking-wide financial sync.
+   */
+  public editProformaInvoiceFull(
+    bookingId: string,
+    invoiceId: string,
+    updates: {
+      invoiceNumber?: string;
+      invoiceDate?: string;
+      dueDate?: string;
+      currency?: CurrencyCode;
+      paymentStatus?: InvoicePaymentStatus;
+      customerName?: string;
+      customerEmail?: string;
+      customerPhone?: string;
+      leadTravelerName?: string;
+      billedToAgency?: string;
+      agencyName?: string;
+      billedToGstin?: string;
+      billingAddress?: string;
+      agencyAddress?: string;
+      destination?: string;
+      travelDates?: string;
+      bookingDescription?: string;
+      totalPax?: number;
+      perPersonPrice?: number;
+      totalAmount?: number;
+      recalcMode?: 'PER_PERSON_DRIVES_TOTAL' | 'TOTAL_DRIVES_PER_PERSON';
+      services?: InvoiceServiceItem[];
+      notes?: string;
+      terms?: string;
+      bankAccountDetails?: BookingInvoice['bankAccountDetails'];
+      syncToBooking?: boolean;
+    },
+    user: User | null,
+    reason: string
+  ): { success: boolean; invoice?: BookingInvoice; booking?: Booking; error?: string } {
+    if (!isInternalStaff(user)) {
+      return { success: false, error: 'Only authorised internal staff may edit Proforma Invoices.' };
+    }
+    const isAdmin = this.isAdminRoleUser(user);
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) {
+      return { success: false, error: 'An amendment reason is required for Proforma Invoice edits.' };
+    }
+
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
+    if (!b) return { success: false, error: 'Booking not found.' };
+
+    const existingInvoices = this.getBookingInvoices(b.id);
+    const prevInvoice = existingInvoices.find(inv => inv.id === invoiceId);
+    if (!prevInvoice) return { success: false, error: 'Proforma Invoice not found.' };
+
+    const prevPax = Math.max(1, Number(prevInvoice.totalPax || b.customer?.totalPax || 1));
+    const prevTotal = roundMoney(Number(prevInvoice.proformaFinalBookingAmount ?? prevInvoice.totalAmount ?? 0));
+    const prevPerPerson = roundMoney(Number(prevInvoice.perPersonPrice ?? (prevPax > 0 ? prevTotal / prevPax : prevTotal)));
+
+    const requestedPax =
+      updates.totalPax !== undefined ? Math.floor(Number(updates.totalPax)) : prevPax;
+    if (!Number.isFinite(requestedPax) || requestedPax < 1) {
+      return { success: false, error: 'PAX (Passenger Count) must be at least 1.' };
+    }
+
+    // Determine whether restricted financial/commercial fields are being changed
+    const isChangingRestrictedFields =
+      (updates.invoiceNumber !== undefined && updates.invoiceNumber.trim() !== prevInvoice.invoiceNumber) ||
+      (updates.totalPax !== undefined && requestedPax !== prevPax) ||
+      (updates.perPersonPrice !== undefined && Math.abs(Number(updates.perPersonPrice) - prevPerPerson) > 0.01) ||
+      (updates.totalAmount !== undefined && Math.abs(Number(updates.totalAmount) - prevTotal) > 0.01) ||
+      (updates.currency !== undefined && updates.currency !== prevInvoice.currency) ||
+      (updates.paymentStatus !== undefined && updates.paymentStatus !== prevInvoice.paymentStatus);
+
+    if (isChangingRestrictedFields && !isAdmin) {
+      return {
+        success: false,
+        error: 'Only Admin users are permitted to modify PAX, pricing totals, currency, invoice number, or payment status.'
+      };
+    }
+
+    // Recalculate per-person price & total amount cleanly
+    let nextPerPerson = prevPerPerson;
+    let nextTotal = prevTotal;
+    const mode = updates.recalcMode || (updates.totalAmount !== undefined && updates.totalPax === undefined && updates.perPersonPrice === undefined ? 'TOTAL_DRIVES_PER_PERSON' : 'PER_PERSON_DRIVES_TOTAL');
+
+    if (mode === 'TOTAL_DRIVES_PER_PERSON') {
+      const candidateTotal = updates.totalAmount !== undefined ? Number(updates.totalAmount) : prevTotal;
+      if (!Number.isFinite(candidateTotal) || candidateTotal < 0) {
+        return { success: false, error: 'Total invoice amount must be a valid non-negative number.' };
+      }
+      nextTotal = roundMoney(candidateTotal);
+      nextPerPerson = roundMoney(nextTotal / requestedPax);
+    } else {
+      const candidatePerPerson = updates.perPersonPrice !== undefined ? Number(updates.perPersonPrice) : prevPerPerson;
+      if (!Number.isFinite(candidatePerPerson) || candidatePerPerson < 0) {
+        return { success: false, error: 'Per-person price must be a valid non-negative number.' };
+      }
+      nextPerPerson = roundMoney(candidatePerPerson);
+      if (updates.totalPax !== undefined && requestedPax !== prevPax) {
+        nextTotal = roundMoney(nextPerPerson * requestedPax);
+      } else if (updates.perPersonPrice !== undefined && Math.abs(candidatePerPerson - prevPerPerson) > 0.005) {
+        nextTotal = roundMoney(nextPerPerson * requestedPax);
+      } else if (updates.totalAmount !== undefined && Number.isFinite(Number(updates.totalAmount))) {
+        nextTotal = roundMoney(Number(updates.totalAmount));
+        nextPerPerson = roundMoney(nextTotal / requestedPax);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const amountPaid = roundMoney(Number(prevInvoice.amountPaid ?? prevInvoice.paidAmount ?? b.paidAmount ?? 0));
+    const balanceDue = roundMoney(Math.max(0, nextTotal - amountPaid));
+    const creditBalance = roundMoney(Math.max(0, amountPaid - nextTotal));
+    const computedPaymentStatus: InvoicePaymentStatus =
+      updates.paymentStatus ||
+      (amountPaid >= nextTotal && nextTotal > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'UNPAID');
+
+    const nextCurrency = updates.currency || prevInvoice.currency || b.currency;
+    const nextInvoiceNumber = (updates.invoiceNumber || prevInvoice.invoiceNumber).trim();
+
+    // Update service lines (and update PAX counts if PAX changed and services weren't manually replaced)
+    const nextServices: InvoiceServiceItem[] = updates.services
+      ? updates.services.map((srv, i) => ({
+          ...srv,
+          id: srv.id || `srv-${Date.now()}-${i}`,
+          pax: Math.max(1, Math.floor(Number(srv.pax || requestedPax))),
+          quantity: Math.max(1, Math.floor(Number(srv.quantity || srv.pax || requestedPax)))
+        }))
+      : (prevInvoice.services || []).map(srv => ({
+          ...srv,
+          pax: requestedPax !== prevPax ? requestedPax : srv.pax,
+          quantity: requestedPax !== prevPax ? requestedPax : srv.quantity
+        }));
+
+    // Track field-level diffs for immutable audit history
+    const changedFields: Array<{ field: string; before: string; after: string }> = [];
+    const track = (field: string, beforeVal: any, afterVal: any) => {
+      const bStr = String(beforeVal ?? '');
+      const aStr = String(afterVal ?? '');
+      if (bStr !== aStr) changedFields.push({ field, before: bStr, after: aStr });
+    };
+    track('invoiceNumber', prevInvoice.invoiceNumber, nextInvoiceNumber);
+    track('invoiceDate', prevInvoice.invoiceDate, updates.invoiceDate ?? prevInvoice.invoiceDate);
+    track('dueDate', prevInvoice.dueDate, updates.dueDate ?? prevInvoice.dueDate);
+    track('currency', prevInvoice.currency, nextCurrency);
+    track('totalPax', prevPax, requestedPax);
+    track('perPersonPrice', prevPerPerson, nextPerPerson);
+    track('totalAmount', prevTotal, nextTotal);
+    track('paymentStatus', prevInvoice.paymentStatus, computedPaymentStatus);
+    track('customerName', prevInvoice.customerName, updates.customerName ?? prevInvoice.customerName);
+    track('leadTravelerName', prevInvoice.leadTravelerName, updates.leadTravelerName ?? prevInvoice.leadTravelerName);
+    track('agencyName', prevInvoice.agencyName, updates.agencyName ?? prevInvoice.agencyName);
+    track('destination', prevInvoice.destination, updates.destination ?? prevInvoice.destination);
+    track('travelDates', prevInvoice.travelDates, updates.travelDates ?? prevInvoice.travelDates);
+    track('billingAddress', prevInvoice.billingAddress, updates.billingAddress ?? prevInvoice.billingAddress);
+    track('notes', prevInvoice.notes, updates.notes ?? prevInvoice.notes);
+    track('terms', prevInvoice.terms, updates.terms ?? prevInvoice.terms);
+
+    const paxChanged = requestedPax !== prevPax;
+    const totalChanged = Math.abs(nextTotal - prevTotal) > 0.01;
+    const currentVersion = prevInvoice.invoiceVersion || 1;
+    const nextVersion = currentVersion + 1;
+
+    const versionHistory = [...(prevInvoice.versionHistory || [])];
+    versionHistory.unshift({
+      version: currentVersion,
+      invoiceNumber: prevInvoice.invoiceNumber,
+      amendedAt: now,
+      amendedByName: user?.name || 'Admin',
+      reason: trimmedReason,
+      totalAmount: prevTotal,
+      currency: prevInvoice.currency
+    });
+
+    const auditEntry: BookingInvoiceAuditEntry = {
+      id: `inv-aud-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      invoiceId: prevInvoice.id,
+      invoiceNumber: nextInvoiceNumber,
+      action: paxChanged ? 'PAX_RECALCULATED' : 'UPDATED',
+      actorId: user?.id || 'admin',
+      actorName: user?.name || 'Admin',
+      actorRole: user?.role || 'ADMIN',
+      timestamp: now,
+      reason: trimmedReason,
+      changedFields,
+      previousAmount: prevTotal,
+      newAmount: nextTotal,
+      previousPax: prevPax,
+      newPax: requestedPax,
+      currency: nextCurrency
+    };
+
+    // Sync updated PAX and financial values back to booking when syncToBooking !== false
+    const shouldSyncBooking = updates.syncToBooking !== false && (paxChanged || totalChanged || prevInvoice.id === b.activeProformaInvoiceId || existingInvoices[0]?.id === prevInvoice.id);
+    let nextSnapshotId = prevInvoice.sourcePricingSnapshotId;
+    let nextSnapshotVersion = prevInvoice.sourcePricingSnapshotVersion || b.currentPricingSnapshotVersion || 1;
+
+    if (shouldSyncBooking) {
+      if (!b.customer) {
+        b.customer = {
+          leadTravelerName: updates.leadTravelerName || updates.customerName || prevInvoice.customerName || 'Lead Traveler',
+          email: updates.customerEmail || prevInvoice.customerEmail || '',
+          phone: updates.customerPhone || prevInvoice.customerPhone || '',
+          totalAdults: requestedPax,
+          totalChildren: 0,
+          totalPax: requestedPax
+        };
+      } else {
+        if (updates.leadTravelerName !== undefined) b.customer.leadTravelerName = updates.leadTravelerName;
+        else if (updates.customerName !== undefined && !b.customer.leadTravelerName) b.customer.leadTravelerName = updates.customerName;
+        if (updates.customerEmail !== undefined) b.customer.email = updates.customerEmail;
+        if (updates.customerPhone !== undefined) b.customer.phone = updates.customerPhone;
+        if (updates.agencyName !== undefined) b.customer.agencyName = updates.agencyName;
+        if (paxChanged) {
+          const prevChildren = Math.max(0, Number(b.customer.totalChildren || 0));
+          const nextChildren = requestedPax > prevChildren ? prevChildren : 0;
+          const nextAdults = Math.max(1, requestedPax - nextChildren);
+          b.customer.totalPax = requestedPax;
+          b.customer.totalAdults = nextAdults;
+          b.customer.totalChildren = nextChildren;
+          // Scale booking items' PAX counts proportionally when items exist
+          if (Array.isArray(b.items) && b.items.length > 0) {
+            b.items = b.items.map(it => ({
+              ...it,
+              adults: nextAdults,
+              children: nextChildren,
+              totalPax: requestedPax
+            }));
+          }
+        }
+      }
+
+      if (updates.destination !== undefined && updates.destination.trim()) {
+        b.destinationName = updates.destination.trim();
+      }
+      if (updates.currency !== undefined) {
+        b.currency = nextCurrency;
+      }
+
+      if (totalChanged || paxChanged) {
+        const existingSnapshots = this.getBookingPricingSnapshots(b.id);
+        const currentSnapshot = getLatestBookingPricingSnapshot(b, existingSnapshots);
+        const newSnapVer = Math.max(b.currentPricingSnapshotVersion || 0, currentSnapshot.version || 1) + 1;
+        const newSnapId = `bps-${b.id}-v${newSnapVer}-${Date.now()}`;
+
+        const supplierNettCost = roundMoney(
+          currentSnapshot.supplierNettCost ?? b.supplierTotalCost ?? b.supplierCost ?? b.totalNetCost ?? 0
+        );
+        const agentMarkup = roundMoney(currentSnapshot.agentAdditionalMarkupAmount ?? 0);
+        const cumulativeDiscount = roundMoney(
+          currentSnapshot.cumulativeAdminManualDiscount ?? b.adminManualDiscountTotal ?? 0
+        );
+        const b2bPromo = roundMoney(currentSnapshot.b2bPromotionDiscountAmount ?? 0);
+        const nextOriginalCustomerSelling = roundMoney(nextTotal + cumulativeDiscount);
+        const nextRevisedBaseSelling = roundMoney(Math.max(0, nextTotal - agentMarkup));
+        const nextOriginalBaseSelling = roundMoney(nextRevisedBaseSelling + b2bPromo + cumulativeDiscount);
+        const nextOriginalMargin = roundMoney(nextOriginalBaseSelling - supplierNettCost);
+        const nextRemainingMargin = roundMoney(nextRevisedBaseSelling - supplierNettCost);
+
+        const revisedSnapshot: BookingPricingSnapshot = {
+          ...currentSnapshot,
+          snapshotId: newSnapId,
+          id: newSnapId,
+          bookingId: b.id,
+          bookingReference: b.bookingReference,
+          version: newSnapVer,
+          currency: nextCurrency,
+          supplierNettCost,
+          originalBaseSellingPrice: nextOriginalBaseSelling,
+          originalCustomerSellingPrice: nextOriginalCustomerSelling,
+          original_selling_price: nextOriginalCustomerSelling,
+          current_selling_price: nextTotal,
+          originalTheUnboundMargin: nextOriginalMargin,
+          b2bPromotionDiscountAmount: b2bPromo,
+          agentAdditionalMarkupAmount: agentMarkup,
+          cumulativeAdminManualDiscount: cumulativeDiscount,
+          remainingTheUnboundMargin: nextRemainingMargin,
+          revisedBaseSellingPrice: nextRevisedBaseSelling,
+          revisedCustomerSellingPrice: nextTotal,
+          isLossMaking: nextRemainingMargin < 0,
+          sourceAction: 'PROFORMA_INVOICE_REVISION',
+          previousSnapshotId: currentSnapshot.snapshotId,
+          previousSnapshotVersion: currentSnapshot.version,
+          discountReason: paxChanged
+            ? `Proforma Invoice #${nextInvoiceNumber} PAX updated (${prevPax} → ${requestedPax} Pax): ${trimmedReason}`
+            : `Proforma Invoice #${nextInvoiceNumber} commercial revision: ${trimmedReason}`,
+          createdBy: user?.id || 'admin',
+          createdByName: user?.name || 'Admin',
+          createdByRole: String(user?.role || 'ADMIN'),
+          createdAt: now,
+          immutable: true
+        };
+
+        // Persist baseline + revised snapshots to booking_pricing_snapshots ledger
+        const allSnapshots = this.getItem<BookingPricingSnapshot[]>('booking_pricing_snapshots', []);
+        const hadBaseline = allSnapshots.some(s => s.snapshotId === currentSnapshot.snapshotId);
+        if (!hadBaseline) {
+          allSnapshots.push(currentSnapshot);
+        }
+        allSnapshots.push(revisedSnapshot);
+        this.setItem('booking_pricing_snapshots', allSnapshots);
+        if (!hadBaseline) {
+          this.syncFirestoreDoc('booking_pricing_snapshots', currentSnapshot.snapshotId, currentSnapshot);
+        }
+        this.syncFirestoreDoc('booking_pricing_snapshots', revisedSnapshot.snapshotId, revisedSnapshot);
+
+        const priorHistory =
+          b.pricingSnapshotHistory && b.pricingSnapshotHistory.length > 0
+            ? b.pricingSnapshotHistory
+            : existingSnapshots.length > 0
+              ? existingSnapshots
+              : [currentSnapshot];
+        b.pricingSnapshotHistory = [
+          ...priorHistory.filter(s => s.snapshotId !== revisedSnapshot.snapshotId),
+          revisedSnapshot
+        ];
+        b.currentPricingSnapshotId = newSnapId;
+        b.currentPricingSnapshotVersion = newSnapVer;
+        nextSnapshotId = newSnapId;
+        nextSnapshotVersion = newSnapVer;
+
+        // Sync all booking-level authoritative totals
+        b.original_selling_price = nextOriginalCustomerSelling;
+        b.originalBookingAmount = nextOriginalCustomerSelling;
+        b.finalCustomerSellingPrice = nextTotal;
+        b.final_customer_selling_price = nextTotal;
+        b.discountedBaseSellingPrice = nextRevisedBaseSelling;
+        b.remainingTheUnboundMargin = nextRemainingMargin;
+        b.totalAmount = nextTotal;
+        b.current_selling_price = nextTotal;
+        b.balanceDue = balanceDue;
+        b.creditBalance = creditBalance;
+        b.paidAmount = amountPaid;
+        b.amountPaid = amountPaid;
+        b.paymentStatus =
+          amountPaid >= nextTotal && nextTotal > 0 ? 'PAID' : amountPaid > 0 ? 'PARTIALLY_PAID' : 'PENDING_PAYMENT';
+        b.hasRevisedPricingAfterInvoice = false;
+        b.revisedPricingNotice = undefined;
+
+        // Preserve custom committed schedules and flag RECALCULATION_REQUIRED; auto-recalculate default schedules
+        b.paymentSchedule = recalculateBookingPaymentSchedule(
+          b,
+          nextTotal,
+          amountPaid,
+          nextCurrency,
+          now,
+          {
+            preserveCommittedCustom: true,
+            latestSnapshot: revisedSnapshot,
+            appendAuditEntry: true
+          }
+        );
+      }
+    }
+
+    const updatedInvoice: BookingInvoice = {
+      ...prevInvoice,
+      invoiceNumber: nextInvoiceNumber,
+      invoiceDate: updates.invoiceDate ?? prevInvoice.invoiceDate,
+      dueDate: updates.dueDate ?? prevInvoice.dueDate,
+      currency: nextCurrency,
+      paymentStatus: computedPaymentStatus,
+      customerName: updates.customerName ?? prevInvoice.customerName,
+      customerEmail: updates.customerEmail ?? prevInvoice.customerEmail,
+      customerPhone: updates.customerPhone ?? prevInvoice.customerPhone,
+      leadTravelerName: updates.leadTravelerName ?? prevInvoice.leadTravelerName,
+      billedToAgency: updates.billedToAgency ?? prevInvoice.billedToAgency,
+      agencyName: updates.agencyName ?? prevInvoice.agencyName,
+      billedToGstin: updates.billedToGstin ?? prevInvoice.billedToGstin,
+      billingAddress: updates.billingAddress ?? prevInvoice.billingAddress,
+      agencyAddress: updates.agencyAddress ?? prevInvoice.agencyAddress,
+      destination: updates.destination ?? prevInvoice.destination,
+      travelDates: updates.travelDates ?? prevInvoice.travelDates,
+      bookingDescription: updates.bookingDescription ?? prevInvoice.bookingDescription,
+      totalPax: requestedPax,
+      perPersonPrice: nextPerPerson,
+      subtotal: nextTotal,
+      totalAmount: nextTotal,
+      proformaFinalBookingAmount: nextTotal,
+      amountPaid,
+      paidAmount: amountPaid,
+      balanceDue,
+      creditBalance,
+      services: nextServices,
+      notes: updates.notes ?? prevInvoice.notes,
+      terms: updates.terms ?? prevInvoice.terms,
+      bankAccountDetails:
+        updates.bankAccountDetails !== undefined ? updates.bankAccountDetails : prevInvoice.bankAccountDetails,
+      invoiceVersion: nextVersion,
+      sourcePricingSnapshotId: nextSnapshotId,
+      sourcePricingSnapshotVersion: nextSnapshotVersion,
+      amendedAt: now,
+      amendedBy: user?.id || 'admin',
+      amendedByName: user?.name || 'Admin',
+      amendmentReason: trimmedReason,
+      versionHistory,
+      auditHistory: [auditEntry, ...(prevInvoice.auditHistory || [])],
+      updatedAt: now
+    };
+
+    this.upsertProformaInvoiceLocal(updatedInvoice);
+    this.syncFirestoreDoc('invoices', updatedInvoice.id, updatedInvoice);
+
+    b.proformaInvoiceAuditHistory = [auditEntry, ...(b.proformaInvoiceAuditHistory || [])];
+    b.timeline = [
+      {
+        id: `tl-inv-edit-${Date.now()}`,
+        timestamp: now,
+        title: paxChanged
+          ? `Proforma Invoice #${nextInvoiceNumber} Updated (PAX ${prevPax} → ${requestedPax})`
+          : `Proforma Invoice #${nextInvoiceNumber} Edited (v${nextVersion})`,
+        description: `${trimmedReason} • Final Amount: ${nextCurrency} ${nextTotal.toLocaleString()} (${nextCurrency} ${nextPerPerson.toLocaleString()}/pax)`,
+        actorName: user?.name || 'Admin',
+        actorRole: user?.role || 'ADMIN',
+        type: 'PAYMENT'
+      },
+      ...(b.timeline || [])
+    ];
+    b.updatedAt = now;
+    this.saveBooking(b, user);
+    this.syncFirestoreDoc('bookings', b.id, b);
+
+    this.logAudit(
+      user,
+      'STATUS_UPDATED',
+      'Booking',
+      b.id,
+      `Edited Proforma Invoice #${nextInvoiceNumber} (v${nextVersion}) — PAX: ${prevPax}→${requestedPax}, Total: ${nextCurrency} ${prevTotal}→${nextTotal}. Reason: ${trimmedReason}`
+    );
+
+    return { success: true, invoice: updatedInvoice, booking: b };
+  }
+
+  /**
+   * Admin-only Proforma Invoice deletion with permanent audit trail preservation on the booking & audit ledger.
+   */
+  public deleteProformaInvoice(
+    bookingId: string,
+    invoiceId: string,
+    user: User | null,
+    reason: string
+  ): { success: boolean; deletedInvoiceNumber?: string; error?: string } {
+    if (!this.isAdminRoleUser(user)) {
+      return { success: false, error: 'Only Admin users are authorised to delete a Proforma Invoice.' };
+    }
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) {
+      return { success: false, error: 'Please provide a reason for deleting this Proforma Invoice.' };
+    }
+
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
+    if (!b) return { success: false, error: 'Booking not found.' };
+
+    const allForBooking = this.getBookingInvoices(b.id);
+    const target = allForBooking.find(inv => inv.id === invoiceId);
+    if (!target) return { success: false, error: 'Proforma Invoice not found.' };
+
+    const now = new Date().toISOString();
+
+    // Remove from both local invoice stores
+    const bookingInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []).filter(inv => inv.id !== invoiceId);
+    this.setItem('booking_invoices', bookingInvoices);
+
+    const globalInvoices = this.getItem<BookingInvoice[]>('invoices', []).filter(inv => inv.id !== invoiceId);
+    this.setItem('invoices', globalInvoices);
+
+    // Delete from Firestore `invoices` collection
+    this.deleteFirestoreDoc('invoices', invoiceId);
+
+    // Update parent booking references cleanly
+    const remainingIds = (b.proformaInvoiceIds || []).filter(id => id !== invoiceId);
+    const remainingInvoices = allForBooking.filter(inv => inv.id !== invoiceId);
+    b.proformaInvoiceIds = remainingIds;
+    b.activeProformaInvoiceId = remainingInvoices[0]?.id;
+    b.proformaInvoiceUrl = remainingInvoices[0] ? `/invoices/${remainingInvoices[0].id}` : undefined;
+
+    const deleteAuditEntry: BookingInvoiceAuditEntry = {
+      id: `inv-del-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      invoiceId: target.id,
+      invoiceNumber: target.invoiceNumber,
+      action: 'DELETED',
+      actorId: user?.id || 'admin',
+      actorName: user?.name || 'Admin',
+      actorRole: user?.role || 'ADMIN',
+      timestamp: now,
+      reason: trimmedReason,
+      previousAmount: target.proformaFinalBookingAmount ?? target.totalAmount,
+      previousPax: target.totalPax,
+      currency: target.currency
+    };
+
+    b.proformaInvoiceAuditHistory = [deleteAuditEntry, ...(b.proformaInvoiceAuditHistory || [])];
+    b.timeline = [
+      {
+        id: `tl-inv-del-${Date.now()}`,
+        timestamp: now,
+        title: `Proforma Invoice #${target.invoiceNumber} Deleted`,
+        description: `Deleted by ${user?.name || 'Admin'}. Reason: ${trimmedReason}`,
+        actorName: user?.name || 'Admin',
+        actorRole: user?.role || 'ADMIN',
+        type: 'PAYMENT'
+      },
+      ...(b.timeline || [])
+    ];
+    b.updatedAt = now;
+    this.saveBooking(b, user);
+    this.syncFirestoreDoc('bookings', b.id, b);
+
+    // Also unlink from linked lead if present
+    const targetLeadId = b.leadId || b.linkedLeadId;
+    if (targetLeadId) {
+      const allLeads = this.getLeads();
+      const lIdx = allLeads.findIndex(l => l.id === targetLeadId);
+      if (lIdx >= 0) {
+        const lead = allLeads[lIdx];
+        lead.invoiceIds = (lead.invoiceIds || []).filter(id => id !== invoiceId);
+        if (lead.activeInvoiceId === invoiceId) {
+          lead.activeInvoiceId = remainingInvoices[0]?.id;
+        }
+        allLeads[lIdx] = lead;
+        this.setItem('leads', allLeads);
+        this.syncFirestoreDoc('leads', lead.id, {
+          invoiceIds: lead.invoiceIds,
+          activeInvoiceId: lead.activeInvoiceId ?? null
+        });
+      }
+    }
+
+    this.logAudit(
+      user,
+      'STATUS_UPDATED',
+      'Booking',
+      b.id,
+      `Deleted Proforma Invoice #${target.invoiceNumber} (${target.currency} ${target.proformaFinalBookingAmount ?? target.totalAmount}). Reason: ${trimmedReason}`
+    );
+
+    return { success: true, deletedInvoiceNumber: target.invoiceNumber };
+  }
+
+  /**
+   * Saves an immutable versioned Payment Schedule & Instalment Tranches for a booking,
+   * linked directly to the Latest Committed Booking Financial Snapshot.
+   */
+  public saveBookingPaymentSchedule(
+    bookingId: string,
+    tranches: PaymentScheduleTrancheInput[],
+    user: User | null,
+    reason: string,
+    options?: {
+      allowPartialSchedule?: boolean;
+      idempotencyKey?: string;
+      expectedSnapshotVersion?: number;
+      isRecalculation?: boolean;
+    }
+  ): {
+    success: boolean;
+    idempotentReplay?: boolean;
+    paymentSchedule?: PaymentSchedule;
+    booking?: Booking;
+    error?: string;
+  } {
+    const perms = resolveAdminManualDiscountPermissions(user);
+    if (!user || !perms.canManagePaymentSchedule) {
+      return {
+        success: false,
+        error: 'Forbidden: your account does not have permission to create or modify booking payment schedules.'
+      };
+    }
+
+    const b = this.getBookingById(bookingId, user) || this.findBookingInternal(bookingId);
+    if (!b) return { success: false, error: 'Booking not found.' };
+
+    const existingSnapshots = this.getBookingPricingSnapshots(b.id);
+    const existingSchedules = this.getBookingPaymentSchedules(b.id);
+
+    const built = validateAndBuildVersionedPaymentSchedule({
+      booking: b,
+      tranches,
+      actor: {
+        id: user.id,
+        name: user.name || user.displayName || user.email || 'Admin',
+        email: user.email,
+        role: user.role
+      },
+      reason,
+      allowPartialSchedule: options?.allowPartialSchedule,
+      idempotencyKey: options?.idempotencyKey,
+      expectedSnapshotVersion: options?.expectedSnapshotVersion,
+      isRecalculation: options?.isRecalculation,
+      externalSnapshots: existingSnapshots.length > 0 ? existingSnapshots : undefined,
+      existingSchedules
+    });
+
+    if (built.ok === false) {
+      return { success: false, error: built.error };
+    }
+
+    if (built.idempotentReplay) {
+      return {
+        success: true,
+        idempotentReplay: true,
+        paymentSchedule: built.newSchedule,
+        booking: built.updatedBooking
+      };
+    }
+
+    const allSchedules = this.getItem<PaymentSchedule[]>('booking_payment_schedules', []);
+    if (
+      built.supersededSchedule &&
+      built.supersededSchedule.scheduleId &&
+      !allSchedules.some(s => s.scheduleId === built.supersededSchedule!.scheduleId)
+    ) {
+      const latestSnap = getLatestBookingPricingSnapshot(b, existingSnapshots);
+      const enrichedSuperseded: PaymentSchedule = {
+        ...built.supersededSchedule,
+        financialSnapshotId:
+          built.supersededSchedule.financialSnapshotId || latestSnap.previousSnapshotId || `bps-${b.id}-v1`,
+        financialSnapshotVersion:
+          built.supersededSchedule.financialSnapshotVersion || latestSnap.previousSnapshotVersion || 1,
+        originalBookingAmount:
+          built.supersededSchedule.originalBookingAmount ?? latestSnap.originalCustomerSellingPrice,
+        totalDiscountAmount: built.supersededSchedule.totalDiscountAmount ?? 0,
+        revisedBookingAmount:
+          built.supersededSchedule.revisedBookingAmount ?? built.supersededSchedule.totalAmount,
+        createdBy: built.supersededSchedule.createdBy || user.id,
+        createdAt: built.supersededSchedule.createdAt || built.supersededSchedule.updatedAt,
+        immutable: true
+      };
+      allSchedules.push(enrichedSuperseded);
+      this.syncFirestoreDoc('booking_payment_schedules', enrichedSuperseded.scheduleId!, enrichedSuperseded);
+    }
+
+    if (!allSchedules.some(s => s.scheduleId === built.newSchedule.scheduleId)) {
+      allSchedules.push(built.newSchedule);
+    }
+    this.setItem('booking_payment_schedules', allSchedules);
+
+    this.saveBooking(built.updatedBooking, user);
+    if (built.newSchedule.scheduleId) {
+      this.syncFirestoreDoc('booking_payment_schedules', built.newSchedule.scheduleId, built.newSchedule);
+    }
+    this.syncFirestoreDoc('bookings', built.updatedBooking.id, built.updatedBooking);
+
+    this.logAudit(
+      user,
+      'STATUS_UPDATED',
+      'Booking',
+      b.id,
+      `Saved Payment Schedule v${built.newSchedule.scheduleVersion} (${built.newSchedule.scheduleId}) linked to Snapshot v${built.newSchedule.financialSnapshotVersion} for ${b.bookingReference} (${built.newSchedule.installments.length} tranches, total ${built.newSchedule.currency} ${built.newSchedule.totalAmount}). Reason: ${reason.trim()}`
+    );
+
+    return {
+      success: true,
+      idempotentReplay: false,
+      paymentSchedule: built.newSchedule,
+      booking: built.updatedBooking
+    };
+  }
+
+  /**
+   * Acknowledges a payment schedule adjustment flag after Admin review.
+   */
+  public acknowledgePaymentScheduleAdjustment(
+    bookingId: string,
+    user: User | null,
+    note?: string
+  ): { success: boolean; paymentSchedule?: PaymentSchedule; error?: string } {
+    if (!this.isAdminRoleUser(user)) {
+      return { success: false, error: 'Only Admin users can acknowledge schedule adjustments.' };
+    }
+    const b = user ? this.getBookingById(bookingId, user) : this.findBookingInternal(bookingId);
+    if (!b || !b.paymentSchedule) return { success: false, error: 'Booking payment schedule not found.' };
+
+    const now = new Date().toISOString();
+    const authFin = resolveAuthoritativeBookingFinancials(b);
+    const totalScheduled = roundMoney(
+      (b.paymentSchedule.installments || []).reduce((s, i) => s + Number(i.amount || 0), 0)
+    );
+    const auditEntry: PaymentScheduleAuditEntry = {
+      id: `ps-ack-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: now,
+      actorId: user?.id || 'admin',
+      actorName: user?.name || 'Admin',
+      actorRole: user?.role || 'ADMIN',
+      action: 'ADJUSTMENT_ACKNOWLEDGED',
+      reason: note?.trim() || 'Admin reviewed and acknowledged recalculated payment schedule.',
+      previousTotalScheduled: totalScheduled,
+      newTotalScheduled: totalScheduled,
+      bookingSellingTotal: authFin.revisedBookingAmount,
+      currency: authFin.currency
+    };
+
+    b.paymentSchedule = {
+      ...b.paymentSchedule,
+      requiresAdjustment: false,
+      adjustmentNotice: undefined,
+      lastAdjustedAt: now,
+      lastAdjustedBy: user?.name || 'Admin',
+      auditHistory: [auditEntry, ...(b.paymentSchedule.auditHistory || [])]
+    };
+    b.updatedAt = now;
+    this.saveBooking(b, user);
+    this.syncFirestoreDoc('bookings', b.id, b);
+    return { success: true, paymentSchedule: b.paymentSchedule };
   }
 
   /**
@@ -18020,8 +19669,7 @@ export class AppDatabase {
       updatedAt: now
     };
 
-    allInvoices.unshift(reissued);
-    this.setItem('booking_invoices', allInvoices);
+    this.upsertProformaInvoiceLocal(reissued);
     this.syncFirestoreDoc('invoices', reissued.id, reissued);
 
     if (!b.proformaInvoiceIds) b.proformaInvoiceIds = [];
@@ -18183,7 +19831,7 @@ export class AppDatabase {
   }
 
   public getInvoicesForLead(leadId: string): BookingInvoice[] {
-    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    const allInvoices = this.getBookingInvoices();
     const allBookings = this.getAllBookings().filter(b => b.leadId === leadId || b.linkedLeadId === leadId);
     const bookingIds = allBookings.map(b => b.id);
     const bookingRefs = allBookings.map(b => b.bookingReference);
@@ -18201,12 +19849,41 @@ export class AppDatabase {
       }
     });
     return Array.from(uniqueMap.values()).sort((a, b) => 
-      new Date(b.invoiceDate || b.createdAt || 0).getTime() - new Date(a.invoiceDate || a.createdAt || 0).getTime()
+      new Date(b.createdAt || b.invoiceDate || 0).getTime() - new Date(a.createdAt || a.invoiceDate || 0).getTime()
     );
   }
 
   public getBookingInvoices(bookingId?: string): BookingInvoice[] {
-    const allInvoices = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    // Unify both local 'booking_invoices' and Firestore-hydrated 'invoices' collections
+    // so generated Proforma Invoices ALWAYS persist across page refreshes and logout/login.
+    const localProformas = this.getItem<BookingInvoice[]>('booking_invoices', []);
+    const hydratedInvoices = this.getItem<BookingInvoice[]>('invoices', []);
+
+    const mergedMap = new Map<string, BookingInvoice>();
+    hydratedInvoices.forEach(inv => {
+      if (!inv?.id || inv.isDeleted || inv.status === 'DELETED') return;
+      // Include Proforma invoices (isProforma !== false or documentType === 'PROFORMA_INVOICE' or PINV prefix)
+      const isTaxOnly = inv.documentType === 'TAX_INVOICE' && inv.isProforma === false;
+      if (!isTaxOnly) {
+        mergedMap.set(inv.id, inv);
+      }
+    });
+    localProformas.forEach(inv => {
+      if (!inv?.id || inv.isDeleted || inv.status === 'DELETED') return;
+      const existing = mergedMap.get(inv.id);
+      if (!existing || new Date(inv.updatedAt || inv.createdAt || 0).getTime() >= new Date(existing.updatedAt || existing.createdAt || 0).getTime()) {
+        mergedMap.set(inv.id, inv);
+      }
+    });
+
+    const allInvoices = Array.from(mergedMap.values()).sort((a, b) => {
+      const timeDiff =
+        new Date(b.createdAt || b.invoiceDate || 0).getTime() -
+        new Date(a.createdAt || a.invoiceDate || 0).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      return (b.invoiceVersion || 1) - (a.invoiceVersion || 1);
+    });
+
     if (!bookingId) return allInvoices;
     const booking = this.findBookingInternal(bookingId);
     const invoiceIds = booking?.proformaInvoiceIds || [];
@@ -18216,8 +19893,6 @@ export class AppDatabase {
       inv.bookingId === bookingId ||
       (bRef && inv.bookingReference === bRef) ||
       invoiceIds.includes(inv.id)
-    ).sort((a, b) => 
-      new Date(b.invoiceDate || b.createdAt || 0).getTime() - new Date(a.invoiceDate || a.createdAt || 0).getTime()
     );
   }
 
@@ -28791,6 +30466,536 @@ export class AppDatabase {
     });
 
     return entry;
+  }
+
+  // =========================================================================
+  // CONSOLIDATED MULTI-SERVICE SUPPLIER ALLOCATIONS
+  // =========================================================================
+
+  public getBookingConsolidatedAllocations(bookingId: string): SupplierAllocationRecord[] {
+    const fromCollection = this.getItem<SupplierAllocationRecord[]>('supplier_allocations', [])
+      .filter(a => a.allocationType === 'CONSOLIDATED' && (a.bookingId === bookingId || a.bookingReference === bookingId));
+    const booking = this.findBookingInternal(bookingId);
+    const fromBooking = (booking?.consolidatedAllocations || []).filter(a => a.allocationType === 'CONSOLIDATED');
+
+    const merged = new Map<string, SupplierAllocationRecord>();
+    fromBooking.forEach(a => merged.set(a.id, a));
+    fromCollection.forEach(a => {
+      const existing = merged.get(a.id);
+      if (!existing || (a.version || 1) >= (existing.version || 1)) {
+        merged.set(a.id, a);
+      }
+    });
+
+    return Array.from(merged.values()).sort(
+      (a, b) => new Date(b.allocatedAt || 0).getTime() - new Date(a.allocatedAt || 0).getTime()
+    );
+  }
+
+  public syncConsolidatedAllocationFromServer(
+    allocation: SupplierAllocationRecord,
+    updatedBooking?: Booking | null
+  ): void {
+    const all = this.getItem<SupplierAllocationRecord[]>('supplier_allocations', []);
+    const idx = all.findIndex(a => a.id === allocation.id);
+    if (idx >= 0) {
+      all[idx] = allocation;
+    } else {
+      all.unshift(allocation);
+    }
+    this.setItem('supplier_allocations', all);
+
+    if (updatedBooking) {
+      const allBookings = this.getAllBookings();
+      const bIdx = allBookings.findIndex(b => b.id === updatedBooking.id);
+      if (bIdx >= 0) {
+        allBookings[bIdx] = updatedBooking;
+      } else {
+        allBookings.unshift(updatedBooking);
+      }
+      this.setItem('bookings', allBookings);
+    }
+  }
+
+  public createConsolidatedSupplierAllocation(
+    payload: {
+      bookingId: string;
+      serviceItemIds: string[];
+      supplierId: string;
+      consolidatedCommercialPrice: number;
+      allocationMethod: ConsolidatedPriceAllocationMethod;
+      manualAllocations?: Record<string, number>;
+      status?: SupplierAllocationRecord['status'];
+      confirmationRef?: string;
+      internalNotes?: string;
+      supplierNotes?: string;
+      supportingDocuments?: ConsolidatedAllocationDocument[];
+      idempotencyKey?: string;
+      authorizedCommonCurrency?: CurrencyCode;
+      authorizedFxRates?: Record<string, number>;
+    },
+    user: User | null
+  ): {
+    success: boolean;
+    allocation?: SupplierAllocationRecord;
+    booking?: Booking;
+    error?: string;
+    warnings?: string[];
+  } {
+    if (!user || !isInternalStaff(user)) {
+      return {
+        success: false,
+        error: 'Unauthorized: Only internal Admin, Operations, or Finance users can create supplier allocations.'
+      };
+    }
+
+    const allBookings = this.getAllBookings();
+    const bIdx = allBookings.findIndex(
+      b => b.id === payload.bookingId || b.bookingReference === payload.bookingId
+    );
+    if (bIdx < 0) return { success: false, error: 'Booking not found.' };
+    const b = { ...allBookings[bIdx], items: [...(allBookings[bIdx].items || [])] };
+
+    const supplier = this.getSupplierById(payload.supplierId);
+    if (!supplier) return { success: false, error: 'Selected supplier not found in Supplier Management.' };
+
+    const uniqueIds = Array.from(new Set((payload.serviceItemIds || []).filter(Boolean)));
+    if (uniqueIds.length === 0) {
+      return { success: false, error: 'Select at least one Service Item for consolidated allocation.' };
+    }
+
+    const existingAllocs = this.getBookingConsolidatedAllocations(b.id);
+    if (payload.idempotencyKey) {
+      const replay = existingAllocs.find(a => a.idempotencyKey === payload.idempotencyKey);
+      if (replay) {
+        return { success: true, allocation: replay, booking: b };
+      }
+    }
+
+    const selectedItems = b.items.filter(it => uniqueIds.includes(it.id));
+    if (selectedItems.length !== uniqueIds.length) {
+      return { success: false, error: 'One or more selected Service Items do not exist on this booking.' };
+    }
+
+    for (const item of selectedItems) {
+      const check = isItemEligibleForNewConsolidatedAllocation(item, existingAllocs);
+      if (!check.eligible) {
+        return {
+          success: false,
+          error: `Duplicate allocation blocked for "${item.productName}": ${check.reason}`
+        };
+      }
+    }
+
+    const productMap = new Map<string, Product>(this.getProducts().filter(p => p?.id).map(p => [p.id, p]));
+    const hotelMap = new Map<string, Hotel>(this.getHotels().filter(h => h?.id).map(h => [h.id, h]));
+
+    const supEligibility = validateSupplierEligibilityForItems(supplier, selectedItems, productMap, hotelMap);
+    if (!supEligibility.eligible) {
+      return {
+        success: false,
+        error: supEligibility.warnings.join(' '),
+        warnings: supEligibility.warnings
+      };
+    }
+
+    const dist = distributeConsolidatedCommercialPrice({
+      items: selectedItems,
+      booking: b,
+      productMap,
+      hotelMap,
+      consolidatedCommercialPrice: Number(payload.consolidatedCommercialPrice),
+      allocationMethod: payload.allocationMethod,
+      manualAllocations: payload.manualAllocations,
+      authorizedCommonCurrency: payload.authorizedCommonCurrency,
+      authorizedFxRates: payload.authorizedFxRates
+    });
+
+    if (!dist.valid) {
+      return {
+        success: false,
+        error: dist.errors.join(' '),
+        warnings: dist.errors
+      };
+    }
+
+    const now = new Date().toISOString();
+    const actorName = user.displayName || user.name || user.email || 'Operations Admin';
+    const allocationId = `csa-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const nextStatus = payload.status || 'ALLOCATED';
+    const isConfirmed = nextStatus === 'CONFIRMED';
+
+    const mappedAllocStatus: SupplierAllocationStatus =
+      nextStatus === 'CONFIRMED'
+        ? 'Supplier Confirmed'
+        : nextStatus === 'SENT_TO_SUPPLIER'
+        ? 'Sent to Supplier'
+        : nextStatus === 'AWAITING_CONFIRMATION'
+        ? 'Awaiting Confirmation'
+        : nextStatus === 'AMENDMENT_REQUIRED'
+        ? 'Amendment Required'
+        : 'Supplier Selected';
+
+    const finalItemAllocations = dist.itemAllocations.map(a => ({
+      ...a,
+      confirmationStatus: mappedAllocStatus,
+      itemConfirmationRef: payload.confirmationRef?.trim() || a.itemConfirmationRef
+    }));
+
+    const allocationRecord: SupplierAllocationRecord = {
+      id: allocationId,
+      allocationType: 'CONSOLIDATED',
+      supplierId: supplier.id,
+      supplierNameSnapshot: supplier.name,
+      bookingId: b.id,
+      bookingReference: b.bookingReference,
+      serviceItemId: uniqueIds[0],
+      serviceItemIds: uniqueIds,
+      productIds: Array.from(new Set(selectedItems.map(i => i.productId).filter(Boolean))),
+      serviceName: `${selectedItems.length} Consolidated Services (${selectedItems.map(i => i.productName).slice(0, 2).join(', ')}${selectedItems.length > 2 ? ` +${selectedItems.length - 2} more` : ''})`,
+      customerName: b.customer?.leadTravelerName || b.customer?.name || 'Guest',
+      travelDate: selectedItems[0]?.serviceDate || selectedItems[0]?.travelDate || b.travelStartDate,
+      allocatedAt: now,
+      allocatedBy: user.id,
+      allocatedByName: actorName,
+      updatedAt: now,
+      status: nextStatus,
+      confirmationRef: payload.confirmationRef?.trim() || undefined,
+      consolidatedCommercialPrice: dist.consolidatedCommercialPrice,
+      totalNetCost: dist.totalNetCost,
+      totalSellingPrice: dist.totalSellingPrice,
+      totalMarginAmount: dist.totalMarginAmount,
+      totalMarginPercent: dist.totalMarginPercent,
+      currency: dist.currency,
+      allocationMethod: dist.allocationMethod,
+      itemAllocations: finalItemAllocations,
+      internalNotes: payload.internalNotes?.trim() || undefined,
+      supplierNotes: payload.supplierNotes?.trim() || undefined,
+      supportingDocuments: payload.supportingDocuments || [],
+      statusHistory: [
+        {
+          timestamp: now,
+          status: nextStatus,
+          actorId: user.id,
+          actorName,
+          note: `Consolidated allocation created for ${uniqueIds.length} Service Items (${dist.allocationMethod}).`
+        }
+      ],
+      idempotencyKey: payload.idempotencyKey,
+      version: 1
+    };
+
+    const allocByItem = new Map(finalItemAllocations.map(a => [a.serviceItemId, a]));
+
+    b.items = b.items.map(item => {
+      const distItem = allocByItem.get(item.id);
+      if (!distItem) return item;
+      return {
+        ...item,
+        consolidatedAllocationId: allocationId,
+        allocationMethod: dist.allocationMethod,
+        allocatedCommercialPrice: distItem.allocatedCommercialPrice,
+        netPrice: item.netPrice !== undefined ? item.netPrice : distItem.netCost,
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        supplierNameSnapshot: supplier.name,
+        supplierContact: (supplier as any).primaryContact?.name || supplier.contactPerson || supplier.email || item.supplierContact,
+        supplierPhone: (supplier as any).primaryContact?.phone || supplier.phone || item.supplierPhone,
+        supplierEmail: (supplier as any).primaryContact?.email || supplier.email || item.supplierEmail,
+        supplierCurrency: dist.currency,
+        supplierConfirmationRef: distItem.itemConfirmationRef || item.supplierConfirmationRef,
+        supplierAllocationStatus: mappedAllocStatus,
+        supplierStatus: isConfirmed ? 'CONFIRMED_BY_SUPPLIER' : 'SENT_TO_SUPPLIER',
+        supplierConfirmationStatus: isConfirmed ? 'Confirmed' : 'Confirmation Pending',
+        operationalStatus: isConfirmed ? 'Confirmed' : 'Confirmation Pending',
+        supplierAllocatedAt: now,
+        supplierAllocatedBy: actorName,
+        supplierNotes: payload.supplierNotes?.trim() || item.supplierNotes,
+        allocationHistory: [
+          {
+            timestamp: now,
+            actorId: user.id,
+            actorName,
+            action: 'ALLOCATED',
+            previousSupplierId: item.supplierId,
+            previousSupplierName: item.supplierName,
+            newSupplierId: supplier.id,
+            newSupplierName: supplier.name,
+            previousConfirmationRef: item.supplierConfirmationRef,
+            newConfirmationRef: distItem.itemConfirmationRef || item.supplierConfirmationRef,
+            previousStatus: item.supplierAllocationStatus,
+            newStatus: mappedAllocStatus,
+            reason: `Linked to Consolidated Supplier Allocation ${allocationId} (${dist.allocationMethod})`
+          },
+          ...(item.allocationHistory || [])
+        ]
+      };
+    });
+
+    b.consolidatedAllocations = [
+      allocationRecord,
+      ...((b.consolidatedAllocations || []).filter(a => a.id !== allocationId))
+    ];
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    // Flag any existing active vouchers covering affected items as outdated so they are reissued cleanly
+    if (b.vouchersList && b.vouchersList.length > 0) {
+      b.vouchersList = b.vouchersList.map(v => {
+        const affects = v.isCompleteBookingVoucher || (v.serviceItemId && uniqueIds.includes(v.serviceItemId));
+        if (!affects || v.status === 'CANCELLED' || v.status === 'OUTDATED') return v;
+        return {
+          ...v,
+          isOutdated: true,
+          outdatedReason: `Consolidated supplier allocation ${allocationId} (${supplier.name}) applied.`
+        };
+      });
+    }
+
+    const allAllocs = this.getItem<SupplierAllocationRecord[]>('supplier_allocations', []);
+    allAllocs.unshift(allocationRecord);
+    this.setItem('supplier_allocations', allAllocs);
+    this.syncFirestoreDoc('supplier_allocations', allocationRecord.id, allocationRecord);
+
+    this.logSupplierActivity({
+      supplierId: supplier.id,
+      action: 'ALLOCATION_LINKED',
+      summary: `Consolidated allocation (${uniqueIds.length} items) for ${b.bookingReference}`,
+      details: `Commercial Price: ${dist.currency} ${dist.consolidatedCommercialPrice.toFixed(2)} | Method: ${dist.allocationMethod}`,
+      performedBy: user.id,
+      performedByName: actorName,
+      performedByEmail: user.email
+    });
+
+    this.recordBookingActivity({
+      eventId: `act-csa-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      bookingId: b.id,
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      eventType: 'SUPPLIER_ALLOCATED',
+      newValue: `${supplier.name} (Consolidated: ${uniqueIds.length} Service Items)`,
+      actorId: user.id,
+      actorRole: user.role,
+      actorName,
+      timestamp: now,
+      metadata: {
+        allocationId,
+        serviceItemIds: uniqueIds,
+        allocationMethod: dist.allocationMethod,
+        consolidatedCommercialPrice: dist.consolidatedCommercialPrice,
+        currency: dist.currency
+      },
+      description: `Consolidated Supplier Allocation ${allocationId} created with ${supplier.name} across ${uniqueIds.length} Service Items.`
+    }, user);
+
+    this.saveBooking(b, user);
+    return { success: true, allocation: allocationRecord, booking: b };
+  }
+
+  public updateConsolidatedSupplierAllocation(
+    allocationId: string,
+    updates: {
+      status?: SupplierAllocationRecord['status'];
+      confirmationRef?: string;
+      internalNotes?: string;
+      supplierNotes?: string;
+      supportingDocuments?: ConsolidatedAllocationDocument[];
+      itemUpdates?: Array<{
+        serviceItemId: string;
+        confirmationStatus?: SupplierAllocationStatus;
+        itemConfirmationRef?: string;
+      }>;
+      applyStatusToAllItems?: boolean;
+      note?: string;
+    },
+    user: User | null
+  ): {
+    success: boolean;
+    allocation?: SupplierAllocationRecord;
+    booking?: Booking;
+    error?: string;
+  } {
+    if (!user || !isInternalStaff(user)) {
+      return { success: false, error: 'Unauthorized: Internal staff permission required.' };
+    }
+
+    const allAllocs = this.getItem<SupplierAllocationRecord[]>('supplier_allocations', []);
+    let existingIdx = allAllocs.findIndex(a => a.id === allocationId);
+    let existing = existingIdx >= 0 ? allAllocs[existingIdx] : undefined;
+
+    if (!existing) {
+      const bFallback = this.getAllBookings().find(b =>
+        (b.consolidatedAllocations || []).some(a => a.id === allocationId)
+      );
+      existing = bFallback?.consolidatedAllocations?.find(a => a.id === allocationId);
+    }
+
+    if (!existing) return { success: false, error: 'Consolidated Supplier Allocation not found.' };
+
+    const allBookings = this.getAllBookings();
+    const bIdx = allBookings.findIndex(b => b.id === existing!.bookingId);
+    if (bIdx < 0) return { success: false, error: 'Linked booking not found.' };
+
+    const b = { ...allBookings[bIdx], items: [...(allBookings[bIdx].items || [])] };
+    const now = new Date().toISOString();
+    const actorName = user.displayName || user.name || user.email || 'Operations Admin';
+    const nextStatus = updates.status || existing.status;
+    const isCancelling = nextStatus === 'CANCELLED' || nextStatus === 'REMOVED';
+
+    const itemUpdateMap = new Map(
+      (updates.itemUpdates || []).map(u => [u.serviceItemId, u])
+    );
+
+    const mappedParentStatus: SupplierAllocationStatus =
+      nextStatus === 'CONFIRMED'
+        ? 'Supplier Confirmed'
+        : nextStatus === 'SENT_TO_SUPPLIER'
+        ? 'Sent to Supplier'
+        : nextStatus === 'AWAITING_CONFIRMATION'
+        ? 'Awaiting Confirmation'
+        : nextStatus === 'AMENDMENT_REQUIRED'
+        ? 'Amendment Required'
+        : isCancelling
+        ? 'Pending Allocation'
+        : 'Supplier Selected';
+
+    const nextItemAllocations = (existing.itemAllocations || []).map(a => {
+      if (isCancelling) {
+        return { ...a, confirmationStatus: 'Pending Allocation' as SupplierAllocationStatus };
+      }
+      const u = itemUpdateMap.get(a.serviceItemId);
+      return {
+        ...a,
+        confirmationStatus: u?.confirmationStatus
+          ? u.confirmationStatus
+          : updates.applyStatusToAllItems
+          ? mappedParentStatus
+          : a.confirmationStatus,
+        itemConfirmationRef:
+          u?.itemConfirmationRef !== undefined
+            ? u.itemConfirmationRef
+            : updates.confirmationRef !== undefined && updates.applyStatusToAllItems
+            ? updates.confirmationRef.trim()
+            : a.itemConfirmationRef
+      };
+    });
+
+    const updatedRecord: SupplierAllocationRecord = {
+      ...existing,
+      status: nextStatus,
+      confirmationRef:
+        updates.confirmationRef !== undefined ? updates.confirmationRef.trim() : existing.confirmationRef,
+      internalNotes: updates.internalNotes !== undefined ? updates.internalNotes.trim() : existing.internalNotes,
+      supplierNotes: updates.supplierNotes !== undefined ? updates.supplierNotes.trim() : existing.supplierNotes,
+      supportingDocuments: updates.supportingDocuments ?? existing.supportingDocuments,
+      itemAllocations: nextItemAllocations,
+      version: (existing.version || 1) + 1,
+      updatedAt: now,
+      statusHistory: [
+        {
+          timestamp: now,
+          status: nextStatus,
+          actorId: user.id,
+          actorName,
+          note: updates.note?.trim() || `Consolidated allocation updated to ${nextStatus}.`
+        },
+        ...(existing.statusHistory || [])
+      ]
+    };
+
+    const allocItemMap = new Map(nextItemAllocations.map(a => [a.serviceItemId, a]));
+    const linkedIds = new Set(existing.serviceItemIds || []);
+
+    b.items = b.items.map(item => {
+      if (item.consolidatedAllocationId !== allocationId && !linkedIds.has(item.id)) {
+        return item;
+      }
+
+      if (isCancelling) {
+        const clone = { ...item };
+        delete clone.consolidatedAllocationId;
+        delete clone.allocatedCommercialPrice;
+        delete clone.allocationMethod;
+        delete clone.supplierId;
+        delete clone.supplierName;
+        delete clone.supplierNameSnapshot;
+        delete clone.supplierConfirmationRef;
+        return {
+          ...clone,
+          supplierAllocationStatus: 'Pending Allocation' as SupplierAllocationStatus,
+          supplierStatus: 'PENDING_DISPATCH' as const,
+          supplierConfirmationStatus: 'Not Confirmed' as const,
+          operationalStatus: 'Supplier Not Allocated' as const
+        };
+      }
+
+      const entry = allocItemMap.get(item.id);
+      if (!entry) return item;
+
+      const isItemConfirmed =
+        entry.confirmationStatus === 'Supplier Confirmed' || entry.confirmationStatus === 'Confirmed';
+      const isItemAmend = entry.confirmationStatus === 'Amendment Required';
+
+      return {
+        ...item,
+        supplierConfirmationRef:
+          entry.itemConfirmationRef !== undefined ? entry.itemConfirmationRef : item.supplierConfirmationRef,
+        supplierAllocationStatus: entry.confirmationStatus,
+        supplierStatus: isItemConfirmed
+          ? ('CONFIRMED_BY_SUPPLIER' as const)
+          : isItemAmend
+          ? ('AMENDMENT_REQUESTED' as const)
+          : ('SENT_TO_SUPPLIER' as const),
+        supplierConfirmationStatus: isItemConfirmed ? ('Confirmed' as const) : ('Confirmation Pending' as const),
+        operationalStatus: isItemConfirmed ? ('Confirmed' as const) : ('Confirmation Pending' as const),
+        supplierNotes: updates.supplierNotes !== undefined ? updates.supplierNotes.trim() : item.supplierNotes
+      };
+    });
+
+    b.consolidatedAllocations = [
+      updatedRecord,
+      ...((b.consolidatedAllocations || []).filter(a => a.id !== allocationId))
+    ];
+    b.updatedAt = now;
+    b.operationalProcessingStatus = this.calculateBookingOperationalStatus(b);
+
+    if (b.vouchersList && b.vouchersList.length > 0) {
+      b.vouchersList = b.vouchersList.map(v => {
+        const affects = v.isCompleteBookingVoucher || (v.serviceItemId && linkedIds.has(v.serviceItemId));
+        if (!affects || v.status === 'CANCELLED' || v.status === 'OUTDATED') return v;
+        return {
+          ...v,
+          isOutdated: true,
+          outdatedReason: `Consolidated supplier allocation ${allocationId} updated (${nextStatus}).`
+        };
+      });
+    }
+
+    if (existingIdx >= 0) {
+      allAllocs[existingIdx] = updatedRecord;
+    } else {
+      allAllocs.unshift(updatedRecord);
+    }
+    this.setItem('supplier_allocations', allAllocs);
+    this.syncFirestoreDoc('supplier_allocations', updatedRecord.id, updatedRecord);
+    this.saveBooking(b, user);
+
+    return { success: true, allocation: updatedRecord, booking: b };
+  }
+
+  public cancelConsolidatedSupplierAllocation(
+    allocationId: string,
+    reason: string,
+    user: User | null
+  ): { success: boolean; allocation?: SupplierAllocationRecord; booking?: Booking; error?: string } {
+    return this.updateConsolidatedSupplierAllocation(
+      allocationId,
+      {
+        status: 'CANCELLED',
+        note: reason || 'Consolidated supplier allocation cancelled and Service Items unlinked.'
+      },
+      user
+    );
   }
 
   public getSupplierLinkedBookings(supplierId: string): {

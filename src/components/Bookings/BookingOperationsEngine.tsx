@@ -21,6 +21,7 @@ import {
   hydrateBookingServiceItem,
   resolveCanonicalAllocationStatus
 } from '../../services/bookingOperationsSyncService';
+import { resolveAuthoritativeBookingFinancials } from '../../services/bookingManualDiscountEngine';
 import { VoucherDocumentView } from './VoucherDocumentView';
 import {
   AddServiceItemModal,
@@ -562,11 +563,12 @@ export const BookingOperationsEngine: React.FC<BookingOperationsEngineProps> = (
     onRefresh();
   };
 
-  // Calculation helpers
-  const totalCostEstimate = items.reduce((sum, it) => sum + (it.supplierPrice || 0), 0);
-  const totalSellingPrice = booking.totalAmount || items.reduce((sum, it) => sum + it.totalPrice, 0);
-  const estimatedGrossProfit = totalSellingPrice - totalCostEstimate;
-  const estimatedMarginPercent = totalSellingPrice > 0 ? Math.round((estimatedGrossProfit / totalSellingPrice) * 100) : 0;
+  // Calculation helpers (strictly derived from authoritative pricing snapshot)
+  const authoritativeFin = resolveAuthoritativeBookingFinancials(booking);
+  const totalCostEstimate = authoritativeFin.supplierNettCost || items.reduce((sum, it) => sum + (it.supplierPrice || 0), 0);
+  const totalSellingPrice = authoritativeFin.current_selling_price;
+  const estimatedGrossProfit = authoritativeFin.remainingTheUnboundMargin;
+  const estimatedMarginPercent = Math.round(authoritativeFin.grossMarginPercent);
 
   return (
     <div className="space-y-6">

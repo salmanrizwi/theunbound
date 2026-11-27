@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import {
   AdminManualDiscountApplyPayload,
   AdminManualDiscountReversePayload,
@@ -10,6 +11,7 @@ import {
   BookingManualDiscountPreview,
   BookingManualDiscountReportSummary,
   BookingPricingSnapshot,
+  PaymentSchedule,
   Promotion
 } from '../src/types';
 import {
@@ -19,8 +21,12 @@ import {
   buildReverseManualDiscountCommit,
   calculateBookingManualDiscountPreview,
   getLatestBookingPricingSnapshot,
+  PaymentScheduleRecalculationPreview,
+  PaymentScheduleTrancheInput,
+  previewPaymentScheduleRecalculation,
   resolveAdminManualDiscountPermissions,
-  roundMoney
+  roundMoney,
+  validateAndBuildVersionedPaymentSchedule
 } from '../src/services/bookingManualDiscountEngine';
 import { findPromotionByCode, normalizePromotionCode } from '../src/services/promotionEngine';
 import { fromFirestoreDocument, toFirestoreFields } from './marginGovernanceService';
@@ -29,28 +35,36 @@ import { fromFirestoreDocument, toFirestoreFields } from './marginGovernanceServ
 // FIREBASE / FIRESTORE REST CONFIGURATION
 // ============================================================================
 
+const DEFAULT_PROJECT_ID = 'gen-lang-client-0981426327';
+const DEFAULT_DATABASE_ID = 'ai-studio-theunbounddmctra-384adde8-26cf-49a7-8158-336473069762';
+
 function getFirebaseConfig(): {
   projectId: string;
   apiKey: string;
   firestoreDatabaseId: string;
 } {
   try {
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    if (fs.existsSync(configPath)) {
-      const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-      return {
-        projectId: parsed.projectId || 'gen-lang-client-0981426327',
-        apiKey: parsed.apiKey || '',
-        firestoreDatabaseId: parsed.firestoreDatabaseId || '(default)'
-      };
+    const candidatePaths = [
+      path.resolve(process.cwd(), 'firebase-applet-config.json'),
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'firebase-applet-config.json')
+    ];
+    for (const configPath of candidatePaths) {
+      if (fs.existsSync(configPath)) {
+        const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        return {
+          projectId: parsed.projectId || DEFAULT_PROJECT_ID,
+          apiKey: parsed.apiKey || '',
+          firestoreDatabaseId: parsed.firestoreDatabaseId || DEFAULT_DATABASE_ID
+        };
+      }
     }
   } catch (err) {
     console.warn('[MANUAL-DISCOUNT-SVC] Could not read firebase-applet-config.json:', err);
   }
   return {
-    projectId: 'gen-lang-client-0981426327',
+    projectId: DEFAULT_PROJECT_ID,
     apiKey: '',
-    firestoreDatabaseId: '(default)'
+    firestoreDatabaseId: DEFAULT_DATABASE_ID
   };
 }
 
@@ -149,7 +163,7 @@ async function verifyAdminCaller(
   }
 
   const resolvedRole = String(
-    userDoc?.role || (MASTER_ADMIN_EMAILS.has(email) ? 'ADMIN' : 'B2B_AGENT')
+    userDoc?.role || userDoc?.userType || (MASTER_ADMIN_EMAILS.has(email) ? 'SUPER_ADMIN' : 'B2B_AGENT')
   ).toUpperCase();
 
   const permissions = resolveAdminManualDiscountPermissions({
@@ -159,19 +173,20 @@ async function verifyAdminCaller(
     role: resolvedRole
   });
 
-  // Block any external user (B2B_AGENT, BUYER, etc.) immediately at the API gateway
-  const hasAnyAdminManualDiscountAccess =
+  // Block any external user (B2B_AGENT, BUYER, etc.) or unauthorized staff immediately at the API gateway
+  const hasAnyAdminFinancialAccess =
     permissions.canViewInternalMargin ||
     permissions.canApplyManualDiscount ||
     permissions.canApplyAdminCoupon ||
     permissions.canReverseManualDiscount ||
-    permissions.canViewDiscountReports;
+    permissions.canViewDiscountReports ||
+    permissions.canManagePaymentSchedule;
 
-  if (!hasAnyAdminManualDiscountAccess) {
+  if (!hasAnyAdminFinancialAccess) {
     return {
       ok: false,
       status: 403,
-      error: 'Forbidden: Only authorized Administrators may access Booking Manual Discount controls, internal margins, or reports.'
+      error: 'Forbidden: Your account does not have internal financial or booking discount/schedule permissions.'
     };
   }
 
@@ -203,6 +218,8 @@ export interface BookingDiscountStoreAdapter {
   saveSnapshot(snapshot: BookingPricingSnapshot, token: string): Promise<void>;
   listAdjustments(token: string, bookingId?: string): Promise<BookingManualDiscountAdjustment[]>;
   saveAdjustment(adjustment: BookingManualDiscountAdjustment, token: string): Promise<void>;
+  listPaymentSchedules?(token: string, bookingId: string): Promise<PaymentSchedule[]>;
+  savePaymentSchedule?(schedule: PaymentSchedule, token: string): Promise<void>;
   saveAuditLog(log: Record<string, any>, token: string): Promise<void>;
   countInvoicesForBooking(bookingId: string, token: string): Promise<number>;
 }
@@ -224,7 +241,58 @@ async function fsListCollection(
   }
   const json = (await res.json()) as any;
   const docs = Array.isArray(json.documents) ? json.documents : [];
-  return docs.map((d: any) => fromFirestoreDocument(d));
+  return docs
+    .map((d: any) => fromFirestoreDocument(d))
+    .filter((d): d is Record<string, any> => Boolean(d));
+}
+
+/**
+ * Executes a scoped Firestore structured query filtered by an exact string field
+ * (e.g. `bookingId == '...'` or `couponId == '...'`) via `:runQuery` so single-booking
+ * operations NEVER perform an unfiltered full-collection list.
+ */
+export async function fsQueryCollectionByField(
+  collectionId: string,
+  fieldPath: string,
+  stringValue: string,
+  token: string,
+  maxDocs = 500
+): Promise<Record<string, any>[]> {
+  const url = `${getFirestoreBaseUrl()}:runQuery`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId }],
+        where: {
+          fieldFilter: {
+            field: { fieldPath },
+            op: 'EQUAL',
+            value: { stringValue }
+          }
+        },
+        limit: Math.min(maxDocs, 1000)
+      }
+    }),
+    signal: AbortSignal.timeout(8000)
+  });
+
+  if (res.status === 404) return [];
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Firestore query failed for ${collectionId} where ${fieldPath}==${stringValue} (${res.status}): ${errText}`);
+  }
+
+  const rows = (await res.json()) as any[];
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter(r => r && r.document)
+    .map(r => fromFirestoreDocument(r.document))
+    .filter((d): d is Record<string, any> => Boolean(d));
 }
 
 async function fsGetDoc(
@@ -293,9 +361,15 @@ export class FirestoreBookingDiscountStore implements BookingDiscountStoreAdapte
   }
 
   async listSnapshots(token: string, bookingId?: string): Promise<BookingPricingSnapshot[]> {
-    const all = (await fsListCollection('booking_pricing_snapshots', token)) as BookingPricingSnapshot[];
-    if (!bookingId) return all;
-    return all.filter(s => s.bookingId === bookingId);
+    if (bookingId) {
+      return (await fsQueryCollectionByField(
+        'booking_pricing_snapshots',
+        'bookingId',
+        bookingId,
+        token
+      )) as BookingPricingSnapshot[];
+    }
+    return (await fsListCollection('booking_pricing_snapshots', token)) as BookingPricingSnapshot[];
   }
 
   async saveSnapshot(snapshot: BookingPricingSnapshot, token: string): Promise<void> {
@@ -303,13 +377,39 @@ export class FirestoreBookingDiscountStore implements BookingDiscountStoreAdapte
   }
 
   async listAdjustments(token: string, bookingId?: string): Promise<BookingManualDiscountAdjustment[]> {
-    const all = (await fsListCollection('booking_manual_discounts', token)) as BookingManualDiscountAdjustment[];
-    if (!bookingId) return all;
-    return all.filter(a => a.bookingId === bookingId);
+    if (bookingId) {
+      return (await fsQueryCollectionByField(
+        'booking_manual_discounts',
+        'bookingId',
+        bookingId,
+        token
+      )) as BookingManualDiscountAdjustment[];
+    }
+    return (await fsListCollection('booking_manual_discounts', token)) as BookingManualDiscountAdjustment[];
   }
 
   async saveAdjustment(adjustment: BookingManualDiscountAdjustment, token: string): Promise<void> {
     await fsWriteDoc('booking_manual_discounts', adjustment.adjustmentId, adjustment as any, token, true);
+  }
+
+  async listPaymentSchedules(token: string, bookingId: string): Promise<PaymentSchedule[]> {
+    return (await fsQueryCollectionByField(
+      'booking_payment_schedules',
+      'bookingId',
+      bookingId,
+      token
+    )) as PaymentSchedule[];
+  }
+
+  async savePaymentSchedule(schedule: PaymentSchedule, token: string): Promise<void> {
+    const scheduleId = schedule.scheduleId || `ps-${schedule.bookingId}-v${schedule.scheduleVersion || 1}`;
+    await fsWriteDoc(
+      'booking_payment_schedules',
+      scheduleId,
+      { ...schedule, scheduleId, immutable: true },
+      token,
+      true
+    );
   }
 
   async saveAuditLog(log: Record<string, any>, token: string): Promise<void> {
@@ -319,8 +419,8 @@ export class FirestoreBookingDiscountStore implements BookingDiscountStoreAdapte
 
   async countInvoicesForBooking(bookingId: string, token: string): Promise<number> {
     try {
-      const invoices = await fsListCollection('invoices', token);
-      return invoices.filter((inv: any) => inv.bookingId === bookingId).length;
+      const invoices = await fsQueryCollectionByField('invoices', 'bookingId', bookingId, token);
+      return invoices.filter((inv: any) => inv.status !== 'DELETED').length;
     } catch {
       return 0;
     }
@@ -337,6 +437,7 @@ export class InMemoryBookingDiscountStore implements BookingDiscountStoreAdapter
   public promotions = new Map<string, Promotion>();
   public snapshots = new Map<string, BookingPricingSnapshot>();
   public adjustments = new Map<string, BookingManualDiscountAdjustment>();
+  public paymentSchedules = new Map<string, PaymentSchedule>();
   public auditLogs: Record<string, any>[] = [];
   public invoiceCounts = new Map<string, number>();
 
@@ -385,6 +486,19 @@ export class InMemoryBookingDiscountStore implements BookingDiscountStoreAdapter
     this.adjustments.set(adjustment.adjustmentId, JSON.parse(JSON.stringify(adjustment)));
   }
 
+  async listPaymentSchedules(_token: string, bookingId: string): Promise<PaymentSchedule[]> {
+    const all = Array.from(this.paymentSchedules.values()).map(s => JSON.parse(JSON.stringify(s)));
+    return all.filter(s => s.bookingId === bookingId);
+  }
+
+  async savePaymentSchedule(schedule: PaymentSchedule): Promise<void> {
+    const scheduleId = schedule.scheduleId || `ps-${schedule.bookingId}-v${schedule.scheduleVersion || 1}`;
+    if (this.paymentSchedules.has(scheduleId)) {
+      throw new Error(`Immutable payment schedule conflict: ${scheduleId} already exists.`);
+    }
+    this.paymentSchedules.set(scheduleId, JSON.parse(JSON.stringify({ ...schedule, scheduleId, immutable: true })));
+  }
+
   async saveAuditLog(log: Record<string, any>): Promise<void> {
     this.auditLogs.push(JSON.parse(JSON.stringify(log)));
   }
@@ -400,8 +514,11 @@ export class InMemoryBookingDiscountStore implements BookingDiscountStoreAdapter
 
 export class BookingManualDiscountTransactionManager {
   private readonly bookingLocks = new Map<string, Promise<void>>();
+  private readonly store: BookingDiscountStoreAdapter;
 
-  constructor(private readonly store: BookingDiscountStoreAdapter) {}
+  constructor(store: BookingDiscountStoreAdapter) {
+    this.store = store;
+  }
 
   private async withBookingLock<T>(bookingId: string, task: () => Promise<T>): Promise<T> {
     const prior = this.bookingLocks.get(bookingId) || Promise.resolve();
@@ -756,6 +873,19 @@ export class BookingManualDiscountTransactionManager {
         }
       }
 
+      // Optimistic concurrency check on reversal
+      const latestSnap = getLatestBookingPricingSnapshot(booking, snapshots);
+      if (
+        typeof payload.expectedSnapshotVersion === 'number' &&
+        payload.expectedSnapshotVersion !== latestSnap.version
+      ) {
+        return {
+          ok: false,
+          status: 409,
+          error: `Pricing snapshot version conflict: expected v${payload.expectedSnapshotVersion}, but latest committed snapshot is v${latestSnap.version}. Please refresh and retry.`
+        };
+      }
+
       const commit = buildReverseManualDiscountCommit({
         booking,
         adjustmentId: payload.adjustmentId,
@@ -891,6 +1021,236 @@ export class BookingManualDiscountTransactionManager {
       toDate
     });
     return { ok: true, report };
+  }
+
+  public async getBookingPaymentSchedules(params: {
+    bookingId: string;
+    caller: Pick<VerifiedAdminCaller, 'uid' | 'permissions' | 'idToken'>;
+  }): Promise<
+    | {
+        ok: true;
+        activeSchedule: PaymentSchedule | null;
+        schedules: PaymentSchedule[];
+        latestSnapshot: BookingPricingSnapshot;
+      }
+    | { ok: false; status: number; error: string }
+  > {
+    const { bookingId, caller } = params;
+    if (!caller.permissions.canViewInternalMargin && !caller.permissions.canManagePaymentSchedule) {
+      return { ok: false, status: 403, error: 'Forbidden: missing payment schedule visibility permission.' };
+    }
+    const booking = await this.store.getBooking(bookingId, caller.idToken);
+    if (!booking) {
+      return { ok: false, status: 404, error: `Booking "${bookingId}" not found.` };
+    }
+    const [snapshots, storedSchedules] = await Promise.all([
+      this.store.listSnapshots(caller.idToken, bookingId),
+      this.store.listPaymentSchedules
+        ? this.store.listPaymentSchedules(caller.idToken, bookingId)
+        : Promise.resolve([])
+    ]);
+
+    const latestSnapshot = getLatestBookingPricingSnapshot(booking, snapshots.length > 0 ? snapshots : undefined);
+    const byId = new Map<string, PaymentSchedule>();
+    for (const s of [...(booking.paymentScheduleHistory || []), ...storedSchedules]) {
+      if (s && s.scheduleId) byId.set(s.scheduleId, s);
+    }
+    if (booking.paymentSchedule?.scheduleId) {
+      byId.set(booking.paymentSchedule.scheduleId, booking.paymentSchedule);
+    }
+    const schedules = Array.from(byId.values()).sort(
+      (a, b) => (b.scheduleVersion || 0) - (a.scheduleVersion || 0)
+    );
+
+    return {
+      ok: true,
+      activeSchedule: booking.paymentSchedule || schedules[0] || null,
+      schedules,
+      latestSnapshot
+    };
+  }
+
+  public async previewScheduleRecalculation(params: {
+    bookingId: string;
+    caller: Pick<VerifiedAdminCaller, 'uid' | 'permissions' | 'idToken'>;
+  }): Promise<
+    | { ok: true; preview: PaymentScheduleRecalculationPreview }
+    | { ok: false; status: number; error: string }
+  > {
+    const { bookingId, caller } = params;
+    if (!caller.permissions.canManagePaymentSchedule) {
+      return { ok: false, status: 403, error: 'Forbidden: missing permission to recalculate booking payment schedules.' };
+    }
+    const booking = await this.store.getBooking(bookingId, caller.idToken);
+    if (!booking) {
+      return { ok: false, status: 404, error: `Booking "${bookingId}" not found.` };
+    }
+    const [snapshots, existingSchedules] = await Promise.all([
+      this.store.listSnapshots(caller.idToken, bookingId),
+      this.store.listPaymentSchedules
+        ? this.store.listPaymentSchedules(caller.idToken, bookingId)
+        : Promise.resolve([])
+    ]);
+    const preview = previewPaymentScheduleRecalculation({
+      booking,
+      externalSnapshots: snapshots.length > 0 ? snapshots : undefined,
+      existingSchedules
+    });
+    return { ok: true, preview };
+  }
+
+  public async savePaymentScheduleVersion(params: {
+    bookingId: string;
+    payload: {
+      tranches: PaymentScheduleTrancheInput[];
+      reason: string;
+      allowPartialSchedule?: boolean;
+      idempotencyKey?: string;
+      expectedSnapshotVersion?: number;
+      isRecalculation?: boolean;
+    };
+    caller: Pick<VerifiedAdminCaller, 'uid' | 'email' | 'name' | 'role' | 'permissions' | 'idToken'>;
+  }): Promise<
+    | {
+        ok: true;
+        idempotentReplay: boolean;
+        newSchedule: PaymentSchedule;
+        updatedBooking: Booking;
+        latestSnapshot: BookingPricingSnapshot;
+      }
+    | { ok: false; status: number; error: string }
+  > {
+    const { bookingId, payload, caller } = params;
+
+    return this.withBookingLock(bookingId, async () => {
+      if (!caller.permissions.canManagePaymentSchedule) {
+        return {
+          ok: false,
+          status: 403,
+          error: 'Forbidden: your role is not permitted to create or modify booking payment schedules.'
+        };
+      }
+
+      const booking = await this.store.getBooking(bookingId, caller.idToken);
+      if (!booking) {
+        return { ok: false, status: 404, error: `Booking "${bookingId}" not found.` };
+      }
+
+      const [snapshots, existingSchedules] = await Promise.all([
+        this.store.listSnapshots(caller.idToken, bookingId),
+        this.store.listPaymentSchedules
+          ? this.store.listPaymentSchedules(caller.idToken, bookingId)
+          : Promise.resolve([])
+      ]);
+
+      const latestSnapshot = getLatestBookingPricingSnapshot(
+        booking,
+        snapshots.length > 0 ? snapshots : undefined
+      );
+
+      const built = validateAndBuildVersionedPaymentSchedule({
+        booking,
+        tranches: payload.tranches || [],
+        actor: {
+          id: caller.uid,
+          name: caller.name,
+          email: caller.email,
+          role: caller.role
+        },
+        reason: payload.reason,
+        allowPartialSchedule: Boolean(payload.allowPartialSchedule),
+        idempotencyKey: payload.idempotencyKey,
+        expectedSnapshotVersion: payload.expectedSnapshotVersion,
+        isRecalculation: Boolean(payload.isRecalculation),
+        externalSnapshots: snapshots.length > 0 ? snapshots : undefined,
+        existingSchedules
+      });
+
+      if (!built.ok) {
+        return { ok: false, status: built.status, error: built.error };
+      }
+
+      if (built.idempotentReplay) {
+        return {
+          ok: true,
+          idempotentReplay: true,
+          newSchedule: built.newSchedule,
+          updatedBooking: built.updatedBooking,
+          latestSnapshot
+        };
+      }
+
+      // Persist baseline snapshot if booking had no snapshot document in Firestore yet
+      if (snapshots.length === 0) {
+        const baseline = buildInitialBookingPricingSnapshot(booking);
+        await this.store.saveSnapshot(baseline, caller.idToken);
+      }
+
+      // Persist immutable payment schedule version BEFORE updating booking projection
+      if (this.store.savePaymentSchedule) {
+        // Also persist v1 historical custom schedule if it existed only on booking doc without a Firestore schedule doc
+        if (
+          built.supersededSchedule &&
+          built.supersededSchedule.scheduleId &&
+          !existingSchedules.some(s => s.scheduleId === built.supersededSchedule!.scheduleId)
+        ) {
+          await this.store.savePaymentSchedule(
+            {
+              ...built.supersededSchedule,
+              financialSnapshotId:
+                built.supersededSchedule.financialSnapshotId || latestSnapshot.previousSnapshotId || `bps-${booking.id}-v1`,
+              financialSnapshotVersion:
+                built.supersededSchedule.financialSnapshotVersion || latestSnapshot.previousSnapshotVersion || 1,
+              originalBookingAmount:
+                built.supersededSchedule.originalBookingAmount ?? latestSnapshot.originalCustomerSellingPrice,
+              totalDiscountAmount: built.supersededSchedule.totalDiscountAmount ?? 0,
+              revisedBookingAmount:
+                built.supersededSchedule.revisedBookingAmount ?? built.supersededSchedule.totalAmount,
+              createdBy: built.supersededSchedule.createdBy || caller.uid,
+              createdAt: built.supersededSchedule.createdAt || built.supersededSchedule.updatedAt || new Date().toISOString(),
+              immutable: true
+            },
+            caller.idToken
+          );
+        }
+        await this.store.savePaymentSchedule(built.newSchedule, caller.idToken);
+      }
+
+      await this.store.saveBooking(built.updatedBooking, caller.idToken);
+
+      await this.store.saveAuditLog(
+        {
+          id: `audit-ps-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          action: payload.isRecalculation ? 'PAYMENT_SCHEDULE_RECALCULATED' : 'PAYMENT_SCHEDULE_SAVED',
+          entityType: 'Booking',
+          entityId: booking.id,
+          userId: caller.uid,
+          userName: caller.name,
+          userRole: caller.role,
+          timestamp: built.newSchedule.createdAt || built.newSchedule.updatedAt,
+          details: `Saved Payment Schedule v${built.newSchedule.scheduleVersion} (${built.newSchedule.scheduleId}) linked to Snapshot v${latestSnapshot.version} on ${booking.bookingReference}. Revised Booking Amount: ${built.newSchedule.currency} ${built.newSchedule.revisedBookingAmount}. Scheduled Total: ${built.newSchedule.currency} ${built.newSchedule.totalAmount}. Reason: ${payload.reason}`,
+          metadata: {
+            scheduleId: built.newSchedule.scheduleId,
+            scheduleVersion: built.newSchedule.scheduleVersion,
+            financialSnapshotId: latestSnapshot.snapshotId,
+            financialSnapshotVersion: latestSnapshot.version,
+            revisedBookingAmount: built.newSchedule.revisedBookingAmount,
+            totalScheduled: built.newSchedule.totalAmount,
+            unallocatedBalance: built.newSchedule.unallocatedBalance || 0,
+            scheduleStatus: built.newSchedule.scheduleStatus
+          }
+        },
+        caller.idToken
+      );
+
+      return {
+        ok: true,
+        idempotentReplay: false,
+        newSchedule: built.newSchedule,
+        updatedBooking: built.updatedBooking,
+        latestSnapshot
+      };
+    });
   }
 }
 
@@ -1034,6 +1394,82 @@ export function createAdminBookingManualDiscountRouter(
     } catch (err: any) {
       console.error('[MANUAL-DISCOUNT-SVC] Report error:', err);
       return res.status(500).json({ error: err?.message || 'Failed to generate manual discount report.' });
+    }
+  });
+
+  // Fetch immutable versioned payment schedules & latest financial snapshot for a booking
+  router.get('/bookings/:bookingId/payment-schedules', async (req: Request, res: Response) => {
+    const auth = await verifyAdminCaller(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    try {
+      const result = await manager.getBookingPaymentSchedules({
+        bookingId: req.params.bookingId,
+        caller: auth.caller
+      });
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
+      return res.json({
+        activeSchedule: result.activeSchedule,
+        schedules: result.schedules,
+        latestSnapshot: result.latestSnapshot,
+        permissions: auth.caller.permissions
+      });
+    } catch (err: any) {
+      console.error('[MANUAL-DISCOUNT-SVC] Get payment schedules error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to load payment schedule versions.' });
+    }
+  });
+
+  // Preview recalculating an existing Payment Schedule against the Latest Committed Financial Snapshot
+  router.post('/bookings/:bookingId/payment-schedules/preview-recalculation', async (req: Request, res: Response) => {
+    const auth = await verifyAdminCaller(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    try {
+      const result = await manager.previewScheduleRecalculation({
+        bookingId: req.params.bookingId,
+        caller: auth.caller
+      });
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
+      return res.json({ preview: result.preview });
+    } catch (err: any) {
+      console.error('[MANUAL-DISCOUNT-SVC] Preview payment schedule recalculation error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to preview payment schedule recalculation.' });
+    }
+  });
+
+  // Save a new immutable Payment Schedule version linked to the Latest Committed Financial Snapshot
+  router.post('/bookings/:bookingId/payment-schedules', async (req: Request, res: Response) => {
+    const auth = await verifyAdminCaller(req);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    try {
+      const result = await manager.savePaymentScheduleVersion({
+        bookingId: req.params.bookingId,
+        payload: {
+          tranches: Array.isArray(req.body?.tranches) ? req.body.tranches : [],
+          reason: String(req.body?.reason || ''),
+          allowPartialSchedule: Boolean(req.body?.allowPartialSchedule),
+          idempotencyKey: req.body?.idempotencyKey ? String(req.body.idempotencyKey) : undefined,
+          expectedSnapshotVersion:
+            typeof req.body?.expectedSnapshotVersion === 'number'
+              ? req.body.expectedSnapshotVersion
+              : undefined,
+          isRecalculation: Boolean(req.body?.isRecalculation)
+        },
+        caller: auth.caller
+      });
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
+      return res.json({
+        success: true,
+        idempotentReplay: result.idempotentReplay,
+        newSchedule: result.newSchedule,
+        updatedBooking: result.updatedBooking,
+        latestSnapshot: result.latestSnapshot
+      });
+    } catch (err: any) {
+      console.error('[MANUAL-DISCOUNT-SVC] Save payment schedule error:', err);
+      return res.status(500).json({ error: err?.message || 'Failed to save payment schedule version.' });
     }
   });
 

@@ -12,7 +12,11 @@ import {
   Supplier,
   SupplierRequest
 } from '../types';
-import { getLatestBookingPricingSnapshot, roundMoney } from './bookingManualDiscountEngine';
+import {
+  getLatestBookingPricingSnapshot,
+  resolveAuthoritativeBookingFinancials,
+  roundMoney
+} from './bookingManualDiscountEngine';
 
 /**
  * Canonical display labels for LeadStatus identifiers.
@@ -641,13 +645,14 @@ export function generateOperationsCalendarEvents(bookings: Booking[]): Operation
 
     // 3. Payment Cutoff Date
     if (b.paymentCutoffDate) {
+      const fin = resolveAuthoritativeBookingFinancials(b);
       const isPast = new Date(b.paymentCutoffDate) < new Date();
-      const isPaid = b.paymentStatus === 'PAID';
+      const isPaid = fin.paymentStatus === 'PAID';
       events.push({
         id: `evt-pay-${b.id}`,
         type: 'PAYMENT_CUTOFF',
         title: `Payment Cutoff: ${b.bookingReference}`,
-        description: `Supplier payment cutoff for ${b.bookingReference} (${b.currency} ${b.totalAmount})`,
+        description: `Payment cutoff for ${b.bookingReference} (${fin.currency} ${fin.outstandingBalance > 0 ? fin.outstandingBalance : fin.revisedBookingAmount})`,
         bookingId: b.id,
         bookingReference: b.bookingReference,
         customerName: custName,

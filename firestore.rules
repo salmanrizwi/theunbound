@@ -26,18 +26,34 @@ service cloud.firestore {
       return getUserDoc(request.auth.uid).data;
     }
 
-    // Master admin email or designated admin role
-    function isMasterAdmin() {
+    function currentRole() {
+      return hasUserDoc(request.auth.uid)
+        ? currentUserData().get('role', currentUserData().get('userType', ''))
+        : '';
+    }
+
+    // Super Admin (bootstrapped master email or explicit SUPER_ADMIN role)
+    function isSuperAdmin() {
       return isAuthenticated() && (
-        ('email' in request.auth.token && (
+        ('email' in request.auth.token && request.auth.token.email is string && (
           request.auth.token.email.lower() == 'business@theunbound.in' ||
           request.auth.token.email.lower() == 'admin@theunbound.com' ||
           request.auth.token.email.lower() == 'marcus@theunbound.in'
         )) ||
         (hasUserDoc(request.auth.uid) && (
-          currentUserData().role == 'ADMIN' ||
-          currentUserData().role == 'SUPER_ADMIN'
+          currentUserData().get('role', '') == 'SUPER_ADMIN' ||
+          currentUserData().get('userType', '') == 'SUPER_ADMIN'
         ))
+      );
+    }
+
+    // Master admin email or designated admin role (CEL null-safe)
+    function isMasterAdmin() {
+      return isSuperAdmin() || (
+        isAuthenticated() && hasUserDoc(request.auth.uid) && (
+          currentUserData().get('role', '') == 'ADMIN' ||
+          currentUserData().get('userType', '') == 'ADMIN'
+        ) && currentUserData().get('approvalStatus', 'APPROVED') == 'APPROVED'
       );
     }
 
@@ -111,85 +127,177 @@ service cloud.firestore {
       return isAuthenticated() && (
         isMasterAdmin() ||
         (hasUserDoc(request.auth.uid) && (
-          currentUserData().role == 'SUPER_ADMIN' ||
-          currentUserData().role == 'ADMIN' ||
-          currentUserData().role == 'TEAM_MEMBER' ||
-          currentUserData().role == 'DMC_STAFF' ||
-          currentUserData().userType == 'SUPER_ADMIN' ||
-          currentUserData().userType == 'ADMIN' ||
-          currentUserData().userType == 'TEAM_MEMBER'
+          currentUserData().get('role', '') in ['SUPER_ADMIN', 'ADMIN', 'TEAM_MEMBER', 'DMC_STAFF'] ||
+          currentUserData().get('userType', '') in ['SUPER_ADMIN', 'ADMIN', 'TEAM_MEMBER', 'DMC_STAFF']
         ))
       );
     }
 
     function hasPerms() {
-      return hasUserDoc(request.auth.uid) && ('permissions' in currentUserData());
+      return hasUserDoc(request.auth.uid) &&
+        ('permissions' in currentUserData()) &&
+        currentUserData().permissions is map;
     }
 
     function userPerms() {
       return currentUserData().permissions;
     }
 
+    function hasBookingOpsPerm(key, defaultVal) {
+      return hasPerms() &&
+        ('bookingOperations' in userPerms()) &&
+        userPerms().bookingOperations is map
+        ? userPerms().bookingOperations.get(key, defaultVal) == true
+        : defaultVal;
+    }
+
+    function hasCmsFinanceAccess() {
+      return hasPerms() && (
+        userPerms().get('canAccessFinancials', false) == true ||
+        (('cmsFinance' in userPerms()) && userPerms().cmsFinance is map && (
+          userPerms().cmsFinance.get('enabled', false) == true ||
+          userPerms().cmsFinance.get('pricing', false) == true
+        ))
+      );
+    }
+
+    function adminFinancialRevoked() {
+      return hasPerms() && (
+        userPerms().get('canAccessFinancials', true) == false ||
+        (('cmsFinance' in userPerms()) && userPerms().cmsFinance is map && userPerms().cmsFinance.get('enabled', true) == false)
+      );
+    }
+
+    // Strict RBAC for reading internal booking pricing snapshots & margin-funded discount history.
+    // B2B Agents, Buyers, unapproved accounts, Admins with explicitly revoked financial access,
+    // and Team Members without explicit financial/margin permissions are strictly denied.
+    function canReadBookingFinancialSnapshots() {
+      return isSuperAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          (currentRole() == 'ADMIN' && (
+            (!adminFinancialRevoked() && (
+              hasBookingOpsPerm('view_internal_margin', true) ||
+              hasBookingOpsPerm('apply_manual_discount', false) ||
+              hasBookingOpsPerm('view_discount_reports', false) ||
+              hasCmsFinanceAccess()
+            )) ||
+            (adminFinancialRevoked() && (
+              hasBookingOpsPerm('view_internal_margin', false) ||
+              hasBookingOpsPerm('apply_manual_discount', false) ||
+              hasBookingOpsPerm('view_discount_reports', false)
+            ))
+          )) ||
+          (currentRole() in ['TEAM_MEMBER', 'DMC_STAFF'] && (
+            hasBookingOpsPerm('view_internal_margin', false) ||
+            hasBookingOpsPerm('view_internal_financials', false) ||
+            hasBookingOpsPerm('apply_manual_discount', false) ||
+            hasBookingOpsPerm('apply_admin_coupon', false) ||
+            hasBookingOpsPerm('view_discount_reports', false) ||
+            hasCmsFinanceAccess()
+          ))
+        )
+      );
+    }
+
+    // Strict RBAC for creating immutable pricing snapshots & manual discount adjustments.
+    function canWriteBookingFinancialSnapshots() {
+      return isSuperAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          (currentRole() == 'ADMIN' && (
+            (!adminFinancialRevoked() && (
+              hasBookingOpsPerm('apply_manual_discount', true) ||
+              hasBookingOpsPerm('apply_admin_coupon', true) ||
+              hasBookingOpsPerm('reverse_manual_discount', true)
+            )) ||
+            (adminFinancialRevoked() && (
+              hasBookingOpsPerm('apply_manual_discount', false) ||
+              hasBookingOpsPerm('apply_admin_coupon', false) ||
+              hasBookingOpsPerm('reverse_manual_discount', false)
+            ))
+          )) ||
+          (currentRole() in ['TEAM_MEMBER', 'DMC_STAFF'] && (
+            hasBookingOpsPerm('apply_manual_discount', false) ||
+            hasBookingOpsPerm('apply_admin_coupon', false) ||
+            hasBookingOpsPerm('reverse_manual_discount', false)
+          ))
+        )
+      );
+    }
+
+    // Strict RBAC for creating versioned Payment Schedules & Instalment Tranches.
+    function canManageBookingPaymentSchedules() {
+      return isSuperAdmin() || (
+        isApprovedUser() && hasUserDoc(request.auth.uid) && (
+          (currentRole() == 'ADMIN' && (
+            (!adminFinancialRevoked() && (
+              hasBookingOpsPerm('manage_payment_schedule', true) ||
+              hasBookingOpsPerm('apply_manual_discount', true) ||
+              hasCmsFinanceAccess()
+            )) ||
+            (adminFinancialRevoked() && (
+              hasBookingOpsPerm('manage_payment_schedule', false) ||
+              hasBookingOpsPerm('apply_manual_discount', false)
+            ))
+          )) ||
+          (currentRole() in ['TEAM_MEMBER', 'DMC_STAFF'] && (
+            hasBookingOpsPerm('manage_payment_schedule', false) ||
+            hasBookingOpsPerm('apply_manual_discount', false) ||
+            hasCmsFinanceAccess()
+          ))
+        )
+      );
+    }
+
     // 1. User & Account Management Access
     function canManageUserAccounts() {
       return isMasterAdmin() || (
         isApprovedUser() && hasUserDoc(request.auth.uid) && (
-          currentUserData().role == 'SUPER_ADMIN' ||
-          currentUserData().role == 'ADMIN' ||
+          currentRole() in ['SUPER_ADMIN', 'ADMIN'] ||
           (hasPerms() && (
-            userPerms().canManagePermissions == true ||
-            ('cmsFinance' in userPerms() && (
-              userPerms().cmsFinance.userAccounts == true ||
-              userPerms().cmsFinance.accountManagement == true
+            userPerms().get('canManagePermissions', false) == true ||
+            (('cmsFinance' in userPerms()) && userPerms().cmsFinance is map && (
+              userPerms().cmsFinance.get('userAccounts', false) == true ||
+              userPerms().cmsFinance.get('accountManagement', false) == true
             ))
           ))
         )
       );
     }
 
-    // 2. CMS Operations Access (Products, Hotels, Packages, Bookings, Leads, Roster)
+    // 2. CMS Operations Access (Products, Hotels, Packages, Bookings, Leads, Roster) — CEL null-safe
     function canAccessCMSOperations() {
       return isMasterAdmin() || (
         isApprovedUser() && hasUserDoc(request.auth.uid) && (
-          currentUserData().role == 'ADMIN' ||
-          currentUserData().role == 'TEAM_MEMBER' ||
-          currentUserData().role == 'DMC_STAFF' ||
-          currentUserData().userType == 'ADMIN' ||
-          currentUserData().userType == 'TEAM_MEMBER'
+          currentRole() in ['SUPER_ADMIN', 'ADMIN', 'TEAM_MEMBER', 'DMC_STAFF']
         ) && (
-          !('permissions' in currentUserData()) ||
-          !('cmsOperations' in currentUserData().permissions) ||
-          currentUserData().permissions.cmsOperations.enabled != false
+          !hasPerms() ||
+          !('cmsOperations' in userPerms()) ||
+          !(userPerms().cmsOperations is map) ||
+          userPerms().cmsOperations.get('enabled', true) != false
         )
       );
     }
 
-    // 3. CMS Content Access (Pages, Marketing, FAQ, Destinations, Media, Menus, Footers)
+    // 3. CMS Content Access (Pages, Marketing, FAQ, Destinations, Media, Menus, Footers) — CEL null-safe
     function canAccessCMSContent() {
       return isMasterAdmin() || (
         isApprovedUser() && hasUserDoc(request.auth.uid) && (
-          currentUserData().role == 'ADMIN' ||
-          currentUserData().role == 'TEAM_MEMBER' ||
-          currentUserData().role == 'DMC_STAFF' ||
-          currentUserData().userType == 'ADMIN' ||
-          currentUserData().userType == 'TEAM_MEMBER'
+          currentRole() in ['SUPER_ADMIN', 'ADMIN', 'TEAM_MEMBER', 'DMC_STAFF']
         ) && (
-          !('permissions' in currentUserData()) ||
-          !('cmsContent' in currentUserData().permissions) ||
-          currentUserData().permissions.cmsContent.enabled != false
+          !hasPerms() ||
+          !('cmsContent' in userPerms()) ||
+          !(userPerms().cmsContent is map) ||
+          userPerms().cmsContent.get('enabled', true) != false
         )
       );
     }
 
-    // 4. CMS Financial Access (Invoices, Ledgers, Vouchers, Financial Reporting)
+    // 4. CMS Financial Access (Invoices, Ledgers, Vouchers, Financial Reporting) — CEL null-safe
     function canAccessCMSFinance() {
       return isMasterAdmin() || (
         isApprovedUser() && hasUserDoc(request.auth.uid) && (
-          currentUserData().role == 'ADMIN' ||
-          (hasPerms() && (
-            userPerms().canAccessFinancials == true ||
-            ('cmsFinance' in userPerms() && userPerms().cmsFinance.enabled == true)
-          ))
+          currentRole() in ['SUPER_ADMIN', 'ADMIN'] ||
+          hasCmsFinanceAccess()
         )
       );
     }
@@ -758,7 +866,29 @@ service cloud.firestore {
         (data.cumulativeAdminManualDiscount is int || data.cumulativeAdminManualDiscount is float) && data.cumulativeAdminManualDiscount >= 0 &&
         (data.remainingTheUnboundMargin is int || data.remainingTheUnboundMargin is float) &&
         (data.revisedCustomerSellingPrice is int || data.revisedCustomerSellingPrice is float) && data.revisedCustomerSellingPrice >= 0 &&
-        data.sourceAction in ['INITIAL_BOOKING', 'ADMIN_MANUAL_DISCOUNT_APPLIED', 'ADMIN_MANUAL_DISCOUNT_REVERSED'] &&
+        data.sourceAction in ['INITIAL_BOOKING', 'ADMIN_MANUAL_DISCOUNT_APPLIED', 'ADMIN_MANUAL_DISCOUNT_REVERSED', 'PROFORMA_INVOICE_REVISION'] &&
+        data.immutable == true;
+    }
+
+    function isValidBookingPaymentScheduleCreate(data, scheduleId) {
+      return isValidId(scheduleId) &&
+        data != null &&
+        data.scheduleId == scheduleId &&
+        data.bookingId is string && data.bookingId.size() > 0 && data.bookingId.size() <= 128 &&
+        data.scheduleVersion is int && data.scheduleVersion >= 1 &&
+        data.financialSnapshotId is string && data.financialSnapshotId.size() > 0 && data.financialSnapshotId.size() <= 160 &&
+        data.financialSnapshotVersion is int && data.financialSnapshotVersion >= 1 &&
+        data.currency is string && data.currency.size() > 0 && data.currency.size() <= 8 &&
+        (data.originalBookingAmount is int || data.originalBookingAmount is float) && data.originalBookingAmount >= 0 &&
+        (data.totalDiscountAmount is int || data.totalDiscountAmount is float) && data.totalDiscountAmount >= 0 &&
+        (data.revisedBookingAmount is int || data.revisedBookingAmount is float) && data.revisedBookingAmount >= 0 &&
+        (data.totalAmount is int || data.totalAmount is float) && data.totalAmount >= 0 &&
+        (data.totalPaid is int || data.totalPaid is float) && data.totalPaid >= 0 &&
+        (data.balanceDue is int || data.balanceDue is float) && data.balanceDue >= 0 &&
+        data.installments is list && data.installments.size() >= 1 && data.installments.size() <= 50 &&
+        data.scheduleStatus in ['ACTIVE', 'RECALCULATION_REQUIRED', 'SUPERSEDED', 'PARTIAL'] &&
+        data.createdBy is string && data.createdBy.size() > 0 && data.createdBy.size() <= 128 &&
+        data.createdAt is string && data.createdAt.size() > 0 && data.createdAt.size() <= 64 &&
         data.immutable == true;
     }
 
@@ -868,23 +998,33 @@ service cloud.firestore {
       allow update, delete: if isValidId(redemptionId) && (canAccessCMSContent() || isMasterAdmin());
     }
 
-    // Strictly Admin-Only Append-Only Booking Pricing Snapshots (Never readable by B2B Agents/Buyers)
+    // Strictly Authorised Financial Staff Append-Only Booking Pricing Snapshots (Never readable by B2B Agents/Buyers or unauthorised staff)
     match /booking_pricing_snapshots/{snapshotId} {
-      allow get: if isValidId(snapshotId) && (canAccessCMSOperations() || isMasterAdmin());
-      allow list: if canAccessCMSOperations() || isMasterAdmin();
+      allow get: if isValidId(snapshotId) && canReadBookingFinancialSnapshots();
+      allow list: if canReadBookingFinancialSnapshots();
       allow create: if isValidId(snapshotId) &&
-        (canAccessCMSOperations() || isMasterAdmin()) &&
+        canWriteBookingFinancialSnapshots() &&
         isValidBookingPricingSnapshotCreate(request.resource.data, snapshotId);
       allow update, delete: if false;
     }
 
-    // Strictly Admin-Only Append-Only Booking Manual Discount Ledger (Immutable — Reversals create new REVERSE records)
+    // Strictly Authorised Financial Staff Append-Only Booking Manual Discount Ledger (Immutable — Reversals create new REVERSE records)
     match /booking_manual_discounts/{adjustmentId} {
-      allow get: if isValidId(adjustmentId) && (canAccessCMSOperations() || isMasterAdmin());
-      allow list: if canAccessCMSOperations() || isMasterAdmin();
+      allow get: if isValidId(adjustmentId) && canReadBookingFinancialSnapshots();
+      allow list: if canReadBookingFinancialSnapshots();
       allow create: if isValidId(adjustmentId) &&
-        (canAccessCMSOperations() || isMasterAdmin()) &&
+        canWriteBookingFinancialSnapshots() &&
         isValidBookingManualDiscountCreate(request.resource.data, adjustmentId);
+      allow update, delete: if false;
+    }
+
+    // Strictly Versioned Append-Only Booking Payment Schedules (Linked to Authoritative Financial Snapshot Version)
+    match /booking_payment_schedules/{scheduleId} {
+      allow get: if isValidId(scheduleId) && (canReadBookingFinancialSnapshots() || canManageBookingPaymentSchedules());
+      allow list: if canReadBookingFinancialSnapshots() || canManageBookingPaymentSchedules();
+      allow create: if isValidId(scheduleId) &&
+        canManageBookingPaymentSchedules() &&
+        isValidBookingPaymentScheduleCreate(request.resource.data, scheduleId);
       allow update, delete: if false;
     }
 
@@ -1472,9 +1612,18 @@ service cloud.firestore {
             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'passengers',
               'missingDocuments',
+              'documentStatus',
+              'timeline',
               'updatedAt',
+              'updatedBy',
+              'updatedByRole',
+              'updatedByEmail',
+              'isDeleted',
               'customerFacingNotes'
-            ])
+            ]) && (
+              !('isDeleted' in request.resource.data) ||
+              request.resource.data.isDeleted == resource.data.isDeleted
+            )
           )
         )
       );
@@ -1486,6 +1635,171 @@ service cloud.firestore {
       match /operations_history/{historyId} {
         allow read, write: if canAccessCMSOperations();
       }
+    }
+
+    // =========================================================================
+    // PASSENGER COMPLIANCE DOCUMENTS METADATA (Firebase Storage + Firestore)
+    // Actual binary files reside in Firebase Storage (`bookings/{bookingId}/...`).
+    // Strictly scoped to Booking ID + Passenger ID; zero public/Buyer access.
+    // =========================================================================
+
+    function isValidBookingPassengerDocument(data, docId) {
+      return isValidId(docId) &&
+        data.id == docId &&
+        data.bookingId is string && data.bookingId.size() > 0 && data.bookingId.size() <= 128 &&
+        data.passengerId is string && data.passengerId.size() > 0 && data.passengerId.size() <= 128 &&
+        data.category in [
+          'PASSPORT_FRONT',
+          'PASSPORT_BACK',
+          'VISA_COPY',
+          'PAN_CARD',
+          'NATIONAL_ID',
+          'TRAVEL_INSURANCE',
+          'FLIGHT_TICKET',
+          'MEDICAL_DECLARATION',
+          'OTHER_COMPLIANCE'
+        ] &&
+        data.documentType is string && data.documentType.size() > 0 && data.documentType.size() <= 120 &&
+        data.originalFileName is string && data.originalFileName.size() > 0 && data.originalFileName.size() <= 255 &&
+        data.storagePath is string && data.storagePath.size() > 0 && data.storagePath.size() <= 512 &&
+        data.storagePath.matches('^bookings/.*') &&
+        data.mimeType in ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] &&
+        (data.fileSizeBytes is int || data.fileSizeBytes is number) &&
+        data.fileSizeBytes > 0 && data.fileSizeBytes <= 15728640 &&
+        data.uploadedBy is string && data.uploadedBy.size() > 0 && data.uploadedBy.size() <= 128 &&
+        data.uploadedAt is string && data.uploadedAt.size() > 0 && data.uploadedAt.size() <= 64 &&
+        data.status in ['ACTIVE', 'REPLACED', 'DELETED'] &&
+        (data.version is int || data.version is number) && data.version >= 1 &&
+        (!('verificationStatus' in data) || data.verificationStatus in ['PENDING_REVIEW', 'APPROVED', 'VERIFIED', 'REJECTED']) &&
+        (!('verificationNotes' in data) || (data.verificationNotes is string && data.verificationNotes.size() <= 2000)) &&
+        (!('storageBackend' in data) || data.storageBackend in ['FIREBASE_STORAGE', 'FIRESTORE_CHUNKS']) &&
+        (!('blobGroupId' in data) || (data.blobGroupId is string && data.blobGroupId.size() <= 160)) &&
+        (!('chunkCount' in data) || ((data.chunkCount is int || data.chunkCount is number) && data.chunkCount >= 1 && data.chunkCount <= 40));
+    }
+
+    function isValidPassengerDocumentBlobChunk(data, chunkId) {
+      return isValidId(chunkId) &&
+        data != null &&
+        data.keys().hasAll([
+          'id', 'documentId', 'bookingId', 'passengerId', 'chunkIndex',
+          'totalChunks', 'mimeType', 'dataBase64', 'uploadedBy', 'uploadedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'documentId', 'blobGroupId', 'bookingId', 'passengerId',
+          'agentId', 'submittedByUserId', 'assignedAgentId', 'storagePath',
+          'originalFileName', 'fileSizeBytes', 'chunkIndex', 'totalChunks',
+          'mimeType', 'dataBase64', 'uploadedBy', 'uploadedAt'
+        ]) &&
+        data.id is string && data.id == chunkId &&
+        data.documentId is string && data.documentId.size() > 0 && data.documentId.size() <= 128 &&
+        (!('blobGroupId' in data) || (data.blobGroupId is string && data.blobGroupId.size() > 0 && data.blobGroupId.size() <= 160)) &&
+        data.bookingId is string && data.bookingId.size() > 0 && data.bookingId.size() <= 128 &&
+        data.passengerId is string && data.passengerId.size() > 0 && data.passengerId.size() <= 128 &&
+        (data.chunkIndex is int || data.chunkIndex is number) && data.chunkIndex >= 0 && data.chunkIndex < 40 &&
+        (data.totalChunks is int || data.totalChunks is number) && data.totalChunks >= 1 && data.totalChunks <= 40 &&
+        data.mimeType in ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'] &&
+        data.dataBase64 is string && data.dataBase64.size() > 0 && data.dataBase64.size() <= 750000 &&
+        data.uploadedBy is string && data.uploadedBy.size() > 0 && data.uploadedBy.size() <= 128 &&
+        data.uploadedAt is string && data.uploadedAt.size() > 0 && data.uploadedAt.size() <= 64 &&
+        (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 512)) &&
+        (!('originalFileName' in data) || (data.originalFileName is string && data.originalFileName.size() <= 255)) &&
+        (!('fileSizeBytes' in data) || ((data.fileSizeBytes is int || data.fileSizeBytes is number) && data.fileSizeBytes > 0 && data.fileSizeBytes <= 15728640));
+    }
+
+    match /booking_passenger_documents/{docId} {
+      allow get: if isValidId(docId) && (
+        canAccessCMSOperations() ||
+        canAccessCMSFinance() ||
+        (isAuthenticated() && isNotBuyer() && (
+          resource.data.agentId == request.auth.uid ||
+          resource.data.submittedByUserId == request.auth.uid ||
+          resource.data.assignedAgentId == request.auth.uid ||
+          resource.data.uploadedBy == request.auth.uid
+        ))
+      );
+
+      allow list: if canAccessCMSOperations() ||
+        canAccessCMSFinance() ||
+        (isAuthenticated() && isNotBuyer() && (
+          resource.data.agentId == request.auth.uid ||
+          resource.data.submittedByUserId == request.auth.uid ||
+          resource.data.assignedAgentId == request.auth.uid ||
+          resource.data.uploadedBy == request.auth.uid
+        ));
+
+      allow create: if isValidBookingPassengerDocument(request.resource.data, docId) && (
+        canAccessCMSOperations() ||
+        canAccessCMSFinance() ||
+        (isAuthenticated() && isNotBuyer() &&
+          request.resource.data.uploadedBy == request.auth.uid && (
+            request.resource.data.agentId == request.auth.uid ||
+            request.resource.data.submittedByUserId == request.auth.uid ||
+            request.resource.data.assignedAgentId == request.auth.uid
+          )
+        )
+      );
+
+      allow update: if isValidBookingPassengerDocument(request.resource.data, docId) &&
+        request.resource.data.bookingId == resource.data.bookingId &&
+        request.resource.data.passengerId == resource.data.passengerId && (
+          canAccessCMSOperations() ||
+          canAccessCMSFinance() ||
+          (isAuthenticated() && isNotBuyer() && (
+            resource.data.agentId == request.auth.uid ||
+            resource.data.submittedByUserId == request.auth.uid ||
+            resource.data.assignedAgentId == request.auth.uid
+          ) && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'bookingId',
+            'passengerId',
+            'agentId',
+            'submittedByUserId',
+            'assignedAgentId',
+            'verificationStatus',
+            'verifiedBy',
+            'verifiedByName',
+            'verifiedAt'
+          ]))
+        );
+
+      // Soft-delete preserves compliance audit trail; hard-delete strictly Admin/Operations only
+      allow delete: if isValidId(docId) && (canAccessCMSOperations() || isMasterAdmin());
+    }
+
+    match /booking_passenger_document_blobs/{chunkId} {
+      allow get: if isValidId(chunkId) && (
+        canAccessCMSOperations() ||
+        canAccessCMSFinance() ||
+        (isAuthenticated() && isNotBuyer() && (
+          resource.data.agentId == request.auth.uid ||
+          resource.data.submittedByUserId == request.auth.uid ||
+          resource.data.assignedAgentId == request.auth.uid ||
+          resource.data.uploadedBy == request.auth.uid
+        ))
+      );
+
+      allow list: if canAccessCMSOperations() ||
+        canAccessCMSFinance() ||
+        (isAuthenticated() && isNotBuyer() && (
+          resource.data.agentId == request.auth.uid ||
+          resource.data.submittedByUserId == request.auth.uid ||
+          resource.data.assignedAgentId == request.auth.uid ||
+          resource.data.uploadedBy == request.auth.uid
+        ));
+
+      allow create: if isValidPassengerDocumentBlobChunk(request.resource.data, chunkId) && (
+        canAccessCMSOperations() ||
+        canAccessCMSFinance() ||
+        (isAuthenticated() && isNotBuyer() &&
+          request.resource.data.uploadedBy == request.auth.uid && (
+            request.resource.data.agentId == request.auth.uid ||
+            request.resource.data.submittedByUserId == request.auth.uid ||
+            request.resource.data.assignedAgentId == request.auth.uid
+          )
+        )
+      );
+
+      allow update: if false;
+      allow delete: if isValidId(chunkId) && (canAccessCMSOperations() || isMasterAdmin());
     }
 
     match /agent_notifications/{notificationId} {
@@ -1588,13 +1902,15 @@ service cloud.firestore {
     }
 
     match /invoices/{id} {
-      allow read: if canAccessCMSFinance() || (
-        isAuthenticated() && (
+      allow read: if canAccessCMSFinance() || canAccessCMSOperations() || (
+        isAuthenticated() && isNotBuyer() && (
           resource.data.buyerId == request.auth.uid ||
-          resource.data.agentId == request.auth.uid
+          resource.data.agentId == request.auth.uid ||
+          resource.data.responsibleAgentId == request.auth.uid
         )
       );
-      allow write: if canAccessCMSFinance();
+      allow create, update: if isValidId(id) && (canAccessCMSFinance() || canAccessCMSOperations());
+      allow delete: if isValidId(id) && (canAccessCMSFinance() || isMasterAdmin());
     }
 
     match /financial_vouchers/{id} {

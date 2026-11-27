@@ -4,6 +4,7 @@ import { AppDatabase } from '../../services/db';
 import { useAuth } from '../../context/AuthContext';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
 import { resolveUserAccountManager } from '../../services/accountManagerService';
+import { resolveAuthoritativeBookingFinancials } from '../../services/bookingManualDiscountEngine';
 import { BookingDashboardCards } from '../Bookings/BookingDashboardCards';
 import { BookingOperationsDesk, DeskSection } from '../Bookings/BookingOperationsDesk';
 import { ManualOperationalBookingModal } from '../Bookings/ManualOperationalBookingModal';
@@ -28,20 +29,21 @@ import {
   TrendingUp,
   UserCheck,
   UserPlus,
-  RefreshCw,
-  Compass
+  RefreshCw
 } from 'lucide-react';
 import { CalendarTask } from '../../types';
 
 export interface BookingsManagerProps {
   initialBookingId?: string | null;
   initialSubTab?: string;
+  onSubTabChange?: (subTab: string) => void;
   onOpenActionCenter?: (task: CalendarTask) => void;
 }
 
 export const BookingsManager: React.FC<BookingsManagerProps> = ({
   initialBookingId,
   initialSubTab,
+  onSubTabChange,
   onOpenActionCenter
 }) => {
   const { user } = useAuth();
@@ -51,9 +53,7 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   const [bookings, setBookings] = useState<Booking[]>(() => db.getAllBookings());
   const [internalTeamMembers, setInternalTeamMembers] = useState(() => db.getEligibleInternalTeamMembers());
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(initialBookingId || null);
-  const [activeWorkspaceTab, setActiveWorkspaceTab] = useState<'PIPELINE' | 'HORIZON'>(
-    initialSubTab === 'HORIZON' ? 'HORIZON' : 'PIPELINE'
-  );
+  const isHorizonSubTab = initialSubTab === 'HORIZON';
   const [initialDeskSection, setInitialDeskSection] = useState<DeskSection>('OVERVIEW');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -64,6 +64,14 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
   const [ownershipFilter, setOwnershipFilter] = useState<string>('ALL');
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
+  const [migrationNotice, setMigrationNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // When user switches to Booking Management -> Operational Horizon & Ground Dispatch Desk, clear any open booking detail view
+  useEffect(() => {
+    if (isHorizonSubTab) {
+      setSelectedBookingId(null);
+    }
+  }, [isHorizonSubTab]);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -79,23 +87,33 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
   const handleRunMigration = () => {
     setIsMigrating(true);
+    setMigrationNotice(null);
     try {
       const res = db.migrateBookingAssignments();
-      alert(`Assignment reconciliation completed!\n• Migrated/Updated: ${res.migratedCount}\n• Already Complete: ${res.alreadyAssignedCount}\n• Pending Operational Owner: ${res.pendingInternalCount}\n• Pending Agent: ${res.pendingAgentCount}`);
+      setMigrationNotice({
+        type: 'success',
+        message: `Assignment reconciliation completed — Migrated/Updated: ${res.migratedCount}, Already Complete: ${res.alreadyAssignedCount}, Pending Owner: ${res.pendingInternalCount}, Pending Agent: ${res.pendingAgentCount}.`
+      });
       setBookings(db.getAllBookings());
       setInternalTeamMembers(db.getEligibleInternalTeamMembers());
     } catch (e: any) {
-      alert('Migration error: ' + (e?.message || e));
+      setMigrationNotice({
+        type: 'error',
+        message: `Migration error: ${e?.message || e}`
+      });
     } finally {
       setIsMigrating(false);
     }
   };
 
   useEffect(() => {
-    const unsub = db.subscribeToCollections(['bookings', 'system_users'], () => {
-      setBookings(db.getAllBookings());
-      setInternalTeamMembers(db.getEligibleInternalTeamMembers());
-    });
+    const unsub = db.subscribeToCollections(
+      ['bookings', 'system_users', 'booking_pricing_snapshots', 'booking_manual_discounts'],
+      () => {
+        setBookings(db.getAllBookings());
+        setInternalTeamMembers(db.getEligibleInternalTeamMembers());
+      }
+    );
     return unsub;
   }, [db]);
 
@@ -166,6 +184,26 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
     });
   }, [bookings, debouncedSearchQuery, channelFilter, ownershipFilter, activeFilter, user?.id]);
 
+  // Dedicated Booking Management -> Operational Horizon & Ground Dispatch Desk view
+  // Exclusively accessible under Booking Management -> Operational Horizon & Ground Dispatch Desk
+  if (isHorizonSubTab && !selectedBookingId) {
+    return (
+      <div id="operational-horizon-management-view" className="space-y-6">
+        <OperationalHorizonDesk
+          currentUser={user}
+          onOpenBooking={(id) => {
+            onSubTabChange?.('BOOKINGS');
+            setInitialDeskSection('OVERVIEW');
+            setSelectedBookingId(id);
+          }}
+          onBackToAllocationDesk={() => {
+            onSubTabChange?.('BOOKINGS');
+          }}
+        />
+      </div>
+    );
+  }
+
   // If a booking is selected, render the full unified Booking Operations & Supplier Allocation Desk
   if (selectedBookingId) {
     return (
@@ -182,18 +220,37 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
   return (
     <div id="booking-management-dashboard-view" className="space-y-6">
+      {migrationNotice && (
+        <div
+          className={`p-3.5 rounded-2xl border text-xs flex items-center justify-between gap-3 ${
+            migrationNotice.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-rose-50 border-rose-200 text-rose-900'
+          }`}
+        >
+          <span className="font-semibold">{migrationNotice.message}</span>
+          <button
+            type="button"
+            onClick={() => setMigrationNotice(null)}
+            className="text-xs font-bold underline cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Top Header Banner matching CMS Hub Theme */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center space-x-2 text-[#008972] font-bold text-xs uppercase tracking-wider mb-1">
             <Building2 className="w-4 h-4 text-[#008972]" />
-            <span>Company Management System • Booking Operations</span>
+            <span>Booking Management • Booking Pipeline &amp; Supplier Allocation</span>
           </div>
           <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-            Booking Operations & Supplier Allocation Desk
+            Booking Pipeline &amp; Supplier Allocation
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 max-w-3xl mt-1">
-            Unified ground reservation pipeline, service item allocation, commercial supplier pricing, luxury voucher dispatch, and execution tracking.
+            Unified ground reservation pipeline, service item allocation, commercial supplier pricing, proforma invoices, payment tranches, and compliance tracking.
           </p>
         </div>
 
@@ -201,8 +258,8 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
           <div className="bg-slate-900 text-slate-200 px-4 py-2 rounded-2xl text-xs border border-slate-800 flex items-center space-x-2">
             <ShieldCheck className="w-4 h-4 text-[#00E5C0]" />
             <div>
-              <span className="text-[10px] text-slate-400 block font-mono">WORKSPACE</span>
-              <span className="font-bold text-[#00E5C0]">Unified Desk</span>
+              <span className="text-[10px] text-slate-400 block font-mono">PIPELINE</span>
+              <span className="font-bold text-[#00E5C0]">{bookings.length} Bookings</span>
             </div>
           </div>
 
@@ -227,62 +284,12 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
         </div>
       </div>
 
-      {/* Primary Workspace Navigation Tabs */}
-      <div className="flex items-center space-x-2 border-b border-slate-200 pb-2">
-        <button
-          type="button"
-          onClick={() => setActiveWorkspaceTab('PIPELINE')}
-          className={`flex items-center space-x-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-            activeWorkspaceTab === 'PIPELINE'
-              ? 'bg-[#008972] text-white shadow-xs'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>Booking Pipeline & Supplier Allocation</span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-            activeWorkspaceTab === 'PIPELINE' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-700'
-          }`}>
-            {bookings.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveWorkspaceTab('HORIZON')}
-          className={`flex items-center space-x-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer ${
-            activeWorkspaceTab === 'HORIZON'
-              ? 'bg-[#008972] text-white shadow-xs'
-              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-          }`}
-        >
-          <Compass className="w-4 h-4" />
-          <span>Operational Horizon & Ground Dispatch Desk</span>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-            activeWorkspaceTab === 'HORIZON' ? 'bg-white/20 text-white' : 'bg-teal-50 text-teal-800 border border-teal-200'
-          }`}>
-            Daily Ops
-          </span>
-        </button>
-      </div>
-
-      {/* Render Active Workspace */}
-      {activeWorkspaceTab === 'HORIZON' ? (
-        <OperationalHorizonDesk
-          currentUser={user}
-          onOpenBooking={(id) => {
-            setSelectedBookingId(id);
-          }}
-          onBackToAllocationDesk={() => setActiveWorkspaceTab('PIPELINE')}
-        />
-      ) : (
-        <>
-          {/* Dashboard Status Metric Cards */}
-          <BookingDashboardCards
-            bookings={bookings}
-            activeFilter={activeFilter}
-            onSelectFilter={handleSelectFilter}
-          />
+      {/* Dashboard Status Metric Cards */}
+      <BookingDashboardCards
+        bookings={bookings}
+        activeFilter={activeFilter}
+        onSelectFilter={handleSelectFilter}
+      />
 
       {/* Filter and Search Bar */}
       <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -456,7 +463,10 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
                                   }
                                   setBookings(db.getAllBookings());
                                 } catch (err: any) {
-                                  alert(err?.message || 'Failed to update booking assignment');
+                                  setMigrationNotice({
+                                    type: 'error',
+                                    message: err?.message || 'Failed to update booking assignment'
+                                  });
                                 }
                               }}
                               className={`w-full px-2 py-1 rounded-lg text-[10px] font-bold border cursor-pointer focus:outline-none ${
@@ -512,21 +522,34 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
 
                       {/* Selling Price */}
                       {(() => {
-                        const amtConv = convertForDisplay(b.totalAmount || 0, b.currency || 'USD');
+                        const fin = resolveAuthoritativeBookingFinancials(b);
+                        const amtConv = convertForDisplay(fin.revisedBookingAmount, fin.currency || b.currency || 'USD');
+                        const discConv = fin.hasManualDiscount
+                          ? convertForDisplay(fin.adminManualDiscountTotal, fin.currency || b.currency || 'USD')
+                          : null;
                         return (
                           <td className="py-4 px-4 align-top text-right whitespace-nowrap font-mono">
                             <span className={`font-bold block ${amtConv.status === 'UNAVAILABLE' ? 'text-amber-700' : 'text-slate-900'}`}>
                               {amtConv.formatted}
                             </span>
+                            {fin.hasManualDiscount && discConv && (
+                              <span className="text-[10px] font-bold text-emerald-700 block">
+                                Disc −{discConv.formatted} (v{fin.latestSnapshotVersion})
+                              </span>
+                            )}
                             {amtConv.isConverted && (
                               <span className="text-[10px] text-slate-400 block">
                                 Booked: {amtConv.nativeFormatted}
                               </span>
                             )}
                             <span className={`text-[10px] font-bold block ${
-                              b.paymentStatus === 'PAID' ? 'text-emerald-700' : 'text-blue-700'
+                              fin.isOverpaid
+                                ? 'text-indigo-700'
+                                : fin.paymentStatus === 'PAID'
+                                ? 'text-emerald-700'
+                                : 'text-blue-700'
                             }`}>
-                              {b.paymentStatus || 'PENDING'}
+                              {fin.isOverpaid ? 'PAID (CREDIT)' : (fin.paymentStatus || 'PENDING')}
                             </span>
                           </td>
                         );
@@ -601,8 +624,6 @@ export const BookingsManager: React.FC<BookingsManagerProps> = ({
           </div>
         )}
       </div>
-      </>
-      )}
 
       {/* Single Authoritative Booking Creation Modal */}
       {isManualModalOpen && (

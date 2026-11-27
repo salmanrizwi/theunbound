@@ -152,13 +152,17 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
               Payment Management & Multi-Tranche Verification
             </h3>
             <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
-              booking.paymentStatus === 'PAID'
+              paymentSummary.paymentStatus === 'PAID'
                 ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
-                : booking.paymentStatus === 'PARTIALLY_PAID'
+                : paymentSummary.paymentStatus === 'PARTIALLY_PAID'
                 ? 'bg-amber-50 text-amber-900 border-amber-300'
                 : 'bg-rose-50 text-rose-900 border-rose-300'
             }`}>
-              {booking.paymentStatus ? booking.paymentStatus.replace(/_/g, ' ') : 'PENDING PAYMENT'}
+              {paymentSummary.isOverpaid
+                ? 'PAID • CREDIT BALANCE'
+                : paymentSummary.paymentStatus
+                ? paymentSummary.paymentStatus.replace(/_/g, ' ')
+                : 'PENDING PAYMENT'}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
@@ -178,10 +182,17 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
       {/* Financial Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
         <div className="p-4 rounded-2xl border border-slate-200 bg-slate-50">
-          <span className="text-[11px] font-bold text-slate-500 uppercase block tracking-wider">Total Booking Value</span>
+          <span className="text-[11px] font-bold text-slate-500 uppercase block tracking-wider">
+            {paymentSummary.discountAmount > 0 ? 'Revised Booking Value' : 'Total Booking Value'}
+          </span>
           <span className="text-lg font-black font-mono text-slate-900 mt-1 block">
             {formatCurrency(paymentSummary.totalAmount, booking.currency)}
           </span>
+          {paymentSummary.discountAmount > 0 && (
+            <span className="text-[10px] font-mono text-emerald-700 mt-0.5 block">
+              Orig {formatCurrency(paymentSummary.originalAmount, booking.currency)} − Disc {formatCurrency(paymentSummary.discountAmount, booking.currency)} (Snap v{paymentSummary.latestSnapshotVersion})
+            </span>
+          )}
         </div>
         <div className="p-4 rounded-2xl border border-emerald-200 bg-emerald-50/50">
           <span className="text-[11px] font-bold text-emerald-800 uppercase block tracking-wider">Verified Paid</span>
@@ -195,12 +206,24 @@ export const PaymentProofsManager: React.FC<PaymentProofsManagerProps> = ({
             {formatCurrency(Math.max(0, paymentSummary.paidAmount - paymentSummary.verifiedPaidAmount), booking.currency)}
           </span>
         </div>
-        <div className="p-4 rounded-2xl border border-rose-200 bg-rose-50/50">
-          <span className="text-[11px] font-bold text-rose-800 uppercase block tracking-wider">Outstanding Balance</span>
-          <span className="text-lg font-black font-mono text-rose-900 mt-1 block">
-            {formatCurrency(paymentSummary.pendingAmount, booking.currency)}
-          </span>
-        </div>
+        {paymentSummary.isOverpaid ? (
+          <div className="p-4 rounded-2xl border border-indigo-200 bg-indigo-50/60">
+            <span className="text-[11px] font-bold text-indigo-800 uppercase block tracking-wider">Credit / Overpayment</span>
+            <span className="text-lg font-black font-mono text-indigo-900 mt-1 block">
+              {formatCurrency(paymentSummary.creditBalance, booking.currency)}
+            </span>
+            <span className="text-[10px] text-indigo-700 mt-0.5 block">
+              Balance Due: {formatCurrency(0, booking.currency)} • Manual review required
+            </span>
+          </div>
+        ) : (
+          <div className="p-4 rounded-2xl border border-rose-200 bg-rose-50/50">
+            <span className="text-[11px] font-bold text-rose-800 uppercase block tracking-wider">Outstanding Balance</span>
+            <span className="text-lg font-black font-mono text-rose-900 mt-1 block">
+              {formatCurrency(paymentSummary.pendingAmount, booking.currency)}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Tranches List */}

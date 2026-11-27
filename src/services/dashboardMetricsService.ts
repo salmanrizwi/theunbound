@@ -14,6 +14,7 @@ import { displayCurrencyService, roundAmountForCurrency } from './displayCurrenc
 import { runFirestoreDiagnostics, FirestoreDiagnosticReport } from './firestoreDiagnostic';
 import { IntegrationsHubService } from './integrationsHubService';
 import { normalizeLeadStatus } from './crmOperationsEngine';
+import { resolveAuthoritativeBookingFinancials } from './bookingManualDiscountEngine';
 import firebaseConfigJson from '../../firebase-applet-config.json';
 
 export type DateRangeOption = 
@@ -507,8 +508,9 @@ export class DashboardMetricsService {
 
     if (isAuthorizedForFinance) {
       currentBookings.forEach(b => {
-        const amount = b.totalAmount || b.finalCustomerSellingPrice || 0;
-        const conv = displayCurrencyService.convertForDisplay(amount, b.currency || 'USD', baseCurrency);
+        const fin = resolveAuthoritativeBookingFinancials(b);
+        const amount = fin.revisedBookingAmount;
+        const conv = displayCurrencyService.convertForDisplay(amount, fin.currency || b.currency || 'USD', baseCurrency);
         if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
           bookingValueUnavailableCount += 1;
           return;
@@ -530,8 +532,9 @@ export class DashboardMetricsService {
     let previousTotalBookingValue = 0;
     if (isAuthorizedForFinance) {
       previousBookings.forEach(b => {
-        const amount = b.totalAmount || b.finalCustomerSellingPrice || 0;
-        const conv = displayCurrencyService.convertForDisplay(amount, b.currency || 'USD', baseCurrency);
+        const fin = resolveAuthoritativeBookingFinancials(b);
+        const amount = fin.revisedBookingAmount;
+        const conv = displayCurrencyService.convertForDisplay(amount, fin.currency || b.currency || 'USD', baseCurrency);
         if (conv.status !== 'UNAVAILABLE' && conv.convertedAmount !== null) {
           previousTotalBookingValue += conv.convertedAmount;
         }
@@ -551,11 +554,12 @@ export class DashboardMetricsService {
     const pendingVerificationAgents = allAgents.filter(u => u.approvalStatus === 'PENDING').length;
     const suspendedAgents = allAgents.filter(u => u.approvalStatus === 'REJECTED' || (u.approvalStatus as string) === 'DISABLED').length;
 
-    // 7. Pending Payments
-    const bookingsWithPendingPayments = bookings.filter(b => 
-      b.status !== 'CANCELLED' && 
-      (b.paymentStatus === 'UNPAID' || b.paymentStatus === 'PARTIALLY_PAID' || !b.paymentStatus)
-    );
+    // 7. Pending Payments (derived strictly from authoritative revised booking financials & verified payments)
+    const bookingsWithPendingPayments = bookings.filter(b => {
+      if (b.status === 'CANCELLED') return false;
+      const fin = resolveAuthoritativeBookingFinancials(b);
+      return fin.outstandingBalance > 0;
+    });
 
     let totalOutstandingAmount = 0;
     let outstandingUnavailableCount = 0;
@@ -564,11 +568,10 @@ export class DashboardMetricsService {
     const nowTimestamp = new Date().getTime();
 
     bookingsWithPendingPayments.forEach(b => {
-      // Outstanding customer selling balance
-      const totalSelling = b.totalAmount || 0;
-      const paid = b.excessPaymentAmount || 0;
-      const balance = Math.max(0, totalSelling - paid);
-      const balConv = displayCurrencyService.convertForDisplay(balance, b.currency || 'USD', baseCurrency);
+      // Authoritative outstanding customer selling balance (revised booking amount minus verified payments)
+      const fin = resolveAuthoritativeBookingFinancials(b);
+      const balance = fin.outstandingBalance;
+      const balConv = displayCurrencyService.convertForDisplay(balance, fin.currency || b.currency || 'USD', baseCurrency);
       if (balConv.status === 'UNAVAILABLE' || balConv.convertedAmount === null) {
         outstandingUnavailableCount += 1;
       } else {
@@ -719,8 +722,8 @@ export class DashboardMetricsService {
         let dayValue = 0;
         if (isAuthorizedForFinance) {
           dayBookings.forEach(b => {
-            const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-            const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+            const fin = resolveAuthoritativeBookingFinancials(b);
+            const conv = displayCurrencyService.convertForDisplay(fin.revisedBookingAmount, fin.currency || b.currency || 'USD', baseCurrency);
             if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
               perfUnavailableCount += 1;
             } else {
@@ -758,8 +761,8 @@ export class DashboardMetricsService {
         let wValue = 0;
         if (isAuthorizedForFinance) {
           wBookings.forEach(b => {
-            const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-            const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+            const fin = resolveAuthoritativeBookingFinancials(b);
+            const conv = displayCurrencyService.convertForDisplay(fin.revisedBookingAmount, fin.currency || b.currency || 'USD', baseCurrency);
             if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
               perfUnavailableCount += 1;
             } else {
@@ -797,8 +800,8 @@ export class DashboardMetricsService {
         let mValue = 0;
         if (isAuthorizedForFinance) {
           mBookings.forEach(b => {
-            const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-            const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+            const fin = resolveAuthoritativeBookingFinancials(b);
+            const conv = displayCurrencyService.convertForDisplay(fin.revisedBookingAmount, fin.currency || b.currency || 'USD', baseCurrency);
             if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
               perfUnavailableCount += 1;
             } else {
@@ -872,8 +875,8 @@ export class DashboardMetricsService {
       if (!bookedDestMap[d]) bookedDestMap[d] = { count: 0, value: 0 };
       bookedDestMap[d].count++;
       if (isAuthorizedForFinance) {
-        const val = b.totalAmount || b.finalCustomerSellingPrice || 0;
-        const conv = displayCurrencyService.convertForDisplay(val, b.currency || 'USD', baseCurrency);
+        const fin = resolveAuthoritativeBookingFinancials(b);
+        const conv = displayCurrencyService.convertForDisplay(fin.revisedBookingAmount, fin.currency || b.currency || 'USD', baseCurrency);
         if (conv.status === 'UNAVAILABLE' || conv.convertedAmount === null) {
           perfUnavailableCount += 1;
         } else {
@@ -1364,20 +1367,23 @@ export class DashboardMetricsService {
             }
           }
         });
-      } else if (b.paymentCutoffDate && (b.paymentStatus === 'UNPAID' || b.paymentStatus === 'PARTIALLY_PAID')) {
-        const isToday = b.paymentCutoffDate === todayStr;
-        const isOverdue = b.paymentCutoffDate < todayStr;
-        if (isToday || isOverdue) {
-          paymentsDue.push({
-            bookingId: b.id,
-            bookingRef: b.bookingReference || b.id,
-            clientName: b.customer?.bookerName || 'Client',
-            amount: b.totalAmount || 0,
-            currency: b.currency || 'USD',
-            dueDate: b.paymentCutoffDate,
-            isOverdue,
-            trancheName: 'Full Balance'
-          });
+      } else if (b.paymentCutoffDate) {
+        const fin = resolveAuthoritativeBookingFinancials(b);
+        if (fin.outstandingBalance > 0) {
+          const isToday = b.paymentCutoffDate === todayStr;
+          const isOverdue = b.paymentCutoffDate < todayStr;
+          if (isToday || isOverdue) {
+            paymentsDue.push({
+              bookingId: b.id,
+              bookingRef: b.bookingReference || b.id,
+              clientName: b.customer?.bookerName || 'Client',
+              amount: fin.outstandingBalance,
+              currency: fin.currency || b.currency || 'USD',
+              dueDate: b.paymentCutoffDate,
+              isOverdue,
+              trancheName: 'Outstanding Balance'
+            });
+          }
         }
       }
     });

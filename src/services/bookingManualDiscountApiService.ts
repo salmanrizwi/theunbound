@@ -2,6 +2,7 @@ import {
   AdminManualDiscountApplyPayload,
   AdminManualDiscountReversePayload,
   Booking,
+  BookingInvoice,
   BookingManualDiscountAdjustment,
   BookingManualDiscountPreview,
   BookingManualDiscountReportSummary,
@@ -96,6 +97,28 @@ export async function previewBookingManualDiscountAsync(params: {
   return { ok: true, preview };
 }
 
+// Per-booking async mutex to serialize concurrent discount mutations in the browser/local process
+const bookingDiscountLocks = new Map<string, Promise<unknown>>();
+
+async function withBookingDiscountLock<T>(bookingId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = bookingDiscountLocks.get(bookingId) || Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  const chained = previous.then(() => gate);
+  bookingDiscountLocks.set(bookingId, chained);
+  try {
+    await previous;
+    return await fn();
+  } finally {
+    release();
+    if (bookingDiscountLocks.get(bookingId) === chained) {
+      bookingDiscountLocks.delete(bookingId);
+    }
+  }
+}
+
 export async function applyBookingManualDiscountAsync(params: {
   booking: Booking;
   payload: AdminManualDiscountApplyPayload;
@@ -107,7 +130,9 @@ export async function applyBookingManualDiscountAsync(params: {
       adjustment: BookingManualDiscountAdjustment;
       newSnapshot: BookingPricingSnapshot;
       updatedBooking: Booking;
-      preview: BookingManualDiscountPreview;
+      revisedInvoice?: BookingInvoice;
+      supersededInvoices?: BookingInvoice[];
+      preview?: BookingManualDiscountPreview;
     }
   | { ok: false; error: string; preview?: BookingManualDiscountPreview }
 > {
@@ -129,6 +154,7 @@ export async function applyBookingManualDiscountAsync(params: {
     idempotencyKey
   };
 
+  return await withBookingDiscountLock(booking.id, async () => {
   const token = await getBearerToken();
   if (token) {
     try {
@@ -145,37 +171,65 @@ export async function applyBookingManualDiscountAsync(params: {
       );
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.success && json.updatedBooking && json.newSnapshot && json.adjustment) {
-        db.commitBookingManualDiscountSnapshot(
+        const syncedBooking = db.commitBookingManualDiscountSnapshot(
           json.updatedBooking,
           json.newSnapshot,
           json.adjustment,
           user,
           false
         );
+        const syncedAdj =
+          db.getBookingManualDiscountAdjustments(syncedBooking.id).find(
+            a => a.adjustmentId === json.adjustment.adjustmentId
+          ) || json.adjustment;
+        const latestInv = syncedBooking.activeProformaInvoiceId
+          ? db.getBookingInvoices(syncedBooking.id).find(i => i.id === syncedBooking.activeProformaInvoiceId)
+          : undefined;
         return {
           ok: true,
           idempotentReplay: Boolean(json.idempotentReplay),
-          adjustment: json.adjustment,
+          adjustment: syncedAdj,
           newSnapshot: json.newSnapshot,
-          updatedBooking: json.updatedBooking,
+          updatedBooking: syncedBooking,
+          revisedInvoice: latestInv,
           preview: json.preview
         };
       }
-      // Strictly respect authoritative server rejections (400/401/403/404)
-      if (res.status >= 400 && res.status < 500) {
+      // Strictly respect authoritative server rejections (4xx) AND server persistence errors (5xx)
+      if (res.status >= 400) {
         return {
           ok: false,
-          error: json.error || 'Manual discount request was rejected by server.',
+          error: json.error || `Manual discount request failed on server (HTTP ${res.status}).`,
           preview: json.preview
         };
       }
     } catch {
-      // Only fall back to local central-engine commit if backend is unreachable (e.g. local non-Firebase session)
+      // Only fall back to local central-engine commit if backend endpoint is genuinely unreachable
     }
   }
 
-  // Authoritative local central-engine commit (enforces identical RBAC, margin protection, and immutability)
+  // Authoritative local central-engine commit (enforces identical RBAC, idempotency, concurrency, margin protection, and immutability)
   const freshBooking = db.getAllBookings().find(b => b.id === booking.id) || booking;
+  const existingAdjustments = db.getBookingManualDiscountAdjustments(freshBooking.id);
+  const existingSnapshots = db.getBookingPricingSnapshots(freshBooking.id);
+
+  // Idempotency replay protection on retries / double-clicks
+  const existingByKey = existingAdjustments.find(
+    a => a.actionType === 'APPLY' && a.idempotencyKey && a.idempotencyKey === idempotencyKey
+  );
+  if (existingByKey) {
+    const matchedSnap =
+      existingSnapshots.find(s => s.snapshotId === existingByKey.resultingSnapshotId) ||
+      existingSnapshots[existingSnapshots.length - 1];
+    return {
+      ok: true,
+      idempotentReplay: true,
+      adjustment: existingByKey,
+      newSnapshot: matchedSnap,
+      updatedBooking: freshBooking
+    };
+  }
+
   const promotions = db.getPromotions();
   const coupon =
     enrichedPayload.discountSource === 'ADMIN_MANUAL_COUPON'
@@ -197,6 +251,8 @@ export async function applyBookingManualDiscountAsync(params: {
     },
     permissions,
     coupon,
+    externalSnapshots: existingSnapshots.length > 0 ? existingSnapshots : undefined,
+    externalAdjustments: existingAdjustments.length > 0 ? existingAdjustments : undefined,
     existingInvoicesCount: db.getBookingInvoices(freshBooking.id).length
   });
 
@@ -211,7 +267,7 @@ export async function applyBookingManualDiscountAsync(params: {
     return { ok: false, error: commit.error, preview: commit.preview };
   }
 
-  db.commitBookingManualDiscountSnapshot(
+  const persisted = await db.commitBookingManualDiscountSnapshotAsync(
     commit.updatedBooking,
     commit.newSnapshot,
     commit.adjustment,
@@ -219,6 +275,14 @@ export async function applyBookingManualDiscountAsync(params: {
     true,
     commit.initialSnapshotToPersist
   );
+
+  if (persisted.error) {
+    return {
+      ok: false,
+      error: persisted.error,
+      preview: commit.preview
+    };
+  }
 
   if (coupon) {
     db.savePromotion(
@@ -238,11 +302,14 @@ export async function applyBookingManualDiscountAsync(params: {
   return {
     ok: true,
     idempotentReplay: false,
-    adjustment: commit.adjustment,
+    adjustment: persisted.adjustment,
     newSnapshot: commit.newSnapshot,
-    updatedBooking: commit.updatedBooking,
+    updatedBooking: persisted.booking,
+    revisedInvoice: persisted.revisedInvoice,
+    supersededInvoices: persisted.supersededInvoices,
     preview: commit.preview
   };
+  });
 }
 
 export async function reverseBookingManualDiscountAsync(params: {
@@ -256,6 +323,8 @@ export async function reverseBookingManualDiscountAsync(params: {
       reversalAdjustment: BookingManualDiscountAdjustment;
       newSnapshot: BookingPricingSnapshot;
       updatedBooking: Booking;
+      revisedInvoice?: BookingInvoice;
+      supersededInvoices?: BookingInvoice[];
     }
   | { ok: false; error: string }
 > {
@@ -271,6 +340,7 @@ export async function reverseBookingManualDiscountAsync(params: {
     payload.idempotencyKey ||
     `bmd-rev-${booking.id}-${payload.adjustmentId}-${Date.now()}`;
 
+  return await withBookingDiscountLock(booking.id, async () => {
   const token = await getBearerToken();
   if (token) {
     try {
@@ -284,29 +354,38 @@ export async function reverseBookingManualDiscountAsync(params: {
           },
           body: JSON.stringify({
             reason: payload.reason,
-            idempotencyKey
+            idempotencyKey,
+            expectedSnapshotVersion: payload.expectedSnapshotVersion
           })
         }
       );
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.success && json.updatedBooking && json.newSnapshot && json.reversalAdjustment) {
-        db.commitBookingManualDiscountSnapshot(
+        const syncedBooking = db.commitBookingManualDiscountSnapshot(
           json.updatedBooking,
           json.newSnapshot,
           json.reversalAdjustment,
           user,
           false
         );
+        const syncedRev =
+          db.getBookingManualDiscountAdjustments(syncedBooking.id).find(
+            a => a.adjustmentId === json.reversalAdjustment.adjustmentId
+          ) || json.reversalAdjustment;
+        const latestInv = syncedBooking.activeProformaInvoiceId
+          ? db.getBookingInvoices(syncedBooking.id).find(i => i.id === syncedBooking.activeProformaInvoiceId)
+          : undefined;
         return {
           ok: true,
           idempotentReplay: Boolean(json.idempotentReplay),
-          reversalAdjustment: json.reversalAdjustment,
+          reversalAdjustment: syncedRev,
           newSnapshot: json.newSnapshot,
-          updatedBooking: json.updatedBooking
+          updatedBooking: syncedBooking,
+          revisedInvoice: latestInv
         };
       }
-      if (res.status >= 400 && res.status < 500) {
-        return { ok: false, error: json.error || 'Reversal request was rejected by server.' };
+      if (res.status >= 400) {
+        return { ok: false, error: json.error || `Reversal request failed on server (HTTP ${res.status}).` };
       }
     } catch {
       // Fallback below on network error
@@ -314,6 +393,41 @@ export async function reverseBookingManualDiscountAsync(params: {
   }
 
   const freshBooking = db.getAllBookings().find(b => b.id === booking.id) || booking;
+  const existingAdjustments = db.getBookingManualDiscountAdjustments(freshBooking.id);
+  const existingSnapshots = db.getBookingPricingSnapshots(freshBooking.id);
+
+  // Idempotency replay protection for reversal retries
+  const existingReversal = existingAdjustments.find(
+    a => a.actionType === 'REVERSE' && a.idempotencyKey && a.idempotencyKey === idempotencyKey
+  );
+  if (existingReversal) {
+    const matchedSnap =
+      existingSnapshots.find(s => s.snapshotId === existingReversal.resultingSnapshotId) ||
+      existingSnapshots[existingSnapshots.length - 1];
+    return {
+      ok: true,
+      idempotentReplay: true,
+      reversalAdjustment: existingReversal,
+      newSnapshot: matchedSnap,
+      updatedBooking: freshBooking
+    };
+  }
+
+  // Optimistic concurrency check if caller supplied expectedSnapshotVersion
+  const latestVersion =
+    existingSnapshots.length > 0
+      ? Math.max(...existingSnapshots.map(s => s.version || 1))
+      : Number(freshBooking.currentPricingSnapshotVersion || 1);
+  if (
+    typeof payload.expectedSnapshotVersion === 'number' &&
+    payload.expectedSnapshotVersion !== latestVersion
+  ) {
+    return {
+      ok: false,
+      error: `Pricing snapshot version conflict: expected v${payload.expectedSnapshotVersion}, but latest committed snapshot is v${latestVersion}. Please refresh and retry.`
+    };
+  }
+
   const commit = buildReverseManualDiscountCommit({
     booking: freshBooking,
     adjustmentId: payload.adjustmentId,
@@ -326,6 +440,8 @@ export async function reverseBookingManualDiscountAsync(params: {
       role: user.role
     },
     permissions,
+    externalSnapshots: existingSnapshots.length > 0 ? existingSnapshots : undefined,
+    externalAdjustments: existingAdjustments.length > 0 ? existingAdjustments : undefined,
     existingInvoicesCount: db.getBookingInvoices(freshBooking.id).length
   });
 
@@ -333,7 +449,7 @@ export async function reverseBookingManualDiscountAsync(params: {
     return { ok: false, error: commit.error };
   }
 
-  db.commitBookingManualDiscountSnapshot(
+  const persisted = await db.commitBookingManualDiscountSnapshotAsync(
     commit.updatedBooking,
     commit.newSnapshot,
     commit.reversalAdjustment,
@@ -341,13 +457,20 @@ export async function reverseBookingManualDiscountAsync(params: {
     true
   );
 
+  if (persisted.error) {
+    return { ok: false, error: persisted.error };
+  }
+
   return {
     ok: true,
     idempotentReplay: false,
-    reversalAdjustment: commit.reversalAdjustment,
+    reversalAdjustment: persisted.adjustment,
     newSnapshot: commit.newSnapshot,
-    updatedBooking: commit.updatedBooking
+    updatedBooking: persisted.booking,
+    revisedInvoice: persisted.revisedInvoice,
+    supersededInvoices: persisted.supersededInvoices
   };
+  });
 }
 
 export async function fetchAdminManualDiscountReportAsync(params: {

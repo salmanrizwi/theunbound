@@ -1117,6 +1117,7 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
   delete (clone as any).supplierCost;
   delete (clone as any).supplierTotalCost;
   delete clone.supplierAllocations;
+  delete clone.consolidatedAllocations;
   delete clone.supplierRequests;
   delete clone.operationalConfirmationOverride;
   delete (clone as any).internalNotes;
@@ -1156,7 +1157,16 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
       // Eliminate supplier identity and contacts
       delete it.supplierId;
       delete it.supplierName;
+      delete it.supplierNameSnapshot;
       delete it.supplierContact;
+      delete it.supplierPhone;
+      delete it.supplierEmail;
+      delete it.supplierAllocationStatus;
+      delete it.supplierAllocatedAt;
+      delete it.supplierAllocatedBy;
+      delete it.allocationHistory;
+      delete it.consolidatedAllocationId;
+      delete it.allocationMethod;
       delete (it as any).allocatedSupplierId;
       delete (it as any).allocatedSupplierName;
       delete (it as any).supplierAllocated;
@@ -1168,7 +1178,9 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
       delete (it as any).supplierReferenceNumber;
       delete (it as any).allocatedCost;
 
-      // Eliminate supplier pricing and nett costs
+      // Eliminate supplier pricing, net costs, and allocated commercial prices
+      delete it.netPrice;
+      delete it.allocatedCommercialPrice;
       delete it.supplierPrice;
       delete it.supplierCurrency;
       delete it.supplierPriceType;
@@ -1199,6 +1211,8 @@ export function sanitizeBookingForAgent(b: Booking): Booking {
       delete it.unitNetPrice;
       delete (it as any).costPrice;
       delete (it as any).netCost;
+      delete (it as any).marginAmount;
+      delete (it as any).marginPercent;
       return it;
     });
   }

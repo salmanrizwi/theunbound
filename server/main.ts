@@ -19,6 +19,7 @@ import { createHomepageVideoRouter } from "./homepageVideoService";
 import { createPromotionRouter, createAdminPromotionRouter } from "./promotionService";
 import { createAdminBookingManualDiscountRouter } from "./bookingManualDiscountService";
 import { createUserCartRouter, createAdminUserCartRouter } from "./userCartService";
+import { createAdminSupplierAllocationRouter } from "./supplierAllocationService";
 
 // Prevent unexpected unhandled crashes
 process.on('unhandledRejection', (reason) => {
@@ -100,6 +101,9 @@ export async function startServer() {
       // Strict UID-Scoped User Cart Isolation & Admin On-Behalf-Of Cart Routers
       app.use("/api/cart", createUserCartRouter());
       app.use("/api/admin", createAdminUserCartRouter());
+
+      // Secure Server-Side Consolidated Supplier Allocation & Net Cost Governance Router
+      app.use("/api/admin/supplier-allocations", createAdminSupplierAllocationRouter());
 
       // Centralized Live XE.com FX Currency Engine Router
       app.use("/api/fx", createFXRouter());

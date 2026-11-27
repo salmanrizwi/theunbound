@@ -88,6 +88,30 @@
         { "fieldPath": "termsConfigId", "order": "ASCENDING" },
         { "fieldPath": "version", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "booking_pricing_snapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bookingId", "order": "ASCENDING" },
+        { "fieldPath": "version", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "booking_manual_discounts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bookingId", "order": "ASCENDING" },
+        { "fieldPath": "appliedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "booking_payment_schedules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "bookingId", "order": "ASCENDING" },
+        { "fieldPath": "scheduleVersion", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

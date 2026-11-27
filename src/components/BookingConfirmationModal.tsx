@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Booking, SentEmailRecord } from '../types';
 import { formatCurrency } from '../services/pricingEngine';
+import { resolveAuthoritativeBookingFinancials } from '../services/bookingManualDiscountEngine';
 import { 
   CheckCircle2, 
   X, 
@@ -41,6 +42,7 @@ export const BookingConfirmationModal: React.FC<BookingConfirmationModalProps> =
     setTimeout(() => setCopiedRef(false), 2000);
   };
 
+  const authoritativeFin = resolveAuthoritativeBookingFinancials(booking);
   const clientEmail = booking.notificationEmailsSent.find(e => e.recipientType === 'CLIENT_AGENT');
   const dmcEmail = booking.notificationEmailsSent.find(e => e.recipientType === 'DMC_OPS');
 
@@ -122,10 +124,17 @@ export const BookingConfirmationModal: React.FC<BookingConfirmationModalProps> =
             </div>
 
             <div className="p-3.5 rounded-2xl bg-slate-900 text-white">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block">Total Amount</span>
-              <span className="font-mono font-extrabold text-sm text-[#00E5C0] block mt-1">
-                {formatCurrency(booking.totalAmount, booking.currency)}
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#00E5C0] block">
+                {authoritativeFin.hasManualDiscount ? 'Revised Booking Total' : 'Total Amount'}
               </span>
+              <span className="font-mono font-extrabold text-sm text-[#00E5C0] block mt-1">
+                {formatCurrency(authoritativeFin.current_selling_price, authoritativeFin.currency)}
+              </span>
+              {authoritativeFin.hasManualDiscount && (
+                <span className="text-[10px] text-slate-400 line-through font-mono block">
+                  {formatCurrency(authoritativeFin.original_selling_price, authoritativeFin.currency)}
+                </span>
+              )}
             </div>
           </div>
 

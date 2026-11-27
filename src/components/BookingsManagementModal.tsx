@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Booking, User, BookingStatus } from '../types';
 import { AppDatabase } from '../services/db';
 import { formatCurrency } from '../services/pricingEngine';
+import { resolveAuthoritativeBookingFinancials } from '../services/bookingManualDiscountEngine';
 import { 
   X, 
   Search, 
@@ -230,10 +231,24 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
                   {/* Pricing and Action */}
                   <div className="flex md:flex-col items-center md:items-end justify-between w-full md:w-auto pt-3 md:pt-0 border-t md:border-t-0 border-slate-100">
                     <div className="text-left md:text-right">
-                      <span className="text-[10px] font-bold uppercase text-slate-400 block">Total Value</span>
-                      <span className="text-lg font-black font-mono text-slate-900">
-                        {formatCurrency(b.totalAmount, b.currency)}
-                      </span>
+                      {(() => {
+                        const bFin = resolveAuthoritativeBookingFinancials(b);
+                        return (
+                          <>
+                            <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                              {bFin.hasManualDiscount ? 'Revised Value' : 'Total Value'}
+                            </span>
+                            <span className="text-lg font-black font-mono text-slate-900">
+                              {formatCurrency(bFin.current_selling_price, bFin.currency)}
+                            </span>
+                            {bFin.hasManualDiscount && (
+                              <span className="text-[10px] text-slate-400 line-through font-mono block">
+                                {formatCurrency(bFin.original_selling_price, bFin.currency)}
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
 
                     <button
@@ -302,10 +317,26 @@ export const BookingsManagementModal: React.FC<BookingsManagementModalProps> = (
             </div>
 
             <div className="p-3 bg-slate-900 text-white rounded-xl flex justify-between items-center text-xs">
-              <span className="font-bold">Total Confirmed Amount:</span>
-              <span className="font-mono font-black text-base text-[#00E5C0]">
-                {formatCurrency(selectedBooking.totalAmount, selectedBooking.currency)}
-              </span>
+              {(() => {
+                const selFin = resolveAuthoritativeBookingFinancials(selectedBooking);
+                return (
+                  <>
+                    <span className="font-bold">
+                      {selFin.hasManualDiscount ? 'Revised Confirmed Amount:' : 'Total Confirmed Amount:'}
+                    </span>
+                    <div className="text-right">
+                      <span className="font-mono font-black text-base text-[#00E5C0] block">
+                        {formatCurrency(selFin.current_selling_price, selFin.currency)}
+                      </span>
+                      {selFin.hasManualDiscount && (
+                        <span className="text-[10px] text-slate-400 line-through font-mono">
+                          Orig: {formatCurrency(selFin.original_selling_price, selFin.currency)}
+                        </span>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {selectedBooking.notificationEmailsSent && (selectedBooking.notificationEmailsSent || []).length > 0 && (

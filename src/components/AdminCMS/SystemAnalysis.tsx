@@ -14,6 +14,7 @@ import { performanceMonitor } from '../../services/performanceMonitor';
 import { backgroundJobService } from '../../services/backgroundJobService';
 import { auth } from '../../services/firebase';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
+import { resolveAuthoritativeBookingFinancials } from '../../services/bookingManualDiscountEngine';
 import { 
   Activity, 
   Users, 
@@ -249,10 +250,13 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
       const whatsappShares = userQuotes.filter(q => Boolean(q.lastSharedViaWhatsAppAt)).length;
       const confirmedBookings = userBookings.filter(b => b.status === 'CONFIRMED' || b.status === 'COMPLETED').length;
 
-      const bookingSpendAgg = aggregateForDisplay(userBookings, b => ({
-        amount: Number(b.totalAmount) || 0,
-        currency: b.currency || 'USD'
-      }));
+      const bookingSpendAgg = aggregateForDisplay(userBookings, b => {
+        const bFin = resolveAuthoritativeBookingFinancials(b);
+        return {
+          amount: bFin.current_selling_price,
+          currency: bFin.currency
+        };
+      });
       const quoteValAgg = aggregateForDisplay(userQuotes, q => ({
         amount: Number(q.pricingSnapshot?.finalCustomerSellingPrice ?? q.finalCustomerSellingPrice ?? q.totalSellingPrice ?? 0),
         currency: q.currency || q.pricingSnapshot?.currency || 'USD'
@@ -334,10 +338,13 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
     const totalBookingsCount = filteredBookings.length;
     const confirmedBookingsCount = filteredBookings.filter(b => b.status === 'CONFIRMED' || b.status === 'COMPLETED').length;
 
-    const grossBookingAgg = aggregateForDisplay(filteredBookings, b => ({
-      amount: Number(b.totalAmount) || 0,
-      currency: b.currency || 'USD'
-    }));
+    const grossBookingAgg = aggregateForDisplay(filteredBookings, b => {
+      const bFin = resolveAuthoritativeBookingFinancials(b);
+      return {
+        amount: bFin.current_selling_price,
+        currency: bFin.currency
+      };
+    });
     const grossBookingValue = grossBookingAgg.totalConverted;
 
     const allVerifiedProofs = filteredBookings.flatMap(b =>
@@ -1429,7 +1436,8 @@ export const SystemAnalysis: React.FC<SystemAnalysisProps> = ({
                                   {b.destinationName || b.destination}
                                 </td>
                                 {(() => {
-                                  const bConv = convertForDisplay(Number(b.totalAmount || 0), b.currency || 'USD');
+                                  const bFin = resolveAuthoritativeBookingFinancials(b);
+                                  const bConv = convertForDisplay(bFin.current_selling_price, bFin.currency);
                                   return (
                                     <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
                                       <div>{bConv.formatted}</div>

@@ -658,8 +658,8 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
           alertCount: pendingBookings,
           description: 'Ground reservation pipeline, supplier assignment, status verification, jobsheets, vouchers, invoices, and 12-hour SLA alerts.',
           subTabs: [
-            { id: 'BOOKINGS', label: 'Ground Bookings & Supplier Operations', icon: CalendarCheck },
-            { id: 'HORIZON', label: 'Operational Horizon & Ground Dispatch', icon: Compass }
+            { id: 'BOOKINGS', label: 'Booking Pipeline & Supplier Allocation', icon: CalendarCheck },
+            { id: 'HORIZON', label: 'Operational Horizon & Ground Dispatch Desk', icon: Compass }
           ]
         },
         {
@@ -1294,6 +1294,7 @@ export const AdminCMSHub: React.FC<AdminCMSHubProps> = ({
             <BookingsManager 
               initialBookingId={initialRecordIds.bookingId}
               initialSubTab={activeSubTab}
+              onSubTabChange={setActiveSubTab}
               onOpenActionCenter={handleOpenActionCenter}
             />
           )}

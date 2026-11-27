@@ -12,17 +12,19 @@ import {
   CheckCircle2,
   FileText,
   Info,
-  Loader2
+  Loader2,
+  AlertTriangle
 } from 'lucide-react';
 import { AppDatabase } from '../../../services/db';
 import {
+  evaluateProformaInvoiceFreshness,
   formatPassengerBreakdown,
   formatReadableDate,
   hydrateBookingServiceItem,
   resolveAuthoritativeProformaAmount,
   sortBookingItemsChronologically
 } from '../../../services/bookingOperationsSyncService';
-import { generateProformaInvoicePDF } from '../../../services/bookingDocumentPdfService';
+import { downloadProformaInvoiceDocument } from '../../../services/proformaInvoiceService';
 
 interface ProformaInvoiceModalProps {
   invoice: BookingInvoice;
@@ -48,24 +50,53 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
     return null;
   }, [propBooking, invoice.bookingId, db]);
 
-  // Authoritative Final Booking Amount from latest committed BookingPricingSnapshot
+  // IMMUTABLE SNAPSHOT RULE:
+  // Always display this Proforma Invoice's own committed snapshot amount so historical versions
+  // are never overwritten after later discounts; evaluate freshness separately to flag Outdated/Superseded.
   const authoritative = useMemo(() => {
-    if (resolvedBooking) {
-      return resolveAuthoritativeProformaAmount(resolvedBooking);
-    }
-    const finalAmt = Number(invoice.proformaFinalBookingAmount ?? invoice.totalAmount ?? 0);
-    const paid = Number(invoice.amountPaid ?? invoice.paidAmount ?? 0);
+    const hasLockedAmount =
+      typeof invoice.proformaFinalBookingAmount === 'number' ||
+      (typeof invoice.totalAmount === 'number' && invoice.totalAmount > 0);
+    const fallback = !hasLockedAmount && resolvedBooking ? resolveAuthoritativeProformaAmount(resolvedBooking) : null;
+    const finalAmt = hasLockedAmount
+      ? Number(invoice.proformaFinalBookingAmount ?? invoice.totalAmount ?? 0)
+      : Number(fallback?.finalBookingAmount ?? 0);
+    const hasLockedPaid = typeof invoice.amountPaid === 'number' || typeof invoice.paidAmount === 'number';
+    const paid = hasLockedPaid
+      ? Math.max(0, Number(invoice.amountPaid ?? invoice.paidAmount ?? 0))
+      : Number(fallback?.amountPaid ?? 0);
+    const balanceDue = Math.max(0, Math.round((finalAmt - paid) * 100) / 100);
+    const creditBalance = Math.max(0, Math.round((paid - finalAmt) * 100) / 100);
     return {
       finalBookingAmount: finalAmt,
-      currency: invoice.currency || 'USD',
+      currency: invoice.currency || fallback?.currency || resolvedBooking?.currency || 'USD',
       amountPaid: paid,
-      balanceDue: Math.max(0, Math.round((finalAmt - paid) * 100) / 100),
-      sourcePricingSnapshotId: invoice.sourcePricingSnapshotId || `SNAP-v${invoice.sourcePricingSnapshotVersion || 1}`,
-      sourcePricingSnapshotVersion: invoice.sourcePricingSnapshotVersion || 1
+      balanceDue,
+      creditBalance,
+      sourcePricingSnapshotId:
+        invoice.sourcePricingSnapshotId ||
+        fallback?.sourcePricingSnapshotId ||
+        `SNAP-v${invoice.sourcePricingSnapshotVersion || fallback?.sourcePricingSnapshotVersion || 1}`,
+      sourcePricingSnapshotVersion:
+        invoice.sourcePricingSnapshotVersion || fallback?.sourcePricingSnapshotVersion || 1
     };
   }, [resolvedBooking, invoice]);
 
+  const freshness = useMemo(() => {
+    const siblingInvoices = resolvedBooking ? db.getBookingInvoices(resolvedBooking.id) : undefined;
+    return evaluateProformaInvoiceFreshness(invoice, resolvedBooking, siblingInvoices);
+  }, [invoice, resolvedBooking, db]);
+
   const scopeServices = useMemo(() => {
+    if (invoice.services && invoice.services.length > 0) {
+      return invoice.services.map((srv: any, idx: number) => ({
+        id: srv.id || `srv-${idx}`,
+        name: srv.description || srv.serviceName || srv.productName || 'Travel Service',
+        category: srv.category || 'Service',
+        date: srv.serviceDate || srv.travelDate || 'Scheduled',
+        pax: srv.pax || srv.quantity || invoice.totalPax || 1
+      }));
+    }
     if (resolvedBooking?.items && resolvedBooking.items.length > 0) {
       return sortBookingItemsChronologically(
         resolvedBooking.items
@@ -79,21 +110,20 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
         pax: it.totalPax
       }));
     }
-    return (invoice.services || invoice.items || []).map((srv: any, idx: number) => ({
+    return (invoice.items || []).map((srv: any, idx: number) => ({
       id: srv.id || `srv-${idx}`,
       name: srv.description || srv.serviceName || srv.productName || 'Travel Service',
       category: srv.category || 'Service',
       date: srv.serviceDate || srv.travelDate || 'Scheduled',
       pax: srv.pax || srv.quantity || 1
     }));
-  }, [resolvedBooking, invoice.services, invoice.items]);
+  }, [resolvedBooking, invoice.services, invoice.items, invoice.totalPax]);
 
   const handleDownloadPdf = async () => {
     if (isDownloadingPdf) return;
     setIsDownloadingPdf(true);
     try {
-      const result = generateProformaInvoicePDF(invoice, resolvedBooking, companyProfile);
-      result.download();
+      await downloadProformaInvoiceDocument(invoice, resolvedBooking, companyProfile);
     } finally {
       setIsDownloadingPdf(false);
     }
@@ -106,14 +136,28 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
   const isPaid = authoritative.balanceDue === 0 && authoritative.finalBookingAmount > 0;
   const isPartiallyPaid = !isPaid && authoritative.amountPaid > 0;
 
-  const paxSummary = resolvedBooking?.travelers
+  const resolvedTotalPax = Math.max(
+    1,
+    Number(
+      invoice.totalPax ||
+        resolvedBooking?.customer?.totalPax ||
+        ((resolvedBooking?.travelers?.adults || 0) + (resolvedBooking?.travelers?.children || 0)) ||
+        1
+    )
+  );
+  const resolvedPerPerson =
+    typeof invoice.perPersonPrice === 'number' && invoice.perPersonPrice > 0
+      ? invoice.perPersonPrice
+      : Math.round((authoritative.finalBookingAmount / resolvedTotalPax) * 100) / 100;
+
+  const paxSummary = invoice.totalPax
+    ? `${invoice.totalPax} Passenger(s)`
+    : resolvedBooking?.travelers
     ? formatPassengerBreakdown(
         resolvedBooking.travelers.adults || 0,
         resolvedBooking.travelers.children || 0,
         resolvedBooking.travelers.infants || 0
       )
-    : invoice.totalPax
-    ? `${invoice.totalPax} Passenger(s)`
     : 'As Per Booking';
 
   return (
@@ -172,10 +216,10 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
             <div className="space-y-1">
               <div className="text-xl font-black tracking-tight text-slate-950 flex items-center gap-2">
                 <Building2 className="w-6 h-6 text-[#008f77]" />
-                <span>{companyProfile.companyName || invoice.companyName || 'Unbound Experiences India Pvt Ltd'}</span>
+                <span>{companyProfile.legalName || companyProfile.companyName || invoice.companyName}</span>
               </div>
               <p className="text-xs text-[#008f77] font-bold">
-                PROFORMA INVOICE — Payment &amp; Booking Confirmation Reference
+                PROFORMA INVOICE — Preliminary Commercial &amp; Payment Reference (Not a Tax Invoice)
               </p>
               <div className="text-xs text-slate-500 space-y-0.5 pt-1">
                 <p>
@@ -224,6 +268,24 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
             </div>
           </div>
 
+          {/* Outdated / Superseded Snapshot Banner (Historical Invoice Remains Strictly Immutable) */}
+          {(freshness.isOutdated || freshness.isSupersededByNewerVersion) && (
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 flex items-start gap-2.5 text-xs text-amber-950 print:hidden">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-bold">
+                  {freshness.statusLabel === 'SUPERSEDED'
+                    ? 'Superseded Historical Proforma Invoice (Immutable Record)'
+                    : 'Outdated Proforma Invoice — Booking Price Was Revised After Issuance'}
+                </p>
+                <p className="text-[11px] text-amber-900 leading-relaxed">
+                  {freshness.reason ||
+                    `This invoice remains locked to Snapshot v${freshness.invoiceSnapshotVersion}. Current booking pricing is Snapshot v${freshness.latestSnapshotVersion}.`}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Explicit Proforma Notice */}
           <div className="p-3.5 rounded-2xl bg-teal-50/70 border border-teal-200/80 flex items-start gap-2.5 text-xs text-teal-950">
             <Info className="w-4 h-4 text-[#008972] shrink-0 mt-0.5" />
@@ -259,7 +321,7 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
                 <strong className="text-slate-900">Travel Dates:</strong> {invoice.travelDates || `${resolvedBooking?.travelStartDate || ''} - ${resolvedBooking?.travelEndDate || ''}`}
               </p>
               <p className="text-slate-700">
-                <strong className="text-slate-900">Passengers:</strong> {paxSummary}
+                <strong className="text-slate-900">Passengers:</strong> {paxSummary} ({formatCurrency(resolvedPerPerson, authoritative.currency)} / pax)
               </p>
             </div>
           </div>
@@ -322,6 +384,12 @@ export const ProformaInvoiceModal: React.FC<ProformaInvoiceModalProps> = ({
                   <span>Balance Due</span>
                   <span className="font-mono">{formatCurrency(authoritative.balanceDue, authoritative.currency)}</span>
                 </div>
+                {authoritative.creditBalance > 0 && (
+                  <div className="flex justify-between text-amber-300 font-bold text-xs pt-1">
+                    <span>Credit / Overpayment Balance</span>
+                    <span className="font-mono">{formatCurrency(authoritative.creditBalance, authoritative.currency)}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>

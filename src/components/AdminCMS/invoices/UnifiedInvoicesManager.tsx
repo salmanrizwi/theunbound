@@ -5,10 +5,13 @@ import { useAuth } from '../../../context/AuthContext';
 import { useDisplayCurrency } from '../../../context/DisplayCurrencyContext';
 import { formatCurrency } from '../../../services/pricingEngine';
 import { resolveUserAccountManager } from '../../../services/accountManagerService';
-import { 
-  validateProformaInvoicePreflight, 
-  ProformaPreflightError 
-} from '../../../services/proformaInvoicePreflight';
+import { resolveAuthoritativeBookingFinancials } from '../../../services/bookingManualDiscountEngine';
+import { evaluateProformaInvoiceFreshness } from '../../../services/bookingOperationsSyncService';
+import { ProformaPreflightError } from '../../../services/proformaInvoicePreflight';
+import {
+  downloadProformaInvoiceDocument,
+  generateAndPersistProformaInvoice
+} from '../../../services/proformaInvoiceService';
 import { 
   ProformaGenerationErrorModal, 
   ProformaGenerationSuccessModal 
@@ -109,22 +112,37 @@ export const UnifiedInvoicesManager: React.FC = () => {
       createdBy: string;
       originalProforma?: BookingInvoice;
       originalManual?: BookingUploadedInvoice;
+      freshness?: ReturnType<typeof evaluateProformaInvoiceFreshness>;
     }> = [];
 
+    const proformaByBooking = new Map<string, BookingInvoice[]>();
     proformaInvoices.forEach(inv => {
+      const arr = proformaByBooking.get(inv.bookingId) || [];
+      arr.push(inv);
+      proformaByBooking.set(inv.bookingId, arr);
+    });
+
+    proformaInvoices.forEach(inv => {
+      const linkedBooking = bookings.find(item => item.id === inv.bookingId);
+      const freshness = evaluateProformaInvoiceFreshness(
+        inv,
+        linkedBooking,
+        proformaByBooking.get(inv.bookingId) || []
+      );
       list.push({
         id: inv.id,
         invoiceNumber: inv.invoiceNumber,
         type: 'PROFORMA',
         bookingId: inv.bookingId,
-        bookingReference: inv.bookingReference || 'BK-SYS',
+        bookingReference: inv.bookingReference || linkedBooking?.bookingReference || 'BK-SYS',
         customerOrAgent: inv.customerName || inv.billedToName || inv.agentName || 'Valued Guest',
-        amount: inv.totalAmount || inv.subtotal || 0,
+        amount: inv.proformaFinalBookingAmount ?? inv.totalAmount ?? inv.subtotal ?? 0,
         currency: inv.currency || 'USD',
         status: inv.paymentStatus || 'GENERATED',
         date: inv.invoiceDate || inv.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0],
         createdBy: inv.agentName || 'System',
-        originalProforma: inv
+        originalProforma: inv,
+        freshness
       });
     });
 
@@ -167,25 +185,17 @@ export const UnifiedInvoicesManager: React.FC = () => {
   }, [proformaInvoices, uploadedInvoices, bookings, activeTab, searchQuery, statusFilter]);
 
   // Primary Action: Generate Proforma Invoice
-  const triggerProformaGeneration = (bookingId: string) => {
+  const triggerProformaGeneration = async (bookingId: string) => {
     if (isGenerating) return;
     setIsGenerating(true);
 
     try {
-      // 1. Preflight Validation
-      const precheck = validateProformaInvoicePreflight(bookingId, user);
-      if (!precheck.valid || precheck.error) {
-        setPreflightError(precheck.error || null);
-        setIsGenerating(false);
-        return;
-      }
-
-      // 2. Perform Generation via Canonical Database Service
-      const res = db.generateProformaInvoice(bookingId, user, true);
+      const res = await generateAndPersistProformaInvoice(bookingId, user, {
+        forceRegenerate: true
+      });
       if (res.success && res.invoice) {
         refreshData();
         setGeneratedSuccessInvoice(res.invoice);
-        // Log Audit Event
         db.logAudit(
           user,
           'INVOICE_GENERATED' as any,
@@ -194,14 +204,16 @@ export const UnifiedInvoicesManager: React.FC = () => {
           `Proforma Invoice #${res.invoice.invoiceNumber} generated for Booking #${res.invoice.bookingReference}`
         );
       } else {
-        setPreflightError({
-          code: 'UNKNOWN_ERROR',
-          title: 'Invoice Generation Failed',
-          message: res.error || 'An unexpected error occurred during database invoice creation.',
-          missingRequirements: ['Database authorization and valid pricing state'],
-          actionableInstruction: 'Please check your connection and try again.',
-          bookingId
-        });
+        setPreflightError(
+          res.error || {
+            code: 'UNKNOWN_ERROR',
+            title: 'Invoice Generation Failed',
+            message: 'An unexpected error occurred during database invoice creation.',
+            missingRequirements: ['Database authorization and valid pricing state'],
+            actionableInstruction: 'Please check your connection and try again.',
+            bookingId
+          }
+        );
       }
     } catch (err: any) {
       setPreflightError({
@@ -493,15 +505,31 @@ export const UnifiedInvoicesManager: React.FC = () => {
                         );
                       })()}
                       <td className="py-3.5 px-4 text-center">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                          inv.status === 'PAID' 
-                            ? 'bg-emerald-100 text-emerald-800' 
-                            : inv.status === 'PARTIALLY_PAID' 
-                            ? 'bg-amber-100 text-amber-800'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}>
-                          {inv.status}
-                        </span>
+                        <div className="flex flex-col items-center gap-1">
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                            inv.status === 'PAID' 
+                              ? 'bg-emerald-100 text-emerald-800' 
+                              : inv.status === 'PARTIALLY_PAID' 
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-slate-100 text-slate-700'
+                          }`}>
+                            {inv.status}
+                          </span>
+                          {inv.type === 'PROFORMA' && inv.freshness?.isOutdated && (
+                            <span
+                              title={inv.freshness.reason}
+                              className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                                inv.freshness.isSupersededByNewerVersion
+                                  ? 'bg-slate-100 text-slate-600 border-slate-300'
+                                  : 'bg-amber-100 text-amber-900 border-amber-300'
+                              }`}
+                            >
+                              {inv.freshness.isSupersededByNewerVersion
+                                ? 'Superseded'
+                                : `Outdated • v${inv.freshness.invoiceSnapshotVersion} vs v${inv.freshness.latestSnapshotVersion}`}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-500 font-mono">
                         {inv.date}
@@ -509,27 +537,50 @@ export const UnifiedInvoicesManager: React.FC = () => {
                       <td className="py-3.5 px-4 text-center">
                         <div className="flex items-center justify-center space-x-1.5">
                           {inv.type === 'PROFORMA' && inv.originalProforma && (
-                            <button
-                              onClick={() => setPreviewProformaInvoice(inv.originalProforma!)}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
-                              title="View Proforma Invoice"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
+                            <>
+                              <button
+                                onClick={() => setPreviewProformaInvoice(inv.originalProforma!)}
+                                className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                                title="View Proforma Invoice"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const linkedB = bookings.find(item => item.id === inv.bookingId) || null;
+                                  void downloadProformaInvoiceDocument(
+                                    inv.originalProforma!,
+                                    linkedB,
+                                    db.getCentralCompanyProfile()
+                                  );
+                                }}
+                                className="p-1.5 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-700 transition-colors cursor-pointer"
+                                title="Download Proforma PDF"
+                              >
+                                <Download className="w-3.5 h-3.5" />
+                              </button>
+                              {inv.freshness?.isOutdated && !inv.freshness.isSupersededByNewerVersion && (
+                                <button
+                                  onClick={() => void triggerProformaGeneration(inv.bookingId)}
+                                  disabled={isGenerating}
+                                  className="px-2 py-1 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-bold transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                                  title="Issue Revised Proforma Invoice reflecting updated booking pricing"
+                                >
+                                  Issue Revised
+                                </button>
+                              )}
+                            </>
                           )}
 
-                          {inv.type === 'MANUAL' && inv.originalManual && (
-                            <button
-                              onClick={() => {
-                                if (inv.originalManual?.uploadedFile) {
-                                  window.open(inv.originalManual.uploadedFile, '_blank');
-                                }
-                              }}
-                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                          {inv.type === 'MANUAL' && inv.originalManual && inv.originalManual.uploadedFile && (
+                            <a
+                              href={inv.originalManual.uploadedFile}
+                              download={inv.originalManual.uploadedFileName || `Invoice-${inv.invoiceNumber}.pdf`}
+                              className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer inline-flex"
                               title="Download Manual Invoice"
                             >
                               <Download className="w-3.5 h-3.5" />
-                            </button>
+                            </a>
                           )}
                         </div>
                       </td>
@@ -558,18 +609,22 @@ export const UnifiedInvoicesManager: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {bookings.map(b => {
               const invoices = db.getBookingInvoices(b.id);
-              const totalTurnover = b.totalAmount || 0;
-              const paidAmount = (b as any).paidAmount || (b.paymentStatus === 'PAID' ? totalTurnover : 0);
-              const balance = Math.max(0, totalTurnover - paidAmount);
+              const fin = resolveAuthoritativeBookingFinancials(b);
+              const totalTurnover = fin.revisedBookingAmount;
+              const balance = fin.outstandingBalance;
 
               return (
                 <div key={b.id} className="p-4 rounded-2xl border border-slate-200 bg-slate-50/60 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-mono font-bold text-slate-900">{b.bookingReference}</span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      b.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                      fin.isOverpaid
+                        ? 'bg-indigo-100 text-indigo-800'
+                        : fin.paymentStatus === 'PAID'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800'
                     }`}>
-                      {b.paymentStatus || 'UNPAID'}
+                      {fin.isOverpaid ? 'PAID • CREDIT' : (fin.paymentStatus || 'UNPAID')}
                     </span>
                   </div>
 
@@ -578,20 +633,35 @@ export const UnifiedInvoicesManager: React.FC = () => {
                   </div>
 
                   {(() => {
-                    const turnoverConv = convertForDisplay(totalTurnover, b.currency || 'USD');
-                    const balanceConv = convertForDisplay(balance, b.currency || 'USD');
+                    const turnoverConv = convertForDisplay(totalTurnover, fin.currency || b.currency || 'USD');
+                    const balanceConv = convertForDisplay(
+                      fin.isOverpaid ? fin.creditBalance : balance,
+                      fin.currency || b.currency || 'USD'
+                    );
+                    const paidConv = convertForDisplay(fin.verifiedPaidAmount, fin.currency || b.currency || 'USD');
                     return (
                       <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-200">
                         <div>
-                          <span className="text-[10px] text-slate-400 block font-semibold">Total Price</span>
+                          <span className="text-[10px] text-slate-400 block font-semibold">
+                            {fin.hasManualDiscount ? `Revised Price (v${fin.latestSnapshotVersion})` : 'Total Price'}
+                          </span>
                           <span className="font-mono font-bold text-slate-900 block">{turnoverConv.formatted}</span>
+                          {fin.hasManualDiscount && (
+                            <span className="text-[9px] font-mono text-emerald-700 block">
+                              Paid: {paidConv.formatted}
+                            </span>
+                          )}
                           {turnoverConv.isConverted && (
                             <span className="text-[9px] font-mono text-slate-400 block">Native: {turnoverConv.nativeFormatted}</span>
                           )}
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 block font-semibold">Balance Due</span>
-                          <span className="font-mono font-black text-rose-700 block">{balanceConv.formatted}</span>
+                          <span className="text-[10px] text-slate-400 block font-semibold">
+                            {fin.isOverpaid ? 'Credit Balance' : 'Balance Due'}
+                          </span>
+                          <span className={`font-mono font-black block ${fin.isOverpaid ? 'text-indigo-700' : 'text-rose-700'}`}>
+                            {balanceConv.formatted}
+                          </span>
                           {balanceConv.isConverted && (
                             <span className="text-[9px] font-mono text-slate-400 block">Native: {balanceConv.nativeFormatted}</span>
                           )}
@@ -666,10 +736,14 @@ export const UnifiedInvoicesManager: React.FC = () => {
                       </div>
                       <div className="text-right">
                         {(() => {
-                          const modConv = convertForDisplay(b.totalAmount || 0, b.currency || 'USD');
+                          const fin = resolveAuthoritativeBookingFinancials(b);
+                          const modConv = convertForDisplay(fin.revisedBookingAmount, fin.currency || b.currency || 'USD');
                           return (
                             <>
                               <div className="font-mono font-black text-slate-900">{modConv.formatted}</div>
+                              {fin.hasManualDiscount && (
+                                <div className="text-[9px] font-mono text-emerald-700">Discounted • Snap v{fin.latestSnapshotVersion}</div>
+                              )}
                               {modConv.isConverted && (
                                 <div className="text-[9px] font-mono text-slate-400">Booked: {modConv.nativeFormatted}</div>
                               )}
@@ -721,6 +795,10 @@ export const UnifiedInvoicesManager: React.FC = () => {
         invoice={generatedSuccessInvoice}
         onClose={() => setGeneratedSuccessInvoice(null)}
         onViewInvoice={(inv) => setPreviewProformaInvoice(inv)}
+        onDownloadPdf={(inv) => {
+          const linkedB = bookings.find(item => item.id === inv.bookingId) || null;
+          void downloadProformaInvoiceDocument(inv, linkedB, db.getCentralCompanyProfile());
+        }}
       />
 
       {/* PROFORMA PREVIEW MODAL */}

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Booking, CurrencyCode, User } from '../../../types';
 import { displayCurrencyService, formatDisplayMoney } from '../../../services/displayCurrencyService';
+import { resolveAuthoritativeBookingFinancials } from '../../../services/bookingManualDiscountEngine';
 
 interface FinancialSnapshotSectionProps {
   bookings: Booking[];
@@ -51,8 +52,9 @@ export const FinancialSnapshotSection: React.FC<FinancialSnapshotSectionProps> =
   const todayStr = new Date().toISOString().split('T')[0];
 
   activeBookings.forEach(b => {
-    const bookingCurrency = b.currency || 'USD';
-    const sellingPrice = b.totalAmount || b.finalCustomerSellingPrice || 0;
+    const fin = resolveAuthoritativeBookingFinancials(b);
+    const bookingCurrency = fin.currency || b.currency || 'USD';
+    const sellingPrice = fin.current_selling_price;
     const sellingConv = displayCurrencyService.convertForDisplay(sellingPrice, bookingCurrency, currency);
     if (sellingConv.status === 'UNAVAILABLE' || sellingConv.convertedAmount === null) {
       unavailableRatesCount += 1;
@@ -61,9 +63,9 @@ export const FinancialSnapshotSection: React.FC<FinancialSnapshotSectionProps> =
       totalGrossBookingValue += sellingConv.convertedAmount;
     }
 
-    // Payments received calculation
-    if (b.paidAmount && b.paidAmount > 0) {
-      const paidConv = displayCurrencyService.convertForDisplay(b.paidAmount, bookingCurrency, currency);
+    // Payments received calculation (authoritative verified payments)
+    if (fin.verifiedPaidAmount > 0) {
+      const paidConv = displayCurrencyService.convertForDisplay(fin.verifiedPaidAmount, bookingCurrency, currency);
       if (paidConv.status !== 'UNAVAILABLE' && paidConv.convertedAmount !== null) {
         totalReceivedPayments += paidConv.convertedAmount;
       } else {
@@ -71,12 +73,9 @@ export const FinancialSnapshotSection: React.FC<FinancialSnapshotSectionProps> =
       }
     }
 
-    // Outstanding calculation
-    if (b.paymentStatus === 'PAID') {
-      // fully paid
-    } else {
-      const remaining = Math.max(0, sellingPrice - (b.paidAmount || 0));
-      const remConv = displayCurrencyService.convertForDisplay(remaining, bookingCurrency, currency);
+    // Outstanding calculation (strictly derived from current_selling_price - verifiedPaidAmount)
+    if (fin.outstandingBalance > 0) {
+      const remConv = displayCurrencyService.convertForDisplay(fin.outstandingBalance, bookingCurrency, currency);
       if (remConv.status !== 'UNAVAILABLE' && remConv.convertedAmount !== null) {
         totalOutstandingReceivables += remConv.convertedAmount;
         const isOverdue = b.paymentStatus === 'OVERDUE' || (b.paymentCutoffDate && b.paymentCutoffDate < todayStr);
@@ -88,40 +87,35 @@ export const FinancialSnapshotSection: React.FC<FinancialSnapshotSectionProps> =
       }
     }
 
-    // Schedule breakdown
-    if (b.paymentSchedule?.tranches) {
-      b.paymentSchedule.tranches.forEach(tranche => {
-        const trConv = displayCurrencyService.convertForDisplay(tranche.amount || 0, bookingCurrency, currency);
-        if (trConv.status === 'UNAVAILABLE' || trConv.convertedAmount === null) {
-          unavailableRatesCount += 1;
-          return;
+    // Schedule breakdown (synchronized payment schedule tranches)
+    const scheduleInstallments = fin.paymentSchedule?.installments || [];
+    scheduleInstallments.forEach(tranche => {
+      const trConv = displayCurrencyService.convertForDisplay(tranche.amount || 0, bookingCurrency, currency);
+      if (trConv.status === 'UNAVAILABLE' || trConv.convertedAmount === null) {
+        unavailableRatesCount += 1;
+        return;
+      }
+      const trancheConverted = trConv.convertedAmount;
+      const titleLower = (tranche.title || '').toLowerCase();
+      if (tranche.status === 'PAID') {
+        if (titleLower.includes('deposit') || tranche.installmentNumber === 1) {
+          depositPaymentsReceived += trancheConverted;
         }
-        const trancheConverted = trConv.convertedAmount;
-        if (tranche.status === 'PAID') {
-          if (tranche.type === 'DEPOSIT' || tranche.name?.toLowerCase().includes('deposit')) {
-            depositPaymentsReceived += trancheConverted;
-          }
-        } else {
-          if (tranche.type === 'BALANCE' || tranche.name?.toLowerCase().includes('balance')) {
-            balancePaymentsPending += trancheConverted;
-          }
+      } else {
+        if (titleLower.includes('balance') || tranche.installmentNumber > 1) {
+          balancePaymentsPending += trancheConverted;
         }
-      });
-    }
+      }
+    });
 
-    // Internal supplier cost calculation (strictly for authorized roles)
-    if (isAuthorized && b.items) {
-      b.items.forEach(it => {
-        if (it.netCost || it.costPrice) {
-          const costVal = it.netCost || it.costPrice || 0;
-          const costConv = displayCurrencyService.convertForDisplay(costVal, it.costCurrency || bookingCurrency, currency);
-          if (costConv.status !== 'UNAVAILABLE' && costConv.convertedAmount !== null) {
-            totalSupplierPayables += costConv.convertedAmount;
-          } else {
-            unavailableRatesCount += 1;
-          }
-        }
-      });
+    // Internal supplier cost calculation (strictly for authorized roles; locked Supplier Nett Cost)
+    if (isAuthorized && fin.supplierNettCost > 0) {
+      const costConv = displayCurrencyService.convertForDisplay(fin.supplierNettCost, bookingCurrency, currency);
+      if (costConv.status !== 'UNAVAILABLE' && costConv.convertedAmount !== null) {
+        totalSupplierPayables += costConv.convertedAmount;
+      } else {
+        unavailableRatesCount += 1;
+      }
     }
   });
 

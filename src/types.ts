@@ -341,6 +341,7 @@ export interface BookingOperationsPermissions {
   override_margin_protection?: boolean;
   reverse_manual_discount?: boolean;
   view_discount_reports?: boolean;
+  manage_payment_schedule?: boolean;
 }
 
 export interface SupplierPermissions {
@@ -860,26 +861,66 @@ export interface SupplierActivityHistory {
   timestamp: string;
 }
 
+export type ConsolidatedPriceAllocationMethod = 'PROPORTIONAL_NET_COST' | 'MANUAL';
+
+export interface ConsolidatedAllocationDocument {
+  id: string;
+  name: string;
+  url: string;
+  uploadedAt: string;
+  uploadedBy?: string;
+}
+
+export interface ConsolidatedAllocationItemDistribution {
+  serviceItemId: string;
+  productId: string;
+  productName: string;
+  categoryId: string;
+  categoryLabel: string;
+  destination?: string;
+  hub?: string;
+  serviceDate?: string;
+  netCost: number;
+  sellingPrice: number;
+  allocatedCommercialPrice: number;
+  marginAmount: number;
+  marginPercent: number | null;
+  currency: CurrencyCode;
+  confirmationStatus: SupplierAllocationStatus;
+  itemConfirmationRef?: string;
+  confirmedAt?: string;
+  confirmedBy?: string;
+}
+
 export interface SupplierAllocationRecord {
   id: string;
+  allocationType?: 'INDIVIDUAL' | 'CONSOLIDATED';
   supplierId: string;
   supplierNameSnapshot: string;
-  supplierCategory: string;
+  supplierCategory?: string;
   supplierDestination?: string;
   bookingId: string;
   bookingReference: string;
   serviceItemId: string;
+  serviceItemIds?: string[];
+  productIds?: string[];
   serviceName: string;
   customerName?: string;
   serviceDate?: string;
-  status: 'ALLOCATED' | 'CONFIRMED' | 'REJECTED' | 'CHANGED' | 'REMOVED' | 'AMENDMENT_REQUIRED' | 'SENT_TO_SUPPLIER' | 'AWAITING_CONFIRMATION' | 'COMPLETED';
+  travelDate?: string;
+  status: 'ALLOCATED' | 'CONFIRMED' | 'REJECTED' | 'CHANGED' | 'REMOVED' | 'CANCELLED' | 'AMENDMENT_REQUIRED' | 'SENT_TO_SUPPLIER' | 'AWAITING_CONFIRMATION' | 'COMPLETED';
   allocatedBy: string;
   allocatedByName: string;
   allocatedAt: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  updatedByName?: string;
   previousSupplierId?: string;
   previousSupplierName?: string;
   changeReason?: string;
   serviceDescription?: string;
+  serviceNarrative?: string;
+  serviceOverview?: string;
   serviceTime?: string;
   totalPax?: number;
   adults?: number;
@@ -889,7 +930,29 @@ export interface SupplierAllocationRecord {
   ticketDate?: string;
   ticketEntryTime?: string;
   supplierConfirmationRef?: string;
+  confirmationRef?: string;
   allocationStatusLabel?: string;
+  // Consolidated Commercial Pricing & Reconciliation
+  consolidatedCommercialPrice?: number;
+  totalNetCost?: number;
+  totalSellingPrice?: number;
+  totalMarginAmount?: number;
+  totalMarginPercent?: number | null;
+  currency?: CurrencyCode;
+  allocationMethod?: ConsolidatedPriceAllocationMethod;
+  itemAllocations?: ConsolidatedAllocationItemDistribution[];
+  internalNotes?: string;
+  supplierNotes?: string;
+  supportingDocuments?: ConsolidatedAllocationDocument[];
+  statusHistory?: Array<{
+    timestamp: string;
+    status: string;
+    actorId: string;
+    actorName: string;
+    note?: string;
+  }>;
+  idempotencyKey?: string;
+  version?: number;
 }
 
 export interface SupplierAllocationHistoryEntry {
@@ -1583,6 +1646,8 @@ export interface Product {
   // Content & Overview fields
   summary?: string; // Canonical alias for shortDescription
   description?: string; // Canonical alias for longDescription
+  narrative?: string; // Optional rich editorial/itinerary narrative
+  overview?: string; // Optional structured operational overview
   cancellationPolicy: string;
   inclusions: string[];
   exclusions: string[];
@@ -3403,8 +3468,10 @@ export type SupplierAllocationStatus =
   | 'Supplier Selected'
   | 'Allocated'
   | 'Sent to Supplier'
+  | 'Awaiting Confirmation'
   | 'Awaiting Supplier Confirmation'
   | 'Supplier Confirmed'
+  | 'Confirmed'
   | 'Supplier Changed'
   | 'Amendment Required'
   | 'Supplier Reconfirmation Required'
@@ -3674,8 +3741,18 @@ export interface BookingItem {
   reconfirmationReason?: string;
 
   // Authoritative Synchronised Operational & Voucher Details
+  // Authoritative Category Identity & Product Content Snapshot
+  categoryId?: string;
+  sourceCategoryLabel?: string;
   serviceDescription?: string;
+  serviceNarrative?: string;
   serviceOverview?: string;
+  // Authoritative Net / Selling Pricing & Consolidated Allocation Link
+  netPrice?: number;
+  sellingPrice?: number;
+  consolidatedAllocationId?: string;
+  allocatedCommercialPrice?: number;
+  allocationMethod?: ConsolidatedPriceAllocationMethod;
   inclusions?: string[];
   exclusions?: string[];
   meetingPoint?: string;
@@ -3824,21 +3901,100 @@ export interface BookingPassenger {
   passportFrontUrl?: string;
   passportFrontName?: string;
   passportFrontUploadedAt?: string;
+  passportFrontDocId?: string;
+  passportFrontStoragePath?: string;
   passportBackUrl?: string;
   passportBackName?: string;
   passportBackUploadedAt?: string;
+  passportBackDocId?: string;
+  passportBackStoragePath?: string;
   panCardUrl?: string; // Only for Lead Passenger
   panCardName?: string;
   panCardUploadedAt?: string;
+  panCardDocId?: string;
+  panCardStoragePath?: string;
   panNumber?: string;
   visaCopyUrl?: string;
   visaCopyName?: string;
   visaCopyUploadedAt?: string;
+  visaCopyDocId?: string;
+  visaCopyStoragePath?: string;
+  complianceDocumentIds?: string[];
   documentVerificationStatus?: 'MISSING' | 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
   documentRejectionReason?: string;
   documentRejectionNotes?: string;
   mealPreference?: string;
   specialRequests?: string;
+}
+
+export type PassengerComplianceDocumentCategory =
+  | 'PASSPORT_FRONT'
+  | 'PASSPORT_BACK'
+  | 'VISA_COPY'
+  | 'PAN_CARD'
+  | 'NATIONAL_ID'
+  | 'TRAVEL_INSURANCE'
+  | 'FLIGHT_TICKET'
+  | 'MEDICAL_DECLARATION'
+  | 'OTHER_COMPLIANCE';
+
+export type PassengerComplianceDocumentStatus = 'ACTIVE' | 'REPLACED' | 'DELETED';
+
+export type PassengerDocumentVerificationStatus = 'PENDING_REVIEW' | 'APPROVED' | 'REJECTED';
+
+export interface PassengerDocumentVersionEntry {
+  version: number;
+  storagePath: string;
+  originalFileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  uploadedBy: string;
+  uploadedByName?: string;
+  uploadedAt: string;
+  replacedAt?: string;
+  replacedBy?: string;
+  replacedByName?: string;
+  replaceReason?: string;
+}
+
+export interface PassengerComplianceDocument {
+  id: string;
+  bookingId: string;
+  bookingReference: string;
+  passengerId: string;
+  passengerNumber?: number;
+  passengerName: string;
+  agentId?: string;
+  submittedByUserId?: string;
+  assignedAgentId?: string;
+  category: PassengerComplianceDocumentCategory;
+  documentType: string;
+  originalFileName: string;
+  storagePath: string;
+  storageBackend?: 'FIREBASE_STORAGE' | 'FIRESTORE_CHUNKS';
+  blobGroupId?: string;
+  chunkCount?: number;
+  mimeType: string;
+  fileSizeBytes: number;
+  uploadedBy: string;
+  uploadedByName?: string;
+  uploadedByRole?: string;
+  uploadedAt: string;
+  verificationStatus: PassengerDocumentVerificationStatus;
+  verificationNotes?: string;
+  verifiedBy?: string;
+  verifiedByName?: string;
+  verifiedAt?: string;
+  expiryDate?: string;
+  version: number;
+  versionHistory?: PassengerDocumentVersionEntry[];
+  status: PassengerComplianceDocumentStatus;
+  idempotencyKey?: string;
+  deletedAt?: string;
+  deletedBy?: string;
+  deletedByName?: string;
+  deleteReason?: string;
+  updatedAt: string;
 }
 
 export interface BookingPaymentProof {
@@ -4021,6 +4177,7 @@ export interface Booking {
   missingDocuments?: string[];
   supplierAllocationStatus?: 'UNALLOCATED' | 'DISPATCHED_TO_SUPPLIERS' | 'PARTIALLY_CONFIRMED' | 'FULLY_CONFIRMED_BY_SUPPLIERS';
   supplierAllocations?: BookingSupplierAllocation[];
+  consolidatedAllocations?: SupplierAllocationRecord[];
   
   // Customer-Facing 15-Stage Workflow & Tracking
   customerProgressStage?: BookingProgressStage;
@@ -4051,6 +4208,7 @@ export interface Booking {
   activityVoucherIds?: string[];
   proformaInvoiceIds?: string[];
   activeProformaInvoiceId?: string;
+  proformaInvoiceAuditHistory?: BookingInvoiceAuditEntry[];
   paymentIds?: string[];
   taskIds?: string[];
   documentIds?: string[];
@@ -4071,8 +4229,17 @@ export interface Booking {
 
   // Financial & Profitability Tracking
   paymentSchedule?: PaymentSchedule;
+  paymentScheduleHistory?: PaymentSchedule[];
+  amountPaid?: number;
+  paidAmount?: number;
+  balanceDue?: number;
+  creditBalance?: number;
+  overpaidAmount?: number;
   excessPaymentAmount?: number;
   pendingPaymentAmount?: number;
+  originalBookingAmount?: number;
+  original_selling_price?: number;
+  current_selling_price?: number;
   grossProfit?: number;
   grossMarginPercent?: number;
   supplierTotalCost?: number;
@@ -4473,6 +4640,8 @@ export interface BookingPricingSnapshot {
   supplierNettCost: number;
   originalBaseSellingPrice: number;
   originalCustomerSellingPrice: number;
+  original_selling_price?: number;
+  current_selling_price?: number;
   originalTheUnboundMargin: number;
   b2bPromotionDiscountAmount: number;
   b2bPromotionCode?: string;
@@ -4486,8 +4655,22 @@ export interface BookingPricingSnapshot {
   sourceAction:
     | 'INITIAL_BOOKING'
     | 'ADMIN_MANUAL_DISCOUNT_APPLIED'
-    | 'ADMIN_MANUAL_DISCOUNT_REVERSED';
+    | 'ADMIN_MANUAL_DISCOUNT_REVERSED'
+    | 'PROFORMA_INVOICE_REVISION';
   sourceAdjustmentId?: string;
+  previousSnapshotId?: string;
+  previousSnapshotVersion?: number;
+  discountType?: BookingManualDiscountType;
+  discountValue?: number;
+  discountAmount?: number;
+  discountReason?: string;
+  internalReference?: string;
+  eligibleDiscountBase?: number;
+  supplierCostProtectionValidated?: boolean;
+  approvalReference?: string;
+  approvedBy?: string;
+  approvedByName?: string;
+  approvedAt?: string;
   createdBy: string;
   createdByName: string;
   createdByRole: string;
@@ -4517,6 +4700,8 @@ export interface BookingManualDiscountAdjustment {
   status: BookingManualDiscountAdjustmentStatus;
   reason: string;
   internalNotes?: string;
+  internalReference?: string;
+  eligibleDiscountBase?: number;
   requiresApproval: boolean;
   approvedBy?: string;
   approvedByName?: string;
@@ -4535,6 +4720,10 @@ export interface BookingManualDiscountAdjustment {
   marginAfter: number;
   sellingPriceBefore: number;
   sellingPriceAfter: number;
+  originalBookingAmount?: number;
+  previousPaymentSchedule?: PaymentSchedule | null;
+  revisedPaymentSchedule?: PaymentSchedule | null;
+  associatedInvoiceVersions?: DiscountAssociatedInvoiceVersion[];
   reversedAdjustmentId?: string;
   reversedByAdjustmentId?: string;
   reversedAt?: string;
@@ -4555,6 +4744,18 @@ export interface BookingManualDiscountAdjustment {
   immutable: true;
 }
 
+export interface DiscountAssociatedInvoiceVersion {
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceVersion: number;
+  documentType: 'PROFORMA_INVOICE' | 'TAX_INVOICE';
+  status: 'SUPERSEDED' | 'OUTDATED' | 'ISSUED_REVISED' | 'CURRENT';
+  amount: number;
+  currency: CurrencyCode;
+  snapshotVersion?: number;
+  issuedAt?: string;
+}
+
 export interface BookingManualDiscountPermissions {
   canViewInternalMargin: boolean;
   canApplyManualDiscount: boolean;
@@ -4563,6 +4764,7 @@ export interface BookingManualDiscountPermissions {
   canOverrideMarginProtection: boolean;
   canReverseManualDiscount: boolean;
   canViewDiscountReports: boolean;
+  canManagePaymentSchedule?: boolean;
 }
 
 export interface BookingManualDiscountPreview {
@@ -4606,6 +4808,11 @@ export interface BookingManualDiscountPreview {
   validationWarnings: string[];
   latestSnapshotVersion: number;
   latestSnapshotId: string;
+  eligibleDiscountBase?: number;
+  amountAlreadyPaid?: number;
+  revisedOutstandingBalance?: number;
+  revisedCreditBalance?: number;
+  isOverpaidAfterDiscount?: boolean;
 }
 
 export interface AdminManualDiscountApplyPayload {
@@ -4618,6 +4825,7 @@ export interface AdminManualDiscountApplyPayload {
   couponCode?: string;
   reason: string;
   internalNotes?: string;
+  internalReference?: string;
   allowMarginOverride?: boolean;
   marginOverrideReason?: string;
   approvalReference?: string;
@@ -4632,6 +4840,7 @@ export interface AdminManualDiscountReversePayload {
   adjustmentId: string;
   reason: string;
   idempotencyKey?: string;
+  expectedSnapshotVersion?: number;
 }
 
 export interface BookingManualDiscountReportRow {
@@ -6064,6 +6273,8 @@ export interface Hotel {
   category?: string;
   shortDescription?: string;
   description: string;
+  narrative?: string;
+  overview?: string;
   heroImage: string;
   images: string[];
   galleryImages?: string[];
@@ -6738,30 +6949,105 @@ export interface BookingProgressHistoryItem {
 export interface PaymentInstallmentItem {
   id: string;
   title: string;
+  milestone?: string;
+  description?: string;
+  paymentTerms?: string;
+  calculationMode?: 'PERCENTAGE' | 'FIXED';
   installmentNumber: number;
+  percentage?: number;
   amount: number;
   currency: CurrencyCode;
   dueDate: string;
   status: 'PENDING' | 'PAID' | 'OVERDUE' | 'PARTIAL';
   paidAmount?: number;
   paidDate?: string;
+  paidAt?: string;
   paymentMethod?: string;
+  paymentReference?: string;
+  receiptUrl?: string;
   paymentProofId?: string;
+  allocatedPaymentProofIds?: string[];
   notes?: string;
 }
 
+export interface PaymentScheduleAuditEntry {
+  id: string;
+  action:
+    | 'CREATED'
+    | 'SCHEDULE_CREATED'
+    | 'TRANCHE_ADDED'
+    | 'TRANCHE_UPDATED'
+    | 'TRANCHE_DELETED'
+    | 'SCHEDULE_SAVED'
+    | 'SCHEDULE_RECALCULATED'
+    | 'RECALCULATED_ON_BOOKING_CHANGE'
+    | 'FLAGGED_FOR_ADJUSTMENT'
+    | 'ADJUSTMENT_ACKNOWLEDGED';
+  timestamp: string;
+  actorId: string;
+  actorName: string;
+  actorRole?: string;
+  reason?: string;
+  scheduleId?: string;
+  scheduleVersion?: number;
+  financialSnapshotId?: string;
+  financialSnapshotVersion?: number;
+  previousTotalAmount?: number;
+  newTotalAmount?: number;
+  previousTotalScheduled?: number;
+  newTotalScheduled?: number;
+  bookingSellingTotal?: number;
+  currency?: CurrencyCode;
+  trancheCountBefore?: number;
+  trancheCountAfter?: number;
+  trancheSummary?: string;
+  summary?: string;
+}
+
+export type PaymentScheduleStatus =
+  | 'ACTIVE'
+  | 'RECALCULATION_REQUIRED'
+  | 'SUPERSEDED'
+  | 'PARTIAL';
+
 export interface PaymentSchedule {
+  scheduleId?: string;
+  scheduleVersion?: number;
   bookingId: string;
   bookingReference: string;
+  financialSnapshotId?: string;
+  financialSnapshotVersion?: number;
+  appliedAdjustmentId?: string;
+  originalBookingAmount?: number;
+  totalDiscountAmount?: number;
+  revisedBookingAmount?: number;
+  previousBookingAmount?: number;
+  latestBookingAmount?: number;
+  latestFinancialSnapshotId?: string;
+  latestFinancialSnapshotVersion?: number;
   totalAmount: number;
   currency: CurrencyCode;
   installments: PaymentInstallmentItem[];
   tranches?: any[];
   totalPaid: number;
   balanceDue: number;
+  unallocatedBalance?: number;
+  isPartialSchedule?: boolean;
   excessAmount?: number;
   paymentStatus: 'UNPAID' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE' | 'REFUNDED';
+  scheduleStatus?: PaymentScheduleStatus;
+  idempotencyKey?: string;
+  isManualCustomSchedule?: boolean;
+  requiresAdjustment?: boolean;
+  adjustmentNotice?: string;
+  createdBy?: string;
+  createdByName?: string;
+  createdAt?: string;
+  lastAdjustedAt?: string;
+  lastAdjustedBy?: string;
+  auditHistory?: PaymentScheduleAuditEntry[];
   updatedAt: string;
+  immutable?: boolean;
 }
 
 export interface BookingFinancialProfitability {
@@ -7203,6 +7489,7 @@ export interface InvoiceServiceItem {
   category: string;
   travelDate: string;
   quantity: number;
+  pax?: number;
   unitPrice: number;
   taxAmount: number;
   totalPrice: number;
@@ -7289,6 +7576,10 @@ export interface BookingInvoice {
   sourcePricingSnapshotId?: string;
   sourcePricingSnapshotVersion?: number;
   proformaFinalBookingAmount?: number;
+  originalBookingAmount?: number;
+  discountAppliedAmount?: number;
+  creditBalance?: number;
+  overpaidAmount?: number;
   idempotencyKey?: string;
   hideTaxAndServiceFeeBreakdown?: boolean;
   documentNotice?: string;
@@ -7299,6 +7590,50 @@ export interface BookingInvoice {
   companyRegistrationNumber?: string;
   agencyAddress?: string;
   agencyContactName?: string;
+  // Ownership, Document Type & Firebase Storage Persistence Metadata
+  documentType?: 'PROFORMA_INVOICE' | 'TAX_INVOICE';
+  agentId?: string;
+  buyerId?: string;
+  storagePath?: string;
+  pdfFileName?: string;
+  pdfSizeBytes?: number;
+  generatedBy?: string;
+  generatedByName?: string;
+  generatedAt?: string;
+  status?: 'ISSUED' | 'SUPERSEDED' | 'VOIDED' | 'DRAFT' | 'DELETED';
+  isOutdated?: boolean;
+  supersededAt?: string;
+  supersededByInvoiceId?: string;
+  supersededBySnapshotId?: string;
+  supersededReason?: string;
+  perPersonPrice?: number;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  deletedByName?: string;
+  deleteReason?: string;
+  auditHistory?: BookingInvoiceAuditEntry[];
+}
+
+export interface BookingInvoiceAuditEntry {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  action: 'CREATED' | 'UPDATED' | 'PAX_RECALCULATED' | 'REISSUED' | 'DELETED';
+  timestamp: string;
+  actorId: string;
+  actorName: string;
+  actorRole?: string;
+  reason?: string;
+  previousTotalAmount?: number;
+  newTotalAmount?: number;
+  previousAmount?: number;
+  newAmount?: number;
+  previousPax?: number;
+  newPax?: number;
+  currency?: CurrencyCode;
+  changedFields?: Array<string | { field: string; before: string; after: string }>;
+  summary?: string;
 }
 
 export interface BookingVoucher {
@@ -7395,6 +7730,7 @@ export interface BookingVoucher {
   }[];
   // Authoritative Voucher Operational & Versioning Fields
   serviceDescription?: string;
+  serviceNarrative?: string;
   serviceOverview?: string;
   ticketDate?: string;
   ticketEntryTime?: string;
@@ -7677,6 +8013,13 @@ export interface CentralCompanyProfile {
   gstin?: string;
   cin?: string;
   pan?: string;
+  bankDetails?: {
+    bankName: string;
+    accountName: string;
+    accountNumber: string;
+    swiftBic: string;
+    iban?: string;
+  };
   updatedAt?: string;
   updatedBy?: string;
 }

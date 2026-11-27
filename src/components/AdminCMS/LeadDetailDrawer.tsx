@@ -20,7 +20,8 @@ import { canUserViewInternalCostBreakdown } from '../../services/permissionEngin
 import { resolveUserAccountManager } from '../../services/accountManagerService';
 import { VoucherDocumentView } from '../Bookings/VoucherDocumentView';
 import { ProformaInvoiceModal } from './leads/ProformaInvoiceModal';
-import { validateProformaInvoicePreflight, ProformaPreflightError } from '../../services/proformaInvoicePreflight';
+import { ProformaPreflightError } from '../../services/proformaInvoicePreflight';
+import { generateAndPersistProformaInvoice } from '../../services/proformaInvoiceService';
 import { ProformaGenerationErrorModal, ProformaGenerationSuccessModal } from './invoices/ProformaGenerationModals';
 import { LeadQuotesTab } from './leads/LeadQuotesTab';
 import { LeadBookingsTab } from './leads/LeadBookingsTab';
@@ -232,26 +233,22 @@ export const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
     }
   };
 
-  const handleGenerateInvoice = (bookingId: string) => {
+  const handleGenerateInvoice = async (bookingId: string) => {
     try {
-      // 1. Preflight Validation Check
-      const precheck = validateProformaInvoicePreflight(bookingId, user);
-      if (!precheck.valid || precheck.error) {
-        setPreflightError(precheck.error || null);
-        return;
-      }
-
-      // 2. Perform Generation
-      const res = db.generateProformaInvoice(bookingId, user, true);
+      const res = await generateAndPersistProformaInvoice(bookingId, user, {
+        forceRegenerate: true
+      });
       if (!res.success || !res.invoice) {
-        setPreflightError({
-          code: 'UNKNOWN_ERROR',
-          title: 'Invoice Generation Failed',
-          message: res.error || 'Failed to generate commercial proforma invoice.',
-          missingRequirements: ['Valid booking data structure'],
-          actionableInstruction: 'Please check your connection and try again.',
-          bookingId
-        });
+        setPreflightError(
+          res.error || {
+            code: 'UNKNOWN_ERROR',
+            title: 'Invoice Generation Failed',
+            message: 'Failed to generate commercial proforma invoice.',
+            missingRequirements: ['Valid booking data structure'],
+            actionableInstruction: 'Please check your connection and try again.',
+            bookingId
+          }
+        );
         return;
       }
 

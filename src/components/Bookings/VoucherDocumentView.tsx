@@ -219,15 +219,21 @@ export const VoucherDocumentView: React.FC<VoucherDocumentViewProps> = ({
           </div>
         </div>
 
-        {/* Description & Overview */}
+        {/* Description, Narrative & Overview (omit empty fields cleanly) */}
         {item.resolvedDescription && (
-          <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-100 text-xs text-slate-700 leading-relaxed">
+          <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line">
             <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Service Description</span>
             {item.resolvedDescription}
           </div>
         )}
-        {item.resolvedOverview && item.resolvedOverview !== item.resolvedDescription && (
-          <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-100 text-xs text-slate-700 leading-relaxed">
+        {item.resolvedNarrative && item.resolvedNarrative !== item.resolvedDescription && (
+          <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line">
+            <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Itinerary Narrative</span>
+            {item.resolvedNarrative}
+          </div>
+        )}
+        {item.resolvedOverview && item.resolvedOverview !== item.resolvedDescription && item.resolvedOverview !== item.resolvedNarrative && (
+          <div className="p-3 rounded-xl bg-slate-50/80 border border-slate-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line">
             <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Operational Overview</span>
             {item.resolvedOverview}
           </div>

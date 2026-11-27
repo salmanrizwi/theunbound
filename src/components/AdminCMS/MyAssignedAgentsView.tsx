@@ -7,6 +7,7 @@ import {
 } from '../../services/accountManagerService';
 import { formatCurrency } from '../../services/pricingEngine';
 import { getLeadStatusLabel } from '../../services/crmOperationsEngine';
+import { resolveAuthoritativeBookingFinancials } from '../../services/bookingManualDiscountEngine';
 import {
   Users,
   Building2,
@@ -466,7 +467,10 @@ export const MyAssignedAgentsView: React.FC<MyAssignedAgentsViewProps> = ({
                           </div>
                           <div className="text-[11px] text-slate-500">
                             {b.travelStartDate || 'TBA'} → {b.travelEndDate || 'TBA'} •{' '}
-                            {formatCurrency(b.totalAmount || 0, b.currency || 'USD')}
+                            {(() => {
+                              const bFin = resolveAuthoritativeBookingFinancials(b);
+                              return formatCurrency(bFin.current_selling_price, bFin.currency);
+                            })()}
                           </div>
                         </div>
                         {onNavigateToBooking && (

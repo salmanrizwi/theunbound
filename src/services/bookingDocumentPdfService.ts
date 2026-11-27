@@ -678,6 +678,7 @@ export function generateActivityVoucherPDF(
   const destination = hydrated?.destination || voucher.destination || booking?.destination || '';
   const hub = hydrated?.hub || voucher.hub || voucher.city || '';
   const description = hydrated?.resolvedDescription || voucher.serviceDescription || voucher.activityDescription || '';
+  const narrative = hydrated?.resolvedNarrative || voucher.serviceNarrative || '';
   const overview = hydrated?.resolvedOverview || voucher.serviceOverview || '';
 
   engine.drawSectionTitle('Activity & Service Overview', category);
@@ -694,7 +695,10 @@ export function generateActivityVoucherPDF(
   if (description) {
     engine.drawParagraphBlock('Service Description', description);
   }
-  if (overview && overview !== description) {
+  if (narrative && narrative !== description) {
+    engine.drawParagraphBlock('Itinerary Narrative', narrative);
+  }
+  if (overview && overview !== description && overview !== narrative) {
     engine.drawParagraphBlock('Operational Overview', overview);
   }
 
@@ -1009,11 +1013,14 @@ export function generateCompleteVoucherPDF(
 
     engine.drawKeyValueGrid(timingPairs, 3);
 
-    // Description & Overview
+    // Description, Narrative & Overview (display strictly populated fields, never placeholders)
     if (item.resolvedDescription) {
       engine.drawParagraphBlock('Service Description', item.resolvedDescription);
     }
-    if (item.resolvedOverview && item.resolvedOverview !== item.resolvedDescription) {
+    if (item.resolvedNarrative && item.resolvedNarrative !== item.resolvedDescription) {
+      engine.drawParagraphBlock('Itinerary Narrative', item.resolvedNarrative);
+    }
+    if (item.resolvedOverview && item.resolvedOverview !== item.resolvedDescription && item.resolvedOverview !== item.resolvedNarrative) {
       engine.drawParagraphBlock('Operational Overview', item.resolvedOverview);
     }
 
@@ -1149,22 +1156,29 @@ export function generateProformaInvoicePDF(
   const issueDate = formatReadableDate((invoice.invoiceDate || invoice.issueDate || new Date().toISOString()).slice(0, 10));
   const dueDate = invoice.dueDate ? formatReadableDate(invoice.dueDate.slice(0, 10)) : 'Prior to Service Cut-off';
 
-  // Resolve authoritative final booking amount strictly from committed snapshot when booking is present
-  const resolved = booking ? resolveAuthoritativeProformaAmount(booking) : null;
-  const currency: CurrencyCode = (resolved?.currency || invoice.currency || 'USD') as CurrencyCode;
-  const finalBookingAmount =
-    resolved !== null
-      ? resolved.finalBookingAmount
-      : Number(invoice.proformaFinalBookingAmount ?? invoice.totalAmount ?? 0);
-  const amountPaid =
-    resolved !== null
-      ? resolved.amountPaid
-      : Number(invoice.amountPaid ?? invoice.paidAmount ?? 0);
+  // IMMUTABLE SNAPSHOT RULE:
+  // Each issued Proforma Invoice is permanently locked to the committed BookingPricingSnapshot
+  // from which it was generated. Never overwrite a historical v1 invoice with a newer booking total.
+  const hasLockedInvoiceAmount =
+    typeof invoice.proformaFinalBookingAmount === 'number' ||
+    (typeof invoice.totalAmount === 'number' && invoice.totalAmount > 0);
+  const resolvedFallback = !hasLockedInvoiceAmount && booking ? resolveAuthoritativeProformaAmount(booking) : null;
+
+  const currency: CurrencyCode = (invoice.currency || resolvedFallback?.currency || booking?.currency || 'USD') as CurrencyCode;
+  const finalBookingAmount = hasLockedInvoiceAmount
+    ? Number(invoice.proformaFinalBookingAmount ?? invoice.totalAmount ?? 0)
+    : Number(resolvedFallback?.finalBookingAmount ?? 0);
+  const hasLockedPaidAmount =
+    typeof invoice.amountPaid === 'number' || typeof invoice.paidAmount === 'number';
+  const amountPaid = hasLockedPaidAmount
+    ? Math.max(0, Number(invoice.amountPaid ?? invoice.paidAmount ?? 0))
+    : Number(resolvedFallback?.amountPaid ?? 0);
   const balanceDue = Math.max(0, Math.round((finalBookingAmount - amountPaid) * 100) / 100);
+  const creditBalance = Math.max(0, Math.round((amountPaid - finalBookingAmount) * 100) / 100);
   const snapshotRef =
     invoice.sourcePricingSnapshotId ||
-    resolved?.sourcePricingSnapshotId ||
-    `SNAP-v${invoice.sourcePricingSnapshotVersion || resolved?.sourcePricingSnapshotVersion || 1}`;
+    resolvedFallback?.sourcePricingSnapshotId ||
+    `SNAP-v${invoice.sourcePricingSnapshotVersion || resolvedFallback?.sourcePricingSnapshotVersion || 1}`;
 
   const engine = new PdfLayoutEngine('Proforma Invoice', invoiceNum, bookingRef);
 
@@ -1201,7 +1215,7 @@ export function generateProformaInvoicePDF(
   engine.drawSectionTitle('Issuing Company & Proforma Details');
   engine.drawKeyValueGrid(
     [
-      { label: 'Issuing Entity', value: companyProfile?.companyName || invoice.companyName || 'TheUnbound Travel Pvt. Ltd.' },
+      { label: 'Issuing Entity', value: companyProfile?.legalName || companyProfile?.companyName || invoice.companyName || '' },
       { label: 'Proforma Invoice Number', value: `${invoiceNum} (v${versionNum})`, accent: true },
       { label: 'Registered Address', value: regAddress },
       { label: 'Current / Operating Address', value: curAddress && curAddress !== regAddress ? curAddress : '' },
@@ -1339,9 +1353,10 @@ export function generateProformaInvoicePDF(
   // AUTHORITATIVE COMMERCIAL SUMMARY — FINAL BOOKING AMOUNT ONLY
   // STRICT: NO TAX, NO GST, NO SERVICE FEE, NO MARGIN, NO SUPPLIER NETT COST
   const hasPaid = amountPaid > 0;
-  const summaryBoxH = hasPaid ? 34 : 21;
+  const hasCredit = creditBalance > 0;
+  const summaryBoxH = hasPaid ? (hasCredit ? 41 : 34) : 21;
   engine.ensureSpace(summaryBoxH + 14);
-  engine.drawSectionTitle('Commercial Amount Summary', 'Authoritative Committed Booking Total');
+  engine.drawSectionTitle('Commercial Amount Summary', `Snapshot ${snapshotRef}`);
 
   const boxY = engine.cursorY;
   engine.pdf.setFillColor(...COLOR_OBSIDIAN);
@@ -1362,7 +1377,7 @@ export function generateProformaInvoicePDF(
   engine.pdf.setFont('helvetica', 'normal');
   engine.pdf.setFontSize(7.4);
   engine.pdf.text(
-    'Consolidated Final Booking Amount as per committed booking pricing snapshot.',
+    `Consolidated Final Booking Amount locked to Pricing Snapshot ${snapshotRef}.`,
     MARGIN_X + 6,
     boxY + 14.5
   );
@@ -1383,6 +1398,14 @@ export function generateProformaInvoicePDF(
     engine.pdf.setTextColor(0, 198, 166);
     engine.pdf.text('BALANCE DUE', MARGIN_X + 6, boxY + 30.5);
     engine.pdf.text(formatPdfMoney(balanceDue, currency), PAGE_W - MARGIN_X - 6, boxY + 30.5, { align: 'right' });
+
+    if (hasCredit) {
+      engine.pdf.setFont('helvetica', 'bold');
+      engine.pdf.setFontSize(8.5);
+      engine.pdf.setTextColor(253, 224, 71);
+      engine.pdf.text('CREDIT / OVERPAYMENT BALANCE', MARGIN_X + 6, boxY + 37);
+      engine.pdf.text(formatPdfMoney(creditBalance, currency), PAGE_W - MARGIN_X - 6, boxY + 37, { align: 'right' });
+    }
   }
 
   engine.recordBlock(boxY, boxY + summaryBoxH, 'ProformaFinalBookingAmountBox');
@@ -1412,6 +1435,26 @@ export function generateProformaInvoicePDF(
   if (invoice.terms) {
     engine.drawParagraphBlock('Proforma Invoice Terms & Conditions', invoice.terms);
   }
+
+  // Authoritative Company Profile Footer & Non-Tax Disclaimer
+  const footerCompanyName = companyProfile?.legalName || companyProfile?.companyName || invoice.companyName || '';
+  const footerContact = [
+    companyProfile?.email || invoice.companyEmail,
+    companyProfile?.phone || invoice.companyPhone,
+    companyProfile?.website || invoice.companyWebsite
+  ]
+    .filter(Boolean)
+    .join('  |  ');
+  const footerLines = [
+    footerCompanyName ? `Issued By: ${footerCompanyName}` : '',
+    regAddress ? `Registered Address: ${regAddress}` : '',
+    curAddress ? `Current Address: ${curAddress}` : '',
+    footerContact ? `Contact: ${footerContact}` : '',
+    'Disclaimer: This Proforma Invoice is a preliminary commercial document issued for booking confirmation and remittance guidance only. It is not a final statutory invoice.'
+  ]
+    .filter(Boolean)
+    .join('\n');
+  engine.drawParagraphBlock('Company Details & Commercial Disclaimer', footerLines);
 
   const filename = `Proforma_Invoice_${safeFileSegment(invoiceNum)}_${safeFileSegment(bookingRef)}_v${versionNum}.pdf`;
   return engine.buildResult(filename, 'Proforma Invoice');

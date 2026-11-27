@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { AppDatabase } from '../../services/db';
 import { useDisplayCurrency } from '../../context/DisplayCurrencyContext';
+import { resolveAuthoritativeBookingFinancials } from '../../services/bookingManualDiscountEngine';
 import { 
   User 
 } from '../../types';
@@ -363,7 +364,8 @@ export const CMSGlobalSearch: React.FC<CMSGlobalSearchProps> = ({
             matches((b as any).customerName) ||
             matches((b as any).customerEmail)
           ) {
-            const bConv = convertForDisplay(b.totalAmount ?? 0, b.currency || 'USD');
+            const bFin = resolveAuthoritativeBookingFinancials(b);
+            const bConv = convertForDisplay(bFin.current_selling_price, bFin.currency);
             results.push({
               id: b.id || '',
               title: `${b.bookingReference || 'Booking'} — ${cust.leadTravelerName || cust.name || 'Guest'}`,
