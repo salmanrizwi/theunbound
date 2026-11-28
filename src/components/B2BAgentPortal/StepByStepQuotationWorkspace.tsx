@@ -480,6 +480,8 @@ interface Step4DayCardProps {
   removeProductFromQuote: (itemId: string) => void;
   onGoToStep2: () => void;
   onConfigureAndAddRec: (product: Product, dateString: string) => void;
+  isReadOnlyHistoricalMode?: boolean;
+  onSwitchTicketTier?: (item: QuoteItem, nextTierId: string) => void;
 }
 
 const Step4DayCard: React.FC<Step4DayCardProps> = React.memo(({
@@ -502,7 +504,9 @@ const Step4DayCard: React.FC<Step4DayCardProps> = React.memo(({
   onOpenEditItem,
   removeProductFromQuote,
   onGoToStep2,
-  onConfigureAndAddRec
+  onConfigureAndAddRec,
+  isReadOnlyHistoricalMode = false,
+  onSwitchTicketTier
 }) => {
   const [expandedItems, setExpandedItems] = useState<Record<string, boolean>>({});
   const [hasOpenedDay, setHasOpenedDay] = useState<boolean>(isDayExpanded);
@@ -814,6 +818,76 @@ const Step4DayCard: React.FC<Step4DayCardProps> = React.memo(({
                             )}
                           </div>
                         )}
+
+                        {/* Ticket Tier Specification Badge */}
+                        {Boolean(
+                          item.ticketTierName ||
+                          (item.calculation as any)?.selectedTicketTierName ||
+                          item.selected_options?.ticketTierName ||
+                          item.configuration_snapshot?.ticketTierName
+                        ) && (
+                          <div className="mt-1 inline-flex flex-wrap items-center gap-1.5 text-[11px] text-purple-950 bg-purple-50/90 border border-purple-200 px-2 py-0.5 rounded-lg">
+                            <span className="font-bold text-purple-800">
+                              Ticket Tier:{' '}
+                              {item.ticketTierName ||
+                                (item.calculation as any)?.selectedTicketTierName ||
+                                item.selected_options?.ticketTierName ||
+                                item.configuration_snapshot?.ticketTierName}
+                            </span>
+                            {Boolean(item.serviceTime) && (
+                              <>
+                                <span className="text-purple-300">•</span>
+                                <span className="text-purple-700 font-medium">{item.serviceTime}</span>
+                              </>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Ticket Tier Badge & Draft-mode Inline Tier Switcher */}
+                        {(() => {
+                          const masterTicketProd = item.product?.ticketConfig?.ticketTiers?.length
+                            ? item.product
+                            : (item.product?.id ? db.getProductById(item.product.id) : undefined);
+                          const activeTiers = (masterTicketProd?.ticketConfig?.ticketTiers || []).filter(
+                            (t: any) => t && t.status !== 'INACTIVE'
+                          );
+                          const currentTierId =
+                            item.ticketTierId ||
+                            (item.calculation as any)?.selectedTicketTierId ||
+                            item.selected_options?.ticketTierId ||
+                            item.configuration_snapshot?.ticketTierId ||
+                            item.metadata?.ticketTierId ||
+                            '';
+                          const currentTierName =
+                            item.ticketTierName ||
+                            (item.calculation as any)?.selectedTicketTierName ||
+                            item.selected_options?.ticketTierName ||
+                            item.configuration_snapshot?.ticketTierName ||
+                            item.metadata?.ticketTierName ||
+                            '';
+                          if (!currentTierName && activeTiers.length === 0) return null;
+                          return (
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] bg-purple-50/80 border border-purple-200 px-2 py-1 rounded-lg">
+                              <span className="font-bold text-purple-800">
+                                Tier: {currentTierName || activeTiers[0]?.name || 'Ticket Tier'}
+                              </span>
+                              {!isReadOnlyHistoricalMode && onSwitchTicketTier && activeTiers.length > 1 && (
+                                <select
+                                  value={currentTierId || activeTiers.find((t: any) => t.name === currentTierName)?.id || activeTiers[0]?.id || ''}
+                                  onChange={(e) => onSwitchTicketTier(item, e.target.value)}
+                                  className="px-2 py-0.5 rounded-md bg-white border border-purple-300 text-[10px] font-bold text-purple-900 cursor-pointer outline-none focus:ring-1 focus:ring-purple-500"
+                                  aria-label="Switch Ticket Tier"
+                                >
+                                  {activeTiers.map((tier: any) => (
+                                    <option key={tier.id} value={tier.id}>
+                                      {tier.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-500 mt-1">
                           <span>Pax: {item.pax.adults} Adults{item.pax.children > 0 ? `, ${item.pax.children} Ch` : ''}</span>
@@ -1182,7 +1256,7 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
   onOpenVersionHistory
 }) => {
   const { user, updateUserProfile } = useAuth();
-  const { setIsQuoteDrawerOpen, removeProductsByIds } = useQuotation();
+  const { setIsQuoteDrawerOpen, removeProductsByIds, updateQuoteItem } = useQuotation();
   const canViewInternalCosts = canUserViewInternalCostBreakdown(user);
   const hubUidRef = useRef<number>(0);
   const [showInternalItemized, setShowInternalItemized] = useState<boolean>(false);
@@ -3372,15 +3446,49 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
 
   const handleConfigureAndAddRec = useCallback(
     (recProd: Product, dateString: string) => {
+      const activeTiers = (recProd.ticketConfig?.ticketTiers || []).filter((t: any) => t && t.status !== 'INACTIVE');
+      const firstActiveTier = activeTiers[0];
       addProductToQuote(recProd, {
         adults: adultsCount,
         children: childrenCount,
         infants: infantsCount,
         travelDate: dateString,
+        ...(firstActiveTier
+          ? {
+              ticketTierId: firstActiveTier.id,
+              ticketTierName: firstActiveTier.name,
+              ticketTierDescription: firstActiveTier.description
+            }
+          : {}),
         openDrawer: false
       });
     },
     [addProductToQuote, adultsCount, childrenCount, infantsCount]
+  );
+
+  const handleSwitchTicketTier = useCallback(
+    (item: QuoteItem, nextTierId: string) => {
+      if (isReadOnlyHistoricalMode) return;
+      const masterProd = db.getProductById(item.product?.id) || item.product;
+      const activeTiers = (masterProd?.ticketConfig?.ticketTiers || item.product?.ticketConfig?.ticketTiers || []).filter(
+        (t: any) => t && t.status !== 'INACTIVE'
+      );
+      const matchedTier = activeTiers.find((t: any) => t.id === nextTierId);
+      if (!matchedTier) return;
+      updateQuoteItem(item.id, masterProd, {
+        adults: item.pax?.adults ?? adultsCount,
+        children: item.pax?.children ?? childrenCount,
+        infants: item.pax?.infants ?? infantsCount,
+        travelDate: item.travelDate,
+        serviceTime: item.serviceTime,
+        notes: item.notes,
+        selectedAddonIds: item.selectedAddonIds,
+        ticketTierId: matchedTier.id,
+        ticketTierName: matchedTier.name,
+        ticketTierDescription: matchedTier.description
+      });
+    },
+    [isReadOnlyHistoricalMode, updateQuoteItem, adultsCount, childrenCount, infantsCount]
   );
 
   const hotelTotalSelling = useMemo(() => {
@@ -5710,6 +5818,8 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                       removeProductFromQuote={removeProductFromQuote}
                       onGoToStep2={handleGoToStep2}
                       onConfigureAndAddRec={handleConfigureAndAddRec}
+                      isReadOnlyHistoricalMode={isReadOnlyHistoricalMode}
+                      onSwitchTicketTier={handleSwitchTicketTier}
                     />
                   );
                 })}
@@ -6037,17 +6147,29 @@ const StepByStepQuotationWorkspaceBase: React.FC<StepByStepQuotationWorkspacePro
                                   </span>
                                 </div>
                               ))}
-                              {dayActivities.map((it, idx) => (
-                                <div key={it.id || `day-${slot.dayNumber}-act-${idx}`} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
-                                  <div className="flex items-center space-x-2 truncate">
+                              {dayActivities.map((it, idx) => {
+                                const tierName =
+                                  it.ticketTierName ||
+                                  (it.calculation as any)?.selectedTicketTierName ||
+                                  it.selected_options?.ticketTierName ||
+                                  it.configuration_snapshot?.ticketTierName;
+                                return (
+                                <div key={it.id || `day-${slot.dayNumber}-act-${idx}`} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between gap-2">
+                                  <div className="flex items-center space-x-2 min-w-0">
                                     <Compass className="w-4 h-4 text-teal-600 shrink-0" />
                                     <span className="font-bold text-slate-900 truncate">{getInventoryDisplayName(it)}</span>
+                                    {tierName && (
+                                      <span className="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-bold shrink-0">
+                                        {tierName}
+                                      </span>
+                                    )}
                                   </div>
                                   <span className="text-[10px] font-mono text-slate-500 shrink-0 ml-2">
                                     {formatCurrency(it.calculation?.finalTotalSellingPrice || 0, currency)}
                                   </span>
                                 </div>
-                              ))}
+                                );
+                              })}
                               {dayAncillaryItems.map((it, idx) => (
                                 <div key={it.id || `day-${slot.dayNumber}-anc-${idx}`} className="p-2.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between">
                                   <div className="flex items-center space-x-2 truncate">

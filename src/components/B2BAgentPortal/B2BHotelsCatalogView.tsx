@@ -51,7 +51,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   onOpenCreateQuote,
   onViewHotelDetails
 }) => {
-  const { items, removeProductFromQuote, currency, setIsQuoteDrawerOpen } = useQuotation();
+  const { items, cartItems, removeFromCart, currency, setIsQuoteDrawerOpen } = useQuotation();
   const db = AppDatabase.getInstance();
   const [dbTick, setDbTick] = useState(0);
 
@@ -260,7 +260,7 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   };
 
   const isHotelInQuote = (hotelId: string) => {
-    return items.some(it => it.product && (it.product.id === hotelId || it.product.id.includes(hotelId)));
+    return (cartItems || []).some(it => it.product && (it.product.id === hotelId || it.product.id.includes(hotelId)));
   };
 
   const handleOpenAddHotelModal = (hotel: Hotel) => {
@@ -268,9 +268,9 @@ export const B2BHotelsCatalogView: React.FC<B2BHotelsCatalogViewProps> = ({
   };
 
   const handleRemoveHotelFromQuote = (hotelId: string) => {
-    const existing = items.find(it => it.product && (it.product.id === hotelId || it.product.id.includes(hotelId)));
+    const existing = (cartItems || []).find(it => it.product && (it.product.id === hotelId || it.product.id.includes(hotelId)));
     if (existing) {
-      removeProductFromQuote(existing.id);
+      void removeFromCart(existing.id);
     }
   };
 

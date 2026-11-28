@@ -2119,6 +2119,9 @@ export interface PricingCalculationRequest {
   baseSellingPriceInTargetCurrency?: number;
   surchargeOverrides?: QuotationSurchargeOverride[];
   frozenAppliedSurcharges?: AppliedSurchargeDetail[];
+  ticketTierId?: string;
+  tierId?: string;
+  ticketTierName?: string;
 }
 
 export interface PricingCalculationResult {
@@ -2247,6 +2250,9 @@ export interface PricingCalculationResult {
   rateSnapshot?: any;
   pricingVersion?: number | string;
   commercialNotes?: string;
+  selectedTicketTierId?: string;
+  selectedTicketTierName?: string;
+  selectedTicketTierDescription?: string;
 }
 
 /**
@@ -2326,6 +2332,9 @@ export interface AgentPricingResponse {
   surchargeTotal?: number;
   baseSellingPriceBeforeSurcharges?: number;
   surchargeValidationMessage?: string;
+  selectedTicketTierId?: string;
+  selectedTicketTierName?: string;
+  selectedTicketTierDescription?: string;
 }
 
 export type QuoteItemSource = 'AI_PLANNER' | 'USER' | 'SYSTEM' | 'PACKAGE';
@@ -2403,6 +2412,9 @@ export interface QuoteItem {
   vehicleNameSnapshot?: string;
   vehicleTypeSnapshot?: string;
   vehicleCapacitySnapshot?: number;
+  ticketTierId?: string;
+  ticketTierName?: string;
+  ticketTierDescription?: string;
   metadata?: Record<string, any>;
 
   // Agent-Controlled Additional Markup (Per-Product within Quotation)
@@ -3764,6 +3776,9 @@ export interface BookingItem {
   reportingTime?: string;
   ticketDate?: string;
   ticketEntryTime?: string;
+  ticketTierId?: string;
+  ticketTierName?: string;
+  ticketTierDescription?: string;
   pickupDate?: string;
   pickupTime?: string;
   returnTime?: string;

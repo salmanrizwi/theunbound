@@ -12760,6 +12760,22 @@ export class AppDatabase {
         const descSnap = (item.contentSnapshot as any)?.description || (item.contentSnapshot as any)?.shortDescription || masterProduct?.description || masterHotel?.description;
         const narrativeSnap = (item.contentSnapshot as any)?.narrative || (masterProduct as any)?.narrative || (masterHotel as any)?.narrative;
         const overviewSnap = (item.contentSnapshot as any)?.overview || (masterProduct as any)?.overview || (masterHotel as any)?.overview;
+        const resolvedTierId =
+          item.ticketTierId ||
+          (item.calculation as any)?.selectedTicketTierId ||
+          item.selected_options?.ticketTierId ||
+          item.configuration_snapshot?.ticketTierId;
+        const resolvedTierName =
+          item.ticketTierName ||
+          (item.calculation as any)?.selectedTicketTierName ||
+          item.selected_options?.ticketTierName ||
+          item.configuration_snapshot?.ticketTierName;
+        const resolvedTierDescription =
+          item.ticketTierDescription ||
+          (item.calculation as any)?.selectedTicketTierDescription ||
+          item.selected_options?.ticketTierDescription ||
+          item.configuration_snapshot?.ticketTierDescription;
+
         return {
           id: item.id || `bitem-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           productId: item.product?.id || 'prod-custom',
@@ -12779,6 +12795,10 @@ export class AppDatabase {
           manualHotelDetails: (item as any).manualHotelDetails,
           accommodationType: (item as any).accommodationType || item.product?.accommodationType,
           travelDate: item.travelDate || quote.travelStartDate || new Date().toISOString().split('T')[0],
+          serviceTime: item.serviceTime,
+          ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+          ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+          ...(resolvedTierDescription ? { ticketTierDescription: resolvedTierDescription } : {}),
           adults: item.pax?.adults ?? 2,
           children: item.pax?.children ?? 0,
           infants: item.pax?.infants ?? 0,
@@ -12792,6 +12812,24 @@ export class AppDatabase {
           currency: quote.currency || 'USD',
           supplierStatus: 'PENDING_DISPATCH' as const,
           supplierNotes: item.notes,
+          serviceTime: item.serviceTime,
+          ticketTierId:
+            item.ticketTierId ||
+            (item.calculation as any)?.selectedTicketTierId ||
+            item.selected_options?.ticketTierId ||
+            item.configuration_snapshot?.ticketTierId ||
+            item.metadata?.ticketTierId,
+          ticketTierName:
+            item.ticketTierName ||
+            (item.calculation as any)?.selectedTicketTierName ||
+            item.selected_options?.ticketTierName ||
+            item.configuration_snapshot?.ticketTierName ||
+            item.metadata?.ticketTierName,
+          ticketTierDescription:
+            item.ticketTierDescription ||
+            (item.calculation as any)?.selectedTicketTierDescription ||
+            item.selected_options?.ticketTierDescription ||
+            item.configuration_snapshot?.ticketTierDescription,
           serviceDescription: descSnap,
           serviceNarrative: narrativeSnap,
           serviceOverview: overviewSnap,

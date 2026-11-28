@@ -65,7 +65,7 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
   onOpenCalculator,
   onItemAddedToQuote
 }) => {
-  const { items, addProductToQuote, currency } = useQuotation();
+  const { cartItems, addProductToQuote, currency } = useQuotation();
 
   // Configuration Modal States
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
@@ -73,13 +73,13 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
   const [modalExistingItemId, setModalExistingItemId] = useState<string | undefined>(undefined);
 
   const handleOpenConfigureProduct = (prod: Product) => {
-    const existing = items.find(it => it.product.sku === prod.sku || it.product.id === prod.id);
+    const existing = cartItems.find(it => it.product.sku === prod.sku || it.product.id === prod.id);
     setModalExistingItemId(existing?.id);
     setSelectedProductForModal(prod);
   };
 
   const handleOpenConfigureHotel = (hotel: Hotel) => {
-    const existing = items.find(it => it.product.id === hotel.id || it.product.supplierProductCode === `SUP-HTL-${hotel.id}`);
+    const existing = cartItems.find(it => it.product.id === hotel.id || it.product.supplierProductCode === `SUP-HTL-${hotel.id}`);
     setModalExistingItemId(existing?.id);
     setSelectedHotelForModal(hotel);
   };
@@ -132,8 +132,8 @@ export const DestinationHubsContextView: React.FC<DestinationHubsViewProps> = ({
     );
   }, [allHotels, destination]);
 
-  const isProductInQuote = (sku: string) => items.some(item => item.product.sku === sku);
-  const isHotelInQuote = (hotelId: string) => items.some(item => item.product.supplierProductCode === `SUP-HTL-${hotelId}` || item.product.id === hotelId);
+  const isProductInQuote = (sku: string) => cartItems.some(item => item.product.sku === sku);
+  const isHotelInQuote = (hotelId: string) => cartItems.some(item => item.product.supplierProductCode === `SUP-HTL-${hotelId}` || item.product.id === hotelId);
 
   if (!destination || !inventoryVisibilityService.isDestinationActiveForB2B(destination)) {
     return (
@@ -588,7 +588,7 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
   onOpenCalculator,
   onItemAddedToQuote
 }) => {
-  const { items, addProductToQuote, currency } = useQuotation();
+  const { cartItems, addProductToQuote, currency } = useQuotation();
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'TOURS' | 'TRANSFERS' | 'DAY_TRIPS' | 'HOTELS'>('ALL');
   const [sortBy, setSortBy] = useState<'POPULAR' | 'PRICE_LOW' | 'PRICE_HIGH' | 'NAME'>('POPULAR');
@@ -599,13 +599,13 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
   const [modalExistingItemId, setModalExistingItemId] = useState<string | undefined>(undefined);
 
   const handleOpenConfigureProduct = (prod: Product) => {
-    const existing = items.find(it => it.product.sku === prod.sku || it.product.id === prod.id);
+    const existing = cartItems.find(it => it.product.sku === prod.sku || it.product.id === prod.id);
     setModalExistingItemId(existing?.id);
     setSelectedProductForModal(prod);
   };
 
   const handleOpenConfigureHotel = (hotel: Hotel) => {
-    const existing = items.find(it => it.product.id === hotel.id || it.product.supplierProductCode === `SUP-HTL-${hotel.id}`);
+    const existing = cartItems.find(it => it.product.id === hotel.id || it.product.supplierProductCode === `SUP-HTL-${hotel.id}`);
     setModalExistingItemId(existing?.id);
     setSelectedHotelForModal(hotel);
   };
@@ -722,8 +722,8 @@ export const HubProductsContextView: React.FC<HubProductsViewProps> = ({
     return hots;
   }, [hubHotels, categoryFilter, searchQuery]);
 
-  const isProductInQuote = (sku: string) => items.some(item => item.product.sku === sku);
-  const isHotelInQuote = (hotelId: string) => items.some(item => item.product.supplierProductCode === `SUP-HTL-${hotelId}` || item.product.id === hotelId);
+  const isProductInQuote = (sku: string) => cartItems.some(item => item.product.sku === sku);
+  const isHotelInQuote = (hotelId: string) => cartItems.some(item => item.product.supplierProductCode === `SUP-HTL-${hotelId}` || item.product.id === hotelId);
 
   const parentDest = destinationName || hub.destinationName || 'Destination';
 

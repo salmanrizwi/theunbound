@@ -658,7 +658,7 @@ export function transformPackageToQuoteState(
   const calculatePriceForItem = (
     prod: Product,
     travelDate: string,
-    extra?: { itemId?: string; serviceEndDate?: string; nights?: number; roomsCount?: number }
+    extra?: { itemId?: string; serviceEndDate?: string; nights?: number; roomsCount?: number; ticketTierId?: string; ticketTierName?: string }
   ) => {
     const params = {
       productId: prod.id,
@@ -672,6 +672,8 @@ export function transformPackageToQuoteState(
       serviceEndDate: extra?.serviceEndDate,
       nights: extra?.nights,
       roomsCount: extra?.roomsCount,
+      ticketTierId: extra?.ticketTierId,
+      ticketTierName: extra?.ticketTierName,
       targetCurrency,
       selectedAddonIds: [],
       userRole: user?.role || 'B2B_AGENT',
@@ -722,6 +724,9 @@ export function transformPackageToQuoteState(
       manualHotelDetails?: ManualHotelDetails;
       accommodationType?: any;
       dayNumber?: number;
+      ticketTierId?: string;
+      ticketTierName?: string;
+      ticketTierDescription?: string;
     }
   ): QuoteItem => {
     const itemId = `item-pkg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -729,9 +734,14 @@ export function transformPackageToQuoteState(
       itemId,
       serviceEndDate: itemOptions.checkOutDate || itemOptions.manualHotelDetails?.checkOutDate,
       nights: itemOptions.nights || itemOptions.manualHotelDetails?.numberOfNights || (product as any).nights,
-      roomsCount: itemOptions.roomsCount || itemOptions.manualHotelDetails?.numberOfRooms || (product as any).roomsCount
+      roomsCount: itemOptions.roomsCount || itemOptions.manualHotelDetails?.numberOfRooms || (product as any).roomsCount,
+      ticketTierId: itemOptions.ticketTierId,
+      ticketTierName: itemOptions.ticketTierName
     });
     const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
+    const resolvedTierId = itemOptions.ticketTierId || (calculation as any)?.selectedTicketTierId;
+    const resolvedTierName = itemOptions.ticketTierName || (calculation as any)?.selectedTicketTierName;
+    const resolvedTierDesc = itemOptions.ticketTierDescription || (calculation as any)?.selectedTicketTierDescription;
 
     const item: QuoteItem = {
       id: itemId,
@@ -741,6 +751,9 @@ export function transformPackageToQuoteState(
       serviceTime: itemOptions.serviceTime,
       notes: itemOptions.notes,
       selectedAddonIds: [],
+      ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+      ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+      ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {}),
       calculation,
       hubId: itemOptions.hubId,
       hotelId: itemOptions.hotelId,
@@ -1181,7 +1194,10 @@ export function transformPackageToQuoteState(
         serviceTime,
         hubId: matchedHub?.id,
         dayNumber: dayNum,
-        notes: itemNoteParts.join(' • ')
+        notes: itemNoteParts.join(' • '),
+        ticketTierId: (matchedProdRef as any)?.ticketTierId || (day as any)?.ticketTierId,
+        ticketTierName: (matchedProdRef as any)?.ticketTierName || (day as any)?.ticketTierName,
+        ticketTierDescription: (matchedProdRef as any)?.ticketTierDescription
       });
 
       quoteItems.push(quoteItem);

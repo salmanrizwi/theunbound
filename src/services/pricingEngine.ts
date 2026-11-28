@@ -1553,6 +1553,10 @@ export function calculateProductPrice(
   let vehicleDetails: PricingCalculationResult['vehicleDetails'] | undefined = undefined;
   let matchingTierFound: TieredPrice | undefined = undefined;
 
+  let selectedTicketTierId: string | undefined = undefined;
+  let selectedTicketTierName: string | undefined = undefined;
+  let selectedTicketTierDescription: string | undefined = undefined;
+
   if (isCapacity) {
     // --- CAPACITY-BASED PRICING MODEL (Sections 2–14, 51) ---
     // CORE PRINCIPLE: Commercial passenger capacity is determined strictly by the Product's
@@ -1743,16 +1747,49 @@ export function calculateProductPrice(
       infantNetInNative = baseInfantNet * infants * quantity;
       rawTotalNetCostInNative = adultNetInNative + childNetInNative + infantNetInNative;
     }
-  } else if ((product.category as string) === 'Tickets' || (product.category as string) === 'Ticket') {
-    // Ticket Per-Person Pricing Engine (Section 15)
+  } else if ((product.category as string) === 'Tickets' || (product.category as string) === 'Ticket' || (product.productType as string) === 'Ticket') {
+    // Ticket Per-Person Pricing Engine (Section 15) — STRICT TIER RESOLUTION (Zero Silent Fallback to Tier 1)
     const ticketTiers = product.ticketConfig?.ticketTiers || [];
-    const requestedTierId = (request as any).ticketTierId || (request as any).tierId;
-    const matchedTier = ticketTiers.find(t => t.id === requestedTierId && t.status !== 'INACTIVE') || ticketTiers[0];
+    const activeTicketTiers = ticketTiers.filter(t => t && t.status !== 'INACTIVE');
+    const requestedTierId = String((request as any).ticketTierId || (request as any).tierId || '').trim();
+    const requestedTierName = String((request as any).ticketTierName || '').trim();
+
+    let matchedTier: typeof ticketTiers[number] | undefined = undefined;
+    if (requestedTierId) {
+      const tierById = ticketTiers.find(t => t.id === requestedTierId);
+      if (!tierById) {
+        throw new Error(`Invalid or unknown ticket tier ID "${requestedTierId}" for ticket product "${product.name}".`);
+      }
+      if (tierById.status === 'INACTIVE') {
+        throw new Error(`Selected ticket tier "${tierById.name || requestedTierId}" is inactive and cannot be priced.`);
+      }
+      matchedTier = tierById;
+    } else if (requestedTierName) {
+      const tierByName = ticketTiers.find(t => (t.name || '').trim().toLowerCase() === requestedTierName.toLowerCase());
+      if (!tierByName) {
+        throw new Error(`Invalid or unknown ticket tier "${requestedTierName}" for ticket product "${product.name}".`);
+      }
+      if (tierByName.status === 'INACTIVE') {
+        throw new Error(`Selected ticket tier "${tierByName.name}" is inactive and cannot be priced.`);
+      }
+      matchedTier = tierByName;
+    } else if (ticketTiers.length > 0) {
+      if (activeTicketTiers.length === 0) {
+        throw new Error(`No active ticket tiers are configured for ticket product "${product.name}".`);
+      }
+      matchedTier = activeTicketTiers[0];
+    }
 
     if (matchedTier) {
+      selectedTicketTierId = matchedTier.id;
+      selectedTicketTierName = matchedTier.name;
+      selectedTicketTierDescription = matchedTier.description;
+      if (matchedTier.currency) {
+        nativeCurrency = currencyEngine.normalizeCurrencyCode(matchedTier.currency, nativeCurrency);
+      }
       const adultNett = matchedTier.adultNetPrice !== undefined ? matchedTier.adultNetPrice : baseAdultNet;
-      const childNett = matchedTier.childNetPrice !== undefined ? matchedTier.childNetPrice : baseChildNet;
-      const infantNett = matchedTier.infantNetPrice || 0;
+      const childNett = matchedTier.childNetPrice !== undefined ? matchedTier.childNetPrice : (adultNett * 0.5);
+      const infantNett = matchedTier.infantNetPrice !== undefined ? matchedTier.infantNetPrice : 0;
       adultNetInNative = adultNett * adults * quantity;
       childNetInNative = childNett * children * quantity;
       infantNetInNative = infantNett * infants * quantity;
@@ -1785,7 +1822,7 @@ export function calculateProductPrice(
         const isPerBooking = upsell.priceType === 'PER_BOOKING' || upsell.priceType === 'PER_VEHICLE';
         const chargeablePax = isPerBooking ? 1 : (isCapacity ? 1 : (adults + children));
         const unitCost = upsell.netCost !== undefined ? upsell.netCost : upsell.price;
-        const upsellAmountConverted = convertCurrency(unitCost * chargeablePax * quantity, upsell.currency, product.currency);
+        const upsellAmountConverted = convertCurrency(unitCost * chargeablePax * quantity, upsell.currency || nativeCurrency, nativeCurrency);
         addonsNetInNative += upsellAmountConverted;
       }
     } else if (product.addons && product.addons.length > 0) {
@@ -1793,7 +1830,7 @@ export function calculateProductPrice(
       const selectedAddons = product.addons.filter(a => activeUpsellIds.includes(a.id));
       for (const addon of selectedAddons) {
         const chargeablePax = isCapacity ? 1 : (adults + children);
-        const addonAmountConverted = convertCurrency(addon.pricePerPax * chargeablePax * quantity, addon.currency, product.currency);
+        const addonAmountConverted = convertCurrency(addon.pricePerPax * chargeablePax * quantity, addon.currency || nativeCurrency, nativeCurrency);
         addonsNetInNative += addonAmountConverted;
       }
     }
@@ -2211,6 +2248,9 @@ export function calculateProductPrice(
     isCapacityBased: isCapacity,
     pricingMethod: isCapacity ? 'capacity_based' : 'per_person',
     vehicleDetails,
+    ...(selectedTicketTierId ? { selectedTicketTierId } : {}),
+    ...(selectedTicketTierName ? { selectedTicketTierName } : {}),
+    ...(selectedTicketTierDescription ? { selectedTicketTierDescription } : {}),
 
     // Native Commercial Calculation (Calculate Native First, Convert Second)
     nativeCurrency,
@@ -3361,6 +3401,9 @@ export interface QuoteItemForBreakdown {
   manualHotelDetails?: any;
   isNoAccommodation?: boolean;
   notes?: string;
+  ticketTierId?: string;
+  ticketTierName?: string;
+  ticketTierDescription?: string;
   calculation?: any;
 }
 
@@ -3961,7 +4004,7 @@ export function calculateQuoteInternalBreakdown(
       .filter(s => s && !s.isDeleted && s.status === 'ACTIVE' && s.isActive !== false)
       .map(s => s.id)
   );
-  const itemsByIdMap = new Map<string, QuoteItem>();
+  const itemsByIdMap = new Map<string, QuoteItemForBreakdown>();
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (it && it.id && !itemsByIdMap.has(it.id)) itemsByIdMap.set(it.id, it);
@@ -4123,7 +4166,32 @@ export function calculateQuoteInternalBreakdown(
     // (Hotels, Tours, Tickets, Transfers, Guides, Rail, Ferries, Restaurants, Yachts, Visas, Ancillaries)
     try {
       const existingCalc = item.calculation;
-      const rawSourceCurrency = item.product?.nativeCurrency || item.product?.currency || existingCalc?.nativeCurrency || targetCurrency;
+      const itemTicketTierId =
+        item.ticketTierId ||
+        (item as any).selected_options?.ticketTierId ||
+        (item as any).configuration_snapshot?.ticketTierId ||
+        (existingCalc as any)?.selectedTicketTierId ||
+        undefined;
+      const itemTicketTierName =
+        item.ticketTierName ||
+        (item as any).selected_options?.ticketTierName ||
+        (item as any).configuration_snapshot?.ticketTierName ||
+        (item as any).metadata?.ticketRequirements ||
+        (existingCalc as any)?.selectedTicketTierName ||
+        undefined;
+      const matchedTierForCurrency = Array.isArray(item.product?.ticketConfig?.ticketTiers)
+        ? item.product!.ticketConfig!.ticketTiers.find(
+            t =>
+              (itemTicketTierId && t.id === itemTicketTierId) ||
+              (!itemTicketTierId && itemTicketTierName && (t.name || '').trim().toLowerCase() === String(itemTicketTierName).trim().toLowerCase())
+          )
+        : undefined;
+      const rawSourceCurrency =
+        matchedTierForCurrency?.currency ||
+        existingCalc?.nativeCurrency ||
+        item.product?.nativeCurrency ||
+        item.product?.currency ||
+        targetCurrency;
       const snapshotRate = snapshotLine?.appliedExchangeRate ??
         (preserveHistoricalSnapshot && existingCalc?.currency === targetCurrency ? (existingCalc as any)?.fxDetails?.effectiveRate : undefined);
 
@@ -4200,6 +4268,13 @@ export function calculateQuoteInternalBreakdown(
         !existingCalc?.travelDate ||
         existingCalc.travelDate === item.travelDate;
 
+      const existingCalcTierId = (existingCalc as any)?.selectedTicketTierId;
+      const existingCalcTierName = (existingCalc as any)?.selectedTicketTierName;
+      const isTicketTierMatching =
+        preserveHistoricalSnapshot ||
+        ((!itemTicketTierId || existingCalcTierId === itemTicketTierId) &&
+          (!itemTicketTierName || !existingCalcTierName || existingCalcTierName === itemTicketTierName));
+
       // For unlocked/draft quotations, ensure cached item.calculation matches current Surcharge Management catalog version
       // and does not contain any deleted, deactivated, or non-existent surcharge IDs.
       const hasStaleOrMissingDraftSurcharge =
@@ -4232,6 +4307,7 @@ export function calculateQuoteInternalBreakdown(
         existingCalcCurrency === targetCurrency &&
         isRateStillCurrent &&
         isMarginModeStillCurrent &&
+        isTicketTierMatching &&
         isSurchargeCatalogVersionCurrent &&
         (preserveHistoricalSnapshot || (hasCompleteSurchargeList && isTravelDateCurrent))
       );
@@ -4290,6 +4366,8 @@ export function calculateQuoteInternalBreakdown(
             bookingDate,
             targetCurrency,
             selectedAddonIds: item.selectedAddonIds || [],
+            ticketTierId: itemTicketTierId,
+            ticketTierName: itemTicketTierName,
             surchargeOverrides,
             frozenAppliedSurcharges: preserveHistoricalSnapshot ? (snapshotLine?.appliedSurcharges || existingCalc?.appliedSurcharges) : undefined,
             ...(snapshotRate ? { snapshotExchangeRate: snapshotRate } : {})
@@ -4960,7 +5038,11 @@ function buildQuoteBreakdownCacheKey(args: {
       (calc as any).surchargeCatalogVersion ?? '',
       calc.surchargeTotal ?? '',
       calc.appliedSurcharges?.length || 0,
-      calc.travelDate || ''
+      calc.travelDate || '',
+      it.ticketTierId || it.selected_options?.ticketTierId || '',
+      it.ticketTierName || it.selected_options?.ticketTierName || '',
+      calc.selectedTicketTierId || '',
+      calc.selectedTicketTierName || ''
     ].join(':');
   }).join('|');
 
@@ -5428,7 +5510,32 @@ export function calculateQuoteTotal(
     }
 
     const calc = it.calculation as any;
-    const rawSourceCurrency = it.product?.nativeCurrency || it.product?.currency || calc?.nativeCurrency || effectiveCurrency;
+    const itemTicketTierId =
+      it.ticketTierId ||
+      it.selected_options?.ticketTierId ||
+      it.configuration_snapshot?.ticketTierId ||
+      calc?.selectedTicketTierId ||
+      undefined;
+    const itemTicketTierName =
+      it.ticketTierName ||
+      it.selected_options?.ticketTierName ||
+      it.configuration_snapshot?.ticketTierName ||
+      it.metadata?.ticketRequirements ||
+      calc?.selectedTicketTierName ||
+      undefined;
+    const matchedTierForCurr = Array.isArray(it.product?.ticketConfig?.ticketTiers)
+      ? it.product!.ticketConfig!.ticketTiers.find(
+          t =>
+            (itemTicketTierId && t.id === itemTicketTierId) ||
+            (!itemTicketTierId && itemTicketTierName && (t.name || '').trim().toLowerCase() === String(itemTicketTierName).trim().toLowerCase())
+        )
+      : undefined;
+    const rawSourceCurrency =
+      matchedTierForCurr?.currency ||
+      calc?.nativeCurrency ||
+      it.product?.nativeCurrency ||
+      it.product?.currency ||
+      effectiveCurrency;
     const snapshotRate = preserveHistorical && calc?.currency === effectiveCurrency ? calc?.fxDetails?.effectiveRate : undefined;
     const fxCheck = snapshotRate
       ? { isValid: true, fromCode: rawSourceCurrency, toCode: effectiveCurrency, effectiveRate: snapshotRate }
@@ -5456,6 +5563,11 @@ export function calculateQuoteTotal(
         : (calcMarginMode === expectedMarginMode &&
             (isProductLevelMarginEnabled ||
               Math.abs(((calc?.markupRate || 0) * 100) - customAgentMarginPercent) < 0.001)));
+
+    const isTicketTierMatching =
+      preserveHistorical ||
+      ((!itemTicketTierId || calc?.selectedTicketTierId === itemTicketTierId) &&
+        (!itemTicketTierName || !calc?.selectedTicketTierName || calc?.selectedTicketTierName === itemTicketTierName));
 
     const hasItemSurchargeOverrides =
       Array.isArray(quoteSurchargeOverrides) &&
@@ -5490,6 +5602,7 @@ export function calculateQuoteTotal(
       calcCurrency === effectiveCurrency &&
       isRateStillCurrent &&
       isMarginModeMatching &&
+      isTicketTierMatching &&
       isSurchargeCatalogVersionCurrent &&
       (preserveHistorical || (hasCompleteSurchargeList && isTravelDateCurrent))
     ) {
@@ -5543,6 +5656,8 @@ export function calculateQuoteTotal(
         coverageDays: itemCoverageDays,
         targetCurrency: effectiveCurrency,
         selectedAddonIds: it.selectedAddonIds || [],
+        ticketTierId: itemTicketTierId,
+        ticketTierName: itemTicketTierName,
         surchargeOverrides: quoteSurchargeOverrides,
         productLevelMarginEnabled: isProductLevelMarginEnabled,
         customAgentMarginPercent,

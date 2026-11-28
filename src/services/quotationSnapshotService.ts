@@ -257,6 +257,24 @@ export function computeQuotationCommercialContentHash(
       isNoAccommodation: Boolean(it.isNoAccommodation),
       pax: it.pax || null,
       selectedAddonIds: it.selectedAddonIds || [],
+      ticketTierId:
+        it.ticketTierId ||
+        (it.calculation as any)?.selectedTicketTierId ||
+        it.selected_options?.ticketTierId ||
+        it.configuration_snapshot?.ticketTierId ||
+        '',
+      ticketTierName:
+        it.ticketTierName ||
+        (it.calculation as any)?.selectedTicketTierName ||
+        it.selected_options?.ticketTierName ||
+        it.configuration_snapshot?.ticketTierName ||
+        '',
+      ticketTierDescription:
+        it.ticketTierDescription ||
+        (it.calculation as any)?.selectedTicketTierDescription ||
+        it.selected_options?.ticketTierDescription ||
+        it.configuration_snapshot?.ticketTierDescription ||
+        '',
       serviceTime: it.serviceTime || '',
       notes: it.notes || '',
       agentAdditionalMarkupType: it.agentAdditionalMarkupType || '',

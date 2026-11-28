@@ -482,6 +482,9 @@ export function sanitizePricingResultForAgent(
     isCapacityBased: calc.isCapacityBased,
     pricingMethod: calc.pricingMethod,
     vehicleDetails: safeVehicleDetails,
+    ...(calc.selectedTicketTierId ? { selectedTicketTierId: calc.selectedTicketTierId } : {}),
+    ...(calc.selectedTicketTierName ? { selectedTicketTierName: calc.selectedTicketTierName } : {}),
+    ...(calc.selectedTicketTierDescription ? { selectedTicketTierDescription: calc.selectedTicketTierDescription } : {}),
 
     rateEffectiveTo: calc.rateEffectiveTo,
     isAuthoritative: calc.isAuthoritative ?? true,

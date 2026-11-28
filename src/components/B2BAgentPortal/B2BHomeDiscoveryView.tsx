@@ -82,7 +82,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   onItemAddedToQuote
 }) => {
   const { user } = useAuth();
-  const { items, addProductToQuote, removeProductFromQuote, currency } = useQuotation();
+  const { cartItems, addProductToQuote, removeFromCart, currency } = useQuotation();
   const db = AppDatabase.getInstance();
   const [imageTick, setImageTick] = useState(0);
 
@@ -159,19 +159,19 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
   }, [visibleDestinationsList, selectedDestinationContext]);
 
   const handleOpenConfigureProduct = (prod: Product) => {
-    const existing = items.find(it => it.product.id === prod.id || it.product.sku === prod.sku);
+    const existing = cartItems.find(it => it.product.id === prod.id || it.product.sku === prod.sku);
     setModalExistingItemId(existing?.id);
     setSelectedProductForModal(prod);
   };
 
   const handleOpenConfigureHotel = (hotel: Hotel) => {
-    const existing = items.find(it => it.product.id === hotel.id || it.product.supplierProductCode === `SUP-HTL-${hotel.id}`);
+    const existing = cartItems.find(it => it.product.id === hotel.id || it.product.supplierProductCode === `SUP-HTL-${hotel.id}`);
     setModalExistingItemId(existing?.id);
     setSelectedHotelForModal(hotel);
   };
 
   const handleOpenConfigureVisa = (visa: VisaProduct) => {
-    const existing = items.find(it => it.product.id === visa.id || it.product.id.includes(visa.id));
+    const existing = cartItems.find(it => it.product.id === visa.id || it.product.id.includes(visa.id));
     setModalExistingItemId(existing?.id);
     setSelectedVisaForModal(visa);
   };
@@ -338,22 +338,22 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
     };
   };
 
-  const isProductInQuote = (productId: string) => items.some(it => it.product.id === productId);
-  const isHotelInQuote = (hotelId: string) => items.some(it => it.product.id === hotelId);
+  const isProductInQuote = (productId: string) => cartItems.some(it => it.product.id === productId);
+  const isHotelInQuote = (hotelId: string) => cartItems.some(it => it.product.id === hotelId);
 
   const toggleProduct = (prod: Product) => {
-    const existing = items.find(it => it.product.id === prod.id);
+    const existing = cartItems.find(it => it.product.id === prod.id);
     if (existing) {
-      removeProductFromQuote(existing.id);
+      void removeFromCart(existing.id);
     } else {
       addProductToQuote(prod, { adults: 2, children: 0, infants: 0 });
     }
   };
 
   const toggleHotel = (hotel: Hotel) => {
-    const existing = items.find(it => it.product.id === hotel.id);
+    const existing = cartItems.find(it => it.product.id === hotel.id);
     if (existing) {
-      removeProductFromQuote(existing.id);
+      void removeFromCart(existing.id);
     } else {
       const room = hotel.roomTypes?.[0];
       const rateUSD = room?.rates?.[0]?.adultNettCost || room?.rates?.[0]?.doubleNetRate || 380;
@@ -764,7 +764,7 @@ export const B2BHomeDiscoveryView: React.FC<B2BHomeDiscoveryViewProps> = ({
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                           {searchResults.visas.slice(0, 3).map(v => {
-                            const inQuote = items.some(it => it.product.id === v.id || it.product.id.includes(v.id));
+                            const inQuote = cartItems.some(it => it.product.id === v.id || it.product.id.includes(v.id));
                             return (
                               <div key={v.id} className="p-3 rounded-2xl bg-slate-50 border border-slate-200 hover:border-teal-500 transition-all flex flex-col justify-between space-y-2">
                                 <div>

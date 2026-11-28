@@ -285,6 +285,32 @@ export function getInventoryConfigurationSummary(item: any): string {
     if (procDays) parts.push(`Processing: ${procDays} ${typeof procDays === 'number' ? 'Working Days' : ''}`.trim());
   }
 
+  // 5b. Ticket Tier & Entry Time Slot
+  const ticketTierName =
+    item.ticketTierName ||
+    item.calculation?.selectedTicketTierName ||
+    item.selected_options?.ticketTierName ||
+    configSnap.ticketTierName ||
+    configSnap.ticketTier ||
+    configSnap.tierName ||
+    item.metadata?.ticketTierName;
+  if (ticketTierName) {
+    parts.push(`Tier: ${ticketTierName}`);
+  }
+  const entrySlot =
+    item.serviceTime ||
+    configSnap.timeSlot ||
+    item.selected_options?.timeSlot ||
+    item.metadata?.serviceTime;
+  const isTicketItem =
+    Boolean(ticketTierName) ||
+    String(item.product?.category || item.category || item.product?.productType || '')
+      .toLowerCase()
+      .includes('ticket');
+  if (isTicketItem && entrySlot) {
+    parts.push(`Entry Slot: ${entrySlot}`);
+  }
+
   // 6. Pax / Capacity
   if (item.pax) {
     const adults = item.pax.adults || 0;

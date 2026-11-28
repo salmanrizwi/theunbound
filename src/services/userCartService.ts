@@ -283,6 +283,26 @@ export function buildUserCartItemDocument(params: {
     Number(compactedItem.roomsCount) || Number(pax.adults + pax.children) || 1
   );
 
+  const ticketTierId =
+    compactedItem.ticketTierId ||
+    (compactedItem.selected_options as any)?.ticketTierId ||
+    (compactedItem.configuration_snapshot as any)?.ticketTierId ||
+    compactedItem.calculation?.selectedTicketTierId;
+  const ticketTierName =
+    compactedItem.ticketTierName ||
+    (compactedItem.selected_options as any)?.ticketTierName ||
+    (compactedItem.configuration_snapshot as any)?.ticketTierName ||
+    compactedItem.calculation?.selectedTicketTierName;
+  const ticketTierDescription =
+    compactedItem.ticketTierDescription ||
+    (compactedItem.selected_options as any)?.ticketTierDescription ||
+    (compactedItem.configuration_snapshot as any)?.ticketTierDescription ||
+    compactedItem.calculation?.selectedTicketTierDescription;
+
+  if (ticketTierId) compactedItem.ticketTierId = ticketTierId;
+  if (ticketTierName) compactedItem.ticketTierName = ticketTierName;
+  if (ticketTierDescription) compactedItem.ticketTierDescription = ticketTierDescription;
+
   const selectedOptions: Record<string, any> = {
     ...(compactedItem.selected_options || {}),
     ...(Array.isArray(compactedItem.selectedAddonIds) && compactedItem.selectedAddonIds.length > 0
@@ -295,7 +315,10 @@ export function buildUserCartItemDocument(params: {
     ...(compactedItem.roomTypeId ? { roomTypeId: compactedItem.roomTypeId } : {}),
     ...(compactedItem.mealPlanCode ? { mealPlanCode: compactedItem.mealPlanCode } : {}),
     ...(compactedItem.nights ? { nights: compactedItem.nights } : {}),
-    ...(compactedItem.roomsCount ? { roomsCount: compactedItem.roomsCount } : {})
+    ...(compactedItem.roomsCount ? { roomsCount: compactedItem.roomsCount } : {}),
+    ...(ticketTierId ? { ticketTierId } : {}),
+    ...(ticketTierName ? { ticketTierName } : {}),
+    ...(ticketTierDescription ? { ticketTierDescription } : {})
   };
 
   return {
@@ -341,9 +364,31 @@ export function cartDocumentToVerifiedQuoteItem(
   if (docData.status !== 'ACTIVE') return null;
   if (!docData.itemPayload || !docData.itemPayload.product) return null;
 
+  const resolvedTierId =
+    docData.itemPayload.ticketTierId ||
+    docData.selectedOptions?.ticketTierId ||
+    (docData.itemPayload as any).selected_options?.ticketTierId ||
+    (docData.itemPayload as any).configuration_snapshot?.ticketTierId ||
+    docData.itemPayload.calculation?.selectedTicketTierId;
+  const resolvedTierName =
+    docData.itemPayload.ticketTierName ||
+    docData.selectedOptions?.ticketTierName ||
+    (docData.itemPayload as any).selected_options?.ticketTierName ||
+    (docData.itemPayload as any).configuration_snapshot?.ticketTierName ||
+    docData.itemPayload.calculation?.selectedTicketTierName;
+  const resolvedTierDescription =
+    docData.itemPayload.ticketTierDescription ||
+    docData.selectedOptions?.ticketTierDescription ||
+    (docData.itemPayload as any).selected_options?.ticketTierDescription ||
+    (docData.itemPayload as any).configuration_snapshot?.ticketTierDescription ||
+    docData.itemPayload.calculation?.selectedTicketTierDescription;
+
   return {
     ...docData.itemPayload,
     id: docData.cartItemId,
+    ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+    ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+    ...(resolvedTierDescription ? { ticketTierDescription: resolvedTierDescription } : {}),
     ownerUid: docData.ownerUid,
     agencyId: docData.agencyId ?? null,
     addedByUid: docData.addedByUid,
@@ -400,6 +445,10 @@ export function writeUidNamespacedCartCache(ownerUid: string, docs: UserCartItem
   if (typeof window === 'undefined' || !isValidCartDocumentId(ownerUid)) return;
   const key = getUidCartCacheKey(ownerUid);
   const ownedDocs = docs.filter((d) => d && d.ownerUid === ownerUid && d.status === 'ACTIVE');
+  if (ownedDocs.length === 0) {
+    clearUidNamespacedCartCache(ownerUid);
+    return;
+  }
   const envelope: UidCartCacheEnvelope = {
     ownerUid,
     schemaVersion: USER_CART_SCHEMA_VERSION,
@@ -480,6 +529,47 @@ export interface UserCartPersistenceBackend {
   updateQuarantinedLegacyItem(recordId: string, updates: Partial<QuarantinedLegacyCartItem>): Promise<void>;
 }
 
+async function tryApiCartDelete(
+  pathSuffix: string,
+  expectedOwnerUid: string
+): Promise<'OK' | 'UNAVAILABLE'> {
+  if (typeof window === 'undefined' || typeof fetch !== 'function') return 'UNAVAILABLE';
+  const currentUser = auth?.currentUser;
+  if (!currentUser || currentUser.uid !== expectedOwnerUid || typeof currentUser.getIdToken !== 'function') {
+    return 'UNAVAILABLE';
+  }
+  let idToken = '';
+  try {
+    idToken = await currentUser.getIdToken();
+  } catch {
+    return 'UNAVAILABLE';
+  }
+  if (!idToken) return 'UNAVAILABLE';
+
+  let res: globalThis.Response;
+  try {
+    res = await fetch(`/api/cart${pathSuffix}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${idToken}`
+      }
+    });
+  } catch {
+    return 'UNAVAILABLE';
+  }
+
+  if (res.ok) return 'OK';
+
+  // Fail closed on explicit auth/permission/server validation rejection
+  if (res.status === 401 || res.status === 403 || (res.status >= 400 && res.status !== 404 && res.status !== 502 && res.status !== 503)) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body?.error || `Cart API delete failed with status ${res.status}`);
+  }
+  return 'UNAVAILABLE';
+}
+
+const FIRESTORE_WRITE_BATCH_LIMIT = 450;
+
 function createFirestoreUserCartBackend(): UserCartPersistenceBackend {
   return {
     subscribeUserCart(ownerUid, onDocs, onError) {
@@ -556,6 +646,8 @@ function createFirestoreUserCartBackend(): UserCartPersistenceBackend {
     async deleteUserCartItem(ownerUid, cartItemId) {
       const itemPath = `users/${ownerUid}/cart/${cartItemId}`;
       try {
+        const apiResult = await tryApiCartDelete(`/items/${encodeURIComponent(cartItemId)}`, ownerUid);
+        if (apiResult === 'OK') return;
         await deleteDoc(doc(firestoreDb, 'users', ownerUid, 'cart', cartItemId));
       } catch (error) {
         handleCartFirestoreError(error, CartOperationType.DELETE, itemPath, true);
@@ -565,16 +657,25 @@ function createFirestoreUserCartBackend(): UserCartPersistenceBackend {
     async clearUserCart(ownerUid) {
       const cartPath = `users/${ownerUid}/cart`;
       try {
+        const apiResult = await tryApiCartDelete('', ownerUid);
+        if (apiResult === 'OK') return;
+
         const snap = await getDocs(collection(firestoreDb, 'users', ownerUid, 'cart'));
         if (snap.empty) return;
-        const batch = writeBatch(firestoreDb);
-        snap.forEach((d) => {
-          const raw = d.data() as UserCartItemDocument;
-          if (!raw || raw.ownerUid === ownerUid) {
-            batch.delete(d.ref);
-          }
-        });
-        await batch.commit();
+
+        const refsToDelete = snap.docs
+          .filter((d) => {
+            const raw = d.data() as UserCartItemDocument;
+            return !raw || !raw.ownerUid || raw.ownerUid === ownerUid;
+          })
+          .map((d) => d.ref);
+
+        for (let i = 0; i < refsToDelete.length; i += FIRESTORE_WRITE_BATCH_LIMIT) {
+          const chunk = refsToDelete.slice(i, i + FIRESTORE_WRITE_BATCH_LIMIT);
+          const batch = writeBatch(firestoreDb);
+          chunk.forEach((ref) => batch.delete(ref));
+          await batch.commit();
+        }
       } catch (error) {
         handleCartFirestoreError(error, CartOperationType.DELETE, cartPath, true);
       }
@@ -787,6 +888,10 @@ export interface LegacyMigrationSummary {
 
 export class UserCartService {
   private backend: UserCartPersistenceBackend;
+  private uidClearWatermarkMs = new Map<string, number>();
+  private uidClearEpoch = new Map<string, number>();
+  private uidDeletedTombstones = new Map<string, Map<string, number>>();
+  private lastEventMs = 0;
 
   constructor(backend?: UserCartPersistenceBackend) {
     this.backend = backend || createFirestoreUserCartBackend();
@@ -796,9 +901,51 @@ export class UserCartService {
     return this.backend;
   }
 
+  private nextMonotonicMs(floorMs = 0): number {
+    const next = Math.max(Date.now(), floorMs + 1, this.lastEventMs + 1);
+    this.lastEventMs = next;
+    return next;
+  }
+
+  private parseDocTimestampMs(doc: UserCartItemDocument): number {
+    const raw = doc?.updatedAt || doc?.addedAt || '';
+    if (!raw) return 0;
+    const ms = Date.parse(String(raw));
+    return Number.isFinite(ms) && ms > 0 ? ms : 0;
+  }
+
+  private getOrCreateTombstoneMap(uid: string): Map<string, number> {
+    let m = this.uidDeletedTombstones.get(uid);
+    if (!m) {
+      m = new Map<string, number>();
+      this.uidDeletedTombstones.set(uid, m);
+    }
+    return m;
+  }
+
+  public filterStaleDocsForUid(
+    ownerUid: string,
+    docs: UserCartItemDocument[]
+  ): UserCartItemDocument[] {
+    const clearMs = this.uidClearWatermarkMs.get(ownerUid) || 0;
+    const tombstones = this.uidDeletedTombstones.get(ownerUid);
+    return (docs || []).filter((d) => {
+      if (!d || d.ownerUid !== ownerUid || d.status !== 'ACTIVE') return false;
+      const docMs = this.parseDocTimestampMs(d);
+      if (clearMs > 0 && (docMs === 0 || docMs <= clearMs)) {
+        return false;
+      }
+      const tombMs = tombstones?.get(d.cartItemId) || 0;
+      if (tombMs > 0 && (docMs === 0 || docMs <= tombMs)) {
+        return false;
+      }
+      return true;
+    });
+  }
+
   /**
    * Subscribes strictly to the authenticated user's own cart path (`users/{ownerUid}/cart`).
-   * Never reads global carts or agency carts.
+   * Never reads global carts or agency carts, and suppresses pre-clear / tombstoned snapshots.
    */
   public subscribeToOwnCart(
     actor: User,
@@ -815,9 +962,9 @@ export class UserCartService {
     return this.backend.subscribeUserCart(
       ownerUid,
       (docs) => {
-        const strictlyOwned = docs.filter((d) => d.ownerUid === ownerUid && d.status === 'ACTIVE');
-        writeUidNamespacedCartCache(ownerUid, strictlyOwned);
-        onItems(strictlyOwned);
+        const filtered = this.filterStaleDocsForUid(ownerUid, docs);
+        writeUidNamespacedCartCache(ownerUid, filtered);
+        onItems(filtered);
       },
       onError
     );
@@ -848,12 +995,13 @@ export class UserCartService {
     }
 
     const docs = await this.backend.listUserCart(targetUid);
-    return docs.filter((d) => d.ownerUid === targetUid && d.status === 'ACTIVE');
+    return this.filterStaleDocsForUid(targetUid, docs);
   }
 
   /**
    * B2B Agent (or self) adds or updates an item strictly in their own cart (`users/{actorUid}/cart`).
-   * Rejects cross-user targets and immutable ownerUid tampering.
+   * Rejects cross-user targets, immutable ownerUid tampering, and prevents superseded in-flight writes
+   * from resurrecting after a concurrent delete or clear.
    */
   public async upsertOwnCartItem(params: {
     actor: User;
@@ -880,9 +1028,23 @@ export class UserCartService {
     }
 
     const cartItemId = sanitizeCartItemId(quoteItem.id);
+    const startEpoch = this.uidClearEpoch.get(callerUid) || 0;
+    const clearFloor = this.uidClearWatermarkMs.get(callerUid) || 0;
+    const tombFloor = this.uidDeletedTombstones.get(callerUid)?.get(cartItemId) || 0;
+    const writeMs = this.nextMonotonicMs(Math.max(clearFloor, tombFloor));
+    const writeIso = new Date(writeMs).toISOString();
+
     const existing = await this.backend.getUserCartItem(callerUid, cartItemId);
     if (existing && existing.ownerUid !== callerUid) {
       throw new Error('PERMISSION_DENIED: Existing cart item does not belong to authenticated user.');
+    }
+
+    const epochAfterGet = this.uidClearEpoch.get(callerUid) || 0;
+    const tombAfterGet = this.uidDeletedTombstones.get(callerUid)?.get(cartItemId) || 0;
+    if (epochAfterGet !== startEpoch || tombAfterGet > tombFloor) {
+      const err: any = new Error('CART_WRITE_SUPERSEDED: Cart was cleared or item deleted while write was in flight.');
+      err.code = 'CART_WRITE_SUPERSEDED';
+      throw err;
     }
 
     const addedByRole: CartAddedByRole = isAuthorisedCartAdmin(actor) ? 'ADMIN' : 'B2B_AGENT';
@@ -896,14 +1058,33 @@ export class UserCartService {
       addedByEmail: actor.email,
       existingDoc: existing
     });
+    docData.updatedAt = writeIso;
+    if (!existing) {
+      docData.addedAt = writeIso;
+    }
+
+    // Clear prior delete tombstone strictly for clean post-delete / post-clear re-adds
+    this.uidDeletedTombstones.get(callerUid)?.delete(cartItemId);
 
     await this.backend.saveUserCartItem(callerUid, docData);
+
+    const epochAfterSave = this.uidClearEpoch.get(callerUid) || 0;
+    const tombAfterSave = this.uidDeletedTombstones.get(callerUid)?.get(cartItemId) || 0;
+    if (epochAfterSave !== startEpoch || tombAfterSave > tombFloor) {
+      await this.backend.deleteUserCartItem(callerUid, docData.cartItemId).catch(() => {});
+      clearUidNamespacedCartCache(callerUid);
+      const err: any = new Error('CART_WRITE_SUPERSEDED: Cart was cleared or item deleted while save was in flight.');
+      err.code = 'CART_WRITE_SUPERSEDED';
+      throw err;
+    }
+
     return docData;
   }
 
   /**
    * Removes a single item strictly from the authenticated user's own cart (or Admin targeting explicit agent).
    * Removing an item NEVER affects any other user's cart.
+   * Fail-closed: rolls back optimistic tombstone if persistence fails.
    */
   public async removeCartItem(params: {
     actor: User;
@@ -930,7 +1111,26 @@ export class UserCartService {
       throw new Error('PERMISSION_DENIED: Cannot remove items from another user cart.');
     }
 
-    await this.backend.deleteUserCartItem(effectiveTargetUid, cartItemId);
+    const tombMap = this.getOrCreateTombstoneMap(effectiveTargetUid);
+    const prevTombstoneMs = tombMap.get(cartItemId);
+    const deleteMs = this.nextMonotonicMs(prevTombstoneMs || 0);
+    tombMap.set(cartItemId, deleteMs);
+
+    try {
+      await this.backend.deleteUserCartItem(effectiveTargetUid, cartItemId);
+    } catch (err) {
+      if (prevTombstoneMs !== undefined) {
+        tombMap.set(cartItemId, prevTombstoneMs);
+      } else {
+        tombMap.delete(cartItemId);
+      }
+      throw err;
+    }
+
+    const remainingCached = readUidNamespacedCartCache(effectiveTargetUid).filter(
+      (d) => d.cartItemId !== cartItemId
+    );
+    writeUidNamespacedCartCache(effectiveTargetUid, remainingCached);
 
     if (!isSelf && isAdmin) {
       try {
@@ -947,6 +1147,7 @@ export class UserCartService {
 
   /**
    * Clears ONLY the authenticated user's own cart (never global or agency cart).
+   * Fail-closed: rolls back optimistic clear watermark/epoch if backend clear fails.
    */
   public async clearOwnCart(params: {
     actor: User;
@@ -965,7 +1166,26 @@ export class UserCartService {
       throw new Error('PERMISSION_DENIED: Cannot clear another user cart.');
     }
 
-    await this.backend.clearUserCart(callerUid);
+    const prevWatermark = this.uidClearWatermarkMs.get(callerUid);
+    const prevEpoch = this.uidClearEpoch.get(callerUid) || 0;
+    const clearMs = this.nextMonotonicMs(prevWatermark || 0);
+
+    this.uidClearWatermarkMs.set(callerUid, clearMs);
+    this.uidClearEpoch.set(callerUid, prevEpoch + 1);
+
+    try {
+      await this.backend.clearUserCart(callerUid);
+    } catch (err) {
+      if (prevWatermark !== undefined) {
+        this.uidClearWatermarkMs.set(callerUid, prevWatermark);
+      } else {
+        this.uidClearWatermarkMs.delete(callerUid);
+      }
+      this.uidClearEpoch.set(callerUid, prevEpoch);
+      throw err;
+    }
+
+    this.uidDeletedTombstones.delete(callerUid);
     clearUidNamespacedCartCache(callerUid);
   }
 
@@ -1006,6 +1226,11 @@ export class UserCartService {
       quoteItem.id || `admin-cart-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     );
 
+    const clearFloor = this.uidClearWatermarkMs.get(targetUid) || 0;
+    const tombFloor = this.uidDeletedTombstones.get(targetUid)?.get(cartItemId) || 0;
+    const writeMs = this.nextMonotonicMs(Math.max(clearFloor, tombFloor));
+    const writeIso = new Date(writeMs).toISOString();
+
     const docData = buildUserCartItemDocument({
       ownerUid: targetUid,
       agencyId: resolveSecondaryAgencyId(targetAgent),
@@ -1016,7 +1241,10 @@ export class UserCartService {
       addedByEmail: actor.email,
       adminNote: adminNote?.trim() || `Added on behalf of ${targetAgent.name} by Admin ${actor.name}`
     });
+    docData.updatedAt = writeIso;
+    docData.addedAt = writeIso;
 
+    this.uidDeletedTombstones.get(targetUid)?.delete(cartItemId);
     await this.backend.saveUserCartItem(targetUid, docData);
 
     // Record immutable audit trail

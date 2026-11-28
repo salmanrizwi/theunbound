@@ -126,7 +126,7 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
   const db = AppDatabase.getInstance();
   const { user } = useAuth();
   const isAdminOrStaff = user?.role === 'ADMIN' || user?.role === 'TEAM_MEMBER' || user?.role === 'DMC_STAFF';
-  const { items, removeProductFromQuote, currency, setIsQuoteDrawerOpen } = useQuotation();
+  const { items, cartItems, removeFromCart, currency, setIsQuoteDrawerOpen } = useQuotation();
   const [dbTick, setDbTick] = useState(0);
 
   useEffect(() => {
@@ -294,7 +294,7 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
   };
 
   const isProductInQuote = (productId: string) => {
-    return (items || []).some(it => it.product && it.product.id === productId);
+    return (cartItems || []).some(it => it.product && it.product.id === productId);
   };
 
   const handleOpenProductDetails = (prod: Product) => {
@@ -310,9 +310,9 @@ export const B2BProductsCatalogViewInner: React.FC<B2BProductsCatalogViewProps> 
   };
 
   const handleRemoveFromQuote = (productId: string) => {
-    const existing = (items || []).find(it => it.product && it.product.id === productId);
+    const existing = (cartItems || []).find(it => it.product && it.product.id === productId);
     if (existing) {
-      removeProductFromQuote(existing.id);
+      void removeFromCart(existing.id);
     }
   };
 

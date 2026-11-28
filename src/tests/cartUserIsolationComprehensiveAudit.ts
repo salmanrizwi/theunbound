@@ -934,6 +934,292 @@ async function runAudit() {
     pass('Firestore rules, QuotationContext Quote Builder separation, AuthContext logout purge, and immutability guards verified');
   }
 
+  // --------------------------------------------------------------------------
+  // TEST J: LARGE CART CHUNKED CLEAR (>500 ITEMS) + 3-AGENT SAME AGENCY
+  // --------------------------------------------------------------------------
+  console.log('\n--- TEST J: Large Cart Clear (>500 items) & 3-Agent Same-Agency Independence ---');
+  {
+    installMockWindowStorage();
+    const backend = createInMemoryUserCartBackend();
+    const svc = new UserCartService(backend);
+
+    const AGENT_A3_SAME_AGENCY: User = {
+      ...AGENT_A,
+      id: 'uid_agent_A3',
+      email: 'agent.a3@alpha-travels.com',
+      name: 'Agent Alpha Three'
+    } as unknown as User;
+
+    // Seed 520 items in Agent A cart, 3 in Agent A2, 2 in Agent A3 (all in agency_alpha_001)
+    for (let i = 1; i <= 520; i++) {
+      const docData = buildUserCartItemDocument({
+        ownerUid: AGENT_A.id,
+        agencyId: 'agency_alpha_001',
+        quoteItem: makeQuoteItem(`bulk_${i}`, `prod_bulk_${i}`, `Bulk Tour #${i}`, 100 + i),
+        addedByUid: AGENT_A.id,
+        addedByRole: 'B2B_AGENT'
+      });
+      await backend.saveUserCartItem(AGENT_A.id, docData);
+    }
+    for (let i = 1; i <= 3; i++) {
+      await svc.upsertOwnCartItem({
+        actor: AGENT_A2_SAME_AGENCY,
+        actorFirebaseUid: AGENT_A2_SAME_AGENCY.id,
+        quoteItem: makeQuoteItem(`a2_${i}`, `prod_a2_${i}`, `Alpha Two #${i}`, 500)
+      });
+    }
+    for (let i = 1; i <= 2; i++) {
+      await svc.upsertOwnCartItem({
+        actor: AGENT_A3_SAME_AGENCY,
+        actorFirebaseUid: AGENT_A3_SAME_AGENCY.id,
+        quoteItem: makeQuoteItem(`a3_${i}`, `prod_a3_${i}`, `Alpha Three #${i}`, 700)
+      });
+    }
+
+    assert.strictEqual(
+      (await svc.listCartForUser({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, targetUid: AGENT_A.id })).length,
+      520
+    );
+
+    // Also verify server store chunked clear handles 520 items cleanly
+    const serverStore = new InMemoryUserCartApiStore();
+    for (let i = 1; i <= 520; i++) {
+      await serverStore.saveUserCartItem(
+        AGENT_A.id,
+        buildUserCartItemDocument({
+          ownerUid: AGENT_A.id,
+          quoteItem: makeQuoteItem(`srv_bulk_${i}`, `prod_s_${i}`, `Srv Bulk ${i}`, 200),
+          addedByUid: AGENT_A.id,
+          addedByRole: 'B2B_AGENT'
+        }),
+        'tok_agent_A'
+      );
+    }
+    const deletedCount = await serverStore.clearUserCart(AGENT_A.id);
+    assert.strictEqual(deletedCount, 520, 'Server clearUserCart must delete all 520 items');
+    assert.strictEqual((await serverStore.listUserCart(AGENT_A.id)).length, 0);
+
+    // Clear Agent A in UserCartService -> Agent A2 (3) & Agent A3 (2) untouched
+    await svc.clearOwnCart({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id });
+    assert.strictEqual(
+      (await svc.listCartForUser({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, targetUid: AGENT_A.id })).length,
+      0
+    );
+    assert.strictEqual(
+      (
+        await svc.listCartForUser({
+          actor: AGENT_A2_SAME_AGENCY,
+          actorFirebaseUid: AGENT_A2_SAME_AGENCY.id,
+          targetUid: AGENT_A2_SAME_AGENCY.id
+        })
+      ).length,
+      3
+    );
+    assert.strictEqual(
+      (
+        await svc.listCartForUser({
+          actor: AGENT_A3_SAME_AGENCY,
+          actorFirebaseUid: AGENT_A3_SAME_AGENCY.id,
+          targetUid: AGENT_A3_SAME_AGENCY.id
+        })
+      ).length,
+      2
+    );
+
+    pass('520-item cart cleared completely while 2 other agents in identical agency retained 100% of their items');
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST K: STALE SNAPSHOT & IN-FLIGHT WRITE RACE PROTECTION + CLEAN RE-ADD
+  // --------------------------------------------------------------------------
+  console.log('\n--- TEST K: Stale Listener / In-Flight Write Race Protection & Clean Re-Add ---');
+  {
+    installMockWindowStorage();
+    const backend = createInMemoryUserCartBackend();
+    const svc = new UserCartService(backend);
+
+    const oldAddedAt = new Date(Date.now() - 60000).toISOString();
+    const staleDocA = buildUserCartItemDocument({
+      ownerUid: AGENT_A.id,
+      quoteItem: makeQuoteItem('race_1', 'prod_r1', 'Race Tour 1', 450),
+      addedByUid: AGENT_A.id,
+      addedByRole: 'B2B_AGENT'
+    });
+    staleDocA.addedAt = oldAddedAt;
+    staleDocA.updatedAt = oldAddedAt;
+
+    const staleDocB = buildUserCartItemDocument({
+      ownerUid: AGENT_A.id,
+      quoteItem: makeQuoteItem('race_2', 'prod_r2', 'Race Tour 2', 550),
+      addedByUid: AGENT_A.id,
+      addedByRole: 'B2B_AGENT'
+    });
+    staleDocB.addedAt = oldAddedAt;
+    staleDocB.updatedAt = oldAddedAt;
+
+    await backend.saveUserCartItem(AGENT_A.id, staleDocA);
+    await backend.saveUserCartItem(AGENT_A.id, staleDocB);
+
+    const emissions: string[][] = [];
+    const unsub = svc.subscribeToOwnCart(AGENT_A, AGENT_A.id, (docs) =>
+      emissions.push(docs.map((d) => d.cartItemId))
+    );
+    assert.deepStrictEqual(emissions[0], ['race_1', 'race_2']);
+
+    // Delete single item -> simulate delayed listener delivering stale snapshot containing deleted race_1
+    await svc.removeCartItem({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, cartItemId: 'race_1' });
+    const subsA = backend._listeners.get(AGENT_A.id);
+    subsA?.forEach((cb) => cb([{ ...staleDocA }, { ...staleDocB }]));
+    assert.deepStrictEqual(
+      emissions[emissions.length - 1],
+      ['race_2'],
+      'Stale listener snapshot MUST NOT resurrect deleted item race_1'
+    );
+
+    // Clear entire cart -> simulate delayed listener delivering stale snapshot -> stays empty!
+    await svc.clearOwnCart({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id });
+    subsA?.forEach((cb) => cb([{ ...staleDocA }, { ...staleDocB }]));
+    assert.deepStrictEqual(
+      emissions[emissions.length - 1],
+      [],
+      'Stale listener snapshot MUST NOT resurrect cleared cart items'
+    );
+
+    // Explicit intentional re-add AFTER clear succeeds with watermark-bumped timestamp
+    await svc.upsertOwnCartItem({
+      actor: AGENT_A,
+      actorFirebaseUid: AGENT_A.id,
+      quoteItem: makeQuoteItem('race_1', 'prod_r1', 'Race Tour 1 Re-added', 450)
+    });
+    const afterReAdd = await svc.listCartForUser({
+      actor: AGENT_A,
+      actorFirebaseUid: AGENT_A.id,
+      targetUid: AGENT_A.id
+    });
+    assert.deepStrictEqual(afterReAdd.map((d) => d.cartItemId), ['race_1']);
+    unsub();
+
+    pass('Delayed snapshot emissions cannot resurrect deleted or cleared items; intentional re-add succeeds cleanly');
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST L: FAIL-CLOSED ROLLBACK & RETRY RECOVERY ON BACKEND PERSISTENCE FAILURE
+  // --------------------------------------------------------------------------
+  console.log('\n--- TEST L: Fail-Closed Rollback & Retry Safety ---');
+  {
+    installMockWindowStorage();
+    const baseBackend = createInMemoryUserCartBackend();
+    let failDelete = true;
+    let failClear = true;
+
+    const flakyBackend = {
+      ...baseBackend,
+      async deleteUserCartItem(ownerUid: string, cartItemId: string) {
+        if (failDelete) throw new Error('Simulated Firestore network timeout on delete');
+        return baseBackend.deleteUserCartItem(ownerUid, cartItemId);
+      },
+      async clearUserCart(ownerUid: string) {
+        if (failClear) throw new Error('Simulated Firestore 503 on clear');
+        return baseBackend.clearUserCart(ownerUid);
+      }
+    };
+
+    const svc = new UserCartService(flakyBackend);
+    await svc.upsertOwnCartItem({
+      actor: AGENT_A,
+      actorFirebaseUid: AGENT_A.id,
+      quoteItem: makeQuoteItem('fc_1', 'p_fc1', 'Fail Closed 1', 300)
+    });
+    await svc.upsertOwnCartItem({
+      actor: AGENT_A,
+      actorFirebaseUid: AGENT_A.id,
+      quoteItem: makeQuoteItem('fc_2', 'p_fc2', 'Fail Closed 2', 400)
+    });
+
+    // Failing delete must reject AND preserve item fc_1 (no tombstone left hiding it!)
+    await assert.rejects(
+      () => svc.removeCartItem({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, cartItemId: 'fc_1' }),
+      /Simulated Firestore network timeout/
+    );
+    assert.strictEqual(
+      (await svc.listCartForUser({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, targetUid: AGENT_A.id })).length,
+      2
+    );
+
+    // Retry delete succeeds cleanly
+    failDelete = false;
+    await svc.removeCartItem({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, cartItemId: 'fc_1' });
+    assert.deepStrictEqual(
+      (await svc.listCartForUser({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, targetUid: AGENT_A.id })).map(
+        (d) => d.cartItemId
+      ),
+      ['fc_2']
+    );
+
+    // Failing clear must reject AND roll back watermark so fc_2 remains visible until retry succeeds
+    await assert.rejects(
+      () => svc.clearOwnCart({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id }),
+      /Simulated Firestore 503/
+    );
+    assert.strictEqual(
+      (await svc.listCartForUser({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, targetUid: AGENT_A.id })).length,
+      1
+    );
+
+    // Retry clear succeeds cleanly -> 0 items
+    failClear = false;
+    await svc.clearOwnCart({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id });
+    assert.strictEqual(
+      (await svc.listCartForUser({ actor: AGENT_A, actorFirebaseUid: AGENT_A.id, targetUid: AGENT_A.id })).length,
+      0
+    );
+
+    pass('Failed delete/clear operations roll back cleanly, preserve error state, and recover cleanly on retry');
+  }
+
+  // --------------------------------------------------------------------------
+  // TEST M: STATIC WIRING AUDIT — DRAWER, CATALOG & SUBMISSION MODAL ISOLATION
+  // --------------------------------------------------------------------------
+  console.log('\n--- TEST M: Static UI Wiring Audit (Cart vs Quote Builder & Awaited Clear) ---');
+  {
+    const root = process.cwd();
+    const quoteCtxSrc = fs.readFileSync(path.join(root, 'src/context/QuotationContext.tsx'), 'utf-8');
+    const drawerSrc = fs.readFileSync(path.join(root, 'src/components/QuoteBuilderDrawer.tsx'), 'utf-8');
+    const bookingModalSrc = fs.readFileSync(
+      path.join(root, 'src/components/B2BAgentPortal/BookingSubmissionModal.tsx'),
+      'utf-8'
+    );
+
+    assert.ok(quoteCtxSrc.includes('retryLastCartAction'), 'QuotationContext must expose retryLastCartAction');
+    assert.ok(quoteCtxSrc.includes('cartError'), 'QuotationContext must expose fail-closed cartError');
+    assert.ok(drawerSrc.includes('await clearCart()'), 'QuoteBuilderDrawer must await clearCart()');
+    assert.ok(drawerSrc.includes('await removeFromCart('), 'QuoteBuilderDrawer must await removeFromCart()');
+    assert.ok(drawerSrc.includes('retryLastCartAction'), 'QuoteBuilderDrawer must wire Retry action');
+    assert.ok(
+      bookingModalSrc.includes('cartItems: items') || bookingModalSrc.includes('const items = cartItems'),
+      'BookingSubmissionModal must read verified cartItems rather than Quote Builder items'
+    );
+    assert.ok(
+      bookingModalSrc.includes('await clearCart()'),
+      'BookingSubmissionModal must await clearCart() upon booking submission'
+    );
+
+    const visaViewSrc = fs.readFileSync(
+      path.join(root, 'src/components/B2BAgentPortal/B2BVisaView.tsx'),
+      'utf-8'
+    );
+    assert.ok(
+      !visaViewSrc.includes('removeProductFromQuote'),
+      'B2BVisaView must not call removeProductFromQuote on cart items'
+    );
+    assert.ok(
+      visaViewSrc.includes('removeFromCart('),
+      'B2BVisaView must use removeFromCart for cart item removal'
+    );
+
+    pass('QuotationContext, QuoteBuilderDrawer, BookingSubmissionModal, and B2BVisaView isolation & fail-closed wiring verified');
+  }
+
   console.log(`\n=====================================================================`);
   console.log(` ALL ${passed}/${passed} CART USER ISOLATION AUDIT SUITES PASSED 100%!`);
   console.log(`=====================================================================\n`);

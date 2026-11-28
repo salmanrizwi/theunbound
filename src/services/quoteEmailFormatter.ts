@@ -510,6 +510,22 @@ export function renderProposalViewHtmlEmail(
               </div>
 
               <h4 style="font-size: 12.5px; font-weight: 800; color: #0f172a; margin: 4px 0 4px 0;">${cleanInlineFormattedText(s.listingName)}</h4>
+              ${(() => {
+                const rawAny: any = s.rawItem || {};
+                const tierLabel =
+                  rawAny.ticketTierName ||
+                  rawAny.calculation?.selectedTicketTierName ||
+                  rawAny.selected_options?.ticketTierName ||
+                  rawAny.configuration_snapshot?.ticketTierName ||
+                  rawAny.metadata?.ticketTierName;
+                if (!tierLabel) return '';
+                const tierDesc =
+                  rawAny.ticketTierDescription ||
+                  rawAny.calculation?.selectedTicketTierDescription ||
+                  rawAny.selected_options?.ticketTierDescription ||
+                  rawAny.configuration_snapshot?.ticketTierDescription;
+                return `<div style="margin: 0 0 5px 0;"><span style="display: inline-block; font-size: 9.5px; font-weight: 700; color: #5b21b6; background: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 4px; padding: 2px 7px;">Tier: ${cleanInlineFormattedText(String(tierLabel))}</span>${tierDesc ? `<span style="font-size: 10px; color: #64748b; margin-left: 6px;">${cleanInlineFormattedText(String(tierDesc))}</span>` : ''}</div>`;
+              })()}
               ${s.configurationSummary && !s.isRail ? `<p style="font-size: 10.5px; color: #475569; margin: 0 0 5px 0; font-weight: 500;">${cleanInlineFormattedText(s.configurationSummary)}</p>` : ''}
               ${operationalPointsHtml}
               ${railBoxHtml}
@@ -1742,10 +1758,23 @@ function buildOption2ServiceDetailsHtml(s: ServicePresentationItem, dateLabel: s
   }
 
   // Ticket / Pass tier & requirements
-  const ticketTier = selOpts.ticketTierName || configSnap.ticketTierName || configSnap.tierName || raw.metadata?.ticketRequirements;
+  const ticketTier =
+    raw.ticketTierName ||
+    (raw.calculation as any)?.selectedTicketTierName ||
+    selOpts.ticketTierName ||
+    configSnap.ticketTierName ||
+    configSnap.ticketTier ||
+    configSnap.tierName ||
+    raw.metadata?.ticketTierName ||
+    raw.metadata?.ticketRequirements;
+  const ticketTierDesc =
+    raw.ticketTierDescription ||
+    (raw.calculation as any)?.selectedTicketTierDescription ||
+    selOpts.ticketTierDescription ||
+    configSnap.ticketTierDescription;
   if (ticketTier) {
     parts.push(
-      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 2px 0 4px 0;"><strong>Ticket / Tier Requirements:</strong> ${cleanInlineFormattedText(String(ticketTier))}</div>`
+      `<div style="font-family: ${EXCEL_FONT}; font-size: 10.5px; color: ${EXCEL_TEXT_PRIMARY}; margin: 2px 0 4px 0;"><strong>Ticket Tier:</strong> ${cleanInlineFormattedText(String(ticketTier))}${ticketTierDesc ? ` <span style="color: ${EXCEL_TEXT_SECONDARY};">&mdash; ${cleanInlineFormattedText(String(ticketTierDesc))}</span>` : ''}</div>`
     );
   }
 

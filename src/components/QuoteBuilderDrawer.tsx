@@ -66,6 +66,10 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
     updateItemTravelDate,
     clearQuote,
     clearCart,
+    isCartMutating,
+    cartError,
+    clearCartError,
+    retryLastCartAction,
     totalNetCost,
     totalSellingPrice: workspaceTotalSellingPrice,
     travelStartDate,
@@ -77,6 +81,7 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   const { checkDateAvailability, getNextAvailableDate } = useRoster();
   const [calendarPickerItemId, setCalendarPickerItemId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'HOTELS' | 'PRODUCTS' | 'VISAS' | 'PACKAGES'>('ALL');
+  const [cartFeedback, setCartFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Edit item modal state (Central GlobalConfiguratorRouter)
   const [editingItem, setEditingItem] = useState<any | null>(null);
@@ -94,8 +99,32 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
   // Outside Quote Builder, strictly display ONLY verified UID-owned cartItems (never unverified or cross-user items)
   const items = isInsideQuoteBuilder ? workspaceItems : (isCartVerified ? cartItems : []);
   const totalSellingPrice = isInsideQuoteBuilder ? workspaceTotalSellingPrice : cartTotalSellingPrice;
-  const handleClearActiveCart = isInsideQuoteBuilder ? clearQuote : clearCart;
-  const handleRemoveActiveItem = isInsideQuoteBuilder ? removeProductFromQuote : removeFromCart;
+
+  const handleClearActiveCart = async () => {
+    setCartFeedback(null);
+    if (isInsideQuoteBuilder) {
+      clearQuote();
+      setCartFeedback({ type: 'success', message: 'Quote Builder items cleared.' });
+      return;
+    }
+    const ok = await clearCart();
+    if (ok) {
+      setCartFeedback({ type: 'success', message: 'Your personal cart has been cleared.' });
+    }
+  };
+
+  const handleRemoveActiveItem = async (itemId: string) => {
+    setCartFeedback(null);
+    if (isInsideQuoteBuilder) {
+      removeProductFromQuote(itemId);
+      setCartFeedback({ type: 'success', message: 'Item removed from quote.' });
+      return;
+    }
+    const ok = await removeFromCart(itemId);
+    if (ok) {
+      setCartFeedback({ type: 'success', message: 'Item removed from your cart.' });
+    }
+  };
 
   // Lock body scroll when drawer is open
   useEffect(() => {
@@ -378,12 +407,14 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
                 {items.length > 0 && (
                   <button
-                    onClick={handleClearActiveCart}
-                    className="text-xs text-slate-400 hover:text-rose-400 px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-colors flex items-center space-x-1 font-bold cursor-pointer"
+                    type="button"
+                    disabled={!isInsideQuoteBuilder && isCartMutating}
+                    onClick={() => void handleClearActiveCart()}
+                    className="text-xs text-slate-400 hover:text-rose-400 px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-colors flex items-center space-x-1 font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Clear all items in your personal cart"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Clear</span>
+                    <span className="hidden sm:inline">{!isInsideQuoteBuilder && isCartMutating ? 'Clearing...' : 'Clear'}</span>
                   </button>
                 )}
                 <button
@@ -467,6 +498,53 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
 
             {/* Drawer Scrollable Content Area */}
             <div className="overflow-y-auto p-3.5 sm:p-5 space-y-4 sm:space-y-5 flex-1 bg-slate-50/50 modal-body-scroll">
+              {!isInsideQuoteBuilder && cartError && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-rose-900 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 shadow-xs">
+                  <div className="flex items-start space-x-2 text-xs">
+                    <AlertOctagon className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold block">Cart Sync Error</span>
+                      <span className="text-[11px] text-rose-800">{cartError}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={isCartMutating}
+                      onClick={() => void retryLastCartAction()}
+                      className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Retry</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearCartError}
+                      className="px-2.5 py-1.5 rounded-lg bg-white border border-rose-200 text-rose-700 hover:bg-rose-100 text-[11px] font-bold transition-colors cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {cartFeedback && cartFeedback.type === 'success' && (isInsideQuoteBuilder || !cartError) && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center justify-between">
+                  <div className="flex items-center space-x-2 font-semibold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{cartFeedback.message}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCartFeedback(null)}
+                    className="text-emerald-600 hover:text-emerald-900 p-1 cursor-pointer"
+                    aria-label="Dismiss message"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               {items.length === 0 ? (
                 <div className="text-center py-14 px-4 bg-white rounded-3xl border border-slate-200 shadow-xs my-auto">
                   <div className="w-16 h-16 rounded-2xl bg-[#00C6A6]/10 border border-[#00C6A6]/30 flex items-center justify-center mx-auto mb-4 text-[#00a88c]">
@@ -657,6 +735,18 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                                 <h4 className="text-xs sm:text-sm font-extrabold text-slate-900 leading-snug mt-1">
                                   {item.customTitle || item.title || item.product.name}
                                 </h4>
+                                {(item.ticketTierName || (item.calculation as any)?.selectedTicketTierName) && (
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    <span className="inline-flex items-center space-x-1 text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md">
+                                      <span>Tier: {item.ticketTierName || (item.calculation as any)?.selectedTicketTierName}</span>
+                                    </span>
+                                    {item.serviceTime && (
+                                      <span className="text-[10px] text-slate-500 font-medium">
+                                        • {item.serviceTime}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
                                 {item.railJourneyDetails && (
                                   <div className="mt-1.5 p-2 rounded-lg bg-teal-50 border border-teal-200 text-[11px] text-teal-950 flex flex-wrap items-center gap-1.5 font-medium">
                                     <span className="font-bold text-[#008972] flex items-center gap-1">
@@ -692,8 +782,9 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                               )}
                               <button
                                 type="button"
-                                onClick={() => handleRemoveActiveItem(item.id)}
-                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                                disabled={!isInsideQuoteBuilder && isCartMutating}
+                                onClick={() => void handleRemoveActiveItem(item.id)}
+                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                                 title="Remove from your cart"
                                 aria-label={`Remove ${item.customTitle || item.title || item.product.name} from cart`}
                               >
@@ -883,10 +974,10 @@ export const QuoteBuilderDrawer: React.FC<QuoteBuilderDrawerProps> = ({
                 ) : (
                   <button
                     id="btn-submit-cart-booking"
-                    disabled={hasRosterConflict || items.length === 0 || Boolean(draftDestinationReview?.requiresReview)}
+                    disabled={hasRosterConflict || items.length === 0 || Boolean(draftDestinationReview?.requiresReview) || isCartMutating}
                     onClick={handleOpenBookingSubmission}
                     className={`w-full py-3.5 px-4 rounded-xl text-sm font-black transition-all flex items-center justify-center space-x-2 shadow-lg ${
-                      hasRosterConflict || items.length === 0 || Boolean(draftDestinationReview?.requiresReview)
+                      hasRosterConflict || items.length === 0 || Boolean(draftDestinationReview?.requiresReview) || isCartMutating
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                         : 'bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 shadow-[#00C6A6]/20 cursor-pointer hover:scale-[1.01]'
                     }`}

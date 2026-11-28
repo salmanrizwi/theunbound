@@ -251,32 +251,53 @@ export const BookingModal: React.FC<BookingModalProps> = ({
       if (quotation) {
         // Items from quotation
         const qItems = quotation.items || [];
-        bookingItems = qItems.map(item => ({
-          id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-          productId: item.product.id,
-          productName: item.product.name,
-          productSku: item.product.sku,
-          destinationName: item.product.destinationName,
-          city: item.product.city,
-          category: item.product.category,
-          travelDate: item.travelDate,
-          adults: item.pax.adults,
-          children: item.pax.children,
-          infants: item.pax.infants,
-          totalPax: item.pax.adults + item.pax.children + item.pax.infants,
-          selectedAddonNames: item.selectedAddonIds?.map(aid => 
-            item.product.addons?.find(a => a.id === aid)?.name || aid
-          ),
-          unitNetPrice: item.calculation.totalNetCost,
-          unitSellingPrice: item.calculation.finalTotalSellingPrice,
-          totalPrice: item.calculation.finalTotalSellingPrice,
-          currency: quotation.currency,
-          railJourneyDetails: item.railJourneyDetails,
-          japanRailJourneySnapshot: item.japanRailJourneySnapshot,
-          shinkansenJourneyPayload: (item as any).shinkansenJourneyPayload || (item as any).metadata?.shinkansenJourneyPayload,
-          serviceTime: item.serviceTime,
-          notes: item.notes
-        }));
+        bookingItems = qItems.map(item => {
+          const resolvedTierId =
+            item.ticketTierId ||
+            (item.calculation as any)?.selectedTicketTierId ||
+            item.selected_options?.ticketTierId ||
+            item.configuration_snapshot?.ticketTierId;
+          const resolvedTierName =
+            item.ticketTierName ||
+            (item.calculation as any)?.selectedTicketTierName ||
+            item.selected_options?.ticketTierName ||
+            item.configuration_snapshot?.ticketTierName;
+          const resolvedTierDescription =
+            item.ticketTierDescription ||
+            (item.calculation as any)?.selectedTicketTierDescription ||
+            item.selected_options?.ticketTierDescription ||
+            item.configuration_snapshot?.ticketTierDescription;
+
+          return {
+            id: `item-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+            productId: item.product.id,
+            productName: item.product.name,
+            productSku: item.product.sku,
+            destinationName: item.product.destinationName,
+            city: item.product.city,
+            category: item.product.category,
+            travelDate: item.travelDate,
+            adults: item.pax.adults,
+            children: item.pax.children,
+            infants: item.pax.infants,
+            totalPax: item.pax.adults + item.pax.children + item.pax.infants,
+            selectedAddonNames: item.selectedAddonIds?.map(aid => 
+              item.product.addons?.find(a => a.id === aid)?.name || aid
+            ),
+            ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+            ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+            ...(resolvedTierDescription ? { ticketTierDescription: resolvedTierDescription } : {}),
+            unitNetPrice: item.calculation.totalNetCost,
+            unitSellingPrice: item.calculation.finalTotalSellingPrice,
+            totalPrice: item.calculation.finalTotalSellingPrice,
+            currency: quotation.currency,
+            railJourneyDetails: item.railJourneyDetails,
+            japanRailJourneySnapshot: item.japanRailJourneySnapshot,
+            shinkansenJourneyPayload: (item as any).shinkansenJourneyPayload || (item as any).metadata?.shinkansenJourneyPayload,
+            serviceTime: item.serviceTime,
+            notes: item.notes
+          };
+        });
 
         if (qItems.length > 0) {
           const dates = qItems.map(i => i.travelDate).filter(Boolean).sort();
@@ -333,7 +354,10 @@ export const BookingModal: React.FC<BookingModalProps> = ({
           unitNetPrice: singleProductCalculation.totalNetCost,
           unitSellingPrice: singleProductCalculation.finalTotalSellingPrice,
           totalPrice: singleProductCalculation.finalTotalSellingPrice,
-          currency
+          currency,
+          ...(singleProductCalculation.selectedTicketTierId ? { ticketTierId: singleProductCalculation.selectedTicketTierId } : {}),
+          ...(singleProductCalculation.selectedTicketTierName ? { ticketTierName: singleProductCalculation.selectedTicketTierName } : {}),
+          ...(singleProductCalculation.selectedTicketTierDescription ? { ticketTierDescription: singleProductCalculation.selectedTicketTierDescription } : {})
         }];
       }
 
@@ -588,10 +612,24 @@ export const BookingModal: React.FC<BookingModalProps> = ({
             {quotation && (
               <div className="space-y-2 pt-2 border-t border-slate-200">
                 <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
-                  {quotation.items.map((item, idx) => (
+                  {quotation.items.map((item, idx) => {
+                    const tierName =
+                      item.ticketTierName ||
+                      (item.calculation as any)?.selectedTicketTierName ||
+                      item.selected_options?.ticketTierName ||
+                      item.configuration_snapshot?.ticketTierName ||
+                      item.metadata?.ticketTierName;
+                    return (
                     <div key={idx} className="bg-white p-2.5 rounded-xl border border-slate-200 text-xs flex items-center justify-between">
                       <div>
-                        <span className="font-bold text-slate-900">{item.product.name}</span>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-bold text-slate-900">{item.product.name}</span>
+                          {tierName && (
+                            <span className="inline-block px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 text-[10px] font-bold">
+                              Tier: {tierName}
+                            </span>
+                          )}
+                        </div>
                         <span className="block text-[10px] text-slate-500">
                           📅 {item.travelDate} • 📍 {item.product.destinationName} • 👥 {item.pax.adults + item.pax.children} Pax
                         </span>
@@ -600,7 +638,8 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                         {formatCurrency(item.calculation.finalTotalSellingPrice, quotation.currency)}
                       </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}

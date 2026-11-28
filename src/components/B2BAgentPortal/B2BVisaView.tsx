@@ -83,9 +83,10 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
 }) => {
   const { user } = useAuth();
   const { 
-    items, 
+    items,
+    cartItems, 
     addProductToQuote, 
-    removeProductFromQuote, 
+    removeFromCart, 
     currency, 
     setIsQuoteDrawerOpen,
     travelStartDate,
@@ -306,9 +307,9 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
     });
   }, [realConnectivityPlans, searchLower, selectedDestination]);
 
-  // Helper to check if item is in quote
+  // Helper to check if item is in cart
   const isItemInQuote = (productId: string) => {
-    return items.some(it => 
+    return cartItems.some(it => 
       it.product.id === productId || 
       it.master_product_id === productId || 
       (it.metadata as any)?.visaProductId === productId ||
@@ -317,7 +318,7 @@ export const B2BVisaView: React.FC<B2BVisaViewProps> = ({
   };
 
   const getQuoteItemByProductId = (productId: string): QuoteItem | undefined => {
-    return items.find(it => 
+    return cartItems.find(it => 
       it.product.id === productId || 
       it.master_product_id === productId || 
       (it.metadata as any)?.visaProductId === productId ||
@@ -1026,7 +1027,7 @@ Support: visa-operations@theunbound.in
                               </button>
                               <button
                                 type="button"
-                                onClick={() => quoteItem && removeProductFromQuote(quoteItem.id)}
+                                onClick={() => quoteItem && void removeFromCart(quoteItem.id)}
                                 className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors cursor-pointer"
                                 title="Remove from Quote"
                               >
@@ -1160,9 +1161,9 @@ Support: visa-operations@theunbound.in
                             </button>
                             <button
                               type="button"
-                              onClick={() => quoteItem && removeProductFromQuote(quoteItem.id)}
+                              onClick={() => quoteItem && void removeFromCart(quoteItem.id)}
                               className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors cursor-pointer"
-                              title="Remove from Quote"
+                              title="Remove from Cart"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1262,9 +1263,9 @@ Support: visa-operations@theunbound.in
                             </button>
                             <button
                               type="button"
-                              onClick={() => quoteItem && removeProductFromQuote(quoteItem.id)}
+                              onClick={() => quoteItem && void removeFromCart(quoteItem.id)}
                               className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors cursor-pointer"
-                              title="Remove from Quote"
+                              title="Remove from Cart"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -1351,9 +1352,9 @@ Support: visa-operations@theunbound.in
                             </button>
                             <button
                               type="button"
-                              onClick={() => quoteItem && removeProductFromQuote(quoteItem.id)}
+                              onClick={() => quoteItem && void removeFromCart(quoteItem.id)}
                               className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors cursor-pointer"
-                              title="Remove from Quote"
+                              title="Remove from Cart"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>

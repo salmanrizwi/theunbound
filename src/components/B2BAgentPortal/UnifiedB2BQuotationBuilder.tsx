@@ -757,6 +757,17 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
       // 2. Sanitize product for B2B Agents to conceal internal nett costs
       const sanitizedProduct = !canViewInternalCosts ? sanitizeProductForAgent(effectiveProduct) : effectiveProduct;
 
+      const ticketTierId =
+        item.ticketTierId ||
+        item.selected_options?.ticketTierId ||
+        item.configuration_snapshot?.ticketTierId ||
+        (item.calculation as any)?.selectedTicketTierId;
+      const ticketTierName =
+        item.ticketTierName ||
+        item.selected_options?.ticketTierName ||
+        item.configuration_snapshot?.ticketTierName ||
+        (item.calculation as any)?.selectedTicketTierName;
+
       // 3. Centralized Pricing Engine Execution
       const calcParams = {
         productId: effectiveProduct.id,
@@ -773,6 +784,8 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         roomsCount: item.roomsCount || nextManualDetails?.numberOfRooms || (effectiveProduct as any).roomsCount,
         targetCurrency,
         selectedAddonIds: item.selectedAddonIds || [],
+        ticketTierId,
+        ticketTierName,
         userRole: user?.role || 'B2B_AGENT',
         user,
         companyId: user?.companyId,
@@ -790,6 +803,14 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         calculation = item.calculation;
       }
 
+      const resolvedTierId = calculation?.selectedTicketTierId || ticketTierId;
+      const resolvedTierName = calculation?.selectedTicketTierName || ticketTierName;
+      const resolvedTierDesc =
+        calculation?.selectedTicketTierDescription ||
+        item.ticketTierDescription ||
+        item.selected_options?.ticketTierDescription ||
+        item.configuration_snapshot?.ticketTierDescription;
+
       return {
         ...item,
         product: sanitizedProduct,
@@ -801,6 +822,19 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
         itineraryHubOccurrenceId: item.itineraryHubOccurrenceId || item.hubId || nextManualDetails?.itineraryHubOccurrenceId || nextManualDetails?.hubId,
         accommodationStayId: item.accommodationStayId || nextManualDetails?.accommodationStayId,
         manualHotelDetails: nextManualDetails,
+        ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+        ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+        ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {}),
+        ...(resolvedTierId || resolvedTierName
+          ? {
+              selected_options: {
+                ...(item.selected_options || {}),
+                ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+                ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+                ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {})
+              }
+            }
+          : {}),
         calculation,
         pricing_snapshot: {
           ...(item.pricing_snapshot || {}),
@@ -2343,6 +2377,16 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
           items: next[optNum].items.map(item => {
             if (item.calculation?.currency === currency) return item;
             const calcFn = canViewInternalCosts ? calculateProductPrice : calculateProductPriceForAgent;
+            const ticketTierId =
+              item.ticketTierId ||
+              item.selected_options?.ticketTierId ||
+              item.configuration_snapshot?.ticketTierId ||
+              (item.calculation as any)?.selectedTicketTierId;
+            const ticketTierName =
+              item.ticketTierName ||
+              item.selected_options?.ticketTierName ||
+              item.configuration_snapshot?.ticketTierName ||
+              (item.calculation as any)?.selectedTicketTierName;
             const calculation = calcFn(item.product, {
               productId: item.product.id,
               productName: item.product.name,
@@ -2357,10 +2401,17 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
               nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
               roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
               targetCurrency: currency,
-              selectedAddonIds: item.selectedAddonIds || []
+              selectedAddonIds: item.selectedAddonIds || [],
+              ticketTierId,
+              ticketTierName
             }) as any;
             return {
               ...item,
+              ...(calculation?.selectedTicketTierId || ticketTierId ? { ticketTierId: calculation?.selectedTicketTierId || ticketTierId } : {}),
+              ...(calculation?.selectedTicketTierName || ticketTierName ? { ticketTierName: calculation?.selectedTicketTierName || ticketTierName } : {}),
+              ...(calculation?.selectedTicketTierDescription || item.ticketTierDescription
+                ? { ticketTierDescription: calculation?.selectedTicketTierDescription || item.ticketTierDescription }
+                : {}),
               calculation
             };
           })
@@ -3043,7 +3094,7 @@ const UnifiedB2BQuotationBuilderBase: React.FC<UnifiedB2BQuotationBuilderProps> 
     const itemSig = items
       .map(
         it =>
-          `${it.id}:${it.product?.id}:${it.travelDate || ''}:${it.pax?.adults || 0}:${it.pax?.children || 0}:${it.pax?.infants || 0}:${it.calculation?.finalTotalSellingPrice || 0}:${it.agentAdditionalMarkupType || ''}:${it.agentAdditionalMarkupValue || 0}:${(it.selectedAddonIds || []).join(',')}:${it.serviceTime || ''}:${it.notes || ''}`
+          `${it.id}:${it.product?.id}:${it.ticketTierId || (it.calculation as any)?.selectedTicketTierId || ''}:${it.ticketTierName || (it.calculation as any)?.selectedTicketTierName || ''}:${it.travelDate || ''}:${it.pax?.adults || 0}:${it.pax?.children || 0}:${it.pax?.infants || 0}:${it.calculation?.finalTotalSellingPrice || 0}:${it.agentAdditionalMarkupType || ''}:${it.agentAdditionalMarkupValue || 0}:${(it.selectedAddonIds || []).join(',')}:${it.serviceTime || ''}:${it.notes || ''}`
       )
       .join('|');
     const hubSig = routeHubs

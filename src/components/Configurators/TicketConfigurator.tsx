@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Product, QuoteItem, CurrencyCode } from '../../types';
 import { useQuotation } from '../../context/QuotationContext';
 import { useAuth } from '../../context/AuthContext';
-import { formatCurrency, convertCurrency, calculateProductPrice } from '../../services/pricingEngine';
+import { formatCurrency, convertCurrency, calculateProductPrice, calculateProductPriceForAgent } from '../../services/pricingEngine';
 import { generateConfigurationIdentity, getActiveUpsellsForProduct, createUpsellSnapshot } from '../../services/configuratorRegistry';
 import { 
   X, 
@@ -18,7 +18,8 @@ import {
   Minus, 
   User,
   QrCode,
-  Info
+  Info,
+  AlertTriangle
 } from 'lucide-react';
 
 export interface TicketConfiguratorProps {
@@ -72,27 +73,55 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
   const existingConfig = (itemOrProduct as any)?.configuration_payload ||
     (itemOrProduct as any)?.metadata?.configuration_payload || {};
 
-  // Available Ticket Tiers from Master Product
+  // Available Ticket Tiers from Master Product (strictly active tiers; never synthesize or fall back to Tier 1 on explicit/invalid tier)
+  const rawTiers = product?.ticketConfig?.ticketTiers || [];
+  const hasConfiguredTiers = rawTiers.length > 0;
+  const activeTiers = useMemo(() => {
+    return rawTiers.filter(t => t && t.status !== 'INACTIVE');
+  }, [rawTiers]);
+
   const tierOptions = useMemo(() => {
-    if (product?.ticketConfig?.ticketTiers && product.ticketConfig.ticketTiers.length > 0) {
-      return product.ticketConfig.ticketTiers.map(t => ({
+    if (hasConfiguredTiers) {
+      return activeTiers.map(t => ({
         id: t.id,
         name: t.name,
-        adultPrice: t.sellingPriceStartingFrom || (t.adultNetPrice ? Math.round(t.adultNetPrice * 1.25) : 45),
-        childPrice: t.childNetPrice ? Math.round(t.childNetPrice * 1.25) : Math.round((t.sellingPriceStartingFrom || 45) * 0.6)
+        description: t.description || '',
+        currency: (t.currency || product.currency || 'USD') as CurrencyCode,
+        rawTier: t
       }));
     }
-    const defaultAdult = product?.sellingPriceStartingFrom || (product?.adultNetPrice ? Math.round(product.adultNetPrice * 1.25) : 45);
-    const defaultChild = product?.childNetPrice ? Math.round(product.childNetPrice * 1.25) : Math.round(defaultAdult * 0.6);
     return [
-      { 
-        id: 'standard', 
+      {
+        id: 'standard',
         name: product?.ticketConfig?.ticketType ? `${product.ticketConfig.ticketType.replace(/_/g, ' ')}` : 'Standard General Admission',
-        adultPrice: defaultAdult,
-        childPrice: defaultChild
+        description: '',
+        currency: (product.currency || 'USD') as CurrencyCode,
+        rawTier: null
       }
     ];
-  }, [product]);
+  }, [hasConfiguredTiers, activeTiers, product]);
+
+  const initialExplicitTierId =
+    (itemOrProduct as QuoteItem)?.ticketTierId ||
+    existingConfig.ticketTierId ||
+    (itemOrProduct as any)?.selectedTicketTierId ||
+    '';
+  const initialExplicitTierName =
+    existingConfig.ticketTier ||
+    (itemOrProduct as QuoteItem)?.ticketTierName ||
+    '';
+
+  const resolvedInitialTierId = useMemo(() => {
+    if (!hasConfiguredTiers) return 'standard';
+    if (initialExplicitTierId) return initialExplicitTierId;
+    if (initialExplicitTierName) {
+      const byName = rawTiers.find(
+        t => t && (t.name || '').trim().toLowerCase() === initialExplicitTierName.trim().toLowerCase()
+      );
+      if (byName) return byName.id;
+    }
+    return activeTiers[0]?.id || '';
+  }, [hasConfiguredTiers, initialExplicitTierId, initialExplicitTierName, rawTiers, activeTiers]);
 
   // Form State (Layer 3: Transaction Details)
   const [visitDate, setVisitDate] = useState<string>(
@@ -101,9 +130,7 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
   const [timeSlot, setTimeSlot] = useState<string>(
     existingConfig.timeSlot || initialServiceTime || (itemOrProduct as QuoteItem)?.serviceTime || '10:00 AM'
   );
-  const [ticketTier, setTicketTier] = useState<string>(
-    existingConfig.ticketTier || tierOptions[0]?.name || 'Standard Admission'
-  );
+  const [selectedTierId, setSelectedTierId] = useState<string>(resolvedInitialTierId);
   const [adults, setAdults] = useState<number>(
     existingConfig.adults ?? initialAdults ?? (itemOrProduct as QuoteItem)?.pax?.adults ?? 2
   );
@@ -138,39 +165,127 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
     );
   };
 
-  // Centralized Authoritative Pricing Calculation
-  const selectedTier = tierOptions.find(t => t.name === ticketTier) || tierOptions[0];
+  // Strict Active Tier Resolution (no silent fallback to tierOptions[0] for configured multi-tier products)
+  const selectedTier = useMemo(() => {
+    if (!hasConfiguredTiers) return tierOptions[0];
+    return tierOptions.find(t => t.id === selectedTierId) || null;
+  }, [hasConfiguredTiers, tierOptions, selectedTierId]);
 
-  const pricing = useMemo(() => {
-    if (!product) return { grossSellingPrice: 0, finalPrice: 0, baseSelling: 0, addonsCost: 0, currency };
-    const calc = calculateProductPrice(product, {
-      productId: product.id,
-      adults,
-      children,
-      infants: 0,
-      travelDate: visitDate,
-      targetCurrency: currency,
-      user,
-      selectedAddonIds: selectedAddons,
-      selectedUpsellIds: selectedAddons
+  const ticketTier = selectedTier?.name || initialExplicitTierName || '';
+
+  const isAgentRole = user?.role === 'B2B_AGENT';
+  const pricingFn = isAgentRole ? calculateProductPriceForAgent : calculateProductPrice;
+
+  // Per-tier unit price preview via Central Pricing Engine (single FX conversion)
+  const tierPreviewPrices = useMemo(() => {
+    const map: Record<string, { adultUnit: number; childUnit: number; infantUnit: number; error?: string }> = {};
+    if (!product) return map;
+    tierOptions.forEach(tier => {
+      try {
+        const res = pricingFn(product, {
+          productId: product.id,
+          pricingTier: user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C',
+          adults: 1,
+          children: 0,
+          infants: 0,
+          travelDate: visitDate,
+          targetCurrency: currency,
+          user,
+          ...(hasConfiguredTiers ? { ticketTierId: tier.id, ticketTierName: tier.name } : {})
+        });
+        map[tier.id] = {
+          adultUnit: res.adultPricePerPax,
+          childUnit: res.childPricePerPax,
+          infantUnit: (res as any).infantPricePerPax || 0
+        };
+      } catch (err: any) {
+        map[tier.id] = { adultUnit: 0, childUnit: 0, infantUnit: 0, error: err?.message };
+      }
     });
+    return map;
+  }, [product, tierOptions, pricingFn, user, visitDate, currency, hasConfiguredTiers]);
 
-    return {
-      grossSellingPrice: calc.finalTotalSellingPrice,
-      finalPrice: calc.finalTotalSellingPrice,
-      adultPrice: calc.adultPricePerPax,
-      childPrice: calc.childPricePerPax,
-      baseAdultTotal: calc.adultsSubtotalSelling,
-      baseChildTotal: calc.childrenSubtotalSelling,
-      addonsCost: calc.addonsSubtotalSelling || 0,
-      currency: calc.currency,
-      calcResult: calc
+  // Centralized Authoritative Pricing Calculation
+  const { pricing, tierError } = useMemo(() => {
+    const fallbackEmpty = {
+      grossSellingPrice: 0,
+      finalPrice: 0,
+      adultPrice: 0,
+      childPrice: 0,
+      infantPrice: 0,
+      baseAdultTotal: 0,
+      baseChildTotal: 0,
+      addonsCost: 0,
+      currency,
+      nativeCurrency: (product?.currency || 'USD') as CurrencyCode,
+      calcResult: null as any
     };
-  }, [selectedTier, product, adults, children, visitDate, selectedAddons, currency, user]);
+
+    if (!product) {
+      return { pricing: fallbackEmpty, tierError: 'Product record unavailable.' };
+    }
+
+    if (hasConfiguredTiers && activeTiers.length === 0) {
+      return {
+        pricing: fallbackEmpty,
+        tierError: 'All ticket tiers for this attraction are INACTIVE. Please contact operations.'
+      };
+    }
+
+    if (hasConfiguredTiers && !selectedTier) {
+      const inactiveMatch = rawTiers.find(t => t && t.id === selectedTierId);
+      return {
+        pricing: fallbackEmpty,
+        tierError: inactiveMatch
+          ? `Ticket tier "${inactiveMatch.name}" is INACTIVE. Please select an active admission tier.`
+          : `Selected ticket tier ("${selectedTierId || 'unknown'}") is unavailable. Please select an active admission tier.`
+      };
+    }
+
+    try {
+      const calc = pricingFn(product, {
+        productId: product.id,
+        pricingTier: user && user.role !== 'PUBLIC' ? 'B2B' : 'B2C',
+        adults,
+        children,
+        infants,
+        travelDate: visitDate,
+        targetCurrency: currency,
+        user,
+        selectedAddonIds: selectedAddons,
+        selectedUpsellIds: selectedAddons,
+        ...(hasConfiguredTiers && selectedTier ? { ticketTierId: selectedTier.id, ticketTierName: selectedTier.name } : {})
+      });
+
+      return {
+        pricing: {
+          grossSellingPrice: calc.finalTotalSellingPrice,
+          finalPrice: calc.finalTotalSellingPrice,
+          adultPrice: calc.adultPricePerPax,
+          childPrice: calc.childPricePerPax,
+          infantPrice: (calc as any).infantPricePerPax || 0,
+          baseAdultTotal: calc.adultsSubtotalSelling,
+          baseChildTotal: calc.childrenSubtotalSelling,
+          addonsCost: calc.addonsSubtotalSelling || 0,
+          currency: calc.currency,
+          nativeCurrency: ((calc as any).nativeCurrency || selectedTier?.currency || product.currency || 'USD') as CurrencyCode,
+          calcResult: calc
+        },
+        tierError: null as string | null
+      };
+    } catch (err: any) {
+      return {
+        pricing: fallbackEmpty,
+        tierError: err?.message || 'Unable to calculate price for the selected admission tier.'
+      };
+    }
+  }, [product, hasConfiguredTiers, activeTiers.length, rawTiers, selectedTier, selectedTierId, pricingFn, user, adults, children, infants, visitDate, currency, selectedAddons]);
 
   if (!isOpen || !product) return null;
 
   const handleSave = () => {
+    if (tierError || (hasConfiguredTiers && !selectedTier)) return;
+
     const configIdentity = generateConfigurationIdentity(
       'Tickets',
       product.id,
@@ -183,11 +298,18 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
       return createUpsellSnapshot(found, adults + children);
     }).filter(Boolean);
 
+    const activeTierId = hasConfiguredTiers && selectedTier ? selectedTier.id : undefined;
+    const activeTierName = hasConfiguredTiers && selectedTier ? selectedTier.name : (ticketTier || undefined);
+    const activeTierDesc = hasConfiguredTiers && selectedTier ? (selectedTier.description || undefined) : undefined;
+
     const configurationPayload = {
       ...configIdentity,
       visitDate,
       timeSlot,
-      ticketTier,
+      ticketTier: activeTierName || ticketTier,
+      ticketTierId: activeTierId,
+      ticketTierName: activeTierName,
+      ticketTierDescription: activeTierDesc,
       adults,
       children,
       infants,
@@ -200,6 +322,8 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
       pricingSummary: pricing
     };
 
+    const itemNotes = `${activeTierName || ticketTier} (${timeSlot})${leadTravelerName ? ` | Lead: ${leadTravelerName}` : ''}${specialInstructions ? `. ${specialInstructions}` : ''}`;
+
     if (isEditing && existingQuoteItemId) {
       updateQuoteItem(existingQuoteItemId, product, {
         adults,
@@ -207,10 +331,13 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
         infants,
         travelDate: visitDate,
         serviceTime: timeSlot,
-        notes: `${ticketTier} (${timeSlot}) ${leadTravelerName ? `| Lead: ${leadTravelerName}` : ''}. ${specialInstructions}`,
+        notes: itemNotes,
         selectedAddonIds: selectedAddons,
         selectedUpsellIds: selectedAddons,
-        selectedUpsellSnapshots: selectedUpsellSnapshots as any
+        selectedUpsellSnapshots: selectedUpsellSnapshots as any,
+        ticketTierId: activeTierId,
+        ticketTierName: activeTierName,
+        ticketTierDescription: activeTierDesc
       });
     } else {
       addProductToQuote(product, {
@@ -219,10 +346,13 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
         infants,
         travelDate: visitDate,
         serviceTime: timeSlot,
-        notes: `${ticketTier} (${timeSlot}) ${leadTravelerName ? `| Lead: ${leadTravelerName}` : ''}. ${specialInstructions}`,
+        notes: itemNotes,
         selectedAddonIds: selectedAddons,
         selectedUpsellIds: selectedAddons,
         selectedUpsellSnapshots: selectedUpsellSnapshots as any,
+        ticketTierId: activeTierId,
+        ticketTierName: activeTierName,
+        ticketTierDescription: activeTierDesc,
         openDrawer: portalOrigin !== 'B2B_QUOTE_BUILDER' && portalOrigin !== 'ADMIN_CMS',
         configuration_id: configIdentity.configuration_id,
         configuration_snapshot: configurationPayload,
@@ -231,13 +361,23 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
         service_type: 'TICKET_CONFIGURATOR',
         metadata: {
           configuration_payload: configurationPayload,
-          configurator_type: 'TICKET_CONFIGURATOR'
+          configurator_type: 'TICKET_CONFIGURATOR',
+          ticketTierId: activeTierId,
+          ticketTierName: activeTierName,
+          ticketTierDescription: activeTierDesc
         }
       });
     }
 
     if (onSuccess) {
-      onSuccess({ product, configurationPayload, pricing });
+      onSuccess({
+        product,
+        configurationPayload,
+        pricing,
+        ticketTierId: activeTierId,
+        ticketTierName: activeTierName,
+        ticketTierDescription: activeTierDesc
+      });
     }
     onClose();
   };
@@ -324,40 +464,68 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
           </div>
 
           {/* LAYER 2: CONFIGURABLE TICKET TIERS */}
-          {tierOptions.length > 1 && (
+          {hasConfiguredTiers && (
             <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
-                2. Select Admission Tier
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {tierOptions.map(tier => {
-                  const isSelected = ticketTier === tier.name;
-                  return (
-                    <button
-                      key={tier.id}
-                      type="button"
-                      onClick={() => setTicketTier(tier.name)}
-                      className={`p-3 rounded-xl border text-left flex items-start space-x-2.5 transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-purple-50 border-purple-400 text-purple-950 shadow-xs'
-                          : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
-                      }`}
-                    >
-                      <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
-                        isSelected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-300 bg-white'
-                      }`}>
-                        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-bold text-xs leading-snug">{tier.name}</div>
-                        <div className="text-[10px] text-slate-500 mt-0.5">
-                          {formatCurrency(convertCurrency(tier.adultPrice, ((tier as any).currency || product.currency || 'USD') as CurrencyCode, currency), currency)} / Adult
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                  2. Select Admission Tier
+                </span>
+                {selectedTier && (
+                  <span className="text-[10px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md">
+                    Active: {selectedTier.name}
+                  </span>
+                )}
               </div>
+
+              {tierError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-300 text-rose-900 text-xs flex items-start space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span>{tierError}</span>
+                </div>
+              )}
+
+              {tierOptions.length > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {tierOptions.map(tier => {
+                    const isSelected = selectedTierId === tier.id;
+                    const preview = tierPreviewPrices[tier.id];
+                    return (
+                      <button
+                        key={tier.id}
+                        type="button"
+                        onClick={() => setSelectedTierId(tier.id)}
+                        className={`p-3 rounded-xl border text-left flex items-start space-x-2.5 transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-purple-50 border-purple-400 text-purple-950 shadow-xs'
+                            : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
+                        }`}
+                      >
+                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${
+                          isSelected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-300 bg-white'
+                        }`}>
+                          {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-bold text-xs leading-snug">{tier.name}</div>
+                          {tier.description && (
+                            <div className="text-[10px] text-slate-500 line-clamp-1 mt-0.5">{tier.description}</div>
+                          )}
+                          <div className="text-[10px] text-slate-600 font-medium mt-1">
+                            {preview?.error ? (
+                              <span className="text-rose-600">Unavailable</span>
+                            ) : (
+                              <>
+                                {formatCurrency(preview?.adultUnit || 0, currency)} / Adult
+                                {preview && preview.childUnit > 0 ? ` • ${formatCurrency(preview.childUnit, currency)} / Child` : ''}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -559,16 +727,28 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
         <div className="bg-slate-900 text-white p-4 sm:p-5 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
           <div>
             <span className="text-[10px] text-slate-400 uppercase tracking-wider block font-semibold">
-              Final Price
+              Final Price {selectedTier ? `• ${selectedTier.name}` : ''}
             </span>
             <div className="text-xl sm:text-2xl font-black text-purple-400">
               {formatCurrency(pricing.grossSellingPrice, currency)}
             </div>
-            {selectedAddons.length > 0 && (
-              <span className="text-[10px] text-slate-400">
-                Includes {selectedAddons.length} selected upgrade{selectedAddons.length > 1 ? 's' : ''}
-              </span>
-            )}
+            <div className="text-[10px] text-slate-400 space-x-2">
+              {pricing.adultPrice > 0 && (
+                <span>Ad: {formatCurrency(pricing.adultPrice, currency)}</span>
+              )}
+              {children > 0 && (
+                <span>• Ch: {formatCurrency(pricing.childPrice, currency)}</span>
+              )}
+              {infants > 0 && (
+                <span>• Inf: {formatCurrency(pricing.infantPrice, currency)}</span>
+              )}
+              {pricing.nativeCurrency && pricing.nativeCurrency !== currency && (
+                <span>• FX {pricing.nativeCurrency} → {currency}</span>
+              )}
+              {selectedAddons.length > 0 && (
+                <span>• +{selectedAddons.length} upgrade{selectedAddons.length > 1 ? 's' : ''}</span>
+              )}
+            </div>
           </div>
 
           <div className="flex items-center space-x-2.5 justify-end">
@@ -581,8 +761,9 @@ export const TicketConfigurator: React.FC<TicketConfiguratorProps> = ({
             </button>
             <button
               type="button"
+              disabled={Boolean(tierError)}
               onClick={handleSave}
-              className="px-6 py-2.5 rounded-xl text-xs font-black shadow-lg transition-all cursor-pointer flex items-center space-x-1.5 bg-purple-500 text-white hover:bg-purple-400"
+              className="px-6 py-2.5 rounded-xl text-xs font-black shadow-lg transition-all cursor-pointer flex items-center space-x-1.5 bg-purple-500 text-white hover:bg-purple-400 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Check className="w-4 h-4" />
               <span>{isEditing ? 'Update Configuration' : 'Add to Quote'}</span>

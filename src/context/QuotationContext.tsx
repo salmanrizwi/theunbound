@@ -41,9 +41,13 @@ interface QuotationContextType {
   cartItems: QuoteItem[];
   cartOwnerUid: string | null;
   isCartVerified: boolean;
+  isCartMutating: boolean;
+  cartError: string | null;
+  clearCartError: () => void;
+  retryLastCartAction: () => Promise<boolean>;
   cartTotalSellingPrice: number;
-  removeFromCart: (itemId: string) => void;
-  clearCart: () => void;
+  removeFromCart: (itemId: string) => Promise<boolean>;
+  clearCart: () => Promise<boolean>;
   currency: CurrencyCode;
   setCurrency: (curr: CurrencyCode) => void;
   isQuoteDrawerOpen: boolean;
@@ -90,6 +94,9 @@ interface QuotationContextType {
       vehicleNameSnapshot?: string;
       vehicleTypeSnapshot?: string;
       vehicleCapacitySnapshot?: number;
+      ticketTierId?: string;
+      ticketTierName?: string;
+      ticketTierDescription?: string;
     }
   ) => void;
   removeProductFromQuote: (itemId: string) => void;
@@ -106,6 +113,9 @@ interface QuotationContextType {
       selectedAddonIds?: string[]; 
       notes?: string;
       source?: QuoteItemSource;
+      ticketTierId?: string;
+      ticketTierName?: string;
+      ticketTierDescription?: string;
     }
   ) => void;
   updateQuoteItem: (
@@ -134,6 +144,9 @@ interface QuotationContextType {
       vehicleNameSnapshot?: string;
       vehicleTypeSnapshot?: string;
       vehicleCapacitySnapshot?: number;
+      ticketTierId?: string;
+      ticketTierName?: string;
+      ticketTierDescription?: string;
       metadata?: Record<string, any>;
     }
   ) => void;
@@ -248,6 +261,8 @@ export type QuotationActionsContextType = Pick<
   | 'clearQuote'
   | 'removeFromCart'
   | 'clearCart'
+  | 'clearCartError'
+  | 'retryLastCartAction'
   | 'setClientName'
   | 'setClientEmail'
   | 'setClientCompany'
@@ -308,16 +323,44 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [cartItems, setCartItems] = useState<QuoteItem[]>([]);
   const [cartOwnerUid, setCartOwnerUid] = useState<string | null>(null);
   const [isCartVerified, setIsCartVerified] = useState<boolean>(false);
+  const [isCartMutating, setIsCartMutating] = useState<boolean>(false);
+  const [cartError, setCartError] = useState<string | null>(null);
 
   const activeCartUidRef = useRef<string | null>(null);
   const prevAuthenticatedUidRef = useRef<string | null>(null);
   const cartUnsubscribeRef = useRef<(() => void) | null>(null);
   const isEditingSavedQuoteRef = useRef<boolean>(false);
+  const latestUserRef = useRef(user);
+  latestUserRef.current = user;
+  const cartItemsRef = useRef<QuoteItem[]>([]);
+  cartItemsRef.current = cartItems;
+  const lastFailedCartActionRef = useRef<(() => Promise<boolean>) | null>(null);
+
+  const clearCartError = useCallback(() => {
+    setCartError(null);
+  }, []);
+
+  const retryLastCartAction = useCallback(async (): Promise<boolean> => {
+    const retryFn = lastFailedCartActionRef.current;
+    if (!retryFn) {
+      setCartError(null);
+      return true;
+    }
+    return retryFn();
+  }, []);
 
   const authenticatedCartUid = useMemo(() => {
     if (authState !== 'AUTHENTICATED_READY' || !user) return null;
     return resolveAuthenticatedCartUid(user, auth?.currentUser || null);
   }, [authState, user]);
+
+  const isInsideB2BQuoteBuilder = useCallback((): boolean => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return false;
+    if (document.getElementById('quote-builder-shell')) return true;
+    const path = (window.location?.pathname || '').toLowerCase();
+    return path.includes('b2b-quote-builder') || path.includes('quote-builder');
+  }, []);
+
   const [currency, setCurrencyState] = useState<CurrencyCode>(() => {
     try {
       const globalCurr = displayCurrencyService.getDisplayCurrency();
@@ -360,15 +403,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       unsubEngine();
       unsubGlobal();
     };
-  }, []);
+  }, [isInsideB2BQuoteBuilder]);
   const [isQuoteDrawerOpenState, setIsQuoteDrawerOpenState] = useState(false);
-
-  const isInsideB2BQuoteBuilder = (): boolean => {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return false;
-    if (document.getElementById('quote-builder-shell')) return true;
-    const path = (window.location?.pathname || '').toLowerCase();
-    return path.includes('b2b-quote-builder') || path.includes('quote-builder');
-  };
 
   const setIsQuoteDrawerOpen = useCallback((open: boolean, options?: { explicitFromQuoteBuilder?: boolean }) => {
     if (open && isInsideB2BQuoteBuilder() && !options?.explicitFromQuoteBuilder) {
@@ -376,12 +412,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       return;
     }
     setIsQuoteDrawerOpenState(open);
-  }, []);
+  }, [isInsideB2BQuoteBuilder]);
 
   const isQuoteDrawerOpen = isQuoteDrawerOpenState;
 
   // =========================================================================
   // STRICT UID-SCOPED CART SUBSCRIPTION, ACCOUNT-SWITCH & LOGOUT HYGIENE
+  // Completely decoupled from Quote Builder workspace (`items`)
   // =========================================================================
   useEffect(() => {
     // 1. Always unsubscribe any previous Firestore cart listener immediately
@@ -392,16 +429,20 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       cartUnsubscribeRef.current = null;
     }
 
+    const currentUser = latestUserRef.current;
     const previousUid = prevAuthenticatedUidRef.current;
 
     // 2. Unauthenticated, initializing, or profile loading:
     //    Immediately purge in-memory cart state so ZERO items ever flash or leak across users.
-    if (!authenticatedCartUid || authState !== 'AUTHENTICATED_READY' || !user) {
+    if (!authenticatedCartUid || authState !== 'AUTHENTICATED_READY' || !currentUser) {
       activeCartUidRef.current = null;
       isEditingSavedQuoteRef.current = false;
+      lastFailedCartActionRef.current = null;
       setCartItems([]);
       setCartOwnerUid(null);
       setIsCartVerified(false);
+      setIsCartMutating(false);
+      setCartError(null);
       setItems([]);
       setIsQuoteDrawerOpenState(false);
 
@@ -418,10 +459,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // 3. Account switch detected: purge previous user's in-memory state and temporary cache BEFORE loading next user
     if (previousUid && previousUid !== authenticatedCartUid) {
       clearUidNamespacedCartCache(previousUid);
+      lastFailedCartActionRef.current = null;
       setCartItems([]);
       setItems([]);
       setCartOwnerUid(null);
       setIsCartVerified(false);
+      setIsCartMutating(false);
+      setCartError(null);
       setIsQuoteDrawerOpenState(false);
       isEditingSavedQuoteRef.current = false;
     }
@@ -429,11 +473,11 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     prevAuthenticatedUidRef.current = authenticatedCartUid;
     activeCartUidRef.current = authenticatedCartUid;
 
-    // 4. Safe idempotent quarantine/migration of any legacy shared 'theunbound_cart_items' on this browser
+    // 4. Safe idempotent quarantine/migration of any legacy shared legacy records on this browser
     //    Ensures unowned legacy shared items NEVER leak into this authenticated agent's cart.
     void userCartService
       .migrateOrQuarantineLegacyCartRecords({
-        actor: user,
+        actor: currentUser,
         actorFirebaseUid: authenticatedCartUid,
         verifiedKnownUids: new Set([authenticatedCartUid])
       })
@@ -442,6 +486,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       });
 
     // 5. Optional fast hydrate strictly from UID-namespaced cache (verified ownerUid === authenticatedCartUid ONLY)
+    //    Never overwrite Quote Builder workspace `items`.
     const cachedDocs = readUidNamespacedCartCache(authenticatedCartUid);
     if (cachedDocs.length > 0 && activeCartUidRef.current === authenticatedCartUid) {
       const verifiedCached = cachedDocs
@@ -450,19 +495,13 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setCartItems(verifiedCached);
       setCartOwnerUid(authenticatedCartUid);
       setIsCartVerified(true);
-      if (!isEditingSavedQuoteRef.current) {
-        setItems(verifiedCached);
-      }
     } else {
       setCartItems([]);
-      if (!isEditingSavedQuoteRef.current) {
-        setItems([]);
-      }
     }
 
     // 6. Attach authoritative real-time Firestore listener scoped strictly to users/{authenticatedCartUid}/cart
     const unsub = userCartService.subscribeToOwnCart(
-      user,
+      currentUser,
       authenticatedCartUid,
       (docs) => {
         // Stale closure guard: ignore any snapshot for a different UID
@@ -473,9 +512,6 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setCartItems(verifiedItems);
         setCartOwnerUid(authenticatedCartUid);
         setIsCartVerified(true);
-        if (!isEditingSavedQuoteRef.current) {
-          setItems(verifiedItems);
-        }
       },
       () => {
         if (activeCartUidRef.current !== authenticatedCartUid) return;
@@ -494,7 +530,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         cartUnsubscribeRef.current = null;
       }
     };
-  }, [authenticatedCartUid, authState, user]);
+  }, [authenticatedCartUid, authState]);
   
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
@@ -610,13 +646,43 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
   }, [user]);
 
+  const resolveItemTierFields = useCallback((item: QuoteItem) => {
+    const snap = (item as any).configuration_snapshot || {};
+    const sel = (item as any).selected_options || {};
+    const calc = (item.calculation as any) || {};
+    const meta = (item.metadata as any) || {};
+    return {
+      ticketTierId:
+        item.ticketTierId ||
+        sel.ticketTierId ||
+        snap.ticketTierId ||
+        meta.ticketTierId ||
+        calc.selectedTicketTierId ||
+        undefined,
+      ticketTierName:
+        item.ticketTierName ||
+        sel.ticketTierName ||
+        snap.ticketTierName ||
+        meta.ticketTierName ||
+        calc.selectedTicketTierName ||
+        undefined,
+      ticketTierDescription:
+        item.ticketTierDescription ||
+        sel.ticketTierDescription ||
+        snap.ticketTierDescription ||
+        meta.ticketTierDescription ||
+        calc.selectedTicketTierDescription ||
+        undefined
+    };
+  }, []);
+
   // Recalculate all items whenever currency or user pricingTier changes (preserve locked/issued snapshots if currency unchanged)
   useEffect(() => {
-    setItems(prevItems => {
+    const recalcList = (prevItems: QuoteItem[], respectLock: boolean): QuoteItem[] => {
       if (prevItems.length === 0) return prevItems;
       let anyChanged = false;
       const nextItems = prevItems.map(item => {
-        if (isLocked && item.calculation && item.calculation.currency === currency) {
+        if (respectLock && isLocked && item.calculation && item.calculation.currency === currency) {
           return item;
         }
 
@@ -649,30 +715,52 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           ...(item.master_product_id ? { master_product_id: item.master_product_id } : {})
         } as Product;
 
-        const calculation = calculateItemPrice(productWithContext, {
-          productId: item.product.id,
-          productName: item.product.name,
-          itemId: item.id,
-          pricingTier,
-          adults: item.pax.adults,
-          children: item.pax.children,
-          infants: item.pax.infants,
-          travelDate: item.travelDate,
-          serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
-          nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
-          roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
-          targetCurrency: currency,
-          selectedAddonIds: item.selectedAddonIds
-        });
-        anyChanged = true;
-        return {
-          ...item,
-          calculation
-        };
+        const tierFields = resolveItemTierFields(item);
+
+        try {
+          const calculation = calculateItemPrice(productWithContext, {
+            productId: item.product.id,
+            productName: item.product.name,
+            itemId: item.id,
+            pricingTier,
+            adults: item.pax.adults,
+            children: item.pax.children,
+            infants: item.pax.infants,
+            travelDate: item.travelDate,
+            serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
+            nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
+            roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
+            targetCurrency: currency,
+            selectedAddonIds: item.selectedAddonIds,
+            selectedUpsellIds: item.selectedUpsellIds,
+            ...(tierFields.ticketTierId ? { ticketTierId: tierFields.ticketTierId } : {}),
+            ...(tierFields.ticketTierName ? { ticketTierName: tierFields.ticketTierName } : {})
+          });
+          anyChanged = true;
+          return {
+            ...item,
+            ...(tierFields.ticketTierId || calculation?.selectedTicketTierId
+              ? { ticketTierId: tierFields.ticketTierId || calculation?.selectedTicketTierId }
+              : {}),
+            ...(tierFields.ticketTierName || calculation?.selectedTicketTierName
+              ? { ticketTierName: tierFields.ticketTierName || calculation?.selectedTicketTierName }
+              : {}),
+            ...(tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription
+              ? { ticketTierDescription: tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription }
+              : {}),
+            calculation
+          };
+        } catch (err) {
+          console.warn('[QuotationContext] Skipping recalculation on invalid item tier:', item.id, err);
+          return item;
+        }
       });
       return anyChanged ? nextItems : prevItems;
-    });
-  }, [currency, pricingTier, isAgent, isLocked, fxRateTick]);
+    };
+
+    setItems(prev => recalcList(prev, true));
+    setCartItems(prev => recalcList(prev, false));
+  }, [currency, pricingTier, isAgent, isLocked, fxRateTick, calculateItemPrice, resolveItemTierFields, user?.role]);
 
   const addProductToQuote = useCallback((
     product: Product,
@@ -684,6 +772,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       serviceTime?: string;
       notes?: string;
       selectedAddonIds?: string[];
+      selectedUpsellIds?: string[];
+      selectedUpsellSnapshots?: any;
       openDrawer?: boolean;
       source?: QuoteItemSource;
       aiSuggested?: boolean;
@@ -714,6 +804,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       vehicleNameSnapshot?: string;
       vehicleTypeSnapshot?: string;
       vehicleCapacitySnapshot?: number;
+      ticketTierId?: string;
+      ticketTierName?: string;
+      ticketTierDescription?: string;
     }
   ) => {
     // Enforce active destination check when adding new products in B2B Quote / Cart
@@ -740,8 +833,23 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const infants = options?.infants ?? 0;
     const travelDate = options?.travelDate ?? travelStartDate ?? '';
     const selectedAddonIds = options?.selectedAddonIds ?? [];
+    const selectedUpsellIds = options?.selectedUpsellIds ?? selectedAddonIds;
     const serviceTime = options?.serviceTime;
     const notes = options?.notes;
+
+    const requestedTicketTierId =
+      options?.ticketTierId ||
+      options?.configuration_snapshot?.ticketTierId ||
+      options?.metadata?.ticketTierId;
+    const requestedTicketTierName =
+      options?.ticketTierName ||
+      options?.configuration_snapshot?.ticketTierName ||
+      options?.configuration_snapshot?.ticketTier ||
+      options?.metadata?.ticketTierName;
+    const requestedTicketTierDescription =
+      options?.ticketTierDescription ||
+      options?.configuration_snapshot?.ticketTierDescription ||
+      options?.metadata?.ticketTierDescription;
 
     const newItemId = `item-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
     const serviceEndDate = options?.checkOutDate || options?.manualHotelDetails?.checkOutDate || (product as any).manualHotelDetails?.checkOutDate;
@@ -761,9 +869,16 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       nights: itemNights,
       roomsCount: itemRooms,
       targetCurrency: currency,
-      selectedAddonIds
+      selectedAddonIds,
+      selectedUpsellIds,
+      ...(requestedTicketTierId ? { ticketTierId: requestedTicketTierId } : {}),
+      ...(requestedTicketTierName ? { ticketTierName: requestedTicketTierName } : {})
     });
     const effectiveProduct = isAgent ? sanitizeProductForAgent(product) : product;
+
+    const resolvedTierId = requestedTicketTierId || calculation?.selectedTicketTierId;
+    const resolvedTierName = requestedTicketTierName || calculation?.selectedTicketTierName;
+    const resolvedTierDesc = requestedTicketTierDescription || calculation?.selectedTicketTierDescription;
 
     const nowIso = new Date().toISOString();
     const ownerUid = authenticatedCartUid || undefined;
@@ -778,6 +893,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       serviceTime,
       notes,
       selectedAddonIds,
+      selectedUpsellIds,
+      selectedUpsellSnapshots: options?.selectedUpsellSnapshots,
       calculation,
       hubId: options?.hubId || options?.itineraryHubOccurrenceId || options?.manualHotelDetails?.hubId || (effectiveProduct as any).manualHotelDetails?.hubId,
       itineraryHubOccurrenceId: options?.itineraryHubOccurrenceId || options?.hubId || options?.manualHotelDetails?.itineraryHubOccurrenceId || options?.manualHotelDetails?.hubId,
@@ -801,7 +918,19 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       subcategory: (effectiveProduct as any).subcategory,
       service_type: options?.service_type || (effectiveProduct as any).service_type,
       configuration_id: options?.configuration_id,
-      configuration_snapshot: options?.configuration_snapshot,
+      configuration_snapshot: options?.configuration_snapshot
+        ? {
+            ...options.configuration_snapshot,
+            ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+            ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+            ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {})
+          }
+        : undefined,
+      selected_options: {
+        ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+        ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+        ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {})
+      },
       pricing_snapshot: buildCommercialPricingSnapshot(
         effectiveProduct,
         calculation,
@@ -815,6 +944,9 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       vehicleNameSnapshot: options?.vehicleNameSnapshot || options?.configuration_snapshot?.vehicleName || options?.metadata?.vehicleName || (effectiveProduct as any).vehicleNameSnapshot,
       vehicleTypeSnapshot: options?.vehicleTypeSnapshot || options?.configuration_snapshot?.vehicleType || options?.metadata?.vehicleType || (effectiveProduct as any).vehicleTypeSnapshot,
       vehicleCapacitySnapshot: options?.vehicleCapacitySnapshot || options?.configuration_snapshot?.masterCapacity || options?.configuration_snapshot?.maxCapacity || (effectiveProduct as any).vehicleCapacitySnapshot,
+      ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+      ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+      ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {}),
       ownerUid,
       agencyId: secondaryAgencyId,
       addedByUid: ownerUid,
@@ -831,71 +963,114 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         master_product_id: options?.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
         service_id: options?.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
         vehicleId: options?.vehicleId || options?.configuration_snapshot?.vehicleId || options?.metadata?.vehicleId,
-        vehicleName: options?.vehicleNameSnapshot || options?.configuration_snapshot?.vehicleName || options?.metadata?.vehicleName
+        vehicleName: options?.vehicleNameSnapshot || options?.configuration_snapshot?.vehicleName || options?.metadata?.vehicleName,
+        ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+        ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {})
       }
     };
 
     newItem.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, newItem);
 
-    setItems(prev => [...prev, newItem]);
+    const inQuoteBuilder = isInsideB2BQuoteBuilder();
 
-    // Persist strictly to authenticated user's own cart when NOT editing an existing saved quotation
-    if (!isEditingSavedQuoteRef.current && authenticatedCartUid && user) {
+    if (inQuoteBuilder) {
+      // Strictly Quote Builder workspace: never mutate or overwrite persistent UID cart
+      setItems(prev => [...prev, newItem]);
+    } else if (authenticatedCartUid && user) {
+      // Strictly standalone UID-owned Cart: never mutate Quote Builder draft workspace
+      const prevCartSnapshot = cartItemsRef.current;
+      setCartError(null);
+      setIsCartMutating(true);
       setCartItems(prev => [...prev, newItem]);
       setCartOwnerUid(authenticatedCartUid);
       setIsCartVerified(true);
-      void userCartService
-        .upsertOwnCartItem({
-          actor: user,
-          actorFirebaseUid: authenticatedCartUid,
-          quoteItem: newItem
-        })
-        .catch((err) => {
+
+      const persistAdd = async (): Promise<boolean> => {
+        try {
+          await userCartService.upsertOwnCartItem({
+            actor: user,
+            actorFirebaseUid: authenticatedCartUid,
+            quoteItem: newItem
+          });
+          lastFailedCartActionRef.current = null;
+          setCartError(null);
+          return true;
+        } catch (err: any) {
           console.warn('[QuotationContext] Failed to persist cart item to Firestore:', err);
-        });
+          if (activeCartUidRef.current === authenticatedCartUid) {
+            setCartItems(prevCartSnapshot);
+            setCartError(err?.message || 'Unable to save item to your cart. Please retry.');
+          }
+          return false;
+        } finally {
+          setIsCartMutating(false);
+        }
+      };
+      lastFailedCartActionRef.current = persistAdd;
+      void persistAdd();
+    } else {
+      // Fallback for unauthenticated temporary quote drawer session
+      setItems(prev => [...prev, newItem]);
     }
 
-    if (options?.openDrawer !== false && !isInsideB2BQuoteBuilder()) {
+    if (options?.openDrawer !== false && !inQuoteBuilder) {
       setIsQuoteDrawerOpen(true);
     }
-  }, [authenticatedCartUid, calculateItemPrice, currency, isAgent, pricingTier, setIsQuoteDrawerOpen, travelStartDate, user]);
+  }, [authenticatedCartUid, calculateItemPrice, currency, isAgent, isInsideB2BQuoteBuilder, pricingTier, setIsQuoteDrawerOpen, travelStartDate, user]);
 
-  const removeFromCart = useCallback((itemId: string) => {
-    setCartItems(prev => prev.filter(i => i.id !== itemId));
-    if (!isEditingSavedQuoteRef.current) {
-      setItems(prev => prev.filter(i => i.id !== itemId));
+  /**
+   * Fail-closed async removal of a single item strictly from the user's own UID cart.
+   * Never modifies Quote Builder workspace items or other users' carts.
+   */
+  const removeFromCart = useCallback(async (itemId: string): Promise<boolean> => {
+    if (!authenticatedCartUid || !user) {
+      setCartError('Please sign in to remove items from your cart.');
+      return false;
     }
-    if (authenticatedCartUid && user) {
-      void userCartService
-        .removeCartItem({
+
+    const prevCartSnapshot = cartItemsRef.current;
+    setCartError(null);
+    setIsCartMutating(true);
+    setCartItems(prev => prev.filter(i => i.id !== itemId));
+
+    const executeRemove = async (): Promise<boolean> => {
+      try {
+        await userCartService.removeCartItem({
           actor: user,
           actorFirebaseUid: authenticatedCartUid,
           cartItemId: itemId
-        })
-        .catch((err) => {
-          console.warn('[QuotationContext] Failed to remove item from user cart:', err);
         });
-    }
+        lastFailedCartActionRef.current = null;
+        setCartError(null);
+        return true;
+      } catch (err: any) {
+        console.warn('[QuotationContext] Failed to remove item from user cart:', err);
+        if (activeCartUidRef.current === authenticatedCartUid) {
+          setCartItems(prevCartSnapshot);
+          setCartError(err?.message || 'Could not remove item from your cart. Please retry.');
+          lastFailedCartActionRef.current = () => removeFromCart(itemId);
+        }
+        return false;
+      } finally {
+        setIsCartMutating(false);
+      }
+    };
+
+    return executeRemove();
   }, [authenticatedCartUid, user]);
 
+  /**
+   * Removes an item strictly from the Quote Builder workspace (`items`).
+   * Never mutates or deletes items from the persistent UID cart.
+   */
   const removeProductFromQuote = useCallback((itemId: string) => {
     setItems(prev => prev.filter(i => i.id !== itemId));
-    if (!isEditingSavedQuoteRef.current) {
-      setCartItems(prev => prev.filter(i => i.id !== itemId));
-      if (authenticatedCartUid && user) {
-        void userCartService
-          .removeCartItem({
-            actor: user,
-            actorFirebaseUid: authenticatedCartUid,
-            cartItemId: itemId
-          })
-          .catch((err) => {
-            console.warn('[QuotationContext] Failed to remove item from user cart:', err);
-          });
-      }
-    }
-  }, [authenticatedCartUid, user]);
+  }, []);
 
+  /**
+   * Batch removes items strictly from the Quote Builder workspace (`items`).
+   * Never mutates or deletes items from the persistent UID cart.
+   */
   const removeProductsByIds = useCallback((itemIds: string[]) => {
     if (!itemIds || itemIds.length === 0) return;
     const removeSet = new Set(itemIds);
@@ -903,113 +1078,157 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const next = prev.filter(i => !removeSet.has(i.id));
       return next.length === prev.length ? prev : next;
     });
-    if (!isEditingSavedQuoteRef.current) {
-      setCartItems(prev => prev.filter(i => !removeSet.has(i.id)));
-      if (authenticatedCartUid && user) {
-        itemIds.forEach((id) => {
-          void userCartService
-            .removeCartItem({
-              actor: user,
-              actorFirebaseUid: authenticatedCartUid,
-              cartItemId: id
-            })
-            .catch(() => {});
-        });
-      }
-    }
-  }, [authenticatedCartUid, user]);
+  }, []);
 
-  const persistUpdatedStandaloneCartItem = useCallback((updatedItem: QuoteItem) => {
-    if (isEditingSavedQuoteRef.current || !authenticatedCartUid || !user) return;
+  const persistUpdatedStandaloneCartItem = useCallback((updatedItem: QuoteItem, prevItemSnapshot?: QuoteItem) => {
+    if (!authenticatedCartUid || !user) return;
+    setCartError(null);
+    setIsCartMutating(true);
     setCartItems(prev => prev.map(i => (i.id === updatedItem.id ? updatedItem : i)));
-    void userCartService
-      .upsertOwnCartItem({
-        actor: user,
-        actorFirebaseUid: authenticatedCartUid,
-        quoteItem: updatedItem
-      })
-      .catch((err) => {
+
+    const executePersist = async (): Promise<boolean> => {
+      try {
+        await userCartService.upsertOwnCartItem({
+          actor: user,
+          actorFirebaseUid: authenticatedCartUid,
+          quoteItem: updatedItem
+        });
+        lastFailedCartActionRef.current = null;
+        setCartError(null);
+        return true;
+      } catch (err: any) {
         console.warn('[QuotationContext] Failed to sync updated cart item:', err);
-      });
+        if (activeCartUidRef.current === authenticatedCartUid) {
+          if (prevItemSnapshot) {
+            setCartItems(prev => prev.map(i => (i.id === updatedItem.id ? prevItemSnapshot : i)));
+          }
+          setCartError(err?.message || 'Failed to save cart changes. Please retry.');
+          lastFailedCartActionRef.current = executePersist;
+        }
+        return false;
+      } finally {
+        setIsCartMutating(false);
+      }
+    };
+
+    void executePersist();
   }, [authenticatedCartUid, user]);
 
   const updateItemPax = useCallback((itemId: string, pax: { adults: number; children: number; infants: number }) => {
-    setItems(prev =>
-      prev.map(item => {
-        if (item.id !== itemId) return item;
-        const calculation = calculateItemPrice(item.product, {
-          productId: item.product.id,
-          productName: item.product.name,
-          itemId: item.id,
-          pricingTier,
-          adults: pax.adults,
-          children: pax.children,
-          infants: pax.infants,
-          travelDate: item.travelDate,
-          serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
-          nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
-          roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
-          targetCurrency: currency,
-          selectedAddonIds: item.selectedAddonIds
-        });
-        const updated: QuoteItem = {
-          ...item,
-          pax,
-          calculation,
-          source: 'USER',
-          aiSuggested: false
-        };
-        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
-        persistUpdatedStandaloneCartItem(updated);
-        return updated;
-      })
-    );
-  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
+    const applyPaxUpdate = (item: QuoteItem): QuoteItem => {
+      const tierFields = resolveItemTierFields(item);
+      const calculation = calculateItemPrice(item.product, {
+        productId: item.product.id,
+        productName: item.product.name,
+        itemId: item.id,
+        pricingTier,
+        adults: pax.adults,
+        children: pax.children,
+        infants: pax.infants,
+        travelDate: item.travelDate,
+        serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
+        nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
+        roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
+        targetCurrency: currency,
+        selectedAddonIds: item.selectedAddonIds,
+        selectedUpsellIds: item.selectedUpsellIds,
+        ...(tierFields.ticketTierId ? { ticketTierId: tierFields.ticketTierId } : {}),
+        ...(tierFields.ticketTierName ? { ticketTierName: tierFields.ticketTierName } : {})
+      });
+      const updated: QuoteItem = {
+        ...item,
+        pax,
+        ...(tierFields.ticketTierId || calculation?.selectedTicketTierId
+          ? { ticketTierId: tierFields.ticketTierId || calculation?.selectedTicketTierId }
+          : {}),
+        ...(tierFields.ticketTierName || calculation?.selectedTicketTierName
+          ? { ticketTierName: tierFields.ticketTierName || calculation?.selectedTicketTierName }
+          : {}),
+        ...(tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription
+          ? { ticketTierDescription: tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription }
+          : {}),
+        calculation,
+        source: 'USER',
+        aiSuggested: false
+      };
+      updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+      return updated;
+    };
+
+    const inCart = cartItemsRef.current.find(i => i.id === itemId);
+    if (inCart && !isInsideB2BQuoteBuilder()) {
+      const updated = applyPaxUpdate(inCart);
+      persistUpdatedStandaloneCartItem(updated, inCart);
+    }
+
+    setItems(prev => prev.map(item => (item.id === itemId ? applyPaxUpdate(item) : item)));
+  }, [calculateItemPrice, currency, isInsideB2BQuoteBuilder, persistUpdatedStandaloneCartItem, pricingTier, resolveItemTierFields]);
 
   const updateItemTravelDate = useCallback((itemId: string, date: string) => {
-    setItems(prev =>
-      prev.map(item => {
-        if (item.id !== itemId) return item;
-        const calculation = calculateItemPrice(item.product, {
-          productId: item.product.id,
-          productName: item.product.name,
-          itemId: item.id,
-          pricingTier,
-          adults: item.pax.adults,
-          children: item.pax.children,
-          infants: item.pax.infants,
-          travelDate: date,
-          serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
-          nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
-          roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
-          targetCurrency: currency,
-          selectedAddonIds: item.selectedAddonIds
-        });
-        const updated: QuoteItem = {
-          ...item,
-          travelDate: date,
-          calculation,
-          source: 'USER',
-          aiSuggested: false
-        };
-        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
-        persistUpdatedStandaloneCartItem(updated);
-        return updated;
-      })
-    );
-  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
+    const applyDateUpdate = (item: QuoteItem): QuoteItem => {
+      const tierFields = resolveItemTierFields(item);
+      const calculation = calculateItemPrice(item.product, {
+        productId: item.product.id,
+        productName: item.product.name,
+        itemId: item.id,
+        pricingTier,
+        adults: item.pax.adults,
+        children: item.pax.children,
+        infants: item.pax.infants,
+        travelDate: date,
+        serviceEndDate: item.checkOutDate || item.manualHotelDetails?.checkOutDate,
+        nights: item.nights || item.manualHotelDetails?.numberOfNights || (item.product as any)?.nights,
+        roomsCount: item.roomsCount || item.manualHotelDetails?.numberOfRooms || (item.product as any)?.roomsCount,
+        targetCurrency: currency,
+        selectedAddonIds: item.selectedAddonIds,
+        selectedUpsellIds: item.selectedUpsellIds,
+        ...(tierFields.ticketTierId ? { ticketTierId: tierFields.ticketTierId } : {}),
+        ...(tierFields.ticketTierName ? { ticketTierName: tierFields.ticketTierName } : {})
+      });
+      const updated: QuoteItem = {
+        ...item,
+        travelDate: date,
+        ...(tierFields.ticketTierId || calculation?.selectedTicketTierId
+          ? { ticketTierId: tierFields.ticketTierId || calculation?.selectedTicketTierId }
+          : {}),
+        ...(tierFields.ticketTierName || calculation?.selectedTicketTierName
+          ? { ticketTierName: tierFields.ticketTierName || calculation?.selectedTicketTierName }
+          : {}),
+        ...(tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription
+          ? { ticketTierDescription: tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription }
+          : {}),
+        calculation,
+        source: 'USER',
+        aiSuggested: false
+      };
+      updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+      return updated;
+    };
+
+    const inCart = cartItemsRef.current.find(i => i.id === itemId);
+    if (inCart && !isInsideB2BQuoteBuilder()) {
+      const updated = applyDateUpdate(inCart);
+      persistUpdatedStandaloneCartItem(updated, inCart);
+    }
+
+    setItems(prev => prev.map(item => (item.id === itemId ? applyDateUpdate(item) : item)));
+  }, [calculateItemPrice, currency, isInsideB2BQuoteBuilder, persistUpdatedStandaloneCartItem, pricingTier, resolveItemTierFields]);
 
   const updateItemServiceTime = useCallback((itemId: string, time: string) => {
-    setItems(prev =>
-      prev.map(item => {
-        if (item.id !== itemId) return item;
-        const updated: QuoteItem = { ...item, serviceTime: time, source: 'USER', aiSuggested: false };
-        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
-        persistUpdatedStandaloneCartItem(updated);
-        return updated;
-      })
-    );
-  }, [persistUpdatedStandaloneCartItem]);
+    const applyTimeUpdate = (item: QuoteItem): QuoteItem => {
+      const updated: QuoteItem = { ...item, serviceTime: time, source: 'USER', aiSuggested: false };
+      updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+      return updated;
+    };
+
+    const inCart = cartItemsRef.current.find(i => i.id === itemId);
+    if (inCart && !isInsideB2BQuoteBuilder()) {
+      const updated = applyTimeUpdate(inCart);
+      persistUpdatedStandaloneCartItem(updated, inCart);
+    }
+
+    setItems(prev => prev.map(item => (item.id === itemId ? applyTimeUpdate(item) : item)));
+  }, [isInsideB2BQuoteBuilder, persistUpdatedStandaloneCartItem]);
 
   const updateItemFull = useCallback((
     itemId: string,
@@ -1020,45 +1239,72 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       selectedAddonIds?: string[];
       notes?: string;
       source?: QuoteItemSource;
+      ticketTierId?: string;
+      ticketTierName?: string;
+      ticketTierDescription?: string;
     }
   ) => {
-    setItems(prev =>
-      prev.map(item => {
-        if (item.id !== itemId) return item;
-        const nextDate = updates.travelDate ?? item.travelDate;
-        const nextPax = updates.pax ?? item.pax;
-        const nextAddons = updates.selectedAddonIds ?? item.selectedAddonIds;
-        const nextServiceTime = updates.serviceTime !== undefined ? updates.serviceTime : item.serviceTime;
-        const nextNotes = updates.notes !== undefined ? updates.notes : item.notes;
+    const applyFullUpdate = (item: QuoteItem): QuoteItem => {
+      const nextDate = updates.travelDate ?? item.travelDate;
+      const nextPax = updates.pax ?? item.pax;
+      const nextAddons = updates.selectedAddonIds ?? item.selectedAddonIds;
+      const nextServiceTime = updates.serviceTime !== undefined ? updates.serviceTime : item.serviceTime;
+      const nextNotes = updates.notes !== undefined ? updates.notes : item.notes;
+      const prevTier = resolveItemTierFields(item);
+      const nextTierId = updates.ticketTierId ?? prevTier.ticketTierId;
+      const nextTierName = updates.ticketTierName ?? prevTier.ticketTierName;
+      const nextTierDesc = updates.ticketTierDescription ?? prevTier.ticketTierDescription;
 
-        const calculation = calculateItemPrice(item.product, {
-          productId: item.product.id,
-          pricingTier,
-          adults: nextPax.adults,
-          children: nextPax.children,
-          infants: nextPax.infants,
-          travelDate: nextDate,
-          targetCurrency: currency,
-          selectedAddonIds: nextAddons
-        });
+      const calculation = calculateItemPrice(item.product, {
+        productId: item.product.id,
+        pricingTier,
+        adults: nextPax.adults,
+        children: nextPax.children,
+        infants: nextPax.infants,
+        travelDate: nextDate,
+        targetCurrency: currency,
+        selectedAddonIds: nextAddons,
+        selectedUpsellIds: item.selectedUpsellIds,
+        ...(nextTierId ? { ticketTierId: nextTierId } : {}),
+        ...(nextTierName ? { ticketTierName: nextTierName } : {})
+      });
 
-        const updated: QuoteItem = {
-          ...item,
-          travelDate: nextDate,
-          serviceTime: nextServiceTime,
-          pax: nextPax,
-          selectedAddonIds: nextAddons,
-          notes: nextNotes,
-          calculation,
-          source: updates.source ?? 'USER',
-          aiSuggested: updates.source === 'AI_PLANNER'
-        };
-        updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
-        persistUpdatedStandaloneCartItem(updated);
-        return updated;
-      })
-    );
-  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
+      const resolvedTierId = nextTierId || calculation?.selectedTicketTierId;
+      const resolvedTierName = nextTierName || calculation?.selectedTicketTierName;
+      const resolvedTierDesc = nextTierDesc || calculation?.selectedTicketTierDescription;
+
+      const updated: QuoteItem = {
+        ...item,
+        travelDate: nextDate,
+        serviceTime: nextServiceTime,
+        pax: nextPax,
+        selectedAddonIds: nextAddons,
+        notes: nextNotes,
+        ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+        ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+        ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {}),
+        selected_options: {
+          ...(item.selected_options || {}),
+          ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+          ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+          ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {})
+        },
+        calculation,
+        source: updates.source ?? 'USER',
+        aiSuggested: updates.source === 'AI_PLANNER'
+      };
+      updated.contentSnapshot = createQuoteItemContentSnapshot(item.product, updated);
+      return updated;
+    };
+
+    const inCart = cartItemsRef.current.find(i => i.id === itemId);
+    if (inCart && !isInsideB2BQuoteBuilder()) {
+      const updated = applyFullUpdate(inCart);
+      persistUpdatedStandaloneCartItem(updated, inCart);
+    }
+
+    setItems(prev => prev.map(item => (item.id === itemId ? applyFullUpdate(item) : item)));
+  }, [calculateItemPrice, currency, isInsideB2BQuoteBuilder, persistUpdatedStandaloneCartItem, pricingTier, resolveItemTierFields]);
 
   const updateQuoteItem = useCallback((
     itemId: string,
@@ -1071,6 +1317,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       serviceTime?: string;
       notes?: string;
       selectedAddonIds?: string[];
+      selectedUpsellIds?: string[];
+      selectedUpsellSnapshots?: any;
       master_product_id?: string;
       service_id?: string;
       category?: string;
@@ -1084,141 +1332,236 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       vehicleNameSnapshot?: string;
       vehicleTypeSnapshot?: string;
       vehicleCapacitySnapshot?: number;
+      ticketTierId?: string;
+      ticketTierName?: string;
+      ticketTierDescription?: string;
       metadata?: Record<string, any>;
     }
   ) => {
     const effectiveProduct = isAgent ? sanitizeProductForAgent(updatedProduct) : updatedProduct;
-    setItems(prev =>
-      prev.map(item => {
-        if (item.id !== itemId) return item;
-        const adults = options.adults ?? item.pax.adults;
-        const children = options.children ?? item.pax.children;
-        const infants = options.infants ?? item.pax.infants;
-        const travelDate = options.travelDate ?? item.travelDate;
-        const serviceTime = options.serviceTime !== undefined ? options.serviceTime : item.serviceTime;
-        const notes = options.notes !== undefined ? options.notes : item.notes;
-        const selectedAddonIds = options.selectedAddonIds ?? item.selectedAddonIds;
+    const applyQuoteItemUpdate = (item: QuoteItem): QuoteItem => {
+      const adults = options.adults ?? item.pax.adults;
+      const children = options.children ?? item.pax.children;
+      const infants = options.infants ?? item.pax.infants;
+      const travelDate = options.travelDate ?? item.travelDate;
+      const serviceTime = options.serviceTime !== undefined ? options.serviceTime : item.serviceTime;
+      const notes = options.notes !== undefined ? options.notes : item.notes;
+      const selectedAddonIds = options.selectedAddonIds ?? item.selectedAddonIds;
+      const selectedUpsellIds = options.selectedUpsellIds ?? item.selectedUpsellIds ?? selectedAddonIds;
 
-        const calculation = calculateItemPrice(effectiveProduct, {
-          productId: effectiveProduct.id,
-          pricingTier,
-          adults,
-          children,
-          infants,
-          travelDate,
-          targetCurrency: currency,
-          selectedAddonIds
-        });
+      const prevTier = resolveItemTierFields(item);
+      const requestedTierId =
+        options.ticketTierId ||
+        options.configuration_snapshot?.ticketTierId ||
+        options.metadata?.ticketTierId ||
+        prevTier.ticketTierId;
+      const requestedTierName =
+        options.ticketTierName ||
+        options.configuration_snapshot?.ticketTierName ||
+        options.configuration_snapshot?.ticketTier ||
+        options.metadata?.ticketTierName ||
+        prevTier.ticketTierName;
+      const requestedTierDesc =
+        options.ticketTierDescription ||
+        options.configuration_snapshot?.ticketTierDescription ||
+        options.metadata?.ticketTierDescription ||
+        prevTier.ticketTierDescription;
 
-        const updated = {
-          ...item,
-          product: effectiveProduct,
-          pax: { adults, children, infants },
-          travelDate,
-          serviceTime,
-          notes,
-          selectedAddonIds,
+      const calculation = calculateItemPrice(effectiveProduct, {
+        productId: effectiveProduct.id,
+        pricingTier,
+        adults,
+        children,
+        infants,
+        travelDate,
+        targetCurrency: currency,
+        selectedAddonIds,
+        selectedUpsellIds,
+        ...(requestedTierId ? { ticketTierId: requestedTierId } : {}),
+        ...(requestedTierName ? { ticketTierName: requestedTierName } : {})
+      });
+
+      const resolvedTierId = requestedTierId || calculation?.selectedTicketTierId;
+      const resolvedTierName = requestedTierName || calculation?.selectedTicketTierName;
+      const resolvedTierDesc = requestedTierDesc || calculation?.selectedTicketTierDescription;
+
+      const updated: QuoteItem = {
+        ...item,
+        product: effectiveProduct,
+        pax: { adults, children, infants },
+        travelDate,
+        serviceTime,
+        notes,
+        selectedAddonIds,
+        selectedUpsellIds,
+        selectedUpsellSnapshots: options.selectedUpsellSnapshots ?? item.selectedUpsellSnapshots,
+        calculation,
+        source: 'USER',
+        aiSuggested: false,
+        master_product_id: options.master_product_id || item.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
+        service_id: options.service_id || item.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
+        category: options.category || item.category || effectiveProduct.category,
+        service_type: options.service_type || item.service_type || (effectiveProduct as any).service_type,
+        configuration_id: options.configuration_id || item.configuration_id,
+        configuration_snapshot: (options.configuration_snapshot || item.configuration_snapshot)
+          ? {
+              ...(item.configuration_snapshot || {}),
+              ...(options.configuration_snapshot || {}),
+              ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+              ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+              ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {})
+            }
+          : undefined,
+        selected_options: {
+          ...(item.selected_options || {}),
+          ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+          ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+          ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {})
+        },
+        pricing_snapshot: buildCommercialPricingSnapshot(
+          effectiveProduct,
           calculation,
-          source: 'USER',
-          aiSuggested: false,
-          master_product_id: options.master_product_id || item.master_product_id || (effectiveProduct as any).master_product_id || effectiveProduct.id,
-          service_id: options.service_id || item.service_id || (effectiveProduct as any).service_id || effectiveProduct.id,
-          category: options.category || item.category || effectiveProduct.category,
-          service_type: options.service_type || item.service_type || (effectiveProduct as any).service_type,
-          configuration_id: options.configuration_id || item.configuration_id,
-          configuration_snapshot: options.configuration_snapshot || item.configuration_snapshot,
-          pricing_snapshot: buildCommercialPricingSnapshot(
-            effectiveProduct,
-            calculation,
-            travelDate,
-            options.currency_snapshot || item.currency_snapshot || currency,
-            options.pricing_snapshot
-          ),
-          currency_snapshot: options.currency_snapshot || item.currency_snapshot || currency,
-          visaSnapshot: options.visaSnapshot || item.visaSnapshot,
+          travelDate,
+          options.currency_snapshot || item.currency_snapshot || currency,
+          options.pricing_snapshot
+        ),
+        currency_snapshot: options.currency_snapshot || item.currency_snapshot || currency,
+        visaSnapshot: options.visaSnapshot || item.visaSnapshot,
+        vehicleId: options.vehicleId || options.configuration_snapshot?.vehicleId || options.metadata?.vehicleId || item.vehicleId,
+        vehicleNameSnapshot: options.vehicleNameSnapshot || options.configuration_snapshot?.vehicleName || options.metadata?.vehicleName || item.vehicleNameSnapshot,
+        vehicleTypeSnapshot: options.vehicleTypeSnapshot || options.configuration_snapshot?.vehicleType || options.metadata?.vehicleType || item.vehicleTypeSnapshot,
+        vehicleCapacitySnapshot: options.vehicleCapacitySnapshot || options.configuration_snapshot?.masterCapacity || options.configuration_snapshot?.maxCapacity || item.vehicleCapacitySnapshot,
+        ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+        ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {}),
+        ...(resolvedTierDesc ? { ticketTierDescription: resolvedTierDesc } : {}),
+        metadata: {
+          ...(item.metadata || {}),
+          ...(options.metadata || {}),
+          master_product_id: options.master_product_id || item.master_product_id || effectiveProduct.id,
+          service_id: options.service_id || item.service_id || effectiveProduct.id,
           vehicleId: options.vehicleId || options.configuration_snapshot?.vehicleId || options.metadata?.vehicleId || item.vehicleId,
-          vehicleNameSnapshot: options.vehicleNameSnapshot || options.configuration_snapshot?.vehicleName || options.metadata?.vehicleName || item.vehicleNameSnapshot,
-          vehicleTypeSnapshot: options.vehicleTypeSnapshot || options.configuration_snapshot?.vehicleType || options.metadata?.vehicleType || item.vehicleTypeSnapshot,
-          vehicleCapacitySnapshot: options.vehicleCapacitySnapshot || options.configuration_snapshot?.masterCapacity || options.configuration_snapshot?.maxCapacity || item.vehicleCapacitySnapshot,
-          metadata: {
-            ...(item.metadata || {}),
-            ...(options.metadata || {}),
-            master_product_id: options.master_product_id || item.master_product_id || effectiveProduct.id,
-            service_id: options.service_id || item.service_id || effectiveProduct.id,
-            vehicleId: options.vehicleId || options.configuration_snapshot?.vehicleId || options.metadata?.vehicleId || item.vehicleId,
-            vehicleName: options.vehicleNameSnapshot || options.configuration_snapshot?.vehicleName || options.metadata?.vehicleName || item.vehicleNameSnapshot
-          }
-        };
-        updated.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, updated);
-        persistUpdatedStandaloneCartItem(updated);
-        return updated;
-      })
-    );
-  }, [calculateItemPrice, currency, isAgent, persistUpdatedStandaloneCartItem, pricingTier]);
+          vehicleName: options.vehicleNameSnapshot || options.configuration_snapshot?.vehicleName || options.metadata?.vehicleName || item.vehicleNameSnapshot,
+          ...(resolvedTierId ? { ticketTierId: resolvedTierId } : {}),
+          ...(resolvedTierName ? { ticketTierName: resolvedTierName } : {})
+        }
+      };
+      updated.contentSnapshot = createQuoteItemContentSnapshot(effectiveProduct, updated);
+      return updated;
+    };
+
+    const inCart = cartItemsRef.current.find(i => i.id === itemId);
+    if (inCart && !isInsideB2BQuoteBuilder()) {
+      const updated = applyQuoteItemUpdate(inCart);
+      persistUpdatedStandaloneCartItem(updated, inCart);
+    }
+
+    setItems(prev => prev.map(item => (item.id === itemId ? applyQuoteItemUpdate(item) : item)));
+  }, [calculateItemPrice, currency, isAgent, isInsideB2BQuoteBuilder, persistUpdatedStandaloneCartItem, pricingTier, resolveItemTierFields]);
 
   const toggleItemAddon = useCallback((itemId: string, addonId: string) => {
-    setItems(prev =>
-      prev.map(item => {
-        if (item.id !== itemId) return item;
-        const currentAddons = item.selectedAddonIds || [];
-        const nextAddons = currentAddons.includes(addonId)
-          ? currentAddons.filter(id => id !== addonId)
-          : [...currentAddons, addonId];
+    const applyToggle = (item: QuoteItem): QuoteItem => {
+      const currentAddons = item.selectedAddonIds || [];
+      const nextAddons = currentAddons.includes(addonId)
+        ? currentAddons.filter(id => id !== addonId)
+        : [...currentAddons, addonId];
+      const tierFields = resolveItemTierFields(item);
 
-        const calculation = calculateItemPrice(item.product, {
-          productId: item.product.id,
-          pricingTier,
-          adults: item.pax.adults,
-          children: item.pax.children,
-          infants: item.pax.infants,
-          travelDate: item.travelDate,
-          targetCurrency: currency,
-          selectedAddonIds: nextAddons
-        });
+      const calculation = calculateItemPrice(item.product, {
+        productId: item.product.id,
+        pricingTier,
+        adults: item.pax.adults,
+        children: item.pax.children,
+        infants: item.pax.infants,
+        travelDate: item.travelDate,
+        targetCurrency: currency,
+        selectedAddonIds: nextAddons,
+        selectedUpsellIds: nextAddons,
+        ...(tierFields.ticketTierId ? { ticketTierId: tierFields.ticketTierId } : {}),
+        ...(tierFields.ticketTierName ? { ticketTierName: tierFields.ticketTierName } : {})
+      });
 
-        const updated = {
-          ...item,
-          selectedAddonIds: nextAddons,
-          calculation,
-          source: 'USER' as const,
-          aiSuggested: false
-        };
-        persistUpdatedStandaloneCartItem(updated);
-        return updated;
-      })
-    );
-  }, [calculateItemPrice, currency, persistUpdatedStandaloneCartItem, pricingTier]);
+      return {
+        ...item,
+        selectedAddonIds: nextAddons,
+        ...(tierFields.ticketTierId || calculation?.selectedTicketTierId
+          ? { ticketTierId: tierFields.ticketTierId || calculation?.selectedTicketTierId }
+          : {}),
+        ...(tierFields.ticketTierName || calculation?.selectedTicketTierName
+          ? { ticketTierName: tierFields.ticketTierName || calculation?.selectedTicketTierName }
+          : {}),
+        ...(tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription
+          ? { ticketTierDescription: tierFields.ticketTierDescription || calculation?.selectedTicketTierDescription }
+          : {}),
+        calculation,
+        source: 'USER' as const,
+        aiSuggested: false
+      };
+    };
+
+    const inCart = cartItemsRef.current.find(i => i.id === itemId);
+    if (inCart && !isInsideB2BQuoteBuilder()) {
+      const updated = applyToggle(inCart);
+      persistUpdatedStandaloneCartItem(updated, inCart);
+    }
+
+    setItems(prev => prev.map(item => (item.id === itemId ? applyToggle(item) : item)));
+  }, [calculateItemPrice, currency, isInsideB2BQuoteBuilder, persistUpdatedStandaloneCartItem, pricingTier, resolveItemTierFields]);
 
   const updateItemNotes = useCallback((itemId: string, notes: string) => {
-    setItems(prev =>
-      prev.map(item => {
-        if (item.id !== itemId) return item;
-        const updated = { ...item, notes, source: 'USER' as const, aiSuggested: false };
-        persistUpdatedStandaloneCartItem(updated);
-        return updated;
-      })
-    );
-  }, [persistUpdatedStandaloneCartItem]);
+    const applyNotes = (item: QuoteItem): QuoteItem => ({
+      ...item,
+      notes,
+      source: 'USER' as const,
+      aiSuggested: false
+    });
+
+    const inCart = cartItemsRef.current.find(i => i.id === itemId);
+    if (inCart && !isInsideB2BQuoteBuilder()) {
+      const updated = applyNotes(inCart);
+      persistUpdatedStandaloneCartItem(updated, inCart);
+    }
+
+    setItems(prev => prev.map(item => (item.id === itemId ? applyNotes(item) : item)));
+  }, [isInsideB2BQuoteBuilder, persistUpdatedStandaloneCartItem]);
 
   /**
-   * Clears ONLY the authenticated user's own persistent cart (`users/{uid}/cart`).
-   * Never touches saved quotations, other users' carts, or agency-wide data.
+   * Fail-closed async clear of ONLY the authenticated user's own persistent cart (`users/{uid}/cart`).
+   * Never touches Quote Builder drafts, saved quotations, other users' carts, or agency-wide data.
    */
-  const clearCart = useCallback(() => {
-    setCartItems([]);
-    if (!isEditingSavedQuoteRef.current) {
-      setItems([]);
+  const clearCart = useCallback(async (): Promise<boolean> => {
+    if (!authenticatedCartUid || !user) {
+      setCartError('Please sign in to clear your cart.');
+      return false;
     }
-    if (authenticatedCartUid && user) {
-      void userCartService
-        .clearOwnCart({
+
+    const prevCartSnapshot = cartItemsRef.current;
+    setCartError(null);
+    setIsCartMutating(true);
+    setCartItems([]);
+
+    const executeClear = async (): Promise<boolean> => {
+      try {
+        await userCartService.clearOwnCart({
           actor: user,
           actorFirebaseUid: authenticatedCartUid
-        })
-        .catch((err) => {
-          console.warn('[QuotationContext] Failed to clear user cart:', err);
         });
-    }
+        lastFailedCartActionRef.current = null;
+        setCartError(null);
+        return true;
+      } catch (err: any) {
+        console.warn('[QuotationContext] Failed to clear user cart:', err);
+        if (activeCartUidRef.current === authenticatedCartUid) {
+          setCartItems(prevCartSnapshot);
+          setCartError(err?.message || 'Failed to clear your cart. Please retry.');
+          lastFailedCartActionRef.current = () => clearCart();
+        }
+        return false;
+      } finally {
+        setIsCartMutating(false);
+      }
+    };
+
+    return executeClear();
   }, [authenticatedCartUid, user]);
 
   /**
@@ -1302,6 +1645,7 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const children = item.pax?.children || payload.pax.children || 0;
         const infants = item.pax?.infants || payload.pax.infants || 0;
         const travelDate = item.travelDate || payload.travelDates.startDate || '';
+        const tierFields = resolveItemTierFields(item);
 
         const calc = calculateProductPrice(dbProduct, {
           productId: dbProduct.id,
@@ -1311,7 +1655,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           infants,
           travelDate,
           targetCurrency: currency,
-          selectedAddonIds: item.selectedAddonIds || []
+          selectedAddonIds: item.selectedAddonIds || [],
+          selectedUpsellIds: item.selectedUpsellIds || item.selectedAddonIds || [],
+          ...(tierFields.ticketTierId ? { ticketTierId: tierFields.ticketTierId } : {}),
+          ...(tierFields.ticketTierName ? { ticketTierName: tierFields.ticketTierName } : {})
         });
 
         sumRecalculatedPrice += calc.finalTotalSellingPrice;
@@ -1322,6 +1669,15 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           product: dbProduct,
           pax: { adults, children, infants },
           travelDate,
+          ...(tierFields.ticketTierId || calc?.selectedTicketTierId
+            ? { ticketTierId: tierFields.ticketTierId || calc?.selectedTicketTierId }
+            : {}),
+          ...(tierFields.ticketTierName || calc?.selectedTicketTierName
+            ? { ticketTierName: tierFields.ticketTierName || calc?.selectedTicketTierName }
+            : {}),
+          ...(tierFields.ticketTierDescription || calc?.selectedTicketTierDescription
+            ? { ticketTierDescription: tierFields.ticketTierDescription || calc?.selectedTicketTierDescription }
+            : {}),
           calculation: calc,
           source: itemSource,
           aiSuggested: itemSource === 'AI_PLANNER'
@@ -1767,6 +2123,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     cartItems: isCartVerified && cartOwnerUid === authenticatedCartUid ? cartItems : [],
     cartOwnerUid,
     isCartVerified,
+    isCartMutating,
+    cartError,
+    clearCartError,
+    retryLastCartAction,
     cartTotalSellingPrice,
     removeFromCart,
     clearCart,
@@ -1860,6 +2220,10 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     cartOwnerUid,
     authenticatedCartUid,
     isCartVerified,
+    isCartMutating,
+    cartError,
+    clearCartError,
+    retryLastCartAction,
     cartTotalSellingPrice,
     removeFromCart,
     clearCart,
@@ -1943,6 +2307,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     clearQuote,
     removeFromCart,
     clearCart,
+    clearCartError,
+    retryLastCartAction,
     setClientName,
     setClientEmail,
     setClientCompany,
@@ -1994,6 +2360,8 @@ export const QuotationProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     clearQuote,
     removeFromCart,
     clearCart,
+    clearCartError,
+    retryLastCartAction,
     setQuotationDates,
     setClientDetails,
     clearPriceRefreshNotice,

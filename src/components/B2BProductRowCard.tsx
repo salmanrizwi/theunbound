@@ -44,6 +44,9 @@ interface B2BProductRowCardProps {
     selectedAddonIds: string[];
     timeSlot?: string;
     notes?: string;
+    ticketTierId?: string;
+    ticketTierName?: string;
+    ticketTierDescription?: string;
   }) => void;
 }
 
@@ -81,6 +84,26 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [specialNotes, setSpecialNotes] = useState<string>('');
 
+  // Ticket Tiers (for Tickets products with configured admission tiers)
+  const rawTicketTiers = product.ticketConfig?.ticketTiers || [];
+  const hasConfiguredTicketTiers = rawTicketTiers.length > 0;
+  const activeTicketTiers = useMemo(() => {
+    return rawTicketTiers.filter(t => t && t.status !== 'INACTIVE');
+  }, [rawTicketTiers]);
+  const [selectedTicketTierId, setSelectedTicketTierId] = useState<string>(
+    () => activeTicketTiers[0]?.id || ''
+  );
+  const selectedTicketTier = useMemo(
+    () => activeTicketTiers.find(t => t.id === selectedTicketTierId) || null,
+    [activeTicketTiers, selectedTicketTierId]
+  );
+  const ticketTierError = useMemo(() => {
+    if (!hasConfiguredTicketTiers) return null;
+    if (activeTicketTiers.length === 0) return 'All ticket tiers for this product are currently inactive.';
+    if (!selectedTicketTier) return 'Selected ticket tier is unavailable.';
+    return null;
+  }, [hasConfiguredTicketTiers, activeTicketTiers.length, selectedTicketTier]);
+
   // Real-time Roster Availability for the selected date & pax
   const rosterStatus = useMemo(() => {
     return checkDateAvailability(product.id, travelDate, adults + children);
@@ -96,19 +119,35 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
 
   // Real-time calculated price for the current dropdown form values
   const liveCalculation = useMemo(() => {
-    return calculateProductPrice(product, {
-      productId: product.id,
-      pricingTier: 'B2B',
-      userRole: user?.role || 'B2B_AGENT',
-      adults,
-      children,
-      infants,
-      travelDate,
-      targetCurrency: currency,
-      selectedAddonIds,
-      agentClientMarkupPercent
-    });
-  }, [product, user, adults, children, infants, travelDate, currency, selectedAddonIds, agentClientMarkupPercent]);
+    if (ticketTierError) {
+      return {
+        finalTotalSellingPrice: 0,
+        currency
+      } as any;
+    }
+    try {
+      return calculateProductPrice(product, {
+        productId: product.id,
+        pricingTier: 'B2B',
+        userRole: user?.role || 'B2B_AGENT',
+        adults,
+        children,
+        infants,
+        travelDate,
+        targetCurrency: currency,
+        selectedAddonIds,
+        agentClientMarkupPercent,
+        ...(hasConfiguredTicketTiers && selectedTicketTier
+          ? { ticketTierId: selectedTicketTier.id, ticketTierName: selectedTicketTier.name }
+          : {})
+      });
+    } catch {
+      return {
+        finalTotalSellingPrice: 0,
+        currency
+      } as any;
+    }
+  }, [product, user, adults, children, infants, travelDate, currency, selectedAddonIds, agentClientMarkupPercent, hasConfiguredTicketTiers, selectedTicketTier, ticketTierError]);
 
   // Handle toggle add-on checkbox
   const handleToggleAddon = (addonId: string) => {
@@ -119,6 +158,7 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
 
   // Submit and add to quotation
   const handleConfirmAdd = () => {
+    if (ticketTierError) return;
     onAddToQuote({
       adults,
       children,
@@ -126,7 +166,14 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
       travelDate,
       selectedAddonIds,
       timeSlot: selectedTimeSlot,
-      notes: specialNotes
+      notes: specialNotes,
+      ...(hasConfiguredTicketTiers && selectedTicketTier
+        ? {
+            ticketTierId: selectedTicketTier.id,
+            ticketTierName: selectedTicketTier.name,
+            ticketTierDescription: selectedTicketTier.description
+          }
+        : {})
     });
 
     setJustAddedSuccess(true);
@@ -451,6 +498,35 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
                 <option value="Custom Private Pickup">Custom Private Pickup Time</option>
               </select>
 
+              {hasConfiguredTicketTiers && (
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-purple-700 block">
+                    Ticket Tier *
+                  </label>
+                  <select
+                    value={selectedTicketTierId}
+                    onChange={(e) => setSelectedTicketTierId(e.target.value)}
+                    className="w-full bg-purple-50/70 border border-purple-300 rounded-lg p-2 text-xs font-semibold text-purple-950 focus:bg-white focus:outline-none cursor-pointer"
+                  >
+                    {activeTicketTiers.length === 0 ? (
+                      <option value="">No active tiers available</option>
+                    ) : (
+                      activeTicketTiers.map(tier => (
+                        <option key={tier.id} value={tier.id}>
+                          {tier.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  {selectedTicketTier?.description && (
+                    <p className="text-[10px] text-slate-500 line-clamp-1">{selectedTicketTier.description}</p>
+                  )}
+                  {ticketTierError && (
+                    <p className="text-[10px] text-rose-600 font-bold">{ticketTierError}</p>
+                  )}
+                </div>
+              )}
+
               <div>
                 <input
                   type="text"
@@ -590,12 +666,12 @@ export const B2BProductRowCard: React.FC<B2BProductRowCardProps> = ({
               <button
                 type="button"
                 id={`b2b-btn-confirm-add-${product.id}`}
-                disabled={!rosterStatus.isAvailable || justAddedSuccess}
+                disabled={!rosterStatus.isAvailable || justAddedSuccess || Boolean(ticketTierError)}
                 onClick={handleConfirmAdd}
                 className={`px-5 py-2 rounded-xl text-xs font-extrabold transition-all flex items-center space-x-1.5 shadow-sm cursor-pointer ${
                   justAddedSuccess
                     ? 'bg-emerald-600 text-white'
-                    : !rosterStatus.isAvailable
+                    : !rosterStatus.isAvailable || Boolean(ticketTierError)
                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                     : 'bg-[#00C6A6] hover:bg-[#008972] text-slate-950'
                 }`}

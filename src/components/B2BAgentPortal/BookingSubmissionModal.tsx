@@ -56,11 +56,12 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
 }) => {
   const { user } = useAuth();
   const { 
-    items, 
+    cartItems, 
     currency, 
-    totalSellingPrice, 
-    totalNetCost, 
+    cartTotalSellingPrice, 
     clearCart,
+    cartError,
+    isCartMutating,
     clientName,
     clientEmail,
     clientPhone,
@@ -70,6 +71,13 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
     destination,
     draftDestinationReview
   } = useQuotation();
+
+  const items = cartItems;
+  const totalSellingPrice = cartTotalSellingPrice;
+  const totalNetCost = useMemo(
+    () => cartItems.reduce((sum, item) => sum + ((item.calculation as any)?.totalNetCost || 0), 0),
+    [cartItems]
+  );
 
   const db = AppDatabase.getInstance();
 
@@ -373,6 +381,10 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
           supplierStatus: 'WAITING_FOR_SUPPLIER',
           accommodationType: accommodationTypeVal,
           supplierNotes,
+          ticketTierId: item.ticketTierId || (item.calculation as any)?.selectedTicketTierId,
+          ticketTierName: item.ticketTierName || (item.calculation as any)?.selectedTicketTierName,
+          ticketTierDescription: item.ticketTierDescription || (item.calculation as any)?.selectedTicketTierDescription,
+          serviceTime: item.serviceTime,
           pricingSnapshot: item.pricing_snapshot || item.calculation
         } as any;
       });
@@ -456,7 +468,10 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
       }
 
       // 7. Clear ONLY the authenticated user's submitted Cart
-      clearCart();
+      const cartCleared = await clearCart();
+      if (!cartCleared) {
+        console.warn('[BookingSubmissionModal] Booking saved, but cart clear failed:', cartError);
+      }
 
       setIsSubmitting(false);
       onBookingSuccess(newBooking);
@@ -616,6 +631,13 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
                           <h4 className="text-sm font-bold text-slate-900 truncate">
                             {item.product.name}
                           </h4>
+
+                          {(item.ticketTierName || (item.calculation as any)?.selectedTicketTierName) && (
+                            <span className="inline-flex items-center space-x-1 text-[10px] font-bold bg-purple-50 text-purple-800 border border-purple-200 px-2 py-0.5 rounded-md">
+                              <span>Tier: {item.ticketTierName || (item.calculation as any)?.selectedTicketTierName}</span>
+                              {item.serviceTime && <span>• {item.serviceTime}</span>}
+                            </span>
+                          )}
 
                           {/* Specific configurations */}
                           {isHotel && itemAny.hotelDetails && (
@@ -1131,7 +1153,7 @@ export const BookingSubmissionModal: React.FC<BookingSubmissionModalProps> = ({
               <button
                 id="btn-confirm-submit-booking"
                 type="button"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isCartMutating}
                 onClick={handleConfirmAndSubmitBooking}
                 className="w-full sm:w-auto px-6 py-2.5 bg-[#00C6A6] hover:bg-[#00E5C0] text-slate-950 font-black rounded-xl text-xs transition-all cursor-pointer shadow-md shadow-[#00C6A6]/20 flex items-center justify-center space-x-2 disabled:opacity-50"
               >

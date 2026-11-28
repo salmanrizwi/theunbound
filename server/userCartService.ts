@@ -15,6 +15,7 @@ import { fromFirestoreDocument, toFirestoreFields } from './marginGovernanceServ
 import {
   extractBearerToken,
   getServerFirestoreBaseUrl,
+  getServerFirestoreDatabasePath,
   verifyServerFirebaseIdToken
 } from './firebaseServerAuth';
 
@@ -184,26 +185,62 @@ async function fsGetPath(docPath: string, token: string): Promise<Record<string,
   return fromFirestoreDocument(await res.json());
 }
 
+interface ListedFirestoreDoc {
+  name: string;
+  data: Record<string, any>;
+}
+
+async function fsListAllDocs(
+  collectionPath: string,
+  token: string,
+  pageSize = 300
+): Promise<ListedFirestoreDoc[]> {
+  const results: ListedFirestoreDoc[] = [];
+  let pageToken = '';
+  const safePageSize = Math.min(Math.max(1, pageSize), 1000);
+
+  for (let page = 0; page < 50; page++) {
+    const queryParams = new URLSearchParams({ pageSize: String(safePageSize) });
+    if (pageToken) {
+      queryParams.set('pageToken', pageToken);
+    }
+    const url = `${getFirestoreBaseUrl()}/${collectionPath}?${queryParams.toString()}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (res.status === 404) return results;
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      const err: any = new Error(`Firestore list failed (${res.status}): ${errText}`);
+      err.status = res.status;
+      throw err;
+    }
+    const json = (await res.json()) as any;
+    const docs = Array.isArray(json.documents) ? json.documents : [];
+    for (const d of docs) {
+      const data = fromFirestoreDocument(d);
+      if (data) {
+        results.push({
+          name: String(d?.name || ''),
+          data
+        });
+      }
+    }
+    if (!json.nextPageToken) break;
+    pageToken = String(json.nextPageToken);
+  }
+
+  return results;
+}
+
 async function fsListPath(
   collectionPath: string,
   token: string,
   maxDocs = 500
 ): Promise<Record<string, any>[]> {
-  const url = `${getFirestoreBaseUrl()}/${collectionPath}?pageSize=${Math.min(maxDocs, 1000)}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(8000)
-  });
-  if (res.status === 404) return [];
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '');
-    const err: any = new Error(`Firestore list failed (${res.status}): ${errText}`);
-    err.status = res.status;
-    throw err;
-  }
-  const json = (await res.json()) as any;
-  const docs = Array.isArray(json.documents) ? json.documents : [];
-  return docs.map((d: any) => fromFirestoreDocument(d));
+  const docs = await fsListAllDocs(collectionPath, token, maxDocs);
+  return docs.map((d) => d.data);
 }
 
 async function fsWritePath(
@@ -248,6 +285,38 @@ async function fsDeletePath(docPath: string, token: string): Promise<void> {
   }
 }
 
+const FIRESTORE_BATCH_DELETE_CHUNK_SIZE = 450;
+
+async function fsCommitBatchDeletes(docNames: string[], token: string): Promise<number> {
+  if (!docNames || docNames.length === 0) return 0;
+  let deleted = 0;
+  const commitUrl = `${getFirestoreBaseUrl()}:commit`;
+
+  for (let i = 0; i < docNames.length; i += FIRESTORE_BATCH_DELETE_CHUNK_SIZE) {
+    const chunk = docNames.slice(i, i + FIRESTORE_BATCH_DELETE_CHUNK_SIZE);
+    const res = await fetch(commitUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        writes: chunk.map((docName) => ({ delete: docName }))
+      }),
+      signal: AbortSignal.timeout(12000)
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      const err: any = new Error(`Firestore batch delete commit failed (${res.status}): ${errText}`);
+      err.status = res.status;
+      throw err;
+    }
+    deleted += chunk.length;
+  }
+
+  return deleted;
+}
+
 export class FirestoreUserCartApiStore implements UserCartApiStoreAdapter {
   async getUserProfile(uid: string, token: string): Promise<Record<string, any> | null> {
     return fsGetPath(`users/${encodeURIComponent(uid)}`, token);
@@ -289,18 +358,31 @@ export class FirestoreUserCartApiStore implements UserCartApiStoreAdapter {
   }
 
   async deleteUserCartItem(ownerUid: string, cartItemId: string, token: string): Promise<void> {
-    await fsDeletePath(
-      `users/${encodeURIComponent(ownerUid)}/cart/${encodeURIComponent(cartItemId)}`,
-      token
-    );
+    const docPath = `users/${encodeURIComponent(ownerUid)}/cart/${encodeURIComponent(cartItemId)}`;
+    const existing = await fsGetPath(docPath, token);
+    if (existing && existing.ownerUid && existing.ownerUid !== ownerUid) {
+      const err: any = new Error('Forbidden: Cannot delete cart item owned by another user.');
+      err.status = 403;
+      throw err;
+    }
+    await fsDeletePath(docPath, token);
   }
 
   async clearUserCart(ownerUid: string, token: string): Promise<number> {
-    const items = await this.listUserCart(ownerUid, token);
-    for (const item of items) {
-      await this.deleteUserCartItem(ownerUid, item.cartItemId, token);
-    }
-    return items.length;
+    const collectionPath = `users/${encodeURIComponent(ownerUid)}/cart`;
+    const docs = await fsListAllDocs(collectionPath, token);
+    const dbRootPath = getServerFirestoreDatabasePath();
+    const docNamesToDelete = docs
+      .filter(({ data }) => !data?.ownerUid || data.ownerUid === ownerUid)
+      .map(({ name, data }) => {
+        if (name) return name;
+        const id = sanitizeCartItemId(String(data?.cartItemId || ''));
+        return `${dbRootPath}/${collectionPath}/${encodeURIComponent(id)}`;
+      })
+      .filter(Boolean);
+
+    if (docNamesToDelete.length === 0) return 0;
+    return fsCommitBatchDeletes(docNamesToDelete, token);
   }
 
   async listQuarantinedItems(token: string): Promise<QuarantinedLegacyCartItem[]> {
@@ -381,7 +463,14 @@ export class InMemoryUserCartApiStore implements UserCartApiStoreAdapter {
   }
 
   async deleteUserCartItem(ownerUid: string, cartItemId: string): Promise<void> {
-    this.ensureBucket(ownerUid).delete(cartItemId);
+    const bucket = this.ensureBucket(ownerUid);
+    const existing = bucket.get(cartItemId);
+    if (existing && existing.ownerUid !== ownerUid) {
+      const err: any = new Error('Forbidden: Cannot delete cart item owned by another user.');
+      err.status = 403;
+      throw err;
+    }
+    bucket.delete(cartItemId);
   }
 
   async clearUserCart(ownerUid: string): Promise<number> {
@@ -457,6 +546,14 @@ export function createUserCartRouter(options?: {
   const router = Router();
   const store = options?.store || new FirestoreUserCartApiStore();
   const verifyCaller = options?.verifyCaller || verifyAuthenticatedCartCaller;
+  const lastClearedAtByUid = new Map<string, string>();
+  const revisionByUid = new Map<string, number>();
+
+  const bumpRevision = (uid: string): number => {
+    const next = (revisionByUid.get(uid) || 0) + 1;
+    revisionByUid.set(uid, next);
+    return next;
+  };
 
   // GET /api/cart — Strictly loads authenticated caller's own UID cart ONLY.
   // Explicitly ignores/rejects cross-user ownerUid/agencyId override attempts.
@@ -487,7 +584,9 @@ export function createUserCartRouter(options?: {
         ownerUid: caller.uid,
         schemaVersion: USER_CART_SCHEMA_VERSION,
         count: items.length,
-        items
+        items,
+        lastClearedAt: lastClearedAtByUid.get(caller.uid) || null,
+        revision: revisionByUid.get(caller.uid) || 0
       });
     } catch (err: any) {
       return res.status(mapStoreErrorStatus(err)).json({
@@ -657,10 +756,14 @@ export function createUserCartRouter(options?: {
 
     try {
       await store.deleteUserCartItem(caller.uid, cartItemId, caller.idToken);
+      const deletedAt = new Date().toISOString();
+      const revision = bumpRevision(caller.uid);
       return res.status(200).json({
         deleted: true,
         ownerUid: caller.uid,
-        cartItemId
+        cartItemId,
+        deletedAt,
+        revision
       });
     } catch (err: any) {
       return res.status(mapStoreErrorStatus(err)).json({
@@ -679,10 +782,15 @@ export function createUserCartRouter(options?: {
 
     try {
       const removedCount = await store.clearUserCart(caller.uid, caller.idToken);
+      const clearedAt = new Date().toISOString();
+      lastClearedAtByUid.set(caller.uid, clearedAt);
+      const revision = bumpRevision(caller.uid);
       return res.status(200).json({
         cleared: true,
         ownerUid: caller.uid,
-        removedCount
+        removedCount,
+        clearedAt,
+        revision
       });
     } catch (err: any) {
       return res.status(mapStoreErrorStatus(err)).json({
